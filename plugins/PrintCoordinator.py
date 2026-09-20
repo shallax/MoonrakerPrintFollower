@@ -10,6 +10,7 @@ from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
 from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, plate_values, preview_eta_text, result
+from .MoonrakerProtocol import live_position_in_gcode_space
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -253,6 +254,16 @@ class PrintCoordinator(QObject):
                 position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
             except (TypeError, ValueError):
                 position = None
+            # The toolhead's PHYSICAL position, in the G-code's own
+            # coordinates: the plate split refines the dispatcher's
+            # position with it, exactly as the Preview's follower does
+            # (the same helper, the same space), so the painted fill
+            # cannot run ahead of the nozzle. Absent telemetry is None,
+            # and the split then reads the coarse anchor as it always did.
+            live_position = (
+                live_position_in_gcode_space(
+                    self._status.get("motion_report") or {}, self._status.get("gcode_move") or {})
+                if isinstance(self._status, dict) else None)
             layer_progress = None
             if view is not None and physical.index is not None and 0 <= physical.index < len(view.ranges):
                 start, end = view.ranges[physical.index]
@@ -302,8 +313,11 @@ class PrintCoordinator(QObject):
                 # file position: the split is a live print's boundary,
                 # and on another layer it would be another print's
                 # fill.
+                # The live position rides along even when the anchor is
+                # frozen: a frozen layer carries no file position, and
+                # the split short-circuits on that before it refines.
                 plate_progress_payload = self._index.plate_progress(
-                    anchor, position if anchor == physical.index else None)
+                    anchor, position if anchor == physical.index else None, live_position)
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map

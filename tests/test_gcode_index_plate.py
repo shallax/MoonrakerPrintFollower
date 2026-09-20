@@ -9,6 +9,12 @@ review's F2 finding: the request stood down whenever the current layer was
 already hydrated, so the layer behind the print never filled and the face
 degraded to an empty ghost.
 
+The service's split is the third surface here: the follower paints the
+boundary the LIVE position puts the nozzle at, refined through the same
+search the Preview runs (the index's ``refined_fraction``, floored onto
+the layer's motion grid), and that boundary is monotonic per print and
+per layer.
+
 The classification is the E-axis rule, stated once in the index: a
 positive E step extrudes, anything else (no E, flat, or falling for a
 retraction) does not, and every change of that state is a travel boundary.
@@ -52,6 +58,7 @@ from plugins.GCodeIndex import (
 )
 from plugins.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
+from tests.test_plate_progress import make_index
 
 
 def _write_gcode(data):
@@ -635,6 +642,117 @@ class HydrationWindowTests(unittest.TestCase):
         index.followed_layer = None
         self.service.request_hydration(4)
         self.assertEqual(self.service._hydrate, {3, 4})
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class PlateSplitRefinementTests(unittest.TestCase):
+    """The worker-side boundary as the coordinator asks for it: the
+    coarse file position refined by the live tool position, monotonic
+    across polls and honest when the refinement is unavailable.
+
+    The geometry is the synthetic row (``tests.test_plate_progress``'s
+    ``make_index``): motion m runs from x = m - 1 to x = m at z = 0.2,
+    with the dispatcher's byte offsets far ahead of any one motion. The
+    live position is what tells the boundary where the NOZZLE is.
+    """
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Files(QObject):
+            changed = pyqtSignal()
+
+        self.files = Files()
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        module = self.qt.load("GCodeIndexService")
+        self.service = module.GCodeIndexService(self.files, object())
+        self.addCleanup(self.service.close)
+        self.job = ("part.gcode", 100, 1)
+        self.service.bind(self.job)
+
+    def _bind(self, layers=1, motions=20):
+        index = make_index(layers=layers, motions=motions)
+        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = view
+        return list(index.motion_offsets[0])
+
+    def test_a_machine_without_live_telemetry_keeps_the_coarse_boundary(self):
+        offsets = self._bind()
+        self.assertEqual(self.service.plate_progress(0, offsets[9])["split"], 9)
+        # The floor never latches onto a coarse value, so a printer that
+        # reports no live position paints exactly what it always did.
+        self.assertEqual(self.service.plate_progress(0, offsets[19])["split"], 19)
+
+    def test_the_live_position_refines_the_split_and_holds_it(self):
+        offsets = self._bind()
+        # The dispatcher is at the layer's end; the head is at x = 5,
+        # which is 6 finished motions.
+        payload = self.service.plate_progress(0, offsets[19], (5.0, 0.0, 0.2))
+        self.assertEqual(payload["split"], 6)
+        self.assertEqual(payload["method"], "motion index")
+        self.assertIsNotNone(payload["layers"]["current"])
+        # Telemetry gone: the painted boundary is held, never replaced
+        # by the dispatcher's position.
+        self.assertEqual(self.service.plate_progress(0, offsets[19])["split"], 6)
+        # Telemetry present but off-path (a park, a probe): the same.
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (-40.0, -40.0, 0.2))["split"], 6)
+
+    def test_the_boundary_never_walks_backwards_across_polls(self):
+        offsets = self._bind()
+        painted = 0
+        for x in (4.0, 9.0, 9.0, 6.0, 12.0, 11.0, 18.5):
+            split = self.service.plate_progress(0, offsets[19], (x, 0.0, 0.2))["split"]
+            self.assertGreaterEqual(split, painted, "the fill rewound at x=%s" % x)
+            painted = split
+        self.assertEqual(painted, 19)
+
+    def test_a_paused_park_holds_the_boundary(self):
+        offsets = self._bind()
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (5.0, 0.0, 0.2))["split"], 6)
+        # Paused: the dispatcher is frozen where it stopped and the
+        # pause macro parks the head off the path. Nothing is being
+        # printed, so nothing new is painted — the stalled-ahead parser
+        # position is never the answer, and repetition changes nothing.
+        for _poll in range(2):
+            self.assertEqual(
+                self.service.plate_progress(0, offsets[19], (140.0, 140.0, 10.0))["split"], 6)
+        # Resumed: the head is back on the path ahead, and the paint
+        # follows it again.
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (12.0, 0.0, 0.2))["split"], 13)
+
+    def test_an_anchor_off_the_index_reads_unavailable(self):
+        # No layer is no boundary: the face ghosts rather than colouring
+        # to another layer's count, whatever the telemetry says.
+        offsets = self._bind()
+        payload = self.service.plate_progress(9, offsets[19], (5.0, 0.0, 0.2))
+        self.assertIsNone(payload["split"])
+        self.assertEqual(payload["method"], "unavailable")
+
+    def test_the_boundary_resets_with_the_layer(self):
+        offsets = self._bind(layers=3)
+        self.assertEqual(
+            self.service.plate_progress(1, offsets[19], (5.0, 0.0, 0.2))["split"], 6)
+        # Another layer's count is another layer's boundary: layer 2
+        # starts its own, unfloored by layer 1's paint.
+        self.assertEqual(
+            self.service.plate_progress(2, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
+
+    def test_the_boundary_resets_with_the_print(self):
+        offsets = self._bind()
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (5.0, 0.0, 0.2))["split"], 6)
+        # The next print's file: the same anchor, a different job, so
+        # the previous print's boundary is not this one's floor.
+        self.job = ("next.gcode", 200, 1)
+        self.service.bind(self.job)
+        self._bind()
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
