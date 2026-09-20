@@ -31,7 +31,8 @@ def _british_spelling() -> bool:
 
 from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
-from .MonitorControls import MonitorControls
+from .MonitorControls import MonitorControls, _exclude_status
+from .ExcludeGrace import ExcludeGrace
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from .FilesViewModel import FilesViewModel
@@ -54,15 +55,17 @@ from .FileManagerPolicy import (
 from .MonitorFormatting import (
     core_values,
     endstop_values,
+    number,
     print_job_caption,
     file_disk_text,
     file_row_payload,
     file_timestamp,
     peripheral_values,
+    plate_values,
 )
 from dataclasses import replace
 
-from .PrinterConfig import normalise_temperature_chart
+from .PrinterConfig import normalise_restore_window, normalise_temperature_chart
 from .StateStore import StateStore
 from .MonitorTemperatureHistory import (
     DORMANT_CHART,
@@ -267,6 +270,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraTransformChanged = pyqtSignal()
     peripheralsChanged = pyqtSignal()
     excludeObjectsChanged = pyqtSignal()
+    plateObjectsChanged = pyqtSignal()
     powerDevicesChanged = pyqtSignal()
     systemChanged = pyqtSignal()
     endstopsChanged = pyqtSignal()
@@ -318,7 +322,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
-        ("excludeObjectsChanged", ("excludeObjectItems",)),
+        ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
+        ("plateObjectsChanged", ("plateObjects", "plateDot")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -463,6 +468,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             _store_write(self._store, {"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
+        # The plate's grace owner (4.6.0): witnessed exclusion stamps
+        # with the exact cursor rule; the job epoch clears on
+        # invalidation. _grace_seen tracks the last observed excluded
+        # set for the transition diffs.
+        self._grace = ExcludeGrace()
+        self._grace_seen = frozenset()
+        self._grace_seeded = False
+        self._plate_cache_key = None
+        self._plate_geometry = None
         self._history = TemperatureHistory()
         # Each chart surface has its own cache, invalidated only by what
         # it actually reads: the mini and latest caches by the history
@@ -717,6 +731,100 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_auxiliary(self):
         self._schedule_publish()
 
+    def _window_settings(self):
+        """The restore-window knob from the per-printer record: an int
+        (0 = immediate restrict, 1..10 = windowed) or "never"."""
+        return normalise_restore_window(getattr(self._config(), "restore_window", 3))
+
+    def _layer_index(self, snapshot):
+        layer_info = getattr(snapshot, "layer", None)
+        return getattr(layer_info, "index", None)
+
+    def _observe_grace(self, snapshot):
+        """The grace owner consumes the status transitions: exclusions
+        entering the set are witnessed (stamped with the index layer),
+        departures clear the stamp and confirm the in-flight latch."""
+        status = _exclude_status(self._data.snapshot)
+        excluded = frozenset(status.get("excluded_objects") or ())
+        current = status.get("current_object")
+        if not self._grace_seeded:
+            # The first observation of the epoch seeds the set WITHOUT
+            # stamps: exclusions that predate this session (a Cura
+            # restart mid-print, another client) must read unknown,
+            # never freshly-witnessed — the restart-lie. A fresh
+            # exclusion arriving after this observation is a genuine
+            # transition and gets witnessed normally.
+            self._grace_seeded = True
+            self._grace_seen = excluded
+            return
+        layer = self._layer_index(snapshot)
+        for name in excluded - self._grace_seen:
+            self._grace.note_exclusion(name, layer)
+            self._controls.confirm_exclusion(name)
+        for name in self._grace_seen - excluded:
+            self._grace.note_restored(name)
+            self._controls.confirm_restore(name)
+        self._grace.observe(current, excluded)
+        self._grace_seen = excluded
+
+    def _verdict(self, name, layer):
+        window_mode = self._window_settings()
+        return self._grace.evaluate(
+            name, window_mode=window_mode,
+            window_layers=window_mode if isinstance(window_mode, int) else 0,
+            layer=layer)
+
+    def _exclude_rows(self):
+        """The readout rows with the grace verdicts: every excluded row
+        carries its restore verdict and the policy's words."""
+        layer = self._layer_index(self._print_state())
+        rows = []
+        for row in self._peripheral_cache[1].get("excludeObjectItems") or ():
+            fresh = dict(row)
+            if fresh["excluded"]:
+                allowed, verdict, detail = self._verdict(fresh["name"], layer)
+                fresh["restoreAllowed"] = allowed
+                fresh["restoreVerdict"] = verdict
+                fresh["restoreDetail"] = detail
+            rows.append(fresh)
+        return rows
+
+    def _plate_objects_value(self):
+        """The plate geometry: polygons memoised per job on the lane
+        object's identity (the freeze fix keeps it stable across
+        ticks), the volatile flags and the verdicts overlaid per
+        publish."""
+        aux = self._data.snapshot.auxiliary.get("exclude_object") if self._data.snapshot.auxiliary else None
+        core = self._data.snapshot.core.get("exclude_object") if self._data.snapshot.core else None
+        poly_source = aux if isinstance(aux, Mapping) and aux.get("objects") else \
+            core if isinstance(core, Mapping) and core.get("objects") else None
+        if poly_source is None:
+            self._plate_cache_key = None
+            self._plate_geometry = None
+            return {"objects": [], "truncated": 0, "excludedCount": 0}
+        key = id(poly_source.get("objects"))
+        if self._plate_cache_key != key:
+            self._plate_geometry = plate_values(poly_source)
+            self._plate_cache_key = key
+        status = _exclude_status(self._data.snapshot)
+        excluded = frozenset(status.get("excluded_objects") or ())
+        current = status.get("current_object")
+        layer = self._layer_index(self._print_state())
+        rows = []
+        for row in self._plate_geometry["objects"]:
+            fresh = dict(row)
+            fresh["excluded"] = fresh["name"] in excluded
+            fresh["current"] = fresh["name"] == current
+            if fresh["excluded"]:
+                allowed, verdict, detail = self._verdict(fresh["name"], layer)
+                fresh["restoreAllowed"] = allowed
+                fresh["restoreVerdict"] = verdict
+                fresh["restoreDetail"] = detail
+            rows.append(fresh)
+        return {"objects": rows,
+                "truncated": self._plate_geometry["truncated"],
+                "excludedCount": len(excluded)}
+
     def _on_chart_tick(self):
         # The chart's fixed 1 s sampling (Mainsail's temperature store
         # cadence): a delivery slower than 1 s simply holds the last
@@ -730,6 +838,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
+        self._grace.clear()
+        self._grace_seen = frozenset()
+        self._grace_seeded = False
+        self._plate_cache_key = None
+        self._plate_geometry = None
         # A printer switch must not ring for the previous machine's
         # error lines (the bell's marker counts per-session).
         self._console_errors_seen = 0
@@ -956,10 +1069,35 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # peripheral scan and the endstop projection rebuild only
         # when their lane's data object actually changed — a
         # core-only heartbeat used to rescan every sensor and fan.
-        aux_key = id(self._data.snapshot.auxiliary)
+        # The key spans BOTH lanes: the volatile exclude fields read
+        # the core lane (the 4.6.0 move), so a core-only update must
+        # rebuild the rows too.
+        core_exclude = self._data.snapshot.core.get("exclude_object") if self._data.snapshot.core else None
+        aux_key = (id(self._data.snapshot.auxiliary), id(core_exclude))
         if self._peripheral_cache[0] != aux_key:
             self._peripheral_cache = (aux_key, peripheral_values(self._data.snapshot))
         values.update(self._peripheral_cache[1])
+        # The plate's verdicts and geometry (4.6.0): the grace owner
+        # consumes the status transitions here, then the readout rows
+        # and the map carry the verdicts and the policy's words.
+        self._observe_grace(snapshot)
+        values["excludeObjectItems"] = self._exclude_rows()
+        values["plateObjects"] = self._plate_objects_value()
+        # The button's target label: the object the click would kill,
+        # published so the readout stays honest about the victim.
+        values["currentObjectName"] = str(
+            _exclude_status(self._data.snapshot).get("current_object") or "")
+        # The plate's toolhead dot (physical position, the marker
+        # convention): validity rides the connection — a paused
+        # print's position is honest, a disconnected one is a lie if
+        # drawn live (the review's F11).
+        motion = self._data.snapshot.core.get("motion_report") or {}
+        position = motion.get("live_position") or ()
+        values["plateDot"] = {
+            "x": number(position[0], 0.0) if len(position) >= 2 else 0.0,
+            "y": number(position[1], 0.0) if len(position) >= 2 else 0.0,
+            "valid": bool(self._client.connected and len(position) >= 2),
+        }
         endstops_key = (id(self._data.snapshot.endstops), self._client.connected)
         if self._endstop_cache[0] != endstops_key:
             self._endstop_cache = (endstops_key,
@@ -1249,6 +1387,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
     excludeObjectItems = value_property(QVariant, "excludeObjectItems", excludeObjectsChanged, [])
+    currentObjectName = value_property(str, "currentObjectName", excludeObjectsChanged, "")
+    plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
+    plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")
     moonrakerVersion = value_property(str, "moonrakerVersion", systemChanged, "—")
@@ -2205,6 +2346,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self.canCancelPrint: self._commands.send("Cancel", "printer/print/cancel")
     @pyqtSlot(str)
     def excludeObject(self, name): self._controls.exclude(name)
+
+    @pyqtSlot(str)
+    def restoreObject(self, name): self._controls.restore(name)
+
+    @pyqtSlot()
+    def excludeCurrent(self): self._controls.exclude_current()
     @pyqtSlot(str, result=bool)
     def sendConsoleCommand(self, text): return self._console.send(text)
     @pyqtSlot()

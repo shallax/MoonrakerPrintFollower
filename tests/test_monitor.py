@@ -227,17 +227,21 @@ class MonitorModelContractTests(unittest.TestCase):
                                  section_qml.index("CollapsibleSectionHeader {") + 400]
             self.assertIn("Layout.fillWidth: true", header)
             self.assertNotIn("width: parent.width", header)
-        # The two monitor sections sit in the STATUS PANE, not inside
+        # The system/mcu sections sit in the STATUS PANE, not inside
         # the chart pop-over's legend repeater (the adversarial
-        # critic's misplaced-insertion catch): the instantiation
-        # follows ObjectsSection in the pane's own content.
-        objects_at = MONITOR_QML.index("ObjectsSection {")
+        # critic's misplaced-insertion catch). Objects moved to the
+        # controls pane in 4.6.0 — its own ordering pin lives with
+        # the dashboard pins below.
         system_at = MONITOR_QML.index("SystemInfoSection {")
         mcus_at = MONITOR_QML.index("McusSection {")
-        self.assertLess(objects_at, system_at)
         self.assertLess(system_at, mcus_at)
-        pane_close = MONITOR_QML.index("                    }\n                }\n", objects_at)
+        pane_close = MONITOR_QML.index("                    }\n                }\n", system_at)
         self.assertLess(mcus_at, pane_close)
+        # The moved readout leads the controls pane's print section
+        # in the DASHBOARD (the 4.6.0 placement).
+        objects_at = DASHBOARD_QML.index("ObjectsSection {")
+        print_at = DASHBOARD_QML.index("PrintSection {")
+        self.assertLess(objects_at, print_at)
         # The mesh section's refresh rides an accessor — the monitor's
         # handler calls it through the instantiation id, never the
         # component's own id (the dangling-id fix).
@@ -910,7 +914,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
         # mouse (the chosen position, mesh-style).
-        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 2)
+        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 3)
         # meshDetail is component-scoped: exactly one in-scope refresh
         # (inside meshContent) may reference it, or the outer handler
         # throws and kills the pop-over auto-close.
@@ -1342,7 +1346,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.focusSliderIn(pwmSection, target, kind)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
-        self.assertIn('title: "Exclude object?"', MONITOR_QML)
+        # The exclude dialog died with the 4.6.0 rework: the gesture
+        # is the confirmation, and the stale "cannot be undone" copy
+        # must never survive anywhere in the monitor document.
+        self.assertNotIn("Exclude object?", MONITOR_QML)
+        self.assertNotIn("cannot be undone", MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text(encoding="utf-8")
         self.assertIn("DEBOUNCE_MS = 250", tuning)
         self.assertIn("current.revision != revision", tuning)
@@ -2105,6 +2113,15 @@ class MonitorQtTests(unittest.TestCase):
         output.start()
         self.addCleanup(output.stop)
         return output._current.activePrinter
+
+    def feed_chart(self, model, auxiliary):
+        """The chart's feed path (the 4.6.0 decoupling): the fixed 1 s
+        tick samples the latest aux snapshot while connected — aux
+        arrivals alone never feed the history."""
+        self.deliver()  # the client's connect transition
+        model._data._update(auxiliary=auxiliary)
+        model._on_chart_tick()
+        self.qt.events()  # the publish coalescer flushes on the next turn
 
     def stored_transcript(self):
         """The persisted transcript's home (4.5.0): the per-machine
@@ -2872,7 +2889,7 @@ class MonitorQtTests(unittest.TestCase):
         # fresh model's EFFECTIVE layout (sectionLayoutFor) reads the
         # stored order and the hidden set, never the pane default.
         model = self.monitor()
-        order = ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"]
+        order = ["job", "temps", "fansinfo", "filament", "systeminfo", "mcus"]
         self.assertIsNone(model.setSectionLayout("status", order, ["mcus"]))
         section_path = self.follower.persistence.state_global_path
         with open(section_path, "r", encoding="utf-8") as handle:
@@ -3038,13 +3055,11 @@ class MonitorQtTests(unittest.TestCase):
         # publish. The mini preview is a separate, bounded payload
         # that keeps serving while the pop-over is closed.
         model = self.monitor()
-        model._data._update(auxiliary={
+        self.feed_chart(model, {
             "extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
             "heater_bed": {"temperature": 60.0, "target": 60.0},
             "temperature_sensor chamber": {"temperature": 40.0},
         })
-        model._data.auxiliaryChanged.emit()
-        self.qt.events(1)
         self.assertEqual(self.chart_of(model)["series"], [], "closed: the full payload is dormant")
         mini = self.mini_of(model)
         self.assertLessEqual(len(mini["series"]), 2, "the mini payload carries only its own series")
@@ -3056,24 +3071,22 @@ class MonitorQtTests(unittest.TestCase):
         model.setChartOpen(False)
         self.assertEqual(self.chart_of(model)["series"], [], "closing returns the full payload to dormancy")
 
-    def test_the_full_payload_stays_dormant_across_feeds_while_closed(self):
-        # The same dormant object across auxiliary feeds: the STORED
+    def test_the_full_payload_stays_dormant_across_ticks_while_closed(self):
+        # The same dormant object across chart ticks: the STORED
         # value's identity is stable, so the full-chart property never
         # re-converts and its signal never fires while the pop-over is
         # closed. (The property read itself crosses QVariant, so the
         # identity is asserted on the stored value, not the read.)
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events(1)
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0}})
         fired = []
         model.temperatureChartFullChanged.connect(lambda: fired.append(1))
         self.assertEqual(self.chart_of(model)["series"], [])
         dormant = model._values["temperatureChartFull"]
         for tick in range(5):
             model._data._update(auxiliary={"extruder": {"temperature": 200.0 + tick}})
-            model._data.auxiliaryChanged.emit()
-            self.qt.events(1)
+            model._on_chart_tick()
+            self.qt.events()
         self.assertIs(model._values["temperatureChartFull"], dormant,
                       "a feed must not rebuild the closed full payload")
         self.assertEqual(fired, [], "the full-chart signal fired while closed")
@@ -3112,8 +3125,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
                      "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.2}}
-        model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()  # the real feed path: _aux updates then emits
+        self.feed_chart(model, auxiliary)
         # Defaults: everything visible, palette colours, toggles on.
         default = self.legend_of(model)
         self.assertTrue(default["showTargets"])
@@ -3132,9 +3144,7 @@ class MonitorQtTests(unittest.TestCase):
         })
         # A fresh model restores the config from the file.
         second = self.monitor()
-        second._data._update(auxiliary=auxiliary)
-        second._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(second, auxiliary)
         legend = self.legend_of(second)
         self.assertFalse(legend["showTargets"])
         self.assertFalse(legend["showPower"])
@@ -3143,30 +3153,32 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
 
-    def test_history_feeds_once_per_auxiliary_arrival_not_per_publish(self):
+    def test_history_feeds_once_per_chart_tick_not_per_publish(self):
         model = self.monitor()
+        self.deliver()  # the client's connect transition
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}}
         model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
-        self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
-        # Core-only publishes (no aux reply) must not append samples:
-        # the old per-publish feed duplicated samples and halved the
-        # effective window.
+        self.qt.events()
+        self.assertEqual(len(self.mini_of(model)["series"]), 0,
+                         "an aux arrival alone never feeds the chart")
+        # Core-only publishes must not append samples either: the old
+        # per-publish feed duplicated samples and halved the effective
+        # window.
         for _ in range(5):
             model._data._update(core={"print_stats": {"state": "printing"}})
+        self.assertEqual(len(self.mini_of(model)["series"]), 0)
+        # The fixed 1 s tick samples the latest snapshot once.
+        model._on_chart_tick()
+        self.qt.events()
         self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
-        # A second aux reply appends exactly one more sample.
-        model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        # A second tick appends exactly one more sample.
+        model._on_chart_tick()
+        self.qt.events()
         self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 2)
 
     def test_history_resets_when_the_session_is_invalidated(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         self.assertEqual(len(self.mini_of(model)["series"]), 1)
         model._data.set_owner_active(False)  # emits invalidated
         self.assertEqual(self.mini_of(model)["series"], [])
@@ -3177,8 +3189,7 @@ class MonitorQtTests(unittest.TestCase):
 
     def test_chart_setters_are_idempotent_and_validate(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
-        model._data.auxiliaryChanged.emit()
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         writes = []
         model._apply_chart_config = lambda: writes.append(1)
         # Re-applying the same value must not rewrite the state file
@@ -3202,8 +3213,7 @@ class MonitorQtTests(unittest.TestCase):
 
     def test_chart_config_prunes_vanished_sensors(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}})
-        model._data.auxiliaryChanged.emit()
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}})
         model.setTemperatureSensorColor("ghost_sensor", "#123456")
         # Any later change prunes keys for sensors no longer present —
         # but never while the live set is empty.
@@ -3221,18 +3231,14 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(self.follower.current_printer_config().temperature_chart,
                          {"visible": {"extruder": False}, "colors": {"heater_bed": "#123456"},
                           "showTargets": True, "showPower": True})
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         legend = self.legend_of(model)
         extruder = next(item for item in legend["series"] if item["name"] == "extruder")
         bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
         second = self.monitor()
-        second._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        second._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(second, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         legend = self.legend_of(second)
         extruder = next(item for item in legend["series"] if item["name"] == "extruder")
         bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
@@ -3257,9 +3263,7 @@ class MonitorQtTests(unittest.TestCase):
                                             "colors": {"heater_bed": "#123456"},
                                             "showTargets": False, "showPower": False}}, handle)
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         # The legacy block was adopted once into the per-printer record…
         self.assertEqual(self.follower.current_printer_config().temperature_chart, {
             "visible": {"extruder": False},
@@ -4638,6 +4642,10 @@ Item {
             # only change on a printer switch, which is user-initiated.
             "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
             "visible: root.printerModel != null && root.printerModel.hasBedMesh",
+            # The plate's toolhead dot: scene-graph decoration INSIDE
+            # the canvas's reserved slot — it can never shift layout,
+            # only its own marker can appear inside the fixed map.
+            "visible: root._plot != null && root.dot != null && root.dot.valid === true",
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.
@@ -4818,10 +4826,11 @@ Item {
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section
-        # (Dashboard 13 controls, Monitor 2 information + 7 status).
+        # (Dashboard 14 controls — objects joined in 4.6.0; Monitor 3
+        # information + 6 status after the move).
         # A new adopter trips the count — the whitelist's substring
         # blessing must not cover an unbounded family.
-        for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 13),
+        for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 14),
                                        ("MoonrakerMonitor.qml", 9)):
             self.assertEqual(
                 (PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
@@ -4831,7 +4840,7 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
-            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && !modelData.excluded",
+            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && root.printerModel.currentObjectName !== \"\"",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):

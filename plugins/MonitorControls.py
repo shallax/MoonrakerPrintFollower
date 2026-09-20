@@ -3,13 +3,35 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import shlex
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
 )
-from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_z_offset
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
+
+# The in-flight latch's hard ceiling: a gesture's pending state expires
+# on its own after a few multiples of the status lag (the review's
+# rule: never a permanent wedge, and never against the rescue direction).
+PENDING_CEILING_SECONDS = 10.0
+
+
+def _exclude_status(snapshot):
+    """The volatile plate fields live on the CORE lane (the 4.6.0 move);
+    the aux copy covers the lane's first landing."""
+    core = snapshot.core.get("exclude_object") if snapshot.core else None
+    if isinstance(core, Mapping) and core.get("objects"):
+        return core
+    aux = snapshot.auxiliary.get("exclude_object") if snapshot.auxiliary else None
+    return aux if isinstance(aux, Mapping) else {}
+
+
+def _escape_exclude_name(name):
+    """The shared dispatch escaper — exclude AND restore use exactly
+    this (the review's rule: one escaper, never two)."""
+    return str(name).replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
 
 
 class MonitorControls(QObject):
@@ -35,6 +57,7 @@ class MonitorControls(QObject):
         self._config_identity = None
         self._values = {}
         self._values_copy = None
+        self._pending = {}
         self._macros, self._presets = [], []
         data.changed.connect(self.observe)
         data.invalidated.connect(self.reset)
@@ -372,9 +395,17 @@ class MonitorControls(QObject):
             self._commands.send("Power " + name, "machine/device_power/device", {"device": name, "action": "on" if on else "off"})
 
     def exclude(self, name):
-        status = self._data.snapshot.auxiliary.get("exclude_object") or {}
+        name = str(name or "")
+        status = _exclude_status(self._data.snapshot)
         names = {item.get("name") for item in status.get("objects", ())}
-        if name not in names or name in status.get("excluded_objects", ()):
+        if name in status.get("excluded_objects", ()):
+            # A no-op must still receipt (the no-confirm ruling: the
+            # receipt IS the confirmation — silence re-triggers the
+            # gesture, and a toggle applied twice is the inverse).
+            self._commands.report_status(f"Exclude refused: '{name}' is already excluded")
+            return
+        if name not in names:
+            self._commands.report_status(f"Exclude refused: '{name}' is not on the plate")
             return
         observation = getattr(self._data, "observation", None)
         verdict = can_exclude(observation) if observation is not None \
@@ -385,6 +416,61 @@ class MonitorControls(QObject):
             # exact class this release exists to end.
             self._commands.report_status(f"Exclude refused: {verdict.reason or 'no longer allowed'}")
             return
-        safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
-        self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"', rule=can_exclude)
+        if not self._arm(("exclude", name)):
+            return
+        self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{_escape_exclude_name(name)}"', rule=can_exclude)
+
+    def restore(self, name):
+        name = str(name or "")
+        status = _exclude_status(self._data.snapshot)
+        if not name:
+            self._commands.report_status("Restore refused: no object named")
+            return
+        if name not in status.get("excluded_objects", ()):
+            self._commands.report_status(f"Restore refused: '{name}' is not excluded")
+            return
+        observation = getattr(self._data, "observation", None)
+        verdict = can_restore(observation) if observation is not None \
+            else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Restore refused: {verdict.reason or 'no longer allowed'}")
+            return
+        if not self._arm(("restore", name)):
+            return
+        # The name rides INSIDE the RESET line, proven non-empty above;
+        # there is deliberately no no-name branch — a bare RESET=1
+        # clears every exclusion on the plate (the review's blocker).
+        self._commands.script("Restore " + name, f'EXCLUDE_OBJECT RESET=1 NAME="{_escape_exclude_name(name)}"', rule=can_restore)
+
+    def exclude_current(self):
+        """The Exclude current button's dispatch: the readout's current
+        object by NAME — never CURRENT=1, which Klipper re-resolves at
+        execution (the review's blocker). No current object: a refusal
+        naming the empty target, never a guess."""
+        status = _exclude_status(self._data.snapshot)
+        current = status.get("current_object")
+        if not current:
+            self._commands.report_status("Exclude refused: no object is printing right now")
+            return
+        self.exclude(str(current))
+
+    def confirm_exclusion(self, name):
+        """The status shows the name excluded: the gesture landed."""
+        self._pending.pop(("exclude", name), None)
+
+    def confirm_restore(self, name):
+        """The status shows the name restored: the gesture landed."""
+        self._pending.pop(("restore", name), None)
+
+    def _arm(self, key):
+        """The in-flight latch: one gesture per (name, direction), a
+        hard ceiling, and never across directions — the rescue path is
+        never wedged by the exclude path."""
+        now = time.monotonic()
+        if self._pending.get(key, 0.0) > now:
+            direction, name = key
+            self._commands.report_status(f"{direction.capitalize()} already in flight: {name}")
+            return False
+        self._pending[key] = now + PENDING_CEILING_SECONDS
+        return True
 

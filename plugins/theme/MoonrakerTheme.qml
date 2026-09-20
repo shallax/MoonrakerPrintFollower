@@ -69,4 +69,10 @@ QtObject {
 
     // ── the filament section ────────────────────────────────────
     readonly property color filamentDetected: "#43a047"
+
+    // ── the plate map (4.6.0) ────────────────────────────────────
+    // The current object's stroke: a NEW measured token — every
+    // existing green fails the 3:1 floor on the light ground
+    // (measured: 3.45 light / 4.78 dark).
+    readonly property color plateCurrent: "#2f9e44"
 }
