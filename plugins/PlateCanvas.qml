@@ -23,6 +23,22 @@ Item {
     property real viewScale: 1.0
     property real viewPanX: 0.0
     property real viewPanY: 0.0
+    // The grid's threaded raster reads the view through a var carrier
+    // (worker paints see var properties fresh, primitives stale — the
+    // offscreen-harness repaint findings; the face does the same).
+    property var _view: ({
+            scale: 1.0,
+            panX: 0.0,
+            panY: 0.0
+        })
+
+    function _publishView() {
+        root._view = {
+            scale: root.viewScale,
+            panX: root.viewPanX,
+            panY: root.viewPanY
+        };
+    }
     property string hoveredName: ""
     property color halo: UM.Theme.getColor("main_background")
     signal objectHovered(string name)
@@ -142,13 +158,23 @@ Item {
     }
     Component.onCompleted: {
         _replot();
+        _publishView();
         plateCanvas.requestPaint();
     }
     onPlateChanged: plateCanvas.requestPaint()
     onHoveredNameChanged: plateCanvas.requestPaint()
-    onViewScaleChanged: plateCanvas.requestPaint()
-    onViewPanXChanged: plateCanvas.requestPaint()
-    onViewPanYChanged: plateCanvas.requestPaint()
+    onViewScaleChanged: {
+        _publishView();
+        plateCanvas.requestPaint();
+    }
+    onViewPanXChanged: {
+        _publishView();
+        plateCanvas.requestPaint();
+    }
+    onViewPanYChanged: {
+        _publishView();
+        plateCanvas.requestPaint();
+    }
 
     // The threaded image-backed canvas (the TemperatureChart
     // doctrine): the paint callback touches only the snapshot it is
@@ -169,6 +195,11 @@ Item {
             if (root.plate == null) {
                 return;
             }
+            // Round joins/caps on the object outlines: the default
+            // miter pokes pointed corners that grow with the stroke
+            // width (the live report's red perimeter spikes).
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
             var plate = root.plate;
             for (var i = 0; i < plate.objects.length; ++i) {
                 var row = plate.objects[i];
@@ -220,15 +251,15 @@ Item {
         var bed = plot.bed;
         var thin = UM.Theme.getColor("lining");
         var thick = UM.Theme.getColor("border");
-        var left = root.viewPanX + bed.offsetX * root.viewScale;
-        var top = root.viewPanY + bed.offsetY * root.viewScale;
-        var right = left + bed.plotWidth * root.viewScale;
-        var bottom = top + bed.plotHeight * root.viewScale;
+        var left = root._view.panX + bed.offsetX * root._view.scale;
+        var top = root._view.panY + bed.offsetY * root._view.scale;
+        var right = left + bed.plotWidth * root._view.scale;
+        var bottom = top + bed.plotHeight * root._view.scale;
         function gridX(bedX) {
-            return root.viewPanX + root.plateToScene(bedX, bed.bedYMin).x * root.viewScale;
+            return root._view.panX + root.plateToScene(bedX, bed.bedYMin).x * root._view.scale;
         }
         function gridY(bedY) {
-            return root.viewPanY + root.plateToScene(bed.bedXMin, bedY).y * root.viewScale;
+            return root._view.panY + root.plateToScene(bed.bedXMin, bedY).y * root._view.scale;
         }
         if (!root.compact) {
             ctx.lineWidth = 1;
