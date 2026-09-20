@@ -17,7 +17,7 @@ surface, and every assertion reads state the module itself produced — a
 published value block, a sent script, a queue's contents. Nothing here
 patches the modules under test.
 
-Lines that stay uncovered, and why — three statements out of 938:
+Lines that stay uncovered, and why — three statements out of 946:
 
 * ConsoleController:45 — the body of the module-level
   ``_trim_transcript`` helper. Nothing in plugins/ or tests/ calls it;
@@ -166,6 +166,7 @@ if QT_AVAILABLE:
             self.hydration = []
             self.tracking_resets = 0
             self.plate_anchors = []
+            self.plate_positions = []
 
         def bind(self, job):
             self.bound = job
@@ -183,6 +184,7 @@ if QT_AVAILABLE:
             # The service-side prep's shape; the coordinator tests
             # pin the wiring, not the payload.
             self.plate_anchors.append(anchor)
+            self.plate_positions.append(file_position)
             return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
 
         def reset_tracking(self):
@@ -783,6 +785,105 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.coordinator.refresh()
         self.assertEqual(parts.index.plate_anchors, [4, 4, 5, 5],
                          "the plate payload anchored on the previous snapshot's layer")
+
+    def test_the_plate_payload_shares_the_resolved_file_position(self):
+        # A view with a valid position: the ONE resolved value feeds
+        # both consumers — the layer fraction measures it (4500 of the
+        # 4000..5000 range) and the plate split is handed the same
+        # offset.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        snapshot = parts.coordinator.snapshot
+        self.assertTrue(snapshot.index_ready)
+        self.assertEqual(snapshot.layer_progress, 0.5)
+        self.assertEqual(parts.index.plate_anchors, [4])
+        self.assertEqual(parts.index.plate_positions, [4500])
+
+    def test_a_monitor_only_index_builds_the_plate_payload_without_a_view(self):
+        # The Improve-ETA download leaves the index's job key UNRESOLVED
+        # (it names the active print, never a loaded file), so the
+        # identity gate refuses the view — no view, hence no layer
+        # fraction, but the plate still anchors on the resolved
+        # physical layer and reads the live position.
+        parts = self._printing(self._make())
+        parts.index.view = _view(job_key=())
+        parts.coordinator.refresh()
+        snapshot = parts.coordinator.snapshot
+        self.assertFalse(snapshot.index_ready)
+        self.assertIsNone(snapshot.layer_progress)
+        self.assertEqual(parts.index.plate_anchors, [4])
+        self.assertEqual(parts.index.plate_positions, [4500])
+        self.assertIsNotNone(snapshot.plate_progress)
+        self.assertEqual(snapshot.plate_progress["anchor"], 4)
+
+    def test_an_unresolved_physical_layer_builds_no_plate_payload(self):
+        # The print's own layer never resolved while the index exists:
+        # there is no anchor, so the plate APIs are never asked — and
+        # the position's presence on the status is not one.
+        parts = self._make()
+        view = _view()
+        view.layer_at = lambda position: None  # the file position maps to no layer
+        parts.index.view = view
+        status = _status()
+        status["print_stats"]["info"] = {}
+        parts.client.statusReceived.emit(status)
+        snapshot = parts.coordinator.snapshot
+        self.assertIsNone(snapshot.layer.index)
+        self.assertIsNone(snapshot.plate_progress)
+        self.assertEqual(parts.index.plate_anchors, [])
+        self.assertEqual(parts.index.plate_positions, [])
+
+    def test_a_missing_or_invalid_file_position_resolves_to_none(self):
+        # Missing, null and non-numeric fields all resolve to None —
+        # never to byte 0, which would read as real progress at the
+        # head of the layer — and neither consumer acts on it.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        for sdcard in ({}, {"file_position": None}, {"file_position": "many"},
+                       {"file_position": [1]}):
+            with self.subTest(sdcard=sdcard):
+                parts.client.statusReceived.emit(
+                    _status("printing", virtual_sdcard=sdcard))
+                self.assertIsNone(parts.coordinator.snapshot.layer_progress)
+                self.assertEqual(parts.index.plate_anchors[-1], 4)
+                self.assertIsNone(parts.index.plate_positions[-1])
+
+    def test_no_plate_path_raises_across_the_position_variants(self):
+        # Every combination the unbound-position defect could reach,
+        # replayed on one coordinator: each poll completes and
+        # publishes. The view-absent variant raised UnboundLocalError
+        # before the position was resolved ahead of both consumers.
+        parts = self._make()
+
+        def layerless_status():
+            status = _status()
+            status["print_stats"]["info"] = {}
+            return status
+
+        def unmapped_view():
+            view = _view()
+            view.layer_at = lambda position: None
+            return view
+
+        variants = (
+            ("view and position", _view(), _status()),
+            ("monitor-only index", _view(job_key=()), _status()),
+            ("no physical layer", unmapped_view(), layerless_status()),
+            ("missing position", _view(), _status("printing", virtual_sdcard={})),
+            ("null position", _view(),
+             _status("printing", virtual_sdcard={"file_position": None})),
+            ("non-numeric position", _view(),
+             _status("printing", virtual_sdcard={"file_position": "many"})),
+            ("no index at all", None, _status()),
+        )
+        for label, view, status in variants:
+            with self.subTest(label):
+                parts.index.view = view
+                parts.client.statusReceived.emit(status)
+                parts.coordinator.refresh()
+                self.assertIsNotNone(parts.coordinator.snapshot)
+                self.assertTrue(parts.presentation.published)
 
     def test_a_connected_client_publishes_the_followed_layer_and_hydration(self):
         parts = self._printing(self._make())

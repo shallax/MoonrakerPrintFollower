@@ -51,6 +51,16 @@ class IndexView:
         return min(low - 1, len(self._index.ranges) - 1) if low else None
 
 
+def _polygon_identity(polygon):
+    """A polygon's CONTENT identity: its pairs, as a hashable tuple.
+
+    The live walk cannot key on object identity — the coordinator
+    rebuilds the rows (and their polygon lists) from the status on
+    every poll, so equal geometry arrives as a fresh object. Only the
+    content says whether the geometry actually changed."""
+    return tuple((point[0], point[1]) for point in polygon)
+
+
 class GCodeIndexService(QObject):
     """Own index lifecycle with at most ONE submitted worker job, no work queue.
 
@@ -88,6 +98,7 @@ class GCodeIndexService(QObject):
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
+        self._visited_settled = frozenset()
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -122,6 +133,7 @@ class GCodeIndexService(QObject):
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
+        self._visited_settled = frozenset()
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
@@ -225,41 +237,67 @@ class GCodeIndexService(QObject):
         extruding ones count: a travel that merely crosses or ends
         inside a polygon deposits nothing there, while an extrusion
         edge that clips a corner does — the visit follows the material,
-        never the motion endpoint."""
+        never the motion endpoint.
+
+        A bare cursor is not a valid cache here: EXCLUDE_OBJECT_DEFINE
+        executes mid-layer on some machines, so a polygon can arrive
+        after the extrusion it covers has already been walked. The
+        cursor is therefore kept beside `_visited_settled` — the
+        (name, content) geometry the consumed range has been judged
+        against. A poll whose geometry still matches it walks only its
+        new edges; a poll carrying a new or changed polygon replays the
+        consumed range ONCE, for those polygons alone. The visited set
+        only ever grows, so a backwards split keeps its verdicts."""
         if self._view is None or split is None or anchor is None:
             return frozenset()
         index = self._view._index
-        polygons = []
+        entries = []
         for row in rows:
             polygon = row.get("polygon")
             if not polygon or not row.get("name"):
                 continue
-            polygons.append((row["name"], polygon, polygon_bounds(polygon)))
+            entries.append((row["name"], _polygon_identity(polygon),
+                            polygon, polygon_bounds(polygon)))
         with index.cache_lock:
             if self._visited_key != (anchor,):
                 self._visited_key = (anchor,)
                 self._visited = set()
                 self._visited_upto = 0
-            if split <= self._visited_upto:
-                return frozenset(self._visited)
-            for motion, x0, y0, x1, y1, _feature, extruding in _motion_edges(
-                    index, anchor, self._visited_upto):
-                if motion >= split:
-                    break
-                if not extruding:
-                    continue
-                left, right = (x0, x1) if x0 <= x1 else (x1, x0)
-                bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
-                for name, polygon, bounds in polygons:
-                    # The bounds reject most pairs for the price of four
-                    # comparisons, before any vertex is touched.
-                    if right < bounds[0] or left > bounds[2] or top < bounds[1] or bottom > bounds[3]:
-                        continue
-                    if _segment_in_polygon(x0, y0, x1, y1, polygon):
-                        self._visited.add(name)
-                        break
-            self._visited_upto = split
+                self._visited_settled = frozenset()
+            settled = self._visited_settled
+            current, pending = [], []
+            for name, key, polygon, bounds in entries:
+                current.append((name, polygon, bounds))
+                if (name, key) not in settled:
+                    pending.append((name, polygon, bounds))
+            if pending and self._visited_upto > 0:
+                # The late/changed geometry, against everything already
+                # consumed. Replaying only these polygons is enough: the
+                # settled ones have already seen every consumed edge.
+                self._visit_edges(index, anchor, 0, self._visited_upto, pending)
+            if split > self._visited_upto:
+                self._visit_edges(index, anchor, self._visited_upto, split, current)
+                self._visited_upto = split
+            self._visited_settled = frozenset((name, key) for name, key, _p, _b in entries)
             return frozenset(self._visited)
+
+    def _visit_edges(self, index, anchor, first, stop, polygons):
+        """Mark every polygon an extruding edge in [first, stop) meets."""
+        for motion, x0, y0, x1, y1, _feature, extruding in _motion_edges(index, anchor, first):
+            if motion >= stop:
+                break
+            if not extruding:
+                continue
+            left, right = (x0, x1) if x0 <= x1 else (x1, x0)
+            bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
+            for name, polygon, bounds in polygons:
+                # The bounds reject most pairs for the price of four
+                # comparisons, before any vertex is touched.
+                if right < bounds[0] or left > bounds[2] or top < bounds[1] or bottom > bounds[3]:
+                    continue
+                if _segment_in_polygon(x0, y0, x1, y1, polygon):
+                    self._visited.add(name)
+                    break
 
     def plate_progress(self, anchor, file_position=None):
         """The composed payload (the tests and the one-shot consumers):

@@ -649,6 +649,25 @@ class PlateVisitedTests(unittest.TestCase):
     POLYGON = [[20.0, 10.0], [60.0, 10.0], [60.0, 40.0], [20.0, 40.0]]
     ROWS = [{"name": "Widget", "polygon": POLYGON}]
 
+    # The late-arriving geometry. Motions: 0 the opening travel, 1 a
+    # prime, 2 a travel, 3 the extrusion that crosses Widget and starts
+    # inside Box, 4 a travel back, 5 a vertical extrusion inside Box,
+    # 6 a travel away, 7 an extrusion inside Fork, 8 one that touches
+    # nothing. Spoon sits where nothing ever prints.
+    LATE = (b"M82\n;LAYER:0\n"
+            b"G0 X0 Y0\n"
+            b"G1 X5 Y0 E1\n"
+            b"G0 X5 Y5\n"
+            b"G1 X75 Y45 E2\n"
+            b"G0 X5 Y5\n"
+            b"G1 X5 Y45 E3\n"
+            b"G0 X150 Y150\n"
+            b"G1 X155 Y150 E4\n"
+            b"G1 X160 Y150 E5\n")
+    BOX = [[0.0, 2.0], [10.0, 2.0], [10.0, 20.0], [0.0, 20.0]]
+    SPOON = [[100.0, 100.0], [120.0, 100.0], [120.0, 120.0], [100.0, 120.0]]
+    FORK = [[145.0, 140.0], [165.0, 140.0], [165.0, 160.0], [145.0, 160.0]]
+
     def setUp(self):
         from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -676,6 +695,41 @@ class PlateVisitedTests(unittest.TestCase):
         view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
         self.service._view = view
         return index
+
+    def _rows(self, *objects):
+        """Rows as the live path builds them: a fresh dict and a fresh
+        polygon list per tick, so only the CONTENT can identify the
+        geometry."""
+        return [{"name": name, "polygon": [list(point) for point in polygon]}
+                for name, polygon in objects]
+
+    def _counting_walk(self):
+        """The edges the walker actually walks — the module's own seek,
+        wrapped. A poll that re-scans consumed motion reads high here,
+        which is the cost the cache exists to avoid. The recording lags
+        one edge: a walk breaks ON the edge past its stop, so the lag
+        counts what it drew without the seek's look-ahead."""
+        module = self.qt.load("GCodeIndexService")
+        real = module._motion_edges
+        walked = []
+
+        def counted(index, anchor, first=0):
+            drawn = None
+            for edge in real(index, anchor, first):
+                if drawn is not None:
+                    walked.append(drawn)
+                drawn = edge
+                yield edge
+            if drawn is not None:
+                # Exhausted rather than broken out of: that last edge was
+                # drawn. A break leaves the iterator suspended, so the
+                # look-ahead is never counted.
+                walked.append(drawn)
+
+        patcher = patch.object(module, "_motion_edges", counted)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return walked
 
     def test_a_travel_across_a_polygon_deposits_nothing(self):
         # Motions: 1 the prime that starts the print, 2 and 3 the travels
@@ -726,3 +780,99 @@ class PlateVisitedTests(unittest.TestCase):
                 {"name": "", "polygon": self.POLYGON},
                 {"name": "Box", "polygon": [[70.0, 40.0], [80.0, 40.0], [80.0, 50.0], [70.0, 50.0]]}]
         self.assertEqual(self.service.plate_visited(0, 2, rows), frozenset({"Box"}))
+
+    def test_a_polygon_arriving_after_its_extrusion_marks_it(self):
+        # The late-DEFINE sequence: the walk advances with no geometry
+        # at all, then EXCLUDE_OBJECT_DEFINE executes and the polygon
+        # arrives covering an extrusion already consumed. A bare cursor
+        # never looks back, so the object stayed grey until a later
+        # layer.
+        self._bind(self.LATE)
+        self.assertEqual(self.service.plate_visited(0, 8, []), frozenset(),
+                         "the geometry-free poll marked something")
+        self.assertEqual(
+            self.service.plate_visited(0, 8, self._rows(("Widget", self.POLYGON),
+                                                        ("Box", self.BOX))),
+            frozenset({"Widget", "Box"}),
+            "the late polygon was not replayed against the consumed extrusion")
+
+    def test_a_settled_poll_never_rescans_prior_motion(self):
+        self._bind(self.LATE)
+        walked = self._counting_walk()
+        # The opening poll with no geometry walks the layer once.
+        self.service.plate_visited(0, 8, [])
+        self.assertEqual(len(walked), 8, "the opening poll did not walk the layer")
+        walked.clear()
+        # The geometry arriving costs ONE replay of the consumed range.
+        self.assertEqual(self.service.plate_visited(
+            0, 8, self._rows(("Widget", self.POLYGON), ("Box", self.BOX))),
+            frozenset({"Widget", "Box"}))
+        self.assertEqual(len(walked), 8, "the replay did not cover the consumed range")
+        walked.clear()
+        # Rebuilt-but-equal rows are the same geometry: no walk at all.
+        for _ in range(3):
+            self.assertEqual(self.service.plate_visited(
+                0, 8, self._rows(("Widget", self.POLYGON), ("Box", self.BOX))),
+                frozenset({"Widget", "Box"}))
+        self.assertEqual(walked, [], "a settled poll re-walked the consumed motion")
+        # An advanced split walks the new edge alone, never the range.
+        self.assertEqual(self.service.plate_visited(
+            0, 9, self._rows(("Widget", self.POLYGON), ("Box", self.BOX))),
+            frozenset({"Widget", "Box"}))
+        self.assertEqual([edge[0] for edge in walked], [8],
+                         "the advanced poll re-walked the layer")
+
+    def test_another_object_arriving_later_is_judged_on_the_consumed_range(self):
+        self._bind(self.LATE)
+        self.assertEqual(self.service.plate_visited(0, 4, self._rows(("Widget", self.POLYGON))),
+                         frozenset({"Widget"}))
+        # Box arrives at the SAME split: only the consumed extrusion 3
+        # covers it, so the verdict turns on the replay alone.
+        self.assertEqual(
+            self.service.plate_visited(0, 4, self._rows(("Widget", self.POLYGON),
+                                                        ("Box", self.BOX),
+                                                        ("Spoon", self.SPOON))),
+            frozenset({"Widget", "Box"}),
+            "the incrementally-defined object was not judged on the consumed range")
+        # Fork arrives with new motion instead: the two halves compose
+        # into one verdict, and the untouched object stays unvisited.
+        self.assertEqual(
+            self.service.plate_visited(0, 8, self._rows(("Widget", self.POLYGON),
+                                                        ("Box", self.BOX),
+                                                        ("Spoon", self.SPOON),
+                                                        ("Fork", self.FORK))),
+            frozenset({"Widget", "Box", "Fork"}),
+            "the same poll's replay and delta did not compose")
+        self.assertEqual(
+            self.service.plate_visited(0, 8, self._rows(("Widget", self.POLYGON),
+                                                        ("Box", self.BOX),
+                                                        ("Spoon", self.SPOON),
+                                                        ("Fork", self.FORK))),
+            frozenset({"Widget", "Box", "Fork"}),
+            "a later poll changed the verdicts")
+
+    def test_a_changed_polygon_replays_the_consumed_range(self):
+        # The same name with moved vertices is new geometry: the cache
+        # keys on content, so the consumed range is judged again.
+        self._bind(self.LATE)
+        away = [[100.0, 130.0], [120.0, 130.0], [120.0, 140.0], [100.0, 140.0]]
+        self.assertEqual(self.service.plate_visited(0, 8, self._rows(("Widget", away))),
+                         frozenset(), "the far polygon marked something")
+        self.assertEqual(self.service.plate_visited(0, 8, self._rows(("Widget", self.POLYGON))),
+                         frozenset({"Widget"}),
+                         "the moved polygon did not replay the consumed extrusion")
+
+    def test_a_new_layer_rewalks_its_own_motion(self):
+        # Layer 0 settles the geometry without printing the object; the
+        # anchor move must not read that settled geometry as covering
+        # layer 1's own motions, and must reanchor in both directions.
+        data = (b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n"
+                b";LAYER:1\nG0 X5 Y5\nG1 X75 Y45 E2\n")
+        self._bind(data, hydration=(0, 1))
+        rows = self._rows(("Widget", self.POLYGON))
+        self.assertEqual(self.service.plate_visited(0, 2, rows), frozenset(),
+                         "layer 0 printed the object")
+        self.assertEqual(self.service.plate_visited(1, 2, rows), frozenset({"Widget"}),
+                         "the settled geometry suppressed layer 1's own walk")
+        self.assertEqual(self.service.plate_visited(0, 2, rows), frozenset(),
+                         "layer 0's verdict survived the anchor move")
