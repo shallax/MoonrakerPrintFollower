@@ -682,6 +682,12 @@ EXCLUSIONS = {
         "date": "2026-09-20",
         "recheck": "the deferred popup round lands",
     },
+    "restoreWindowBox": {
+        "reason": "the settings pane's restore-window knob — the machine-action coverage drives the save/load semantics directly, the control rides the configuration scenario",
+        "evidence": "the machine-action and printer-config suites exercise every mapping arm and the persistence round-trip",
+        "date": "2026-09-20",
+        "recheck": "the pane-control addressing follow-up (DECISIONS 4.1.0)",
+    },
     "printTimePopup": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",

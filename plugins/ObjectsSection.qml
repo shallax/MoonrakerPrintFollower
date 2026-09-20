@@ -16,6 +16,13 @@ ColumnLayout {
     spacing: 0
     property var printerModel: null
 
+    // The bounded roster: five rows visible at most, the rest scrolls.
+    // The bound is measured from the rows' own pitch — they carry
+    // their text's height — so a theme font change cannot clip one.
+    readonly property int maxVisibleObjectRows: 5
+    readonly property real objectRowSpacing: UM.Theme.getSize("default_margin").height / 2
+    readonly property real objectListHeight: objectRows.count > 0 ? Math.min(objectsColumn.implicitHeight, maxVisibleObjectRows * (objectsColumn.implicitHeight + objectRowSpacing) / objectRows.count - objectRowSpacing) : 0
+
     // NO-REFLOW RULE: the section is permanent — the objects arrive
     // seconds INTO a print (Klipper reports the slicer's DEFINE
     // lines only when they execute), so the rows below start empty
@@ -82,30 +89,79 @@ ColumnLayout {
             font: UM.Theme.getFont("small")
         }
 
-        Repeater {
-            model: root.printerModel != null ? root.printerModel.excludeObjectItems : []
-            // The current row carries the Cura-blue bar and ink — the
-            // live request: the current object must read at a glance
-            // (the map's palette ruling, mirrored here). The bar is a
-            // SIBLING behind the label: a wrapper's opacity would
-            // inherit down and hide the text (the live report).
-            Item {
-                Layout.fillWidth: true
-                height: rowLabel.implicitHeight
-                Rectangle {
-                    anchors.fill: parent
-                    visible: modelData.current
-                    color: UM.Theme.getColor("primary")
-                    opacity: 0.18
+        // The bounded list (the request): the roster must not dominate
+        // the pane. The slot holds the measured cap, never more.
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.objectListHeight
+
+            Flickable {
+                id: objectListFlick
+                anchors.fill: parent
+                clip: true
+                contentWidth: width
+                contentHeight: objectsColumn.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                interactive: contentHeight > height
+
+                Column {
+                    id: objectsColumn
+                    width: objectListFlick.width
+                    spacing: root.objectRowSpacing
+
+                    Repeater {
+                        id: objectRows
+                        model: root.printerModel != null ? root.printerModel.excludeObjectItems : []
+                        // The current row carries the Cura-blue bar and ink — the
+                        // live request: the current object must read at a glance
+                        // (the map's palette ruling, mirrored here). The bar is a
+                        // SIBLING behind the label: a wrapper's opacity would
+                        // inherit down and hide the text (the live report).
+                        Item {
+                            width: objectsColumn.width
+                            height: rowLabel.implicitHeight
+                            Rectangle {
+                                anchors.fill: parent
+                                visible: modelData.current
+                                color: UM.Theme.getColor("primary")
+                                opacity: 0.18
+                            }
+                            UM.Label {
+                                id: rowLabel
+                                anchors.fill: parent
+                                text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? (modelData.restoreVerdict === "past_grace" || modelData.restoreVerdict === "in_grace" ? "  · excluded" : "  · restore closed") : "") + (modelData.excluded && modelData.restoreVerdict === "unknown" ? "  · layer unknown" : "")
+                                color: modelData.excluded ? (modelData.restoreAllowed === false ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : modelData.current ? UM.Theme.getColor("primary") : UM.Theme.getColor("text")
+                                font: modelData.current ? UM.Theme.getFont("default_bold") : UM.Theme.getFont("default")
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
                 }
-                UM.Label {
-                    id: rowLabel
-                    anchors.fill: parent
-                    text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? (modelData.restoreVerdict === "past_grace" || modelData.restoreVerdict === "in_grace" ? "  · excluded" : "  · restore closed") : "") + (modelData.excluded && modelData.restoreVerdict === "unknown" ? "  · layer unknown" : "")
-                    color: modelData.excluded ? (modelData.restoreAllowed === false ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : modelData.current ? UM.Theme.getColor("primary") : UM.Theme.getColor("text")
-                    font: modelData.current ? UM.Theme.getFont("default_bold") : UM.Theme.getFont("default")
-                    elide: Text.ElideRight
-                }
+            }
+
+            // Scroll affordances, the file manager's and what's-new's
+            // idiom: small blue chevrons centred over the list — an up
+            // arrow near the top while more content is above, a down
+            // arrow near the bottom while more is below. They are
+            // SIBLINGS of the Flickable, overlaying it: a Flickable's
+            // own children scroll with the content and vanish.
+            UM.Label {
+                text: "↑"
+                visible: objectListFlick.height > 0 && objectListFlick.contentY > 2
+                anchors.top: objectListFlick.top
+                anchors.horizontalCenter: objectListFlick.horizontalCenter
+                anchors.topMargin: 4 * screenScaleFactor
+                color: UM.Theme.getColor("primary")
+                font: UM.Theme.getFont("medium_bold")
+            }
+            UM.Label {
+                text: "↓"
+                visible: objectListFlick.height > 0 && objectListFlick.contentY < objectListFlick.contentHeight - objectListFlick.height - 2
+                anchors.bottom: objectListFlick.bottom
+                anchors.horizontalCenter: objectListFlick.horizontalCenter
+                anchors.bottomMargin: 4 * screenScaleFactor
+                color: UM.Theme.getColor("primary")
+                font: UM.Theme.getFont("medium_bold")
             }
         }
         UM.Label {

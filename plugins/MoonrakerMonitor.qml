@@ -2790,8 +2790,8 @@ Component {
             visible: root.openPopOver === "plateprogress" && root.printer != null
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
-            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            contentWidth: 390 * screenScaleFactor
+            height: Math.min((780 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 585 * screenScaleFactor
             title: "Print Follower"
 
             Loader {

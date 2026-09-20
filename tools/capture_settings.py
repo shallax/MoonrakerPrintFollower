@@ -181,6 +181,12 @@ class SettingsManager(QObject):
     def settingsZTolerance(self):
         return "0.040"
 
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRestoreWindow(self):
+        # The shipped default (RESTORE_WINDOW_DEFAULT): the capture
+        # renders what a fresh install shows, never a blank combo.
+        return "3"
+
     # --- Integrated Moonraker output settings ---
     @pyqtProperty(str, notify=settingsChanged)
     def settingsFrontendUrl(self):

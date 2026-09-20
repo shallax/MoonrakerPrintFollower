@@ -1957,6 +1957,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(20)
         face.setWidth(face.width() - 1)
         self.pump(20)
+        # At this face size the canvas can still be blank when the
+        # baseline is grabbed, and two blank grabs agree; the baseline
+        # must carry the grid the measurement is diffed against.
+        self._grab_when_inked(window, face)
         return face, window, self._mapping(plot), self._settled(window)
 
     def _printed(self, split, window, face, baseline, box, span):
@@ -2160,7 +2164,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(added, "the printed arc was not painted")
         centres = self._centres(added)
         rows = [bands[0] for bands in centres.values()]
-        self.assertLess(abs(min(rows) - chord), 6, "the clockwise arc did not start on its chord")
+        # A semicircle meets its chord perpendicular, so the endpoint
+        # column's ink run spans about the square root of twice the
+        # on-screen radius and its band centre sits that far below the
+        # chord; the margin grows with the arc's pixel radius.
+        self.assertLess(abs(min(rows) - chord), 9, "the clockwise arc did not start on its chord")
         self.assertGreater(max(rows) - chord, 20.0, "the painted arc never left its own chord")
         self.assertEqual([row for row in rows if row < chord - 6], [],
                          "the clockwise arc bulged to the counter-clockwise side")
