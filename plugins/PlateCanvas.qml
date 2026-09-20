@@ -82,8 +82,9 @@ Item {
             "bed": bed,
             "sx": bed.plotWidth / (bed.bedXMax - bed.bedXMin),
             // Screen y grows down; the bed's y maximum sits at the
-            // top edge (printer y grows away from the front).
-            "sy": -bed.plotHeight / (bed.bedYMax - bed.bedYMin)
+            // top edge (printer y grows away from the front) — the
+            // mesh map's form, with the y minimum at the bottom.
+            "sy": bed.plotHeight / (bed.bedYMax - bed.bedYMin)
         };
     }
 
@@ -96,7 +97,7 @@ Item {
         }
         return {
             "x": plot.bed.offsetX + (x - plot.bed.bedXMin) * plot.sx,
-            "y": plot.bed.offsetY + (y - plot.bed.bedYMin) * plot.sy
+            "y": plot.bed.offsetY + (plot.bed.bedYMax - y) * plot.sy
         };
     }
 
