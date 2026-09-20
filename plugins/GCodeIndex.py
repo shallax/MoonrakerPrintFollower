@@ -31,7 +31,16 @@ _STATS_MARKER = re.compile(
 _MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
 _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
-_AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
+_AXIS = re.compile(rb"([XYZE])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
+# The slicer's feature marker. Leading whitespace is tolerated: a
+# post-processed or macro-generated file does not always write it at
+# column 0, and a missed marker silently mis-colours a whole block. The
+# value runs to the line's end (a marker with no value at all is not one).
+# The prefix is the per-line filter: the marker is a whole-line comment,
+# so nothing else on a move line can start with it, and testing that is
+# several times cheaper than searching every line for the substring.
+_TYPE_PREFIX = b";TYPE:"
+_TYPE_COMMENT = re.compile(rb"^\s*;TYPE:\s*(\S.*?)\s*$")
 # A baked end-of-layer pause: the pause command word standing alone at
 # the line start (comment lines never match). The PauseAtHeight
 # post-processor emits the configured pause command inside its
@@ -40,7 +49,23 @@ _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 _PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
 
 _CACHE_MAGIC = b"MPFI110\0"
-_CACHE_VERSION = 5
+# The header is a length-prefixed JSON blob inside the container, so the
+# reader's bound is also the writer's: a longer header is a blob the
+# loader refuses, and writing one would only spend the cache's budget on
+# a file that can never be read back.
+_MAX_CACHE_HEADER_BYTES = 16 * 1024 * 1024
+# The feature columns' serialization budget (a run or a marker costs
+# ~10 bytes of JSON): a hostile file can fragment every layer into a run
+# list of its own, so the columns are bounded on top of the per-layer
+# caps. Past the budget they are dropped WHOLE — a truncated run list
+# would restore a layer's colours wrong, while an absent one only reads
+# as "not recorded".
+_MAX_CACHE_FEATURE_ENTRIES = 500_000
+# 6: the per-motion feature columns (type runs, travel boundaries and the
+# layer-start feature state). A reader that accepted a 5 blob would restore
+# it with those columns empty, which draws a preview with no feature
+# colours and no travel — so the version refuses it outright.
+_CACHE_VERSION = 6
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -51,6 +76,23 @@ _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 _MAX_LINE_BYTES = 64 * 1024
 _MAX_LAYER_BLOCKS = 100_000
 _MAX_MOTIONS_PER_LAYER = 200_000
+# The feature columns have their own bounds: a hostile file can write a
+# distinct ;TYPE: value (or alternate travel and print every motion) on
+# every line, and neither the vocabulary nor the run list may grow with
+# the line count. Past the vocabulary cap every further distinct name is
+# _TYPE_OTHER; past the run cap the layer's tail is _TYPE_OTHER too —
+# coarser, never wrong in a way the caller cannot see.
+_MAX_TYPE_NAMES = 64
+_MAX_TYPE_NAME_BYTES = 64
+_MAX_TYPE_RUNS_PER_LAYER = 4096
+_TYPE_NONE = 0
+_TYPE_OTHER = 1
+# The E-axis noise floor, in millimetres. Float rounding, a G92/volumetric
+# restore and Klipper's own E math move the axis by well under this on a
+# move that deposits nothing, while a real extrusion step is an order of
+# magnitude above it. Below the floor the motion is a travel: it adds no
+# filament whether E merely held or was pulled back.
+_E_NOISE_MM = 0.05
 # The layer-format sniff window: the file head read before the scan.
 _MARKER_SNIFF_BYTES = 262144
 # How far below the monotonic floor the refinement search may start, in
@@ -66,9 +108,39 @@ class LayerMotionIndex:
     motion_x: List[array] = field(default_factory=list)
     motion_y: List[array] = field(default_factory=list)
     motion_z: List[array] = field(default_factory=list)
+    # The per-motion feature type, one RLE run list per layer: runs of
+    # [motion_count, code] in motion order, so a layer costs one run per
+    # ;TYPE: block instead of a byte per motion (~3 KB against ~0.44 MB
+    # on a 444k-motion file) and the cache never widens its byte body.
+    # Code _TYPE_NONE is "no ;TYPE: seen yet", _TYPE_OTHER the vocabulary
+    # overflow, and code n + 2 names type_names[n].
+    motion_types: List[List[List[int]]] = field(default_factory=list)
+    # The ;TYPE: values in first-seen order. Shared by every layer, so one
+    # feature keeps one code (and one colour) for the whole print. The
+    # per-motion code defaults to the last value seen — a slicer emits a
+    # marker when the feature changes, not per move.
+    type_names: List[str] = field(default_factory=list)
+    # Travel boundaries from the E axis, as motion indices per layer: a
+    # start is the motion where E left the extruding state (holding flat,
+    # or falling for a retraction) and an end the motion where E resumed
+    # rising. The glyphs are exactly these two lists; the travel segment
+    # between a start and its end is theirs to pair (a travel that crosses
+    # a layer boundary leaves its start in the previous layer, which is
+    # what layer_start_extruding tells apart).
+    travel_starts: List[List[int]] = field(default_factory=list)
+    travel_ends: List[List[int]] = field(default_factory=list)
     layer_start_positions: List[Tuple[float, float, float]] = field(default_factory=list)
     layer_start_absolute: List[bool] = field(default_factory=list)
     layer_start_units: List[float] = field(default_factory=list)
+    # The feature state at each layer's first motion, the compact
+    # hydration's seed: without it a hydrated layer parses its opening
+    # moves from a cold start and disagrees with the full scan it stands
+    # in for (an absolute-E file reads its first move as a huge extrusion,
+    # and a travel crossing the boundary loses its end marker).
+    layer_start_types: List[int] = field(default_factory=list)
+    layer_start_e: List[float] = field(default_factory=list)
+    layer_start_e_absolute: List[bool] = field(default_factory=list)
+    layer_start_extruding: List[bool] = field(default_factory=list)
     current_layer_map: Dict[int, int] = field(default_factory=dict)
     layer_elapsed_times: List[Optional[float]] = field(default_factory=list)
     # The layers whose gcode carries a baked pause command (PAUSE / M0 /
@@ -229,6 +301,131 @@ def _parse_axes(code: bytes) -> Dict[str, float]:
     return values
 
 
+class _FeatureTracker:
+    """The per-motion feature state, shared by the scan and the hydrator.
+
+    The E axis decides what a motion is: a rise above the noise floor is an
+    extrusion, anything else deposits nothing and is travel — a *falling* E
+    is the same rule's retraction case, not a separate class. Each change
+    in that state is a travel boundary, recorded as the motion index it
+    happened on: a start where the extrusion stopped, an end where it
+    resumed.
+
+    The two parse loops must classify a motion identically — a hydrated
+    layer that disagreed with the full scan it stands in for would draw a
+    different preview — so the rule lives here once. The modal state (E,
+    its absolute/relative mode, the open travel, the feature type) survives
+    the layer boundaries, and ``open_layer`` hands the layer's own seed on
+    to the compact hydrator, which starts mid-file with nothing else.
+
+    The layer's type runs are built here as well, but only a ``;TYPE:``
+    marker writes one: the per-motion walk ticks a counter, and
+    ``payload`` turns it into a run when the layer is read out.
+    """
+
+    __slots__ = ("runs", "starts", "ends", "count", "last_type", "span",
+                 "open_type", "e", "absolute_e", "extruding", "start_type",
+                 "start_e", "start_e_absolute", "start_extruding")
+
+    def __init__(self) -> None:
+        self.runs: List[List[int]] = []
+        self.starts: List[int] = []
+        self.ends: List[int] = []
+        self.count = 0
+        self.last_type = _TYPE_NONE
+        # The open run, held as (count, code) slots rather than as the
+        # last element of ``runs``.
+        self.span = 0
+        self.open_type = _TYPE_NONE
+        self.e = 0.0
+        self.absolute_e = True
+        # Nothing has been deposited before the first motion, but no
+        # travel is open either: the first rise is a motion, not a
+        # boundary.
+        self.extruding = True
+        self.start_type = _TYPE_NONE
+        self.start_e = 0.0
+        self.start_e_absolute = True
+        self.start_extruding = True
+
+    def open_layer(self) -> None:
+        """Seed a new layer from the modal state and reset the counters."""
+        self._flush()
+        self.start_type = self.last_type
+        self.start_e = self.e
+        self.start_e_absolute = self.absolute_e
+        self.start_extruding = self.extruding
+        self.runs = []
+        self.starts = []
+        self.ends = []
+        self.count = 0
+        self.span = 0
+        self.open_type = self.last_type
+
+    def set_type(self, code: int) -> None:
+        """Adopt a ;TYPE: value, closing the run a different one opened.
+
+        The type changes only on these markers, so this is the only place
+        a run boundary can fall — the motion walk never writes the run
+        list itself. A repeat of the current value (two names that both
+        overflow the vocabulary share a code, and a slicer may re-state
+        one) continues the open run instead of splitting it.
+        """
+        if code == self.last_type:
+            return
+        self._flush()
+        self.last_type = code
+        self.open_type = code
+
+    def payload(self) -> Tuple[List[List[int]], List[int], List[int]]:
+        """The layer's feature arrays, with the open run closed."""
+        self._flush()
+        return (self.runs, self.starts, self.ends)
+
+    def _flush(self) -> None:
+        """Materialize the open run — the count side of the RLE.
+
+        Deferred on purpose: reaching into ``runs[-1]`` on every motion
+        was the largest cost the feature walk added to the scan, while a
+        slot increment is small. Only a type change or a layer boundary
+        pays for the list, and those are per feature block, not per move.
+        """
+        span = self.span
+        if not span:
+            return
+        self.span = 0
+        runs = self.runs
+        if len(runs) < _MAX_TYPE_RUNS_PER_LAYER:
+            runs.append([span, self.open_type])
+        else:
+            # Run-capped: the tail's feature reads unknown rather than as
+            # whatever block happened to be last.
+            runs[-1][1] = _TYPE_OTHER
+            runs[-1][0] += span
+
+    def add(self, axes: Dict[str, float], collect: bool) -> None:
+        """Advance one motion's E and feature state.
+
+        *collect* is False when the motion is not being recorded in the
+        layer's arrays — a compact scan, or past the per-layer motion cap.
+        The modal state advances either way, because the next layer's seed
+        is read from it; only the appends stand down.
+        """
+        delta = 0.0
+        if "E" in axes:
+            value = axes["E"] if self.absolute_e else self.e + axes["E"]
+            delta = value - self.e
+            self.e = value
+        rolling = delta > _E_NOISE_MM
+        if rolling != self.extruding:
+            if collect:
+                (self.ends if rolling else self.starts).append(self.count)
+            self.extruding = rolling
+        if collect:
+            self.span += 1
+        self.count += 1
+
+
 def _emit_progress(handle: BinaryIO, progress) -> None:
     # The scanner's honest precision: the file offset against the
     # size. Every 4096 lines, so the callback stays cheap.
@@ -307,6 +504,13 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     x = y = z = 0.0
     line_number = 0
     collect_motions = not compact
+    # The feature walk runs for every build, compact included: the scan
+    # still sees the ;TYPE: lines and the E words, and a compact index
+    # keeps only each layer's opening state for the hydrator to resume
+    # from.
+    features = _FeatureTracker()
+    type_lookup: Dict[str, int] = {}
+    type_names: List[str] = []
 
     with open(path, "rb") as handle:
         while True:
@@ -365,6 +569,12 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             if boundary:
                 if current is not None and current["end"] is None:
                     current["end"] = offset
+                # The marker opens a layer: hand the closing one its
+                # feature arrays and seed this one's opening state.
+                finished = features.payload()
+                features.open_layer()
+                if current is not None:
+                    current["features"] = finished
                 if len(blocks) >= _MAX_LAYER_BLOCKS:
                     # Marker-dense hostile file: stop tracking further
                     # layers. The last tracked block already closed at
@@ -385,6 +595,11 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         "start_position": (x, y, z),
                         "start_absolute": absolute_xyz,
                         "start_units": units_scale,
+                        "start_type": features.start_type,
+                        "start_e": features.start_e,
+                        "start_e_absolute": features.start_e_absolute,
+                        "start_extruding": features.start_extruding,
+                        "features": None,
                     }
                     blocks.append(current)
                 if matched is not None:
@@ -398,6 +613,12 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 elapsed_match = _ELAPSED.search(stripped)
                 if elapsed_match is not None:
                     current["end"] = offset
+                    # The elapsed marker closes the block as surely as the
+                    # next layer marker does, so the feature arrays go with
+                    # it: a layer closed here would otherwise keep the runs
+                    # the tracker had not yet been handed, and a layer
+                    # closed at EOF would never be given any.
+                    current["features"] = features.payload()
                     try:
                         current["elapsed"] = float(elapsed_match.group(1))
                     except (TypeError, ValueError):
@@ -407,6 +628,23 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             # concern, collected in the same read).
             if _PAUSE_COMMAND.match(stripped) is not None:
                 pause_offsets.append(offset)
+
+            # The slicer's feature marker. The prefix test is the fast
+            # path — the anchored regex is the confirmation, so an
+            # indented or oddly-spaced marker is still read.
+            if stripped.lstrip().startswith(_TYPE_PREFIX):
+                type_match = _TYPE_COMMENT.match(stripped)
+                if type_match is not None:
+                    name = type_match.group(1)[:_MAX_TYPE_NAME_BYTES].decode("ascii", "replace")
+                    code = type_lookup.get(name)
+                    if code is None:
+                        if len(type_names) >= _MAX_TYPE_NAMES:
+                            code = _TYPE_OTHER
+                        else:
+                            type_names.append(name)
+                            code = len(type_names) + 1
+                            type_lookup[name] = code
+                    features.set_type(code)
 
             # Track G-code XYZ state even outside the indexed layer
             # body. This is important for Cura files that emit
@@ -426,6 +664,10 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 absolute_xyz = True
             elif command == b"G91":
                 absolute_xyz = False
+            elif command == b"M82":
+                features.absolute_e = True
+            elif command == b"M83":
+                features.absolute_e = False
             elif command == b"G92":
                 if "X" in axes:
                     x = axes["X"]
@@ -433,6 +675,11 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                     y = axes["Y"]
                 if "Z" in axes:
                     z = axes["Z"]
+                # An extruder reset (Cura's per-layer G92 E0) moves E
+                # without extruding: it re-bases the axis, never reads as
+                # a retraction.
+                if "E" in axes:
+                    features.e = axes["E"]
             elif _MOTION.search(stripped):
                 nx, ny, nz = x, y, z
                 if "X" in axes:
@@ -442,8 +689,15 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 if "Z" in axes:
                     nz = axes["Z"] if absolute_xyz else z + axes["Z"]
                 x, y, z = nx, ny, nz
-                if collect_motions and current is not None and current["end"] is None \
-                        and len(current["motions"]) < _MAX_MOTIONS_PER_LAYER:
+                collect_here = collect_motions and current is not None \
+                    and current["end"] is None \
+                    and len(current["motions"]) < _MAX_MOTIONS_PER_LAYER
+                # The feature walk must see EVERY motion, collected or
+                # not: the per-layer cap and the elapsed-marker boundary
+                # both stop the arrays without stopping the E state, and
+                # the next layer resumes from that state.
+                features.add(axes, collect_here)
+                if collect_here:
                     # Past the cap the layer's path data truncates and
                     # the byte-range fraction covers the rest — a
                     # one-layer hostile file must not grow multi-GB
@@ -458,15 +712,23 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         file_end = handle.tell()
         if current is not None and current["end"] is None:
             current["end"] = file_end
+            current["features"] = features.payload()
 
     ranges: List[Tuple[int, int]] = []
     motions: List[array] = []
     xs: List[array] = []
     ys: List[array] = []
     zs: List[array] = []
+    types: List[List[List[int]]] = []
+    travel_starts: List[List[int]] = []
+    travel_ends: List[List[int]] = []
     starts: List[Tuple[float, float, float]] = []
     start_absolute: List[bool] = []
     start_units: List[float] = []
+    start_types: List[int] = []
+    start_e: List[float] = []
+    start_e_absolute: List[bool] = []
+    start_extruding: List[bool] = []
     elapsed_times: List[Optional[float]] = []
     block_stats: List[Optional[int]] = []
     for block in blocks:
@@ -477,9 +739,17 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         xs.append(block["x"])
         ys.append(block["y"])
         zs.append(block["z"])
+        block_features = block["features"] or ([], [], [])
+        types.append(block_features[0])
+        travel_starts.append(block_features[1])
+        travel_ends.append(block_features[2])
         starts.append(tuple(float(v) for v in block["start_position"]))
         start_absolute.append(bool(block["start_absolute"]))
         start_units.append(float(block["start_units"]))
+        start_types.append(int(block["start_type"]))
+        start_e.append(float(block["start_e"]))
+        start_e_absolute.append(bool(block["start_e_absolute"]))
+        start_extruding.append(bool(block["start_extruding"]))
         elapsed = block.get("elapsed")
         elapsed_times.append(float(elapsed) if elapsed is not None else None)
         stats = block.get("stats")
@@ -512,9 +782,16 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     xs = xs or []
     ys = ys or []
     zs = zs or []
+    types = types or []
+    travel_starts = travel_starts or []
+    travel_ends = travel_ends or []
     starts = starts or []
     start_absolute = start_absolute or []
     start_units = start_units or []
+    start_types = start_types or []
+    start_e = start_e or []
+    start_e_absolute = start_e_absolute or []
+    start_extruding = start_extruding or []
     elapsed_times = elapsed_times or []
     stats_values = stats_values or []
 
@@ -550,9 +827,17 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         motion_x=xs,
         motion_y=ys,
         motion_z=zs,
+        motion_types=types,
+        type_names=type_names,
+        travel_starts=travel_starts,
+        travel_ends=travel_ends,
         layer_start_positions=starts,
         layer_start_absolute=start_absolute,
         layer_start_units=start_units,
+        layer_start_types=start_types,
+        layer_start_e=start_e,
+        layer_start_e_absolute=start_e_absolute,
+        layer_start_extruding=start_extruding,
         current_layer_map=layer_map,
         layer_elapsed_times=elapsed_times,
         pauses=pause_layers,
@@ -576,6 +861,11 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
     anchor is the index's followed_layer (set by the service, read
     HERE at completion so a worker finishing after an anchor change
     applies the latest policy), then the hydrated layer.
+
+    The parse walks the layer's feature state as well as its geometry:
+    the E axis for the travel boundaries and the ;TYPE: markers for the
+    feature runs. Both are seeded from the scan's per-layer opening state,
+    so a hydrated layer matches the full scan it stands in for.
     """
     if not index.compact or layer in index.hydrated_layers:
         return True
@@ -588,6 +878,14 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             x, y, z = index.layer_start_positions[layer] if layer < len(index.layer_start_positions) else (0.0, 0.0, 0.0)
             absolute_xyz = index.layer_start_absolute[layer] if layer < len(index.layer_start_absolute) else True
             units_scale = index.layer_start_units[layer] if layer < len(index.layer_start_units) else 1.0
+            features = _FeatureTracker()
+            seed_type = index.layer_start_types[layer] if layer < len(index.layer_start_types) else _TYPE_NONE
+            features.last_type = seed_type
+            features.open_type = seed_type
+            features.e = index.layer_start_e[layer] if layer < len(index.layer_start_e) else 0.0
+            features.absolute_e = index.layer_start_e_absolute[layer] if layer < len(index.layer_start_e_absolute) else True
+            features.extruding = index.layer_start_extruding[layer] if layer < len(index.layer_start_extruding) else True
+            type_lookup: Dict[str, int] = {}
             offsets = array("Q")
             xs = array("f")
             ys = array("f")
@@ -600,6 +898,22 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 if len(line) > _MAX_LINE_BYTES:
                     line = b""
                 stripped = line.rstrip(b"\r\n")
+                if stripped.lstrip().startswith(_TYPE_PREFIX):
+                    type_match = _TYPE_COMMENT.match(stripped)
+                    if type_match is not None:
+                        name = type_match.group(1)[:_MAX_TYPE_NAME_BYTES].decode("ascii", "replace")
+                        code = type_lookup.get(name)
+                        if code is None:
+                            # The vocabulary is the index's own; a name the
+                            # scan never saw there is one the scan never
+                            # saw either, so it reads as unknown rather
+                            # than as a code this layer cannot name.
+                            try:
+                                code = index.type_names.index(name) + 2
+                            except ValueError:
+                                code = _TYPE_OTHER
+                            type_lookup[name] = code
+                        features.set_type(code)
                 code = stripped.split(b";", 1)[0]
                 command_match = _COMMAND.search(code)
                 command = command_match.group(1).upper() if command_match else b""
@@ -614,21 +928,35 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                     absolute_xyz = True
                 elif command == b"G91":
                     absolute_xyz = False
+                elif command == b"M82":
+                    features.absolute_e = True
+                elif command == b"M83":
+                    features.absolute_e = False
                 elif command == b"G92":
                     x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
+                    if "E" in axes: features.e = axes["E"]
                 elif _MOTION.search(stripped):
                     if "X" in axes: x = axes["X"] if absolute_xyz else x + axes["X"]
                     if "Y" in axes: y = axes["Y"] if absolute_xyz else y + axes["Y"]
                     if "Z" in axes: z = axes["Z"] if absolute_xyz else z + axes["Z"]
-                    if len(offsets) < _MAX_MOTIONS_PER_LAYER:
+                    collect_here = len(offsets) < _MAX_MOTIONS_PER_LAYER
+                    features.add(axes, collect_here)
+                    if collect_here:
                         offsets.append(offset); xs.append(x); ys.append(y); zs.append(z)
         with index.cache_lock:
             while len(index.motion_offsets) < len(index.ranges):
                 index.motion_offsets.append(array("Q")); index.motion_x.append(array("f")); index.motion_y.append(array("f")); index.motion_z.append(array("f"))
+                index.motion_types.append([]); index.travel_starts.append([]); index.travel_ends.append([])
+                index.layer_start_types.append(_TYPE_NONE); index.layer_start_e.append(0.0)
+                index.layer_start_e_absolute.append(True); index.layer_start_extruding.append(True)
             index.motion_offsets[layer] = offsets
             index.motion_x[layer] = xs
             index.motion_y[layer] = ys
             index.motion_z[layer] = zs
+            hydrated_runs, hydrated_starts, hydrated_ends = features.payload()
+            index.motion_types[layer] = hydrated_runs
+            index.travel_starts[layer] = hydrated_starts
+            index.travel_ends[layer] = hydrated_ends
             index.hydrated_layers.add(layer)
             # The retention bound (the live report's progress-driven
             # growth): hydration was demand-driven as the print
@@ -649,6 +977,12 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")
                     index.motion_z[old] = array("f")
+                    # The feature columns travel with the geometry, or an
+                    # evicted layer would hand back a full set of runs for
+                    # an empty motion list.
+                    index.motion_types[old] = []
+                    index.travel_starts[old] = []
+                    index.travel_ends[old] = []
                     index.hydrated_layers.remove(old)
         return True
     except OSError:
@@ -687,6 +1021,98 @@ def _read_exact(handle: BinaryIO, size: int) -> bytes:
     return bytes(chunks)
 
 
+def _feature_columns(counts: Sequence[int], type_names: Sequence[str], columns) -> Optional[Dict]:
+    """Validate the per-motion feature columns, or None when they are ragged.
+
+    The writer and the reader both come through here, because the columns
+    that draw a layer's colours and its travel boundaries are only worth
+    restoring if they agree with the geometry they belong to: a layer
+    whose runs do not total its motion count, a marker outside its layer,
+    or a code past the vocabulary would restore a *different* index than
+    the one saved. Validation returning None means the blob must not be
+    published — or not be trusted. An index carrying no feature data at
+    all (a hand-built one, or a blob predating the columns) answers an
+    empty mapping, so they are simply absent from the header.
+    """
+    runs, starts, ends, start_types, start_e, start_e_absolute, start_extruding = columns
+    try:
+        if all(len(column) == 0 for column in columns):
+            return {}
+    except TypeError:
+        return None
+    if not isinstance(type_names, list) or len(type_names) > _MAX_TYPE_NAMES:
+        return None
+    if not all(isinstance(name, str) for name in type_names):
+        return None
+    layer_count = len(counts)
+    if any(not isinstance(column, list) or len(column) != layer_count for column in columns):
+        return None
+
+    def markers_or_none(values, count):
+        cleaned = []
+        previous = -1
+        for marker in values:
+            if not isinstance(marker, int) or isinstance(marker, bool) or not previous < marker < count:
+                return None
+            previous = marker
+            cleaned.append(marker)
+        return cleaned
+
+    codes = len(type_names) + 2
+    if not all(isinstance(code, int) and 0 <= code < codes for code in start_types):
+        return None
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool)
+               and math.isfinite(value) for value in start_e):
+        return None
+    if not all(isinstance(flag, bool) for flag in (*start_e_absolute, *start_extruding)):
+        return None
+
+    entries = 0
+    clean_runs: List[List[List[int]]] = []
+    clean_starts: List[List[int]] = []
+    clean_ends: List[List[int]] = []
+    for layer, count in enumerate(counts):
+        layer_runs: List[List[int]] = []
+        total = 0
+        if len(runs[layer]) > _MAX_TYPE_RUNS_PER_LAYER:
+            return None
+        for run in runs[layer]:
+            if not isinstance(run, list) or len(run) != 2:
+                return None
+            span, code = run
+            if not isinstance(span, int) or isinstance(span, bool) or span < 1:
+                return None
+            if not isinstance(code, int) or isinstance(code, bool) or not 0 <= code < codes:
+                return None
+            total += span
+            layer_runs.append([span, code])
+        # The runs must cover the layer's motions exactly: a layer that
+        # restores a shorter path than its offsets describe is the
+        # "different index" this validation exists to stop.
+        if total != count:
+            return None
+        layer_starts = markers_or_none(starts[layer], count)
+        layer_ends = markers_or_none(ends[layer], count)
+        if layer_starts is None or layer_ends is None:
+            return None
+        entries += len(layer_runs) + len(layer_starts) + len(layer_ends)
+        clean_runs.append(layer_runs)
+        clean_starts.append(layer_starts)
+        clean_ends.append(layer_ends)
+    if entries > _MAX_CACHE_FEATURE_ENTRIES:
+        return {}
+    return {
+        "type_names": list(type_names),
+        "type_runs": clean_runs,
+        "travel_starts": clean_starts,
+        "travel_ends": clean_ends,
+        "start_types": list(start_types),
+        "start_e": [float(value) for value in start_e],
+        "start_e_absolute": list(start_e_absolute),
+        "start_extruding": list(start_extruding),
+    }
+
+
 class PersistentIndexCache:
     def __init__(self, directory: str, *, max_bytes: int = 128 * 1024 * 1024, max_entries: int = 16) -> None:
         self.directory = directory
@@ -710,7 +1136,7 @@ class PersistentIndexCache:
                 if len(header_len_raw) != 4:
                     return None
                 header_len = struct.unpack("<I", header_len_raw)[0]
-                if header_len <= 0 or header_len > 16 * 1024 * 1024:
+                if header_len <= 0 or header_len > _MAX_CACHE_HEADER_BYTES:
                     return None
                 header = json.loads(_read_exact(handle, header_len).decode("utf-8"))
                 if header.get("version") != _CACHE_VERSION:
@@ -744,6 +1170,43 @@ class PersistentIndexCache:
                     == len(start_absolute) == len(start_units) == len(elapsed_times)
                 ):
                     return None
+                # The feature columns are optional as a whole — a blob
+                # written before they existed still restores its geometry
+                # — but a present one that disagrees with the geometry is
+                # refused rather than trusted. An absent run list restores
+                # as one untyped run per motion: the motion is there, its
+                # colour never was, and the columns must still come back a
+                # per-layer entry long or the hydrator could not fill them.
+                empty_markers = [[] for _ in counts]
+                untyped_runs = [[[count, _TYPE_NONE]] if count else [] for count in counts]
+                blank_seeds = [_TYPE_NONE] * len(counts)
+                zero_seeds = [0.0] * len(counts)
+                true_seeds = [True] * len(counts)
+                feature_header = _feature_columns(
+                    counts,
+                    header.get("type_names", []),
+                    (
+                        header.get("type_runs", untyped_runs),
+                        header.get("travel_starts", empty_markers),
+                        header.get("travel_ends", empty_markers),
+                        header.get("start_types", blank_seeds),
+                        header.get("start_e", zero_seeds),
+                        header.get("start_e_absolute", true_seeds),
+                        header.get("start_extruding", true_seeds),
+                    ),
+                )
+                if feature_header is None:
+                    return None
+                types = feature_header.get("type_runs", untyped_runs)
+                travel_starts = feature_header.get("travel_starts", empty_markers)
+                travel_ends = feature_header.get("travel_ends", empty_markers)
+                start_types = feature_header.get("start_types", blank_seeds)
+                start_e = feature_header.get("start_e", zero_seeds)
+                start_e_absolute = feature_header.get("start_e_absolute", true_seeds)
+                start_extruding = feature_header.get("start_extruding", true_seeds)
+                # A budget-dropped (or absent) vocabulary leaves no code to
+                # name, so the names go with the runs.
+                type_names = list(feature_header.get("type_names", []))
 
                 offsets: List[array] = []
                 xs: List[array] = []
@@ -774,6 +1237,10 @@ class PersistentIndexCache:
             if isinstance(hydrated_raw, list):
                 hydrated = {int(i) for i in hydrated_raw if 0 <= int(i) < len(ranges)}
             else:
+                # The motion arrays are the evidence. The feature columns
+                # deliberately are NOT: their runs must total the layer's
+                # motion count, so they can only exist where those arrays
+                # do and could never name a layer this misses.
                 hydrated = {i for i, values in enumerate(offsets) if len(values) > 0}
             pauses = []
             for value in header.get("pauses", []):
@@ -789,9 +1256,17 @@ class PersistentIndexCache:
                 motion_x=xs,
                 motion_y=ys,
                 motion_z=zs,
+                motion_types=types,
+                type_names=type_names,
+                travel_starts=travel_starts,
+                travel_ends=travel_ends,
                 layer_start_positions=starts,
                 layer_start_absolute=start_absolute,
                 layer_start_units=start_units,
+                layer_start_types=start_types,
+                layer_start_e=start_e,
+                layer_start_e_absolute=start_e_absolute,
+                layer_start_extruding=start_extruding,
                 current_layer_map=layer_map,
                 layer_elapsed_times=elapsed_times,
                 pauses=tuple(pauses),
@@ -817,10 +1292,21 @@ class PersistentIndexCache:
                 and len(index.layer_elapsed_times) == layer_count
             ):
                 return
+            counts = [len(v) for v in index.motion_offsets]
             for i in range(layer_count):
-                count = len(index.motion_offsets[i])
+                count = counts[i]
                 if not (len(index.motion_x[i]) == len(index.motion_y[i]) == len(index.motion_z[i]) == count):
                     return
+            features = _feature_columns(counts, index.type_names, (
+                index.motion_types, index.travel_starts, index.travel_ends,
+                index.layer_start_types, index.layer_start_e,
+                index.layer_start_e_absolute, index.layer_start_extruding,
+            ))
+            if features is None:
+                # Ragged feature columns restore a different index than the
+                # one saved; publishing the blob would be worse than not
+                # caching at all.
+                return
             path = self._path(identity)
             temp_path = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
             header = {
@@ -837,9 +1323,16 @@ class PersistentIndexCache:
                 "pauses": list(index.pauses),
                 "compact": bool(index.compact),
                 "hydrated": sorted(index.hydrated_layers),
-                "counts": [len(v) for v in index.motion_offsets],
+                "counts": counts,
             }
+            header.update(features)
             raw_header = json.dumps(header, separators=(",", ":")).encode("utf-8")
+            if len(raw_header) > _MAX_CACHE_HEADER_BYTES:
+                # A very fragmented (or hostile) file can still push the
+                # geometry columns past the readable bound. Writing that
+                # blob would only spend the byte budget on a file the
+                # loader always refuses, so it is not written at all.
+                return
             try:
                 with gzip.open(temp_path, "wb", compresslevel=3) as handle:
                     handle.write(_CACHE_MAGIC)
