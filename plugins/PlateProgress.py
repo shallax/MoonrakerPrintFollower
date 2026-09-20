@@ -77,6 +77,42 @@ def _decimate(index: LayerMotionIndex, layer: int) -> Dict[str, List[List[float]
     return classes
 
 
+def _travel_points(index: LayerMotionIndex, layer: int, threshold: float) -> List[List[float]]:
+    """The travel spans as one distance-decimated polyline, each point
+    carrying its motion index — the face clips them to the printed
+    portion (the live ruling: travels show only after they have been
+    passed). A layer that opened mid-travel starts in the span."""
+    xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
+    ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
+    count = len(xs)
+    if count == 0:
+        return []
+    starts = list(index.travel_starts[layer] if layer < len(index.travel_starts) else ())
+    ends = list(index.travel_ends[layer] if layer < len(index.travel_ends) else ())
+    start_index = 0
+    end_index = 0
+    # A layer that opened not extruding (a cross-layer travel's tail)
+    # begins the span at motion zero.
+    in_travel = not bool(index.layer_start_extruding[layer]
+                         if layer < len(index.layer_start_extruding) else True)
+    points: List[List[float]] = []
+    last: Optional[List[float]] = None
+    for motion in range(count):
+        if start_index < len(starts) and motion == starts[start_index]:
+            in_travel = True
+            start_index += 1
+        if end_index < len(ends) and motion == ends[end_index]:
+            in_travel = False
+            end_index += 1
+        if not in_travel:
+            continue
+        point = [float(xs[motion]), float(ys[motion]), float(motion)]
+        if last is None or hypot(point[0] - last[0], point[1] - last[1]) >= threshold:
+            points.append(point)
+            last = point
+    return points
+
+
 def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
     """One hydrated layer's prepared geometry, or None when the layer
     is not hydrated (an evicted layer reads as empty — the payload
@@ -87,14 +123,17 @@ def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
         return None
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     if not len(xs):
-        return {"classes": {}, "travelStarts": [], "travelEnds": [], "motions": 0}
+        return {"classes": {}, "travels": [], "travelStarts": [], "travelEnds": [], "motions": 0}
     starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
     ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
     ys = index.motion_y[layer]
+    span = hypot(max(xs) - min(xs), max(ys) - min(ys))
+    threshold = max(MIN_SEGMENT_MM, span / MAX_POINTS_PER_LAYER)
     return {
         "classes": _decimate(index, layer),
-        "travelStarts": [[float(xs[m]), float(ys[m])] for m in starts if m < len(xs)],
-        "travelEnds": [[float(xs[m]), float(ys[m])] for m in ends if m < len(xs)],
+        "travels": _travel_points(index, layer, threshold),
+        "travelStarts": [[float(xs[m]), float(ys[m]), float(m)] for m in starts if m < len(xs)],
+        "travelEnds": [[float(xs[m]), float(ys[m]), float(m)] for m in ends if m < len(xs)],
         "motions": len(xs),
     }
 

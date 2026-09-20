@@ -249,6 +249,7 @@ PREFIX_RULES = [
     ("key", "plateObjects", "b11"),
     ("key", "plateDot", "b11"),
     ("key", "plateProgress", "b11"),
+    ("key", "plateHasObjects", "b11"),
     ("key", "zOffset", "g4"),
     ("key", "homedAxes", "b8"),
     ("key", "positionMode", "g3"),

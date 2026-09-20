@@ -815,11 +815,12 @@ Component {
                             }
                         }
                         PlateSection {
-                            // Only when the current print carries the
-                            // exclude-object data (the live ruling):
-                            // the picker hides until the DEFINE lines
-                            // land, and clears with the job epoch.
-                            visible: root.printer != null && root.printer.sectionHiddenMap["plate"] !== true && root.printer.plateObjects.objects.length > 0
+                            // During a print the picker shows either
+                            // the plate (when the print carries the
+                            // exclude-object data) or the download
+                            // offer (the live rulings); it clears
+                            // with the job epoch.
+                            visible: root.printer != null && root.printer.sectionHiddenMap["plate"] !== true && (root.printer.printActive || root.printer.plateHasObjects)
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
@@ -2947,6 +2948,16 @@ Component {
                 Layout.fillHeight: true
                 spacing: UM.Theme.getSize("thin_margin").height
 
+                // The picker's own download offer (the live request):
+                // an empty plate carries the action instead of a dead
+                // canvas.
+                PlateDownloadAction {
+                    Layout.fillWidth: true
+                    visible: root.printer != null && !root.printer.plateHasObjects
+                    printerModel: root.printer
+                    idleInstruction: "Click here to download and index the print — the picker draws the objects from the print's data."
+                }
+
                 PlateExcludeFace {
                     id: plateFace
                     Layout.fillWidth: true
@@ -3108,7 +3119,14 @@ Component {
                         onToggled: progressFace.showBase = checked
                     }
                     UM.Label {
-                        text: "Grey base"
+                        text: "Pending"
+                    }
+                    UM.CheckBox {
+                        checked: progressFace.showTravels
+                        onToggled: progressFace.showTravels = checked
+                    }
+                    UM.Label {
+                        text: "Travels"
                     }
                     Item {
                         Layout.fillWidth: true
