@@ -770,6 +770,9 @@ def infer_macro_parameters(gcode):
 # The plate map's object budget: beyond it, rows are dropped and the
 # truncation is stated rather than silently ignored.
 MAX_PLATE_OBJECTS = 256
+# The per-polygon vertex budget: the silhouette is what the map
+# draws, and the paint cost is vertices × objects per repaint.
+MAX_PLATE_VERTICES = 64
 # A bed-coordinate sanity cap: real beds are orders of magnitude below
 # this, so anything past it is printer-controlled garbage, not a plate.
 _COORD_CAP = 1e7
@@ -796,7 +799,10 @@ def _finite_pair(value):
 def _finite_polygon(value):
     """[[x, y], ...] pairs or a flat [x, y, x, y, ...] run, sanitised:
     any non-finite or absurd coordinate drops the polygon entirely — a
-    printer-controlled value must never reach the path builder."""
+    printer-controlled value must never reach the path builder. The
+    ring decimates to the vertex budget: the map needs the silhouette,
+    not the raw perimeter's thousands of vertices (the live report —
+    full-vertex polygons repainted per poll crawled the picker)."""
     if not isinstance(value, (list, tuple)) or not value:
         return None
     points = []
@@ -814,7 +820,26 @@ def _finite_polygon(value):
             if pair is None:
                 return None
             points.append(pair)
-    return points if len(points) >= 3 else None
+    if len(points) < 3:
+        return None
+    if len(points) <= MAX_PLATE_VERTICES:
+        return points
+    # Distance decimation over the closed ring; the last vertex is
+    # kept so the closing edge always draws.
+    perimeter = sum(math.hypot(points[index][0] - points[index - 1][0],
+                               points[index][1] - points[index - 1][1])
+                    for index in range(1, len(points)))
+    stride = perimeter / (MAX_PLATE_VERTICES - 2)
+    kept = [points[0]]
+    travelled = 0.0
+    for index in range(1, len(points) - 1):
+        travelled += math.hypot(points[index][0] - points[index - 1][0],
+                                points[index][1] - points[index - 1][1])
+        if travelled >= stride:
+            kept.append(points[index])
+            travelled = 0.0
+    kept.append(points[-1])
+    return kept
 
 
 def plate_values(exclude_object):

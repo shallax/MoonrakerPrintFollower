@@ -16,7 +16,6 @@ Item {
 
     property var printerModel: null
     property var plate: null          // the model's plateObjects payload
-    property var dot: null            // {x, y, valid} in bed mm
     property bool compact: false
     property string hoveredName: ""
     property color halo: UM.Theme.getColor("main_background")
@@ -140,7 +139,6 @@ Item {
         plateCanvas.requestPaint();
     }
     onPlateChanged: plateCanvas.requestPaint()
-    onDotChanged: plateCanvas.requestPaint()
 
     // The threaded image-backed canvas (the TemperatureChart
     // doctrine): the paint callback touches only the snapshot it is
@@ -180,16 +178,9 @@ Item {
                 _stroke(ctx, row, plot);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                // The current object's ring badge (the shape channel:
-                // no state is colour-only).
-                if (row.current === true && row.center != null) {
-                    var scene = root.plateToScene(row.center[0], row.center[1]);
-                    ctx.lineWidth = 2;
-                    ctx.strokeStyle = MoonrakerTheme.plateCurrent;
-                    ctx.beginPath();
-                    ctx.arc(scene.x, scene.y, 6 * screenScaleFactor, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
+                // No centre ring for the current object: the bounds
+                // highlight IS the indicator (the live ruling — two
+                // current symbols read as two states).
             }
         }
     }
@@ -210,21 +201,6 @@ Item {
             ctx.moveTo(dotScene.x + 3 * screenScaleFactor, dotScene.y);
             ctx.arc(dotScene.x, dotScene.y, 3 * screenScaleFactor, 0, Math.PI * 2);
         }
-    }
-
-    // The toolhead dot: scene-graph geometry (a Rectangle binding),
-    // never a canvas repaint — the 1 s position publish moves it.
-    Rectangle {
-        id: toolheadDot
-        width: 7 * screenScaleFactor
-        height: width
-        radius: width / 2
-        color: MoonrakerTheme.plateDot
-        border.color: UM.Theme.getColor("main_background")
-        border.width: 2
-        visible: root._plot != null && root.dot != null && root.dot.valid === true
-        x: visible ? root.plateToScene(root.dot.x, root.dot.y).x - width / 2 : 0
-        y: visible ? root.plateToScene(root.dot.x, root.dot.y).y - height / 2 : 0
     }
 
     MouseArea {
