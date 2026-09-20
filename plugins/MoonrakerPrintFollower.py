@@ -53,6 +53,8 @@ class MoonrakerPrintFollower(QObject, Extension):
     @pyqtSlot()
     def toggleFollowingPause(self): self._runtime.coordinator.toggle_attachment()
 
+    def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
+
     def deinitialize(self):
         self._whats_new.close()
         # The leak probe stops with the plugin — no dead runtime

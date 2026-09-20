@@ -193,6 +193,10 @@ class LayerMotionIndex:
     # hydrated. Runtime state: never saved to or restored from the
     # cache.
     followed_layer: Optional[int] = field(default=None, repr=False)
+    # The follower's FROZEN layer (the pop-over's detach): a second
+    # retention anchor, kept beside the live one. Runtime state, like
+    # followed_layer — never saved to or restored from the cache.
+    manual_anchor: Optional[int] = field(default=None, repr=False)
     cache_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def __bool__(self) -> bool:
@@ -1109,8 +1113,13 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 anchor = index.followed_layer
             if anchor is None:
                 anchor = layer
+            # A frozen follower layer is a second anchor: its window
+            # survives the live one's advance (the pop-over's detach
+            # would otherwise evict the very layer it is showing).
+            manual = index.manual_anchor
             for old in sorted(index.hydrated_layers):
-                if old < anchor - 1 or old > anchor + 1:
+                if (old < anchor - 1 or old > anchor + 1) \
+                        and (manual is None or old < manual - 1 or old > manual + 1):
                     index.motion_offsets[old] = array("Q")
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")

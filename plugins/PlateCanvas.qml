@@ -25,18 +25,16 @@ Item {
     property real viewPanY: 0.0
     // The grid's threaded raster reads the view through a var carrier
     // (worker paints see var properties fresh, primitives stale — the
-    // offscreen-harness repaint findings; the face does the same).
+    // offscreen-harness repaint findings; the face does the same). The
+    // carrier is geometry-in only: the pan is the canvas ITEM's
+    // translation, never a paint input (the pan-agnostic rasters).
     property var _view: ({
-            scale: 1.0,
-            panX: 0.0,
-            panY: 0.0
+            scale: 1.0
         })
 
     function _publishView() {
         root._view = {
-            scale: root.viewScale,
-            panX: root.viewPanX,
-            panY: root.viewPanY
+            scale: root.viewScale
         };
     }
     property string hoveredName: ""
@@ -167,14 +165,8 @@ Item {
         _publishView();
         plateCanvas.requestPaint();
     }
-    onViewPanXChanged: {
-        _publishView();
-        plateCanvas.requestPaint();
-    }
-    onViewPanYChanged: {
-        _publishView();
-        plateCanvas.requestPaint();
-    }
+    // A pan only translates the raster item: the grid is painted once
+    // and never re-drawn for the view (the pan-agnostic rasters).
 
     // The threaded image-backed canvas (the TemperatureChart
     // doctrine): the paint callback touches only the snapshot it is
@@ -184,6 +176,13 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
+        // The view's pan as a scene-graph translation (the pan-agnostic
+        // rasters): the picker never pans, so this is the identity
+        // there.
+        transform: Translate {
+            x: root.viewPanX
+            y: root.viewPanY
+        }
         onPaint: {
             var ctx = getContext("2d");
             var plot = root._plot;
@@ -251,15 +250,16 @@ Item {
         var bed = plot.bed;
         var thin = UM.Theme.getColor("lining");
         var thick = UM.Theme.getColor("border");
-        var left = root._view.panX + bed.offsetX * root._view.scale;
-        var top = root._view.panY + bed.offsetY * root._view.scale;
+        // The pan is the item's translation, never a coordinate here.
+        var left = bed.offsetX * root._view.scale;
+        var top = bed.offsetY * root._view.scale;
         var right = left + bed.plotWidth * root._view.scale;
         var bottom = top + bed.plotHeight * root._view.scale;
         function gridX(bedX) {
-            return root._view.panX + root.plateToScene(bedX, bed.bedYMin).x * root._view.scale;
+            return root.plateToScene(bedX, bed.bedYMin).x * root._view.scale;
         }
         function gridY(bedY) {
-            return root._view.panY + root.plateToScene(bed.bedXMin, bedY).y * root._view.scale;
+            return root.plateToScene(bed.bedXMin, bedY).y * root._view.scale;
         }
         if (!root.compact) {
             ctx.lineWidth = 1;

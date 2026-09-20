@@ -115,6 +115,7 @@ BAD = re.compile(
     r"ReferenceError|Unable to assign \[undefined\]|is not defined"
     r"|Invalid component body|Binding loop detected|TypeError"
     r"|Cannot assign to non-existent property|Layout polish loop"
+    r"|Detected anchors on an item that is managed by a layout"
 )
 diagnostics = []
 

@@ -60,6 +60,10 @@ class PrintSnapshot:
     # prev/current/next bundle with the printed/unprinted split, built
     # by the coordinator from the index — None without a live view.
     plate_progress: Optional[dict] = None
+    # The index's layer count: the layer slider's range, and the clamp
+    # that refuses a stale manual anchor from an earlier file. 0 without
+    # a view.
+    plate_layer_count: int = 0
     # The current layer's printed objects: the executed motions'
     # polygon visits, read back from the layer's start (the live
     # ruling: the DEFINE order is not the print order everywhere).

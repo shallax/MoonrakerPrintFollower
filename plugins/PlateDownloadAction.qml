@@ -25,60 +25,71 @@ ColumnLayout {
         return Math.round(root.printerModel.improveEtaProgress * 100) + "%";
     }
 
-    RowLayout {
+    // The WHOLE row clicks (the live request): the label and the glyph
+    // are the same offer, not two targets. A layout-managed item may
+    // not be anchored, so a plain Item hosts both the anchored
+    // MouseArea and the RowLayout that lays the row out.
+    Item {
+        id: instructionRow
         Layout.fillWidth: true
-        spacing: UM.Theme.getSize("narrow_margin").width
-        Item {
-            width: 16 * screenScaleFactor
-            height: 16 * screenScaleFactor
-            UM.ColorImage {
-                id: downloadGlyph
-                anchors.fill: parent
-                source: root.busy() ? Qt.resolvedUrl("Hourglass.svg") : Qt.resolvedUrl("Download.svg")
-                color: UM.Theme.getColor("text")
-                states: [
-                    State {
-                        name: "idle"
-                        when: !root.busy()
-                        PropertyChanges {
-                            target: downloadGlyph
-                            rotation: 0
+        implicitHeight: instructionRowContent.implicitHeight
+
+        RowLayout {
+            id: instructionRowContent
+            anchors.fill: parent
+            spacing: UM.Theme.getSize("narrow_margin").width
+            Item {
+                width: 16 * screenScaleFactor
+                height: 16 * screenScaleFactor
+                UM.ColorImage {
+                    id: downloadGlyph
+                    anchors.fill: parent
+                    source: root.busy() ? Qt.resolvedUrl("Hourglass.svg") : Qt.resolvedUrl("Download.svg")
+                    color: UM.Theme.getColor("text")
+                    states: [
+                        State {
+                            name: "idle"
+                            when: !root.busy()
+                            PropertyChanges {
+                                target: downloadGlyph
+                                rotation: 0
+                            }
                         }
-                    }
-                ]
-                SequentialAnimation on rotation {
-                    running: root.busy()
-                    loops: Animation.Infinite
-                    NumberAnimation {
-                        from: 0
-                        to: 180
-                        duration: 350
-                        easing.type: Easing.InOutCubic
-                    }
-                    PauseAnimation {
-                        duration: 700
-                    }
-                    NumberAnimation {
-                        from: 180
-                        to: 360
-                        duration: 350
-                        easing.type: Easing.InOutCubic
-                    }
-                    PauseAnimation {
-                        duration: 700
+                    ]
+                    SequentialAnimation on rotation {
+                        running: root.busy()
+                        loops: Animation.Infinite
+                        NumberAnimation {
+                            from: 0
+                            to: 180
+                            duration: 350
+                            easing.type: Easing.InOutCubic
+                        }
+                        PauseAnimation {
+                            duration: 700
+                        }
+                        NumberAnimation {
+                            from: 180
+                            to: 360
+                            duration: 350
+                            easing.type: Easing.InOutCubic
+                        }
+                        PauseAnimation {
+                            duration: 700
+                        }
                     }
                 }
             }
+            UM.Label {
+                Layout.fillWidth: true
+                text: root.busy() ? "Downloading and indexing the print…" : root.idleInstruction
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("small")
+                wrapMode: Text.WordWrap
+            }
         }
-        UM.Label {
-            Layout.fillWidth: true
-            text: root.busy() ? "Downloading and indexing the print…" : root.idleInstruction
-            color: UM.Theme.getColor("text_inactive")
-            font: UM.Theme.getFont("small")
-            wrapMode: Text.WordWrap
-        }
-        // The WHOLE row clicks (the live request): the label and the
-        // glyph are the same offer, not two targets.
+        // Last of the wrapper's children, so it sits above the row
+        // layout and the whole row stays one target.
         MouseArea {
             anchors.fill: parent
             enabled: root.printerModel != null && root.printerModel.monitorConnected

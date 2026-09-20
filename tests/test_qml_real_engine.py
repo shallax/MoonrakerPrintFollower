@@ -1651,11 +1651,23 @@ if QT_AVAILABLE:
         and the popover never opens."""
 
         plateSplitChanged = pyqtSignal()
+        plateDotChanged = pyqtSignal()
+        # The follower's own publish groups, mirroring the model's
+        # _SIGNAL_KEYS: the anchor rides the plate group, the follow
+        # state and the option ride the view group.
+        plateProgressChanged = pyqtSignal()
+        followerViewChanged = pyqtSignal()
 
         def __init__(self):
             super().__init__()
             self._split = PlateFaceRenderTests.PAYLOAD["split"]
+            self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
+            self._layer_count = 40
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
+            self._attached = True
+            self._keep_centred = False
+            self._layer_anchor = -1
+            self.calls = []
             self._plate = {"objects": [
                 {"name": "Widget", "center": [125.0, 125.0],
                  "polygon": [[0.0, 0.0], [250.0, 0.0], [250.0, 250.0], [0.0, 250.0]],
@@ -1689,9 +1701,18 @@ if QT_AVAILABLE:
         def plateSplit(self):
             return self._split
 
-        @pyqtProperty(int, constant=True)
+        @pyqtProperty(int, notify=plateProgressChanged)
         def plateProgressAnchor(self):
-            return PlateFaceRenderTests.PAYLOAD["anchor"]
+            return self._anchor
+
+        def setAnchor(self, anchor):
+            """Move the served layer: the follow's own publish."""
+            self._anchor = int(anchor)
+            self.plateProgressChanged.emit()
+
+        @pyqtProperty(int, constant=True)
+        def plateLayerCount(self):
+            return self._layer_count
 
         @pyqtProperty(bool, constant=True)
         def plateProgressAvailable(self):
@@ -1701,9 +1722,67 @@ if QT_AVAILABLE:
         def plateProgressReason(self):
             return ""
 
-        @pyqtProperty("QVariant", constant=True)
+        @pyqtProperty("QVariant", notify=plateDotChanged)
         def plateDot(self):
             return self._dot
+
+        def setDot(self, x, y, valid=True):
+            """The toolhead moves: the follow's per-poll clock."""
+            self._dot = {"x": float(x), "y": float(y), "valid": bool(valid)}
+            self.plateDotChanged.emit()
+
+        @pyqtProperty(bool, notify=followerViewChanged)
+        def followerKeepCentred(self):
+            return self._keep_centred
+
+        @pyqtProperty(bool, notify=followerViewChanged)
+        def followerAttached(self):
+            return self._attached
+
+        @pyqtProperty(int, notify=followerViewChanged)
+        def followerLayerAnchor(self):
+            return self._layer_anchor
+
+        # The model's own slots, mirrored: the double's state follows
+        # the same rules so the controls' surface is a real state
+        # machine (the freeze, the rejoin, the manual anchor).
+        @pyqtSlot(bool)
+        def setFollowerKeepCentred(self, keep):
+            self.calls.append(("keepCentred", bool(keep)))
+            if self._keep_centred == bool(keep):
+                return
+            self._keep_centred = bool(keep)
+            self.followerViewChanged.emit()
+
+        @pyqtSlot(bool)
+        def setFollowerAttached(self, attached):
+            self.calls.append(("attached", bool(attached)))
+            attached = bool(attached)
+            if attached == self._attached:
+                return
+            if attached:
+                self._attached = True
+                self._layer_anchor = -1
+            else:
+                frozen = self._layer_anchor if self._layer_anchor >= 0 else self._anchor
+                if frozen < 0:
+                    return
+                self._attached = False
+                self._layer_anchor = frozen
+                self._anchor = frozen
+            self.followerViewChanged.emit()
+            self.plateProgressChanged.emit()
+
+        @pyqtSlot(int)
+        def setFollowerLayerAnchor(self, layer):
+            self.calls.append(("layer", int(layer)))
+            if layer < 0:
+                return
+            self._attached = False
+            self._layer_anchor = int(layer)
+            self._anchor = int(layer)
+            self.followerViewChanged.emit()
+            self.plateProgressChanged.emit()
 
         @pyqtProperty("QVariant", constant=True)
         def plateObjects(self):
@@ -2306,6 +2385,185 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(20)
         self.assertEqual(face.height(), height, "un-hovering reflowed the canvas")
 
+    def _click(self, window, item, at=None):
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt
+        point = at if at is not None else QPointF(item.width() / 2, item.height() / 2)
+        centre = item.mapToScene(point).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=centre)
+        self.pump(30)
+
+    def _follower_popover(self, width=900, height=760):
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", width, height)
+        self._open(monitor, "plateprogress")
+        faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
+        self.assertEqual(len(faces), 1)
+        return monitor, window, faces[0]
+
+    def _fill_zoom(self, face, plot):
+        """A zoom whose bed overfills the face on both axes: the pan
+        clamp never bites, so "centred" is exactly the view's centre."""
+        side = plot.property("bed").property("plotWidth").toNumber()
+        face.setProperty("viewScale", max(face.width(), face.height()) / side + 0.5)
+        self.pump(20)
+
+    def test_the_jump_button_recentres_the_view_on_the_toolhead(self):
+        monitor, window, face = self._follower_popover()
+        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        self.assertIsNotNone(plot, "the bed mapping never built")
+        self._fill_zoom(face, plot)
+        # The toolhead at the bed's centre: the view is unpanned, so at
+        # this zoom the dot stands off the view entirely.
+        self._printer.setDot(125.0, 125.0)
+        self.pump(30)
+        dot = face.findChild(QQuickItem, "moonrakerPlateToolheadDot")
+        self.assertTrue(dot.property("visible"), "no toolhead dot to jump to")
+        before = (face.property("viewPanX"), face.property("viewPanY"))
+        jump = self.find(monitor, "moonrakerFollowerJump")
+        self.assertTrue(jump.property("enabled"), "the jump is dead with a live dot")
+        self._click(window, jump)
+        self.assertNotEqual((face.property("viewPanX"), face.property("viewPanY")), before,
+                            "the jump never panned the view")
+        self.assertAlmostEqual(dot.x() + dot.width() / 2, face.width() / 2, delta=2.0,
+                               msg="the jump did not land the toolhead on the view's centre")
+        self.assertAlmostEqual(dot.y() + dot.height() / 2, face.height() / 2, delta=2.0,
+                               msg="the jump did not land the toolhead on the view's centre")
+
+    def test_the_jump_button_is_disabled_without_a_live_toolhead(self):
+        monitor, window, face = self._follower_popover()
+        self._printer.setDot(0.0, 0.0, valid=False)
+        self.pump(30)
+        self.assertFalse(self.find(monitor, "moonrakerFollowerJump").property("enabled"),
+                         "the jump is live with no valid toolhead position")
+
+    def test_a_pan_translates_the_raster_stack_without_re_accumulating(self):
+        monitor, window, face = self._follower_popover()
+        face.setProperty("dot", None)
+        rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
+        self.assertTrue(rows, "the follower painted nothing")
+        # The delta accumulation is live at this split; a pan must not
+        # touch it (the pan is a scene-graph translation, so the old
+        # per-pan re-raster would show up as a reset here).
+        self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
+                                "the accumulation never painted")
+        held = (face.property("_lastSplit"), face.property("_paintsSinceReset"))
+        face.setProperty("viewPanY", 36.0)
+        self.pump(60)
+        self.assertEqual((face.property("_lastSplit"), face.property("_paintsSinceReset")), held,
+                         "a pan re-rastered the raster stack")
+        self.assertEqual(face.property("_view").property("scale").toNumber(),
+                         face.property("viewScale"),
+                         "the painter's carrier lost the zoom")
+        moved = self._ink_rows(self._grab_when_inked(window, face), face, window)
+        self.assertAlmostEqual(min(moved) - min(rows), 36, delta=2,
+                               msg="the raster did not translate with the pan")
+
+    def test_the_centred_follow_option_defaults_off_and_publishes(self):
+        monitor, window, face = self._follower_popover()
+        box = self.find(monitor, "moonrakerFollowerKeepCentred")
+        self.assertFalse(box.property("checked"), "the centred follow is on by default")
+        self.assertFalse(face.property("keepCentred"))
+        self._click(window, box)
+        self.assertIn(("keepCentred", True), self._printer.calls)
+        self.assertTrue(face.property("keepCentred"), "the face never took the option")
+
+    def test_the_centred_follow_pans_onto_the_moving_toolhead(self):
+        monitor, window, face = self._follower_popover()
+        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        self._fill_zoom(face, plot)
+        self._printer.setFollowerKeepCentred(True)
+        self.pump(20)
+        self.assertTrue(face.property("keepCentred"))
+        dot = face.findChild(QQuickItem, "moonrakerPlateToolheadDot")
+        for x, y in ((100.0, 100.0), (150.0, 150.0)):
+            self._printer.setDot(x, y)
+            self.pump(30)
+            self.assertAlmostEqual(dot.x() + dot.width() / 2, face.width() / 2, delta=2.0,
+                                   msg="the follow did not centre the toolhead at x=%s" % x)
+            self.assertAlmostEqual(dot.y() + dot.height() / 2, face.height() / 2, delta=2.0,
+                                   msg="the follow did not centre the toolhead at y=%s" % y)
+        # A toolhead at the bed's edge cannot be centred without
+        # uncovering the view: the pan stops at the bed's own edge and
+        # the bed still fills the face.
+        self._printer.setDot(5.0, 5.0)
+        self.pump(30)
+        bed = plot.property("bed")
+        scale = face.property("viewScale")
+        left = bed.property("offsetX").toNumber() * scale + face.property("viewPanX")
+        top = bed.property("offsetY").toNumber() * scale + face.property("viewPanY")
+        self.assertLessEqual(left, 0.0)
+        self.assertGreaterEqual(left + bed.property("plotWidth").toNumber() * scale, face.width())
+        self.assertLessEqual(top, 0.0)
+        self.assertGreaterEqual(top + bed.property("plotHeight").toNumber() * scale, face.height())
+        self.assertGreater(abs(dot.x() + dot.width() / 2 - face.width() / 2), 2.0,
+                           "a clamped follow still claimed to be centred")
+
+    def test_detaching_freezes_the_layer_and_hides_the_dot(self):
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(9)
+        self.pump(20)
+        dot = face.findChild(QQuickItem, "moonrakerPlateToolheadDot")
+        slider = self.find(monitor, "moonrakerFollowerLayerSlider")
+        attach = self.find(monitor, "moonrakerFollowerAttach")
+        self.assertTrue(dot.property("visible"))
+        self.assertTrue(attach.property("enabled"))
+        self.assertFalse(slider.property("enabled"), "the slider seeks while attached")
+        self.assertEqual(slider.property("value"), 9.0, "the slider did not follow the live layer")
+        self._click(window, attach)
+        self.assertIn(("attached", False), self._printer.calls)
+        self.assertEqual(attach.property("text"), "Attach")
+        self.assertFalse(face.property("attached"))
+        self.assertFalse(dot.property("visible"), "the detached face kept its toolhead dot")
+        self.assertEqual(self._printer.followerLayerAnchor, 9,
+                         "the detach did not hold the layer it showed")
+        self.assertTrue(slider.property("enabled"), "the detached slider cannot seek")
+        self.assertEqual(slider.property("value"), 9.0, "the frozen layer left the slider")
+        self._click(window, attach)
+        self.assertIn(("attached", True), self._printer.calls)
+        self.assertEqual(attach.property("text"), "Detach")
+        self.assertTrue(face.property("attached"))
+        self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
+        self.assertFalse(slider.property("enabled"))
+
+    def test_the_layer_slider_commits_only_after_the_seek_settles(self):
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(9)
+        self.pump(20)
+        self._click(window, self.find(monitor, "moonrakerFollowerAttach"))
+        slider = self.find(monitor, "moonrakerFollowerLayerSlider")
+        self.assertTrue(slider.property("enabled"))
+        self._printer.calls = []
+        seek = slider.mapToScene(QPointF(slider.width() * 0.5, slider.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=seek)
+        self.pump(20)
+        requested = round(slider.property("value"))
+        self.assertEqual([call for call in self._printer.calls if call[0] == "layer"], [],
+                         "the seek committed a layer before it settled")
+        # The settle: the request lands while the handle is still held
+        # (nothing is committed by the hold itself).
+        deadline = time.monotonic() + 1.5
+        while (not [call for call in self._printer.calls if call[0] == "layer"]
+               and time.monotonic() < deadline):
+            self.app.processEvents()
+            time.sleep(0.02)
+        layers = [call for call in self._printer.calls if call[0] == "layer"]
+        self.assertEqual(layers, [("layer", requested)],
+                         "the settled seek did not request its own layer")
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=seek)
+        self.pump(20)
+        self.assertEqual(self._printer.followerLayerAnchor, requested)
+        self.assertEqual(slider.property("value"), float(requested))
+        # A release commits at once: the click path needs no settle.
+        self._printer.calls = []
+        far = slider.mapToScene(QPointF(slider.width() * 0.85, slider.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=far)
+        self.pump(30)
+        seeks = [call for call in self._printer.calls if call[0] == "layer"]
+        self.assertEqual(len(seeks), 1, "a settled click did not commit exactly once")
+        self.assertGreater(seeks[0][1], requested, "the second seek did not move forward")
+
     def test_the_picker_draws_no_toolhead_dot(self):
         monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
         self._open(monitor, "plate")
@@ -2321,3 +2579,105 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertIsNotNone(follower_dot)
         self.assertTrue(follower_dot.property("visible"),
                         "the follower lost its toolhead dot")
+
+
+if QT_AVAILABLE:
+
+    class PlateDownloadPrinterDouble(QObject):
+        """The download action's printer surface. The call counter is
+        the click oracle for the whole-row target: a row that stopped
+        routing clicks to the label would leave it at zero."""
+
+        improvingEtaChanged = pyqtSignal()
+        monitorConnectedChanged = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.improve_eta_calls = 0
+
+        @pyqtProperty(bool, notify=improvingEtaChanged)
+        def improvingEta(self):
+            return False
+
+        @pyqtProperty(float, notify=improvingEtaChanged)
+        def improveEtaProgress(self):
+            return -1.0
+
+        @pyqtProperty(str, notify=improvingEtaChanged)
+        def improveEtaPhase(self):
+            return ""
+
+        @pyqtProperty(bool, notify=monitorConnectedChanged)
+        def monitorConnected(self):
+            return True
+
+        @pyqtSlot()
+        def improveEta(self):
+            self.improve_eta_calls += 1
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class PlateDownloadActionTests(RealEngineTestCase):
+    """The plate cards' download action must stay ONE click target
+    without anchoring a layout-managed item: anchoring a child of a
+    layout is undefined behaviour and the engine warns about it on
+    every mount. The MouseArea therefore lives in a plain Item whose
+    anchored RowLayout carries the glyph and the label."""
+
+    def _mount_action(self, width=260):
+        # The printer is RETAINED: a Python-created QObject dies with
+        # its last Python ref and the QML var then reads null.
+        printer = PlateDownloadPrinterDouble()
+        self._printer = printer
+        document, window = self.mount_window("PlateDownloadAction.qml", width, 240)
+        document.setProperty("printerModel", printer)
+        self.pump(30)
+        return document, window, printer
+
+    def _click_centre(self, item, window):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=point)
+        self.pump(10)
+
+    def _instruction_row(self, document):
+        """The label the user reads and the MouseArea over it."""
+        label = area = None
+        for item in document.findChildren(QQuickItem):
+            name = item.metaObject().className()
+            text = item.property("text")
+            if label is None and "Label" in name and isinstance(text, str) and text:
+                label = item
+            if area is None and name == "QQuickMouseArea":
+                area = item
+        self.assertIsNotNone(label, "the instruction label did not build")
+        self.assertIsNotNone(area, "the instruction row's MouseArea did not build")
+        return label, area
+
+    def test_the_instruction_row_anchors_nothing_managed_by_a_layout(self):
+        self.pump(10)  # flush anything queued by an earlier mount
+        before = len(_APPLICATION["messages"])
+        document, window, printer = self._mount_action()
+        warned = [message for message in _APPLICATION["messages"][before:]
+                  if "PlateDownloadAction.qml" in message or "managed by a layout" in message]
+        self.assertEqual(warned, [], "the row's anchors warn on the real engine again")
+        label, area = self._instruction_row(document)
+        self.assertNotIn("Layout", area.parentItem().metaObject().className(),
+                         "the MouseArea hangs off a layout item again")
+
+    def test_the_whole_instruction_row_stays_one_click_target(self):
+        document, window, printer = self._mount_action()
+        label, area = self._instruction_row(document)
+        base = window.contentItem()
+        area_rect = self.rect(area, base)
+        label_rect = self.rect(label, base)
+        self.assertTrue(area_rect.contains(label_rect),
+                        "the label sits outside the row's MouseArea")
+        # The row is the full width the card gives the action: the
+        # blank space beside the text is the same offer.
+        self.assertAlmostEqual(area_rect.width(), document.width(), delta=0.5)
+        self._click_centre(label, window)
+        self.assertEqual(printer.improve_eta_calls, 1,
+                         "clicking the label no longer downloads the index")

@@ -211,9 +211,9 @@ def _toolhead_state(stored) -> dict:
 
 def _follower_view_state(stored) -> dict:
     """The print follower's view settings — GLOBAL, not per printer
-    (the live ruling): the layer toggles and the stroke thickness.
-    Bools stay booleans; the scale clamps to the control's 0.5-2.0
-    range."""
+    (the live ruling): the layer toggles, the stroke thickness and the
+    centred follow. Bools stay booleans; the scale clamps to the
+    control's 0.5-2.0 range."""
     stored = stored if isinstance(stored, dict) else {}
     def flag(key, default):
         value = stored.get(key, default)
@@ -229,6 +229,9 @@ def _follower_view_state(stored) -> dict:
         "showNext": flag("showNext", True),
         "showBase": flag("showBase", True),
         "showTravels": flag("showTravels", False),
+        # The centred follow is an OPTION and stays one: the default
+        # render path is the cheap one (the 2026-09-20 ruling).
+        "keepCentred": flag("keepCentred", False),
         "lineScale": scale(stored.get("lineScale", 0.7)),
     }
 
@@ -358,7 +361,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
         ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
-        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason")),
+        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
+                                  "plateLayerCount")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -382,7 +386,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
-        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale")),
+        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
+                                 "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
@@ -411,11 +416,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
+                 request_plate_anchor=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
                  identity=None, state_store=None, persistence=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
+        # The follower's anchor seam (the pop-over's layer slider): the
+        # model publishes the state, the coordinator owns the payload.
+        self._request_plate_anchor = request_plate_anchor
         self._identity = identity
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
@@ -486,6 +495,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_show_base = follower_view["showBase"]
         self._follower_show_travels = follower_view["showTravels"]
         self._follower_line_scale = follower_view["lineScale"]
+        self._follower_keep_centred = follower_view["keepCentred"]
+        # The follower's attach state and its frozen layer — a LIVE view
+        # state, never persisted: a restart follows the print again, and
+        # the frozen layer belongs to the file that was printing.
+        self._follower_attached = True
+        self._follower_layer_anchor = -1
+        self._follower_job = None
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
         # moves to the second consumer — the model's save payload
@@ -1115,6 +1131,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
+        # The follower's attach state belongs to ONE print: a new file
+        # re-attaches it before the value block reads the state.
+        self._observe_follower_job(getattr(snapshot, "job_key", None))
         if self._improving_eta and snapshot is not self._improve_started_snapshot \
                 and not snapshot.load_active:
             # The coordinator REBUILT its snapshot since the improve
@@ -1192,6 +1211,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["plateProgressReason"] = (
             "" if progress is not None
             else "No index yet — the download button builds one without loading the preview.")
+        # The layer slider's range: the index's own layer count. A
+        # manual anchor outside the file is refused by the coordinator,
+        # so this is the range the QML slider reads back.
+        try:
+            layer_count = int(getattr(snapshot, "plate_layer_count", 0) or 0)
+        except (TypeError, ValueError):
+            layer_count = 0
+        values["plateLayerCount"] = max(0, layer_count)
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
@@ -1354,6 +1381,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowBase=self._follower_show_base,
             followerShowTravels=self._follower_show_travels,
             followerLineScale=self._follower_line_scale,
+            followerKeepCentred=self._follower_keep_centred,
+            followerAttached=self._follower_attached,
+            followerLayerAnchor=self._follower_layer_anchor,
             britishSpelling=_british_spelling(),
             improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
             # The next scheduled pause (the live ruling): the
@@ -1507,11 +1537,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
     plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "No index yet — the download button builds one without loading the preview.")
+    plateLayerCount = value_property(int, "plateLayerCount", plateProgressChanged, 0)
     followerShowPrevious = value_property(bool, "followerShowPrevious", followerViewChanged, True)
     followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
     followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
     followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 0.7)
+    followerKeepCentred = value_property(bool, "followerKeepCentred", followerViewChanged, False)
+    followerAttached = value_property(bool, "followerAttached", followerViewChanged, True)
+    followerLayerAnchor = value_property(int, "followerLayerAnchor", followerViewChanged, -1)
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")
     moonrakerVersion = value_property(str, "moonrakerVersion", systemChanged, "—")
@@ -2429,6 +2463,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "showNext": self._follower_show_next,
                 "showBase": self._follower_show_base,
                 "showTravels": self._follower_show_travels,
+                "keepCentred": self._follower_keep_centred,
                 "lineScale": self._follower_line_scale,
             },
             # The chrome-only rewrite in __init__ runs BEFORE the
@@ -2651,6 +2686,83 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_line_scale = scale
         self._save_state()
         self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerKeepCentred(self, keep):
+        if self._follower_keep_centred is bool(keep):
+            return
+        self._follower_keep_centred = bool(keep)
+        self._save_state()
+        self._publish()
+
+    def _plate_anchor_request(self, anchor):
+        """The coordinator's anchor seam (the confirm*/toggle*
+        capability pattern): None rejoins the live layer, an index
+        freezes the face on it."""
+        if self._request_plate_anchor is not None:
+            self._request_plate_anchor(anchor)
+
+    def _observe_follower_job(self, job):
+        """A new print re-attaches the follower: the frozen layer
+        belonged to the file that was printing."""
+        if job == self._follower_job:
+            return
+        self._follower_job = job
+        if not self._follower_attached:
+            self._follower_attached = True
+            self._follower_layer_anchor = -1
+            self._plate_anchor_request(None)
+
+    @pyqtSlot(bool)
+    def setFollowerAttached(self, attached):
+        """Attach/detach: detached freezes the anchor on the layer the
+        face is showing, attached rejoins the live print. A refused
+        detach (no layer to hold) leaves the follower attached rather
+        than publishing a state the coordinator cannot serve."""
+        attached = bool(attached)
+        if attached == self._follower_attached:
+            return
+        self._follower_attached = attached
+        if attached:
+            self._follower_layer_anchor = -1
+            self._plate_anchor_request(None)
+        else:
+            frozen = self._follower_layer_anchor
+            if frozen < 0:
+                # Nothing frozen yet: the LIVE layer is where the face
+                # stands, so that is what the detach holds on to.
+                frozen = int(self._values.get("plateProgressAnchor", -1) or -1)
+            if frozen >= 0:
+                self._follower_layer_anchor = frozen
+                self._plate_anchor_request(frozen)
+            else:
+                # No layer to freeze (no index): a detach that would
+                # change nothing is refused rather than published as a
+                # state the coordinator cannot serve.
+                self._follower_attached = True
+                return
+        self._publish()
+
+    @pyqtSlot(int)
+    def setFollowerLayerAnchor(self, layer):
+        """The layer slider's committed value (the debounced request):
+        a manual layer IS a detach — the face cannot follow the print
+        and hold another layer at once."""
+        try:
+            layer = int(layer)
+        except (TypeError, ValueError):
+            return
+        if layer < 0:
+            return
+        if self._follower_attached:
+            self._follower_attached = False
+        if self._follower_layer_anchor == layer:
+            self._publish()
+            return
+        self._follower_layer_anchor = layer
+        self._plate_anchor_request(layer)
+        self._publish()
+
     @pyqtSlot(str, bool)
     def setPowerDevice(self, name, on): self._controls.set_power(name, on)
     @pyqtSlot(int)

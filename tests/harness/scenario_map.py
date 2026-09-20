@@ -100,6 +100,11 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerShowBase": "b11",
     "MoonrakerMonitorModel.setFollowerShowTravels": "b11",
     "MoonrakerMonitorModel.setFollowerLineScale": "b11",
+    # The follower's view and layer seeks (4.6.0): the centred-follow
+    # option, the attach/detach freeze, and the layer slider's anchor.
+    "MoonrakerMonitorModel.setFollowerKeepCentred": "b11",
+    "MoonrakerMonitorModel.setFollowerAttached": "b11",
+    "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",
     "MoonrakerMonitorModel.setSpeedFactor": "c2",
@@ -123,6 +128,16 @@ SCENARIO_MAP = {
     "moonrakerPlateExcludeFace": "b11",
     "moonrakerPlateProgressFace": "b11",
     "moonrakerPlateToolheadDot": "b11",
+    # The follower's own controls (4.6.0): the toolhead jump, the
+    # centred-follow option, the layer seek with its attach button and
+    # readout, and the display-only within-layer bar.
+    "moonrakerFollowerJump": "b11",
+    "moonrakerFollowerKeepCentred": "b11",
+    "moonrakerFollowerLayerSlider": "b11",
+    "moonrakerFollowerLayerReadout": "b11",
+    "moonrakerFollowerAttach": "b11",
+    "moonrakerFollowerLayerProgress": "b11",
+    "moonrakerFollowerLayerProgressReadout": "b11",
     "followerShowPrevious": "b11",
     "followerShowNext": "b11",
     "followerShowBase": "b11",
@@ -270,6 +285,11 @@ PREFIX_RULES = [
     ("key", "plateProgressAvailable", "b11"),
     ("key", "plateProgressReason", "b11"),
     ("key", "plateHasObjects", "b11"),
+    # The layer slider's range and the follower's follow state (4.6.0).
+    ("key", "plateLayerCount", "b11"),
+    ("key", "followerAttached", "b11"),
+    ("key", "followerLayerAnchor", "b11"),
+    ("key", "followerKeepCentred", "b11"),
     ("key", "zOffset", "g4"),
     ("key", "homedAxes", "b8"),
     ("key", "positionMode", "g3"),

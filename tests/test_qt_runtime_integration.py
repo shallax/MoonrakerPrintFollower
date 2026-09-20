@@ -1986,6 +1986,128 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.assertTrue(self._wait(lambda: len(messages) == 1))
         self.assertIn("does not match the file listing", messages[0])
 
+    def _cura_double(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class CuraDouble(QObject):
+            loadFailed = pyqtSignal(str)
+
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.loads = []
+
+            def load(self, lease):
+                self.loads.append(lease)
+
+        return CuraDouble()
+
+    def _file_download(self, **kwargs):
+        """The file-manager save lane over this REAL one-shot service."""
+        module = self.qt.load("FileDownload")
+        download = module.FileDownload(self.files, self._cura_double(), None, **kwargs)
+        self.addCleanup(download.close)
+        return module, download
+
+    def _save_target(self, name="saved.gcode", payload=None):
+        directory = tempfile.mkdtemp(prefix="mpf-save-")
+        target = os.path.join(directory, name)
+        if payload is not None:
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+        return target
+
+    def test_the_two_cancel_terminals_stay_distinct(self):
+        # The reviewer's A at its source: the user's Cancel and an
+        # invalidated session are different terminals, and the user's
+        # never borrows the connection-change explanation. Both retire
+        # their own temp directory as they deliver.
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        cancelled = []
+        download = self.files.download_once(
+            "prints/part.gcode", on_ready=lambda path, error: cancelled.append((path, error)))
+        directory = download._directory
+        download.cancel()
+        self.assertEqual(cancelled, [(None, "The download was cancelled")])
+        self.assertNotIn("connection", cancelled[0][1])
+        self.assertFalse(os.path.exists(directory))
+
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        invalidated = []
+        self.files.download_once(
+            "prints/part.gcode", on_ready=lambda path, error: invalidated.append((path, error)))
+        self.files.cancel_one_shots()
+        self.assertEqual(invalidated,
+                         [(None, "The printer connection changed; the download was cancelled")])
+
+    def test_a_real_save_replaces_the_picked_file(self):
+        # End to end through the streamed lane: the temp file lands at
+        # the picked path, an existing file is replaced, and nothing of
+        # the transfer survives beside it.
+        directory = tempfile.mkdtemp(prefix="mpf-save-")
+        target = os.path.join(directory, "saved.gcode")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("OLD\n")
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"G1 X0\n", size=6)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        self.assertIsNotNone(download.progress())  # the window is open for the transfer
+
+        reply.readyRead.emit()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: download._save is None))
+
+        self.assertEqual(failures, [])
+        self.assertIsNone(download.progress())
+        with open(target, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "G1 X0\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+
+    def test_the_popup_cancel_ends_a_real_save_with_the_user_message(self):
+        target = self._save_target()
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        reply.readyRead.emit()
+
+        download.cancel()
+
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual([name for name in os.listdir(self.files._root) if name.startswith("file-")], [])
+
+    def test_a_session_invalidation_mid_save_touches_no_destination(self):
+        target = self._save_target(payload="OLD\n")
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        reply.readyRead.emit()
+
+        self.files.cancel_one_shots()  # the runtime's invalidation wire
+
+        self.assertTrue(self._wait(lambda: download._save is None))
+        self.assertEqual(failures, ["The printer connection changed; the download was cancelled"])
+        with open(target, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "OLD\n")
+        self.assertEqual([name for name in os.listdir(self.files._root) if name.startswith("file-")], [])
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class ToolheadControllerTests(unittest.TestCase):
