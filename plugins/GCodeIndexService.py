@@ -8,8 +8,12 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
-from .MonitorFormatting import _point_in_polygon
-from .PlateProgress import plate_layers as _plate_layers, split_index as _split_index
+from .MonitorFormatting import _segment_in_polygon, polygon_bounds
+from .PlateProgress import (
+    motion_edges as _motion_edges,
+    plate_layers as _plate_layers,
+    split_index as _split_index,
+)
 
 
 @dataclass(frozen=True)
@@ -161,31 +165,48 @@ class GCodeIndexService(QObject):
 
     def plate_visited(self, anchor, split, rows):
         """The per-layer printed objects: which polygons the executed
-        motions have touched. Built HERE (the raw arrays never cross
-        the boundary) and READ BACK FROM THE LAYER'S START — an
+        EXTRUSION edges have touched. Built HERE (the raw arrays never
+        cross the boundary) and READ BACK FROM THE LAYER'S START — an
         attach part-way through a layer still marks everything the
         toolhead already printed (the live ruling: the DEFINE order
         is not the print order on every machine, so the visits are
-        the truth). The walk advances only the new motions per poll."""
+        the truth). The walk advances only the new edges per poll.
+
+        The edges are the G-code's own motion edges, and only the
+        extruding ones count: a travel that merely crosses or ends
+        inside a polygon deposits nothing there, while an extrusion
+        edge that clips a corner does — the visit follows the material,
+        never the motion endpoint."""
         if self._view is None or split is None or anchor is None:
             return frozenset()
         index = self._view._index
-        polygons = [(row["name"], row["polygon"]) for row in rows
-                    if row.get("polygon") and row.get("name")]
+        polygons = []
+        for row in rows:
+            polygon = row.get("polygon")
+            if not polygon or not row.get("name"):
+                continue
+            polygons.append((row["name"], polygon, polygon_bounds(polygon)))
         with index.cache_lock:
             if self._visited_key != (anchor,):
                 self._visited_key = (anchor,)
                 self._visited = set()
-                self._visited_upto = -1
+                self._visited_upto = 0
             if split <= self._visited_upto:
                 return frozenset(self._visited)
-            xs = index.motion_x[anchor] if anchor < len(index.motion_x) else ()
-            ys = index.motion_y[anchor] if anchor < len(index.motion_y) else ()
-            end = min(split + 1, len(xs))
-            for motion in range(self._visited_upto + 1, end):
-                x, y = float(xs[motion]), float(ys[motion])
-                for name, polygon in polygons:
-                    if _point_in_polygon(x, y, polygon):
+            for motion, x0, y0, x1, y1, _feature, extruding in _motion_edges(
+                    index, anchor, self._visited_upto):
+                if motion >= split:
+                    break
+                if not extruding:
+                    continue
+                left, right = (x0, x1) if x0 <= x1 else (x1, x0)
+                bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
+                for name, polygon, bounds in polygons:
+                    # The bounds reject most pairs for the price of four
+                    # comparisons, before any vertex is touched.
+                    if right < bounds[0] or left > bounds[2] or top < bounds[1] or bottom > bounds[3]:
+                        continue
+                    if _segment_in_polygon(x0, y0, x1, y1, polygon):
                         self._visited.add(name)
                         break
             self._visited_upto = split

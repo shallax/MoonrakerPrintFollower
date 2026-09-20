@@ -2885,7 +2885,7 @@ class MonitorQtTests(unittest.TestCase):
                 # ruling) — the defaults ride the fresh document.
                 "followerView": {"showPrevious": True, "showNext": True,
                                  "showBase": True, "showTravels": False,
-                                 "lineScale": 1.0},
+                                 "lineScale": 0.7},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.

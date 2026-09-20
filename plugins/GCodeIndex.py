@@ -16,6 +16,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
 
+from . import ArcGeometry
 from .MoonrakerProtocol import RemoteFileIdentity
 
 
@@ -31,7 +32,18 @@ _STATS_MARKER = re.compile(
 _MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
 _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
+# Only the XYZE words are read here: an arc's centre offsets are not
+# positions and never move the XYZ state, so they are parsed separately
+# (_ARC_WORD) and only on a G2/G3 line.
 _AXIS = re.compile(rb"([XYZE])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
+# An arc's I/J/K centre offsets, and the R a radius-form arc would carry
+# (Klipper rejects that form; the R is what tells the two apart).
+_ARC_WORD = re.compile(rb"([IJKR])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
+# The motion words that describe an arc, in every spelling the motion
+# regex accepts: G2/G02 and G3/G03. Both spellings are arcs to the
+# parser, so both must be arcs to the geometry as well.
+_ARC_CLOCKWISE = frozenset((b"G2", b"G02"))
+_ARC_COUNTER = frozenset((b"G3", b"G03"))
 # The slicer's feature marker. Leading whitespace is tolerated: a
 # post-processed or macro-generated file does not always write it at
 # column 0, and a missed marker silently mis-colours a whole block. The
@@ -61,11 +73,17 @@ _MAX_CACHE_HEADER_BYTES = 16 * 1024 * 1024
 # would restore a layer's colours wrong, while an absent one only reads
 # as "not recorded".
 _MAX_CACHE_FEATURE_ENTRIES = 500_000
-# 6: the per-motion feature columns (type runs, travel boundaries and the
-# layer-start feature state). A reader that accepted a 5 blob would restore
-# it with those columns empty, which draws a preview with no feature
-# colours and no travel — so the version refuses it outright.
-_CACHE_VERSION = 8
+# The arc columns' serialization budget, in descriptors: the JSON header
+# itself is the bound (one descriptor is ~25 bytes and the header may not
+# exceed _MAX_CACHE_HEADER_BYTES), so past this the descriptors are
+# dropped whole and the reloaded index draws those arcs as the chords it
+# would draw if they had never been indexed. The G0/G1 path pays nothing
+# for it: the column is sparse, one entry per arc.
+_MAX_CACHE_ARC_ENTRIES = 200_000
+# 9: the sparse per-motion arc descriptors and the layer-start arc plane.
+# 8 restored feature columns but indexed G2/G3 by endpoint, so a 8 blob
+# would draw every arc as its chord — the version refuses it outright.
+_CACHE_VERSION = 9
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -108,6 +126,20 @@ class LayerMotionIndex:
     motion_x: List[array] = field(default_factory=list)
     motion_y: List[array] = field(default_factory=list)
     motion_z: List[array] = field(default_factory=list)
+    # The sparse arc descriptors, one mapping per layer: motion index ->
+    # (plane, clockwise, offset-a, offset-b). A G2/G3 stays ONE motion —
+    # its index, its E, its feature and its ownership are the same as any
+    # G1's — and the descriptor is what says the head curved on the way.
+    # Everything else (a real file's motions, overwhelmingly) is absent
+    # from the mapping, which is why it is a mapping and not three more
+    # per-motion arrays. The physical geometry is derived from it on
+    # demand by ArcGeometry, never stored here.
+    motion_arcs: List[Dict[int, tuple]] = field(default_factory=list)
+    # The modal arc plane (17/18/19) at each layer's first motion. The
+    # plane is modal across the whole file, so a G18 in the start g-code
+    # still governs layer 50, and a compact hydration that began at that
+    # layer would otherwise parse its arcs as XY.
+    layer_start_arc_plane: List[int] = field(default_factory=list)
     # The per-motion feature type, one RLE run list per layer: runs of
     # [motion_count, code] in motion order, so a layer costs one run per
     # ;TYPE: block instead of a byte per motion (~3 KB against ~0.44 MB
@@ -252,6 +284,12 @@ class LayerMotionIndex:
             if layer < len(self.layer_start_positions)
             else (float(xs[0]), float(ys[0]), float(zs[0]))
         )
+        # A motion that commanded an arc is matched against the arc it
+        # commanded, not against its endpoint chord: the nozzle is on the
+        # curve for the whole move, so a chord reading would call the
+        # true path "off-model" and hold the coarse fraction instead.
+        # The lookup is skipped entirely for a layer with no arcs.
+        arcs = self.motion_arcs[layer] if layer < len(self.motion_arcs) else None
 
         best_distance_sq = float("inf")
         best_completed = None
@@ -261,6 +299,15 @@ class LayerMotionIndex:
             else:
                 ax, ay, az = float(xs[i - 1]), float(ys[i - 1]), float(zs[i - 1])
             bx, by, bz = float(xs[i]), float(ys[i]), float(zs[i])
+            arc = arcs.get(i) if arcs else None
+            if arc is not None:
+                hit = ArcGeometry.closest(arc, (ax, ay, az), (bx, by, bz), (px, py, pz))
+                if hit is not None:
+                    distance, t = hit
+                    if distance * distance < best_distance_sq:
+                        best_distance_sq = distance * distance
+                        best_completed = i + t
+                    continue
             dx, dy, dz = bx - ax, by - ay, bz - az
             length_sq = dx * dx + dy * dy + dz * dz
             if length_sq <= 1e-12:
@@ -301,6 +348,24 @@ def _parse_axes(code: bytes) -> Dict[str, float]:
     return values
 
 
+def _parse_arc_words(code: bytes) -> Dict[str, float]:
+    """An arc line's I/J/K offsets (and its R, if it carries one).
+
+    These are NOT positions: an I or a J describes where the centre sits
+    relative to the move's start, so reading them as axes would move the
+    head sideways and corrupt every following edge. They are parsed on
+    their own, only on a G2/G3 line, and the arc plane decides which two
+    of them apply (see ArcGeometry.descriptor).
+    """
+    values: Dict[str, float] = {}
+    for match in _ARC_WORD.finditer(code):
+        try:
+            values[match.group(1).decode("ascii").upper()] = float(match.group(2))
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return values
+
+
 class _FeatureTracker:
     """The per-motion feature state, shared by the scan and the hydrator.
 
@@ -314,9 +379,12 @@ class _FeatureTracker:
     The two parse loops must classify a motion identically — a hydrated
     layer that disagreed with the full scan it stands in for would draw a
     different preview — so the rule lives here once. The modal state (E,
-    its absolute/relative mode, the open travel, the feature type) survives
-    the layer boundaries, and ``open_layer`` hands the layer's own seed on
-    to the compact hydrator, which starts mid-file with nothing else.
+    its absolute/relative mode, the open travel, the feature type, the arc
+    plane) survives the layer boundaries, and ``open_layer`` hands the
+    layer's own seed on to the compact hydrator, which starts mid-file with
+    nothing else. The arc plane belongs here for the same reason as E: G17
+    /G18/G19 is modal across the whole file, so a plane chosen long before
+    a layer still decides what that layer's G2/G3 means.
 
     The layer's type runs are built here as well, but only a ``;TYPE:``
     marker writes one: the per-motion walk ticks a counter, and
@@ -325,7 +393,8 @@ class _FeatureTracker:
 
     __slots__ = ("runs", "starts", "ends", "count", "last_type", "span",
                  "open_type", "e", "absolute_e", "extruding", "start_type",
-                 "start_e", "start_e_absolute", "start_extruding")
+                 "start_e", "start_e_absolute", "start_extruding", "plane",
+                 "start_plane")
 
     def __init__(self) -> None:
         self.runs: List[List[int]] = []
@@ -347,6 +416,9 @@ class _FeatureTracker:
         self.start_e = 0.0
         self.start_e_absolute = True
         self.start_extruding = True
+        # G17 is the default plane: a file that never selects one is XY.
+        self.plane = ArcGeometry.PLANE_XY
+        self.start_plane = ArcGeometry.PLANE_XY
 
     def open_layer(self) -> None:
         """Seed a new layer from the modal state and reset the counters."""
@@ -355,6 +427,7 @@ class _FeatureTracker:
         self.start_e = self.e
         self.start_e_absolute = self.absolute_e
         self.start_extruding = self.extruding
+        self.start_plane = self.plane
         self.runs = []
         self.starts = []
         self.ends = []
@@ -592,6 +665,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         "x": array("f"),
                         "y": array("f"),
                         "z": array("f"),
+                        "arcs": {},
                         "start_position": (x, y, z),
                         "start_absolute": absolute_xyz,
                         "start_units": units_scale,
@@ -599,6 +673,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         "start_e": features.start_e,
                         "start_e_absolute": features.start_e_absolute,
                         "start_extruding": features.start_extruding,
+                        "start_arc_plane": features.start_plane,
                         "features": None,
                     }
                     blocks.append(current)
@@ -664,6 +739,12 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 absolute_xyz = True
             elif command == b"G91":
                 absolute_xyz = False
+            elif command == b"G17":
+                features.plane = ArcGeometry.PLANE_XY
+            elif command == b"G18":
+                features.plane = ArcGeometry.PLANE_XZ
+            elif command == b"G19":
+                features.plane = ArcGeometry.PLANE_YZ
             elif command == b"M82":
                 features.absolute_e = True
             elif command == b"M83":
@@ -681,6 +762,14 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 if "E" in axes:
                     features.e = axes["E"]
             elif _MOTION.search(stripped):
+                # A G2/G3 is ONE motion like any other: it takes the next
+                # index, its E decides extrusion, its ;TYPE: names its
+                # feature. What its line adds is where the head actually
+                # travelled — a circular (or helical) path the descriptor
+                # records so the payload, the live-position match and the
+                # printed-object walk all read the real curve instead of
+                # the chord between its ends. The endpoint below is still
+                # the truth the NEXT move's edge starts from.
                 nx, ny, nz = x, y, z
                 if "X" in axes:
                     nx = axes["X"] if absolute_xyz else x + axes["X"]
@@ -688,6 +777,14 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                     ny = axes["Y"] if absolute_xyz else y + axes["Y"]
                 if "Z" in axes:
                     nz = axes["Z"] if absolute_xyz else z + axes["Z"]
+                arc = None
+                if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
+                    arc_words = _parse_arc_words(code)
+                    if units_scale != 1.0 and arc_words:
+                        arc_words = {word: value * units_scale for word, value in arc_words.items()}
+                    arc = ArcGeometry.descriptor(
+                        features.plane, command in _ARC_CLOCKWISE, arc_words,
+                        absolute_xyz=absolute_xyz)
                 x, y, z = nx, ny, nz
                 collect_here = collect_motions and current is not None \
                     and current["end"] is None \
@@ -702,6 +799,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                     # the byte-range fraction covers the rest — a
                     # one-layer hostile file must not grow multi-GB
                     # motion arrays.
+                    if arc is not None:
+                        current["arcs"][len(current["motions"])] = arc
                     current["motions"].append(offset)
                     current["x"].append(x)
                     current["y"].append(y)
@@ -729,6 +828,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     start_e: List[float] = []
     start_e_absolute: List[bool] = []
     start_extruding: List[bool] = []
+    arcs: List[Dict[int, tuple]] = []
+    start_arc_plane: List[int] = []
     elapsed_times: List[Optional[float]] = []
     block_stats: List[Optional[int]] = []
     for block in blocks:
@@ -743,6 +844,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         types.append(block_features[0])
         travel_starts.append(block_features[1])
         travel_ends.append(block_features[2])
+        arcs.append(block["arcs"])
+        start_arc_plane.append(int(block["start_arc_plane"]))
         starts.append(tuple(float(v) for v in block["start_position"]))
         start_absolute.append(bool(block["start_absolute"]))
         start_units.append(float(block["start_units"]))
@@ -792,6 +895,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     start_e = start_e or []
     start_e_absolute = start_e_absolute or []
     start_extruding = start_extruding or []
+    arcs = arcs or []
+    start_arc_plane = start_arc_plane or []
     elapsed_times = elapsed_times or []
     stats_values = stats_values or []
 
@@ -827,6 +932,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         motion_x=xs,
         motion_y=ys,
         motion_z=zs,
+        motion_arcs=arcs,
         motion_types=types,
         type_names=type_names,
         travel_starts=travel_starts,
@@ -838,6 +944,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         layer_start_e=start_e,
         layer_start_e_absolute=start_e_absolute,
         layer_start_extruding=start_extruding,
+        layer_start_arc_plane=start_arc_plane,
         current_layer_map=layer_map,
         layer_elapsed_times=elapsed_times,
         pauses=pause_layers,
@@ -885,11 +992,16 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             features.e = index.layer_start_e[layer] if layer < len(index.layer_start_e) else 0.0
             features.absolute_e = index.layer_start_e_absolute[layer] if layer < len(index.layer_start_e_absolute) else True
             features.extruding = index.layer_start_extruding[layer] if layer < len(index.layer_start_extruding) else True
+            # The plane at this layer's first motion, never a default XY:
+            # a G18 issued before the layer decides what its arcs mean.
+            features.plane = index.layer_start_arc_plane[layer] \
+                if layer < len(index.layer_start_arc_plane) else ArcGeometry.PLANE_XY
             type_lookup: Dict[str, int] = {}
             offsets = array("Q")
             xs = array("f")
             ys = array("f")
             zs = array("f")
+            arcs: Dict[int, tuple] = {}
             while handle.tell() < end:
                 offset = handle.tell()
                 line = handle.readline(_MAX_LINE_BYTES + 1)
@@ -928,6 +1040,12 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                     absolute_xyz = True
                 elif command == b"G91":
                     absolute_xyz = False
+                elif command == b"G17":
+                    features.plane = ArcGeometry.PLANE_XY
+                elif command == b"G18":
+                    features.plane = ArcGeometry.PLANE_XZ
+                elif command == b"G19":
+                    features.plane = ArcGeometry.PLANE_YZ
                 elif command == b"M82":
                     features.absolute_e = True
                 elif command == b"M83":
@@ -936,23 +1054,36 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                     x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
                     if "E" in axes: features.e = axes["E"]
                 elif _MOTION.search(stripped):
+                    arc = None
+                    if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
+                        arc_words = _parse_arc_words(code)
+                        if units_scale != 1.0 and arc_words:
+                            arc_words = {word: value * units_scale for word, value in arc_words.items()}
+                        arc = ArcGeometry.descriptor(
+                            features.plane, command in _ARC_CLOCKWISE, arc_words,
+                            absolute_xyz=absolute_xyz)
                     if "X" in axes: x = axes["X"] if absolute_xyz else x + axes["X"]
                     if "Y" in axes: y = axes["Y"] if absolute_xyz else y + axes["Y"]
                     if "Z" in axes: z = axes["Z"] if absolute_xyz else z + axes["Z"]
                     collect_here = len(offsets) < _MAX_MOTIONS_PER_LAYER
                     features.add(axes, collect_here)
                     if collect_here:
+                        if arc is not None:
+                            arcs[len(offsets)] = arc
                         offsets.append(offset); xs.append(x); ys.append(y); zs.append(z)
         with index.cache_lock:
             while len(index.motion_offsets) < len(index.ranges):
                 index.motion_offsets.append(array("Q")); index.motion_x.append(array("f")); index.motion_y.append(array("f")); index.motion_z.append(array("f"))
+                index.motion_arcs.append({})
                 index.motion_types.append([]); index.travel_starts.append([]); index.travel_ends.append([])
                 index.layer_start_types.append(_TYPE_NONE); index.layer_start_e.append(0.0)
                 index.layer_start_e_absolute.append(True); index.layer_start_extruding.append(True)
+                index.layer_start_arc_plane.append(ArcGeometry.PLANE_XY)
             index.motion_offsets[layer] = offsets
             index.motion_x[layer] = xs
             index.motion_y[layer] = ys
             index.motion_z[layer] = zs
+            index.motion_arcs[layer] = arcs
             hydrated_runs, hydrated_starts, hydrated_ends = features.payload()
             index.motion_types[layer] = hydrated_runs
             index.travel_starts[layer] = hydrated_starts
@@ -979,7 +1110,9 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                     index.motion_z[old] = array("f")
                     # The feature columns travel with the geometry, or an
                     # evicted layer would hand back a full set of runs for
-                    # an empty motion list.
+                    # an empty motion list. The arc descriptors are keyed
+                    # by motion index and go with them.
+                    index.motion_arcs[old] = {}
                     index.motion_types[old] = []
                     index.travel_starts[old] = []
                     index.travel_ends[old] = []
@@ -1113,6 +1246,87 @@ def _feature_columns(counts: Sequence[int], type_names: Sequence[str], columns) 
     }
 
 
+def _arc_entries(arcs) -> List[List[list]]:
+    """The in-memory descriptors as the sorted entry lists the blob holds.
+
+    The live index keys its descriptors by motion (a sparse mapping, so
+    the no-arc path allocates nothing per motion); the blob stores them
+    as ordered entries, which is also the shape both sides validate.
+    """
+    entries: List[List[list]] = []
+    for layer_arcs in arcs:
+        if isinstance(layer_arcs, dict):
+            entries.append([[int(motion), plane, bool(clockwise), float(offset_a), float(offset_b)]
+                            for motion, (plane, clockwise, offset_a, offset_b)
+                            in sorted(layer_arcs.items())])
+        else:
+            entries.append(list(layer_arcs))
+    return entries
+
+
+def _arc_columns(counts: Sequence[int], arcs, start_planes) -> Optional[Dict]:
+    """Validate the arc descriptors and the layer-start planes, or None.
+
+    The writer and the reader both come through here, for the same reason
+    the feature columns do: a descriptor naming a motion its layer does
+    not have, a plane that is not a plane, or offsets that draw no circle
+    would restore an index whose arcs are not the arcs that were saved.
+    Returning None means the blob must not be published — or not be
+    trusted. An index with no arc data at all (every G0/G1 file) answers
+    an empty mapping, so its header carries no arc keys and pays nothing
+    for the feature.
+
+    Past the entry budget the DESCRIPTORS are dropped whole, never
+    truncated — a partial list would re-chord some arcs and not others —
+    while the layer-start planes stay: they are the hydrator's seed and
+    cost nothing to keep.
+    """
+    try:
+        if not any(arcs) and all(plane == ArcGeometry.PLANE_XY for plane in start_planes):
+            return {}
+    except TypeError:
+        return None
+    layer_count = len(counts)
+    if not isinstance(arcs, (list, tuple)) or not isinstance(start_planes, (list, tuple)):
+        return None
+    if len(arcs) != layer_count or len(start_planes) != layer_count:
+        return None
+    if not all(isinstance(plane, int) and not isinstance(plane, bool)
+               and plane in ArcGeometry.PLANES for plane in start_planes):
+        return None
+    entries = 0
+    clean: List[List[list]] = []
+    for layer, count in enumerate(counts):
+        layer_arcs = arcs[layer]
+        if not isinstance(layer_arcs, (list, tuple)):
+            return None
+        cleaned: List[list] = []
+        previous = -1
+        for entry in layer_arcs:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 5:
+                return None
+            motion, plane, clockwise, offset_a, offset_b = entry
+            if not isinstance(motion, int) or isinstance(motion, bool) or not previous < motion < count:
+                return None
+            if not isinstance(plane, int) or isinstance(plane, bool) or plane not in ArcGeometry.PLANES:
+                return None
+            if not isinstance(clockwise, bool):
+                return None
+            if not all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                       and math.isfinite(value) for value in (offset_a, offset_b)):
+                return None
+            if ArcGeometry.degenerate(offset_a, offset_b):
+                return None
+            previous = motion
+            cleaned.append([motion, plane, clockwise, float(offset_a), float(offset_b)])
+        entries += len(cleaned)
+        clean.append(cleaned)
+    planes = [int(plane) for plane in start_planes]
+    if entries > _MAX_CACHE_ARC_ENTRIES:
+        return {"start_arc_plane": planes}
+    return {"arcs": clean, "start_arc_plane": planes}
+
+
 class PersistentIndexCache:
     def __init__(self, directory: str, *, max_bytes: int = 128 * 1024 * 1024, max_entries: int = 16) -> None:
         self.directory = directory
@@ -1207,6 +1421,26 @@ class PersistentIndexCache:
                 # A budget-dropped (or absent) vocabulary leaves no code to
                 # name, so the names go with the runs.
                 type_names = list(feature_header.get("type_names", []))
+                # The arc columns are optional the same way: a blob whose
+                # descriptors were budget-dropped (or one that never had
+                # any) restores every motion without one, and the geometry
+                # draws those arcs as the chords they would have been
+                # before the feature existed. A present column that
+                # disagrees with the geometry is refused instead.
+                arc_header = _arc_columns(
+                    counts,
+                    header.get("arcs", [{} for _ in counts]),
+                    header.get("start_arc_plane", [ArcGeometry.PLANE_XY] * len(counts)),
+                )
+                if arc_header is None:
+                    return None
+                arcs: List[Dict[int, tuple]] = []
+                for layer_arcs in arc_header.get("arcs", [{} for _ in counts]):
+                    arcs.append({int(entry[0]): (int(entry[1]), bool(entry[2]),
+                                                 float(entry[3]), float(entry[4]))
+                                 for entry in layer_arcs})
+                start_arc_plane = list(arc_header.get(
+                    "start_arc_plane", [ArcGeometry.PLANE_XY] * len(counts)))
 
                 offsets: List[array] = []
                 xs: List[array] = []
@@ -1256,6 +1490,7 @@ class PersistentIndexCache:
                 motion_x=xs,
                 motion_y=ys,
                 motion_z=zs,
+                motion_arcs=arcs,
                 motion_types=types,
                 type_names=type_names,
                 travel_starts=travel_starts,
@@ -1267,6 +1502,7 @@ class PersistentIndexCache:
                 layer_start_e=start_e,
                 layer_start_e_absolute=start_e_absolute,
                 layer_start_extruding=start_extruding,
+                layer_start_arc_plane=start_arc_plane,
                 current_layer_map=layer_map,
                 layer_elapsed_times=elapsed_times,
                 pauses=tuple(pauses),
@@ -1290,6 +1526,8 @@ class PersistentIndexCache:
                 and len(index.layer_start_absolute) == layer_count
                 and len(index.layer_start_units) == layer_count
                 and len(index.layer_elapsed_times) == layer_count
+                and len(index.motion_arcs) == layer_count
+                and len(index.layer_start_arc_plane) == layer_count
             ):
                 return
             counts = [len(v) for v in index.motion_offsets]
@@ -1306,6 +1544,10 @@ class PersistentIndexCache:
                 # Ragged feature columns restore a different index than the
                 # one saved; publishing the blob would be worse than not
                 # caching at all.
+                return
+            arc_columns = _arc_columns(counts, _arc_entries(index.motion_arcs),
+                                       index.layer_start_arc_plane)
+            if arc_columns is None:
                 return
             path = self._path(identity)
             temp_path = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
@@ -1326,6 +1568,7 @@ class PersistentIndexCache:
                 "counts": counts,
             }
             header.update(features)
+            header.update(arc_columns)
             raw_header = json.dumps(header, separators=(",", ":")).encode("utf-8")
             if len(raw_header) > _MAX_CACHE_HEADER_BYTES:
                 # A very fragmented (or hostile) file can still push the

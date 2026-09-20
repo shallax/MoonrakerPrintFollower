@@ -31,6 +31,9 @@ if QT_AVAILABLE:
     from PyQt6.QtQml import QQmlComponent, QQmlEngine
     from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
+    from plugins.GCodeIndex import build_index_from_bytes
+    from plugins.PlateProgress import layer_polylines
+
     class CuraApplicationDouble(QObject):
         """The one context property both documents read for idleness."""
 
@@ -1647,8 +1650,11 @@ if QT_AVAILABLE:
         meta-object fails the QML var write — the engine stores null
         and the popover never opens."""
 
+        plateSplitChanged = pyqtSignal()
+
         def __init__(self):
             super().__init__()
+            self._split = PlateFaceRenderTests.PAYLOAD["split"]
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._plate = {"objects": [
                 {"name": "Widget", "center": [125.0, 125.0],
@@ -1670,15 +1676,22 @@ if QT_AVAILABLE:
 
         @pyqtProperty("QVariant", constant=True)
         def plateLayers(self):
-            return PlateFaceRenderTests.CORNER_PAYLOAD["layers"]
+            return PlateFaceRenderTests.PAYLOAD["layers"]
 
-        @pyqtProperty("QVariant", constant=True)
+        def setSplit(self, split):
+            """Move the printed boundary: the layers are the mount's
+            fixed half, the split is the volatile half every poll
+            rewrites (the model emits the same change)."""
+            self._split = int(split)
+            self.plateSplitChanged.emit()
+
+        @pyqtProperty(int, notify=plateSplitChanged)
         def plateSplit(self):
-            return PlateFaceRenderTests.CORNER_PAYLOAD["split"]
+            return self._split
 
         @pyqtProperty(int, constant=True)
         def plateProgressAnchor(self):
-            return PlateFaceRenderTests.CORNER_PAYLOAD["anchor"]
+            return PlateFaceRenderTests.PAYLOAD["anchor"]
 
         @pyqtProperty(bool, constant=True)
         def plateProgressAvailable(self):
@@ -1741,6 +1754,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         "split": 12, "method": "motion index", "anchor": 0,
     }
 
+    # The double reads this one attribute, so a test can install a
+    # payload of its own before it mounts its window (the face binds its
+    # payload once per mount).
+    PAYLOAD = CORNER_PAYLOAD
+
     @staticmethod
     def _printer():
         return PlatePrinterDouble()
@@ -1795,6 +1813,437 @@ class PlateFaceRenderTests(RealEngineTestCase):
             time.sleep(0.05)
             image = window.grabWindow()
         return image
+
+    # The painter-fidelity fixtures: the bed-space runs a payload
+    # carries as separate prepared segments. Every vertex names the
+    # motion that owns the edge ENDING there (a run's first vertex
+    # carries its first edge's motion too), so each single-motion run
+    # here is owned by one motion index. Two straight runs with a gap
+    # between them, and two parallel diagonals 50 mm apart.
+    HORIZONTAL_RUNS = (
+        [[30.0, 203.0, 1.0], [90.0, 203.0, 1.0]],
+        [[130.0, 203.0, 2.0], [190.0, 203.0, 2.0]],
+    )
+    PARALLEL_DIAGONALS = (
+        [[30.0, 30.0, 1.0], [90.0, 90.0, 1.0]],
+        [[30.0, 80.0, 2.0], [90.0, 140.0, 2.0]],
+    )
+
+    # Arcs straight from literal G-code, and their payloads from the
+    # real index: a 120 mm semicircle whose apex stands 60 mm off its own
+    # chord (a painter that connects source endpoints draws the chord,
+    # and the apex band is where that shows), the clockwise mirror of the
+    # same endpoints, the same arc followed by a straight move, and two
+    # arcs a travel apart.
+    ARC_CCW = ("M82\n;LAYER:0\n;TYPE:SKIN\n"
+               "G0 X185 Y125\n"
+               "G3 X65 Y125 I-60 J0 E1\n")
+    ARC_CW = ARC_CCW.replace("G3", "G2")
+    ARC_THEN_LINE = ARC_CCW + "G1 X185 Y60 E2\n"
+    # The second arc's E rises too: under M82 a repeated E deposits
+    # nothing, so an E1-then-E1 pair would reach the face as a travel.
+    ARC_RUNS = ("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                "G0 X105 Y125\nG3 X15 Y125 I-45 J0 E1\n"
+                "G0 X235 Y125\nG3 X145 Y125 I-45 J0 E2\n")
+
+    @staticmethod
+    def _arc_payload(gcode, split=None):
+        """The follower payload a literal file produces: the painted
+        geometry is the index's own output, so an arc's curve here is the
+        one the follower would draw. *split* defaults to every motion."""
+        index = build_index_from_bytes(gcode.encode("ascii"))
+        return {
+            "available": True, "reason": "",
+            "layers": {"prev": None, "current": layer_polylines(index, 0), "next": None},
+            "split": index.motion_count(0) if split is None else int(split),
+            "method": "motion index", "anchor": 0,
+        }
+
+    @staticmethod
+    def _centres(ink):
+        """Each painted column's ink band centres, top to bottom."""
+        columns = {}
+        for col, row in ink:
+            columns.setdefault(col, []).append(row)
+        centres = {}
+        for col, rows in columns.items():
+            rows.sort()
+            bands, run = [], []
+            for row in rows:
+                if run and row > run[-1] + 2:
+                    bands.append(sum(run) / len(run))
+                    run = []
+                run.append(row)
+            if run:
+                bands.append(sum(run) / len(run))
+            centres[col] = bands
+        return centres
+
+    @staticmethod
+    def _near(ink, point, reach):
+        return any(abs(col - round(point[0])) <= reach and abs(row - round(point[1])) <= reach
+                   for col, row in ink)
+
+    @staticmethod
+    def _components(ink, reach=2):
+        """The count of connected ink blobs. The tolerance is raster, not
+        geometry: the strokes are 0.7 px wide on a 1 px grid, so a single
+        antialiased line can drop a pixel, while a real gap at a join is a
+        whole tessellation vertex away."""
+        neighbours = [(dc, dr) for dc in range(-reach, reach + 1)
+                      for dr in range(-reach, reach + 1)]
+        remaining = set(ink)
+        counted = 0
+        while remaining:
+            counted += 1
+            stack = [remaining.pop()]
+            while stack:
+                col, row = stack.pop()
+                for dc, dr in neighbours:
+                    step = (col + dc, row + dr)
+                    if step in remaining:
+                        remaining.discard(step)
+                        stack.append(step)
+        return counted
+
+    @staticmethod
+    def _layer_payload(segments):
+        """The follower payload the model hands the face: one class of
+        prepared runs and the printed count, in PlateProgress's own
+        shape (the count moves afterwards, as a poll moves it)."""
+        return {
+            "available": True, "reason": "",
+            "layers": {
+                "prev": None,
+                "current": {
+                    "classes": {"SKIN": [list(segment) for segment in segments]},
+                    "travels": [], "travelStarts": [], "travelEnds": [],
+                    "motions": 64,
+                },
+                "next": None,
+            },
+            "split": 0, "method": "motion index", "anchor": 0,
+        }
+
+    def _painted(self, payload):
+        """Mount the follower on *payload* and hand back the face, the
+        window, the live mapping and the baseline grab. The boundary
+        opens at zero and the grey base is off, so what the printed
+        strokes ADD over the baseline is exactly the coloured ink."""
+        previous = PlateFaceRenderTests.PAYLOAD
+        PlateFaceRenderTests.PAYLOAD = dict(payload, split=0)
+        self.addCleanup(setattr, PlateFaceRenderTests, "PAYLOAD", previous)
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        self._open(monitor, "plateprogress")
+        faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
+        self.assertEqual(len(faces), 1)
+        face = faces[0]
+        face.setProperty("dot", None)
+        face.setProperty("showBase", False)
+        self.pump(40)
+        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        self.assertIsNotNone(plot, "the bed mapping never built")
+        return face, window, self._mapping(plot), self._settled(window)
+
+    def _printed(self, split, window, face, baseline, box, span):
+        """Move the boundary to *split* and return the pixels the
+        printed strokes added over the baseline."""
+        self._printer.setSplit(split)
+        _image, added = self._await_ink(window, face, baseline, box, span)
+        return added
+
+    @staticmethod
+    def _mapping(plot):
+        """The face's own transform, read from the live plot: the test
+        asserts screen geometry against the mapping the painter uses,
+        never against a second opinion about it."""
+        bed = plot.property("bed")
+        return {
+            "sx": plot.property("sx").toNumber(),
+            "sy": plot.property("sy").toNumber(),
+            "offsetX": bed.property("offsetX").toNumber(),
+            "offsetY": bed.property("offsetY").toNumber(),
+            "bedXMin": bed.property("bedXMin").toNumber(),
+            "bedYMax": bed.property("bedYMax").toNumber(),
+        }
+
+    @staticmethod
+    def _scene(mapping, x, y):
+        return (mapping["offsetX"] + (x - mapping["bedXMin"]) * mapping["sx"],
+                mapping["offsetY"] + (mapping["bedYMax"] - y) * mapping["sy"])
+
+    @staticmethod
+    def _sample(image):
+        return [image.pixel(col, row)
+                for row in range(0, image.height(), 7)
+                for col in range(0, image.width(), 7)]
+
+    def _settled(self, window, rounds=10):
+        """The window's image once two grabs agree: the canvases raster
+        on the threaded render strategy, so one grab can catch the
+        strokes mid-flight."""
+        image = window.grabWindow()
+        for _ in range(rounds):
+            self.pump(10)
+            nxt = window.grabWindow()
+            if self._sample(image) == self._sample(nxt):
+                return nxt
+            image = nxt
+        return image
+
+    def _added(self, image, baseline, face, window, box):
+        """The face's pixels the printed strokes added over the empty
+        baseline, as {(col, row)} inside *box* (face coordinates)."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        ox, oy = int(origin.x()), int(origin.y())
+        left, top, right, bottom = box
+        added = set()
+        for row in range(max(0, top), min(int(face.height()), bottom + 1)):
+            for col in range(max(0, left), min(int(face.width()), right + 1)):
+                now = image.pixel(ox + col, oy + row)
+                was = baseline.pixel(ox + col, oy + row)
+                if any(abs(((now >> shift) & 0xFF) - ((was >> shift) & 0xFF)) > 24
+                       for shift in (0, 8, 16)):
+                    added.add((col, row))
+        return added
+
+    def _await_ink(self, window, face, baseline, box, span, timeout=3.0):
+        """The image once ink reaches both ends of *span*: a paint lands
+        whole, so ink at the stroke's own ends means the run is drawn."""
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while True:
+            added = self._added(image, baseline, face, window, box)
+            columns = [col for col, _row in added]
+            if columns and min(columns) <= span[0] and max(columns) >= span[1]:
+                return image, added
+            if time.monotonic() >= deadline:
+                image.save("/tmp/mpf/follower_painter_fail.png")
+                return image, added
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+
+    def test_the_painted_horizontal_runs_stay_horizontal_and_unbridged(self):
+        face, window, mapping, baseline = self._painted(
+            self._layer_payload(self.HORIZONTAL_RUNS))
+        start = self._scene(mapping, 30.0, 203.0)
+        gap = self._scene(mapping, 90.0, 203.0)[0]
+        end = self._scene(mapping, 130.0, 203.0)[0]
+        last = self._scene(mapping, 190.0, 203.0)[0]
+        left, row, right = int(start[0]), int(start[1]), int(last)
+        box = (left - 6, row - 8, right + 6, row + 8)
+        added = self._printed(3, window, face, baseline, box, (left + 4, right - 4))
+        self.assertTrue(added, "the printed runs were not painted")
+        self.assertLessEqual(max(abs(pixel_row - row) for _col, pixel_row in added), 3,
+                             "a horizontal run did not stay horizontal")
+        bridged = [col for col, _pixel_row in added if gap + 4 < col < end - 4]
+        self.assertEqual(bridged, [],
+                         "the painter bridged the gap between two prepared runs")
+        columns = [col for col, _pixel_row in added]
+        self.assertLessEqual(min(columns), left + 4)
+        self.assertGreaterEqual(max(columns), right - 4)
+
+    def test_the_painted_parallel_diagonals_stay_parallel(self):
+        face, window, mapping, baseline = self._painted(
+            self._layer_payload(self.PARALLEL_DIAGONALS))
+        high = self._scene(mapping, 30.0, 140.0)
+        low = self._scene(mapping, 90.0, 30.0)
+        box = (int(high[0]) - 6, int(high[1]) - 6, int(low[0]) + 6, int(low[1]) + 6)
+        added = self._printed(3, window, face, baseline, box,
+                              (int(high[0]) + 4, int(low[0]) - 4))
+        self.assertTrue(added, "the printed diagonals were not painted")
+        bands = {}
+        for col in range(box[0], box[2] + 1):
+            rows = sorted(pixel_row for pixel_col, pixel_row in added if pixel_col == col)
+            centres = []
+            run = []
+            for pixel_row in rows:
+                if run and pixel_row > run[-1] + 2:
+                    centres.append(sum(run) / len(run))
+                    run = []
+                run.append(pixel_row)
+            if run:
+                centres.append(sum(run) / len(run))
+            bands[col] = centres
+        paired = {col: centres for col, centres in bands.items() if len(centres) == 2}
+        span = box[2] - box[0]
+        self.assertGreaterEqual(len(paired), 0.6 * span,
+                                "both diagonals must paint in every column (%d of %d)"
+                                % (len(paired), span))
+        separations = [centres[1] - centres[0] for centres in paired.values()]
+        self.assertLessEqual(max(separations) - min(separations), 2,
+                             "the parallel diagonals converge or fan on screen")
+        # Each band rides its own straight line at the bed's own slope:
+        # a fanned or chording painter breaks the constant per-column
+        # rise.
+        expected = mapping["sy"] / mapping["sx"]
+        columns = sorted(paired)
+        for index in (0, 1):
+            rise = paired[columns[0]][index] - paired[columns[-1]][index]
+            self.assertAlmostEqual(rise / (columns[-1] - columns[0]), expected,
+                                   delta=0.3, msg="a diagonal's slope is not the bed's")
+
+    def test_the_split_paints_only_the_motions_it_counted(self):
+        # Split 2 counts motions 0 and 1: the first run's edge (motion
+        # 1) is printed, the second run's (motion 2) is not yet — an
+        # inclusive reading of the same number paints one edge ahead.
+        face, window, mapping, baseline = self._painted(
+            self._layer_payload(self.HORIZONTAL_RUNS))
+        left = int(self._scene(mapping, 30.0, 203.0)[0])
+        row = int(self._scene(mapping, 30.0, 203.0)[1])
+        gap = int(self._scene(mapping, 90.0, 203.0)[0])
+        end = int(self._scene(mapping, 130.0, 203.0)[0])
+        right = int(self._scene(mapping, 190.0, 203.0)[0])
+        box = (left - 6, row - 8, right + 6, row + 8)
+        added = self._printed(2, window, face, baseline, box, (left + 4, gap - 4))
+        self.assertTrue(added, "the printed run was not painted")
+        ahead = [col for col, _pixel_row in added if col > gap + 4]
+        self.assertEqual(ahead, [],
+                         "the painter drew motions past the split it was given")
+        # The next poll's delta completes the layer: the accumulation
+        # adds the second run without repainting the first.
+        added = self._printed(3, window, face, baseline, box, (end + 4, right - 4))
+        columns = [col for col, _pixel_row in added]
+        self.assertLessEqual(min(columns), left + 4, "the delta lost the first run")
+        self.assertGreaterEqual(max(columns), right - 4, "the delta never reached the second run")
+
+    def test_a_painted_arc_is_curved_and_not_its_chord(self):
+        face, window, mapping, baseline = self._painted(self._arc_payload(self.ARC_CCW))
+        apex = self._scene(mapping, 125.0, 185.0)
+        chord = self._scene(mapping, 125.0, 125.0)[1]
+        left = self._scene(mapping, 65.0, 125.0)[0]
+        right = self._scene(mapping, 185.0, 125.0)[0]
+        radius = abs(chord - apex[1])
+        box = (int(left) - 8, int(chord - radius) - 8, int(right) + 8, int(chord + radius) + 8)
+        added = self._printed(2, window, face, baseline, box, (int(left) + 4, int(right) - 4))
+        self.assertTrue(added, "the printed arc was not painted")
+        centres = self._centres(added)
+        self.assertGreater(len(centres), 30, "the arc arrived as a handful of chords")
+        for col, bands in centres.items():
+            self.assertEqual(len(bands), 1, "column %d carries two ink bands" % col)
+        rows = [bands[0] for bands in centres.values()]
+        self.assertGreater(max(abs(row - chord) for row in rows), 20.0,
+                           "the painted arc never left its own chord")
+        self.assertGreaterEqual(min(rows), chord - radius - 5, "the ink rose past the arc's apex")
+        self.assertEqual([row for row in rows if row > chord + 6], [],
+                         "the counter-clockwise arc dipped below its own chord")
+        apex_band = [bands[0] for col, bands in centres.items() if abs(col - apex[0]) <= 2]
+        self.assertTrue(apex_band, "the arc's apex column carries no ink")
+        self.assertLessEqual(min(apex_band), apex[1] + 6, "the arc's apex is missing")
+
+    def test_a_clockwise_arc_bulges_to_its_own_side_of_the_chord(self):
+        # The same endpoints as the counter-clockwise case and the same
+        # chord: only the command word moved, so the ink must too.
+        face, window, mapping, baseline = self._painted(self._arc_payload(self.ARC_CW))
+        apex = self._scene(mapping, 125.0, 65.0)
+        chord = self._scene(mapping, 125.0, 125.0)[1]
+        left = self._scene(mapping, 65.0, 125.0)[0]
+        right = self._scene(mapping, 185.0, 125.0)[0]
+        radius = abs(apex[1] - chord)
+        box = (int(left) - 8, int(chord - radius) - 8, int(right) + 8, int(chord + radius) + 8)
+        added = self._printed(2, window, face, baseline, box, (int(left) + 4, int(right) - 4))
+        self.assertTrue(added, "the printed arc was not painted")
+        centres = self._centres(added)
+        rows = [bands[0] for bands in centres.values()]
+        self.assertLess(abs(min(rows) - chord), 6, "the clockwise arc did not start on its chord")
+        self.assertGreater(max(rows) - chord, 20.0, "the painted arc never left its own chord")
+        self.assertEqual([row for row in rows if row < chord - 6], [],
+                         "the clockwise arc bulged to the counter-clockwise side")
+        apex_band = [row for col, bands in centres.items() for row in bands
+                     if abs(col - apex[0]) <= 2]
+        self.assertTrue(apex_band and min(apex_band) >= apex[1] - 6,
+                        "the clockwise arc's own apex band is missing")
+
+    def test_a_quarter_circle_paints_as_multiple_screen_segments(self):
+        gcode = ("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                 "G0 X185 Y125\n"
+                 "G3 X125 Y185 I-60 J0 E1\n")
+        face, window, mapping, baseline = self._painted(self._arc_payload(gcode))
+        start = self._scene(mapping, 185.0, 125.0)
+        end = self._scene(mapping, 125.0, 185.0)
+        box = (int(end[0]) - 8, int(end[1]) - 8, int(start[0]) + 8, int(start[1]) + 8)
+        added = self._printed(2, window, face, baseline, box, (int(end[0]) + 4, int(start[0]) - 4))
+        self.assertTrue(added, "the printed quarter circle was not painted")
+        centres = self._centres(added)
+        self.assertGreater(len(centres), 15, "the quarter circle arrived as a few chords")
+        rows = [centres[col][0] for col in sorted(centres)]
+        # The straight line joining the two painted ends, at the middle
+        # column: a curve whose midpoint sits on it drew as its chord.
+        straight = rows[0] + (rows[-1] - rows[0]) * 0.5
+        self.assertGreater(abs(rows[len(rows) // 2] - straight), 8.0,
+                           "the quarter circle painted as one straight segment")
+
+    def test_the_arc_and_the_line_after_it_join_without_a_gap(self):
+        face, window, mapping, baseline = self._painted(self._arc_payload(self.ARC_THEN_LINE))
+        junction = self._scene(mapping, 65.0, 125.0)
+        far = self._scene(mapping, 185.0, 60.0)
+        apex = self._scene(mapping, 125.0, 185.0)
+        box = (int(junction[0]) - 8, int(apex[1]) - 8, int(far[0]) + 8, int(far[1]) + 8)
+        added = self._printed(3, window, face, baseline, box,
+                              (int(junction[0]) + 4, int(far[0]) - 4))
+        self.assertTrue(added, "the printed arc and line were not painted")
+        self.assertTrue(self._near(added, junction, 3), "the join vertex carries no ink")
+        self.assertTrue(self._near(added, far, 3), "the move after the arc was not painted")
+        self.assertEqual(self._components(added), 1,
+                         "the arc and the line after it painted as separate runs")
+        # Every column between them carries ink on the line's own screen
+        # path: the arc's tessellation ends exactly where the line starts,
+        # rather than short of it or past it.
+        centres = self._centres(added)
+        span = far[0] - junction[0]
+        for col in range(int(junction[0]) + 3, int(far[0]) - 2):
+            bands = centres.get(col)
+            self.assertTrue(bands, "the stroke left a gap at column %d" % col)
+            expected = junction[1] + (col - junction[0]) * (far[1] - junction[1]) / span
+            self.assertLessEqual(min(abs(row - expected) for row in bands), 3,
+                                 "the stroke left the line at column %d" % col)
+
+    def test_the_split_paints_the_arc_by_its_original_motion_index(self):
+        # Split 2 counts motions 0 and 1 — the travel and the arc — and
+        # the arc's whole curve belongs to motion 1. A split read as a
+        # vertex count instead paints part of the curve at 1, and an
+        # inclusive reading of 2 paints the line after it.
+        face, window, mapping, baseline = self._painted(self._arc_payload(self.ARC_THEN_LINE))
+        apex = self._scene(mapping, 125.0, 185.0)
+        chord = self._scene(mapping, 125.0, 125.0)[1]
+        left = self._scene(mapping, 65.0, 125.0)
+        right = self._scene(mapping, 185.0, 125.0)
+        far = self._scene(mapping, 185.0, 60.0)
+        span = (int(left[0]) + 4, int(right[0]) - 4)
+        box = (int(left[0]) - 8, int(apex[1]) - 8, int(right[0]) + 8, int(far[1]) + 8)
+        self._printer.setSplit(1)
+        _image, added = self._await_ink(window, face, baseline, box, span, timeout=0.4)
+        self.assertEqual(added, set(), "the split painted the arc before its own motion")
+        added = self._printed(2, window, face, baseline, box, span)
+        self.assertTrue([row for _col, row in added if abs(row - chord) < 8],
+                        "the arc was never painted")
+        self.assertEqual([row for _col, row in added if row > chord + 8], [],
+                         "the split painted the motion after the arc")
+        line_box = (int(left[0]) - 8, int(chord) + 8, int(right[0]) + 8, int(far[1]) + 8)
+        self._printer.setSplit(3)
+        _image, line_ink = self._await_ink(
+            window, face, baseline, line_box,
+            (int((left[0] + right[0]) / 2), int(right[0]) - 4))
+        self.assertTrue(line_ink, "the motion after the arc was never painted")
+
+    def test_disconnected_arc_runs_are_not_bridged(self):
+        face, window, mapping, baseline = self._painted(self._arc_payload(self.ARC_RUNS))
+        first_end = self._scene(mapping, 105.0, 125.0)[0]
+        second_start = self._scene(mapping, 145.0, 125.0)[0]
+        left = self._scene(mapping, 15.0, 125.0)[0]
+        right = self._scene(mapping, 235.0, 125.0)[0]
+        apex = self._scene(mapping, 60.0, 170.0)[1]
+        chord = self._scene(mapping, 60.0, 125.0)[1]
+        box = (int(left) - 8, int(apex) - 8, int(right) + 8, int(chord) + 8)
+        added = self._printed(4, window, face, baseline, box, (int(left) + 4, int(right) - 4))
+        self.assertTrue(added, "the printed arcs were not painted")
+        columns = [col for col, _row in added]
+        self.assertLessEqual(min(columns), left + 4, "the first arc is missing")
+        self.assertGreaterEqual(max(columns), right - 4, "the second arc is missing")
+        self.assertEqual([col for col in columns if first_end + 4 < col < second_start - 4], [],
+                         "the painter bridged two arc runs a travel apart")
+        self.assertEqual(self._components(added), 2, "the two arc runs painted as one")
 
     def test_the_follower_fills_its_plot_edge_to_edge(self):
         monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)

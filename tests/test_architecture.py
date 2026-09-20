@@ -148,7 +148,8 @@ class SourceContractTests(unittest.TestCase):
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
                 "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
-            "GCodeIndex": {"MoonrakerProtocol"},
+            "ArcGeometry": set(),
+            "GCodeIndex": {"ArcGeometry", "MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting"},
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
@@ -164,7 +165,7 @@ class SourceContractTests(unittest.TestCase):
             "PersistenceMigration": {"PrinterConfig"},
             "MigrationNotice": set(),
             "PluginPersistence": {"PrinterConfig", "StateStore"},
-            "PlateProgress": {"GCodeIndex"},
+            "PlateProgress": {"ArcGeometry", "GCodeIndex"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
             "UiStateStore": set(),
@@ -215,7 +216,14 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(set(allowed), discovered)
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text(encoding="utf-8")
-            imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
+            # `from . import X` names its modules in the aliases, not in
+            # node.module (which is None there): reading only node.module
+            # silently imported None into the set.
+            imported = set()
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.ImportFrom) and node.level:
+                    imported |= ({alias.name for alias in node.names} if node.module is None
+                                 else {node.module})
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
                 self.assertNotIn("_follower", source, module)

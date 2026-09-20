@@ -3134,7 +3134,7 @@ Component {
                     showNext: root.printer != null ? root.printer.followerShowNext : true
                     showBase: root.printer != null ? root.printer.followerShowBase : true
                     showTravels: root.printer != null ? root.printer.followerShowTravels : false
-                    lineScale: root.printer != null ? root.printer.followerLineScale : 1.0
+                    lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
                 }
 
                 // The checkbox's OWN text label (the live reports: a
@@ -3319,7 +3319,7 @@ Component {
                         }
                     }
                     UM.Label {
-                        text: (root.printer != null ? root.printer.followerLineScale : 1.0).toFixed(2) + "×"
+                        text: (root.printer != null ? root.printer.followerLineScale : 0.7).toFixed(2) + "×"
                         width: 34 * screenScaleFactor
                         horizontalAlignment: Text.AlignHCenter
                     }

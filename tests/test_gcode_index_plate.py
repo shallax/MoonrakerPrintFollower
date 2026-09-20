@@ -575,3 +575,94 @@ class HydrationWindowTests(unittest.TestCase):
         index.followed_layer = None
         self.service.request_hydration(4)
         self.assertEqual(self.service._hydrate, {3, 4})
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class PlateVisitedTests(unittest.TestCase):
+    """The printed-object verdict: which polygons the executed
+    EXTRUSION geometry has reached. The walk reads the same motion
+    edges the payload draws, so a travel that crosses or ends inside a
+    polygon deposits nothing there, while an extrusion that only clips
+    a corner marks it."""
+
+    # A 40 x 30 mm object, well inside the bed.
+    POLYGON = [[20.0, 10.0], [60.0, 10.0], [60.0, 40.0], [20.0, 40.0]]
+    ROWS = [{"name": "Widget", "polygon": POLYGON}]
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Files(QObject):
+            changed = pyqtSignal()
+
+        self.files = Files()
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.service = self.qt.load("GCodeIndexService").GCodeIndexService(self.files, object())
+        self.addCleanup(self.service.close)
+        self.job = ("part.gcode", 100, 1)
+        self.service.bind(self.job)
+
+    def _bind(self, data, hydration=None):
+        """Index the literal G-code and point the service at it. A
+        compact index is what the live follower carries, and
+        *hydration* fills a layer the way the worker's job does."""
+        path = _write_gcode(data)
+        self.addCleanup(os.remove, path)
+        index = build_index_from_file(path, compact=hydration is not None)
+        for layer in hydration or ():
+            self.assertTrue(hydrate_layer_from_file(index, path, layer, keep_anchor=layer))
+        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = view
+        return index
+
+    def test_a_travel_across_a_polygon_deposits_nothing(self):
+        # Motions: 1 the prime that starts the print, 2 and 3 the travels
+        # (the second crossing the polygon), 4 the extrusion that finally
+        # reaches it.
+        self._bind(b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n"
+                   b"G0 X0 Y25\nG0 X80 Y25\nG1 X40 Y25 E2\n")
+        self.assertEqual(self.service.plate_visited(0, 4, self.ROWS), frozenset(),
+                         "a travel crossing the polygon marked it printed")
+        self.assertEqual(self.service.plate_visited(0, 5, self.ROWS), frozenset({"Widget"}),
+                         "the extrusion that reached the polygon did not mark it")
+
+    def test_an_extrusion_that_only_clips_a_corner_marks_it(self):
+        # Both endpoints outside, the segment crossing the rectangle: the
+        # endpoint-only reading would call this a miss.
+        self._bind(b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\nG0 X5 Y5\nG1 X75 Y45 E2\n")
+        self.assertEqual(self.service.plate_visited(0, 4, self.ROWS), frozenset({"Widget"}))
+
+    def test_a_later_travel_never_unmarks_a_printed_object(self):
+        self._bind(b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n"
+                   b"G0 X5 Y5\nG1 X75 Y45 E2\nG0 X0 Y0\nG1 X80 Y25 E3\n")
+        self.assertEqual(self.service.plate_visited(0, 4, self.ROWS), frozenset({"Widget"}))
+        # The next poll's travel crosses everything and changes nothing;
+        # a backwards split (a restart) keeps the verdict too, because
+        # the walk's cursor only ever advances.
+        self.assertEqual(self.service.plate_visited(0, 6, self.ROWS), frozenset({"Widget"}))
+        self.assertEqual(self.service.plate_visited(0, 2, self.ROWS), frozenset({"Widget"}))
+
+    def test_a_compact_layer_is_walked_like_a_full_one(self):
+        data = (b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n;LAYER:1\n"
+                b"G0 X5 Y5\nG1 X75 Y45 E2\n")
+        # Layer 1 is the one that prints the object, and a compact index
+        # carries its motions only once the worker has hydrated it.
+        self._bind(data, hydration=(1,))
+        self.assertEqual(self.service.plate_visited(1, 2, self.ROWS), frozenset({"Widget"}))
+
+    def test_a_moved_anchor_restarts_the_walk(self):
+        data = (b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n;LAYER:1\n"
+                b"G0 X5 Y5\nG1 X75 Y45 E2\n")
+        self._bind(data, hydration=(0, 1))
+        self.assertEqual(self.service.plate_visited(0, 2, self.ROWS), frozenset())
+        self.assertEqual(self.service.plate_visited(1, 2, self.ROWS), frozenset({"Widget"}),
+                         "the anchor change did not restart the walk at the layer's start")
+
+    def test_rows_without_a_usable_polygon_are_ignored(self):
+        self._bind(b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X75 Y45 E1\n")
+        rows = [{"name": "Widget", "polygon": None},
+                {"name": "", "polygon": self.POLYGON},
+                {"name": "Box", "polygon": [[70.0, 40.0], [80.0, 40.0], [80.0, 50.0], [70.0, 50.0]]}]
+        self.assertEqual(self.service.plate_visited(0, 2, rows), frozenset({"Box"}))

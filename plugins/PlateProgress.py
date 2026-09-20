@@ -1,42 +1,80 @@
 """The plate's progress payload: prepared polylines for the follower
 face, built from the index's motion arrays.
 
-The payload is prepared HERE (pure, worker-friendly), never in QML:
-each layer's motions decimate into a bed-space distance-filtered
-polyline per feature class (the review's rule: a distance filter,
-never head-truncation — a truncated layer reads as a lie about the
-print), with the travel boundaries as scene-ready markers and the
-printed/unprinted split index for the current layer. The architecture
-contract forbids the mutable index arrays crossing the worker
-boundary; only these built lists do.
+ONE PRIMITIVE: the motion's EDGE. Motion m runs from the position the
+head held when the move began — motion m-1's endpoint, or the layer's
+start position for m == 0 — to motion m's own stored endpoint, which is
+a position and never geometry by itself. The endpoint-only reading lost
+the first edge of every run (the live report's straight-then-diagonal
+skin lines arriving as single diagonals, and the fanning along a hatch)
+and made a one-motion extrusion arrive as a dot.
+
+ONE PRIMITIVE, not one line: a logical motion carries a physical path,
+and a G2/G3 commanded a curve. Such a motion contributes the polyline
+ArcGeometry derives from its descriptor — every subedge carrying that
+one motion's index, feature and travel state — so an arc reaches the
+painter, the printed-object walk and the live-position match as the
+path the head took. Nothing downstream branches on the command word.
+
+``motion_edges`` is that primitive's one implementation, and the payload
+builder and the printed-object walk both read it — the same reading
+``refined_fraction`` already uses to match the live toolhead against a
+segment, so nothing here has to guess what a motion means.
+
+A travel span always breaks the class polylines and its motions never
+enter them; a feature-type change breaks them too, so a WALL -> SKIN ->
+WALL sequence yields two independent WALL runs, never one run chording
+across the SKIN. A feature class holds as many segments as the G-code
+gives it.
+
+Every vertex carries the motion whose edge ENDS there (a segment's
+first vertex carries that first edge's motion too), so a segment's
+indices never decrease and the painter can decide per edge: an edge is
+printed iff its motion index is below the split count.
+
+Below a class's point budget the vertices are the G-code's own — no
+distance filter runs at all (the old 0.35 mm floor erased the live
+file's short skin lines and its corner runs). Above the budget each
+already-separated segment simplifies on its own with Douglas-Peucker:
+endpoints and corners kept, never a stride, never across a segment
+boundary, a travel, or a feature change.
+
+The architecture contract forbids the mutable index arrays crossing the
+worker boundary; only these built lists do.
 """
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from math import hypot
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
+from . import ArcGeometry
 from .GCodeIndex import LayerMotionIndex
 
-# The per-layer point budget: a dense layer's motions can number in
-# the hundreds of thousands; the distance filter decimates toward
-# this ceiling. The threshold keys off the layer's TOTAL PATH LENGTH
-# (the span was wrong — a dense infill's path dwarfs its span, and
-# the paint lagged seconds behind the live toolhead: the live
-# report). The CLASS polylines stride per class instead (below): a
-# class of tiny moves must keep its fidelity.
-MAX_POINTS_PER_LAYER = 12000
-# The per-class point budget: each class strides to ITS OWN path —
-# the layer-wide stride starved a class of tiny moves (the skin's
-# 0.027 mm lines vanished entirely: the live report). The raster
-# stack changes the economics: the layers rasterise once per anchor
-# and the full re-raster amortises over ~20 paints. The raise to
-# 200k puts the dense classes at the 0.35 mm floor — the skin's
-# lines draw at their true pitch, never strided (the live
-# quantisation reports).
+# The per-class point budget: the G-code's own vertices are kept up to
+# this ceiling, so a class draws exactly what the slicer commanded. The
+# raster stack changes the economics here: the static layers rasterise
+# once per anchor and the full re-raster amortises over ~20 paints.
 MAX_POINTS_PER_CLASS = 200000
-# The bed-space minimum segment length (mm): shorter runs collapse.
-MIN_SEGMENT_MM = 0.35
+# The travel channel's budget: the same rule on its own channel, which
+# only draws while the travels are toggled on.
+MAX_TRAVEL_POINTS = 12000
+# A span whose XY path is shorter than this never moved the head: a
+# retract and prime at one position is a seam, not a repositioning. It
+# is a numerical zero, not a visual floor — a 0.3 mm travel is a real
+# travel and stays one.
+_TRAVEL_EPSILON_MM = 1.0e-6
+# The simplification floor and pass cap: the simplification engages only
+# above a budget, and it must stay far below any real geometry so a
+# budget miss never alters a normal layer's vertices.
+_SIMPLIFY_FLOOR_MM = 1.0e-4
+# ...and its ceiling: the arc tessellation's own sagitta. Above a budget
+# the tolerance is path/budget, which on a very dense layer can exceed
+# the error the arcs were drawn to — simplifying there would flatten a
+# curve the geometry just spent vertices on. The two numbers are ONE
+# budget: no vertex ever leaves with more error than a curve may carry.
+_SIMPLIFY_CEILING_MM = ArcGeometry.MAX_SAGITTA_MM
+_MAX_SIMPLIFY_PASSES = 6
 
 _TYPE_NONE = 0
 _TYPE_OTHER = 1
@@ -52,266 +90,327 @@ def _type_name(index: LayerMotionIndex, code: int) -> str:
     return names[position] if 0 <= position < len(names) else "other"
 
 
-def _code_at(index: LayerMotionIndex, layer: int, motion: int) -> int:
-    runs = index.motion_types[layer] if layer < len(index.motion_types) else []
-    walked = 0
-    for count, code in runs:
-        if motion < walked + count:
-            return code
-        walked += count
-    return _TYPE_NONE
+def _layer_start(index: LayerMotionIndex, layer: int,
+                 xs: Sequence, ys: Sequence) -> Tuple[float, float]:
+    """The position the head held when the layer's first motion began —
+    the first edge's start. Without a recorded start position (a
+    hand-built index) the first endpoint stands in, so the run still
+    opens where the G-code's first move starts."""
+    if layer < len(index.layer_start_positions):
+        start = index.layer_start_positions[layer]
+        if len(start) >= 2:
+            return float(start[0]), float(start[1])
+    if len(xs):
+        return float(xs[0]), float(ys[0])
+    return 0.0, 0.0
 
 
-def _path_threshold(index: LayerMotionIndex, layer: int) -> float:
-    """The layer's decimation threshold: the total non-travel PATH
-    length over the point budget (a dense infill's path dwarfs its
-    span — keying on the span left the threshold at the floor and
-    the paint lagged seconds behind the toolhead: the live report),
-    with the bed-space floor."""
+def _layer_start_z(index: LayerMotionIndex, layer: int, zs: Sequence) -> float:
+    """The Z the head held when the layer's first motion began."""
+    if layer < len(index.layer_start_positions):
+        start = index.layer_start_positions[layer]
+        if len(start) >= 3:
+            return float(start[2])
+    return float(zs[0]) if len(zs) else 0.0
+
+
+def motion_edges(index: LayerMotionIndex, layer: int,
+                 first: int = 0) -> Iterator[Tuple[int, float, float, float, float, int, bool]]:
+    """Every motion of *layer* as its true edge, in order.
+
+    Yields ``(motion, x0, y0, x1, y1, feature, extruding)``: the edge
+    runs from the position the head held when motion *motion* began to
+    that motion's own endpoint, *feature* is its feature code and
+    *extruding* is the travel state after it. The order is the G-code's,
+    one motion at a time, and a zero-XY move yields a zero-length edge
+    (its geometry is nothing; its E still moves the state).
+
+    A motion that commanded an arc yields one edge per tessellated
+    subedge instead of one chord, all of them carrying that motion's own
+    index, feature and travel state: the physical path crosses the
+    worker boundary and no consumer needs to know the difference between
+    a straight move and a curved one.
+
+    *first* starts the walk at that motion's edge without walking the
+    ones before it — the printed-object cursor's seek. The travel state
+    is seeded from the layer's own opening state at zero, and from the
+    boundary arrays otherwise.
+    """
+    if layer < 0 or layer >= index.layer_count():
+        return
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
     count = len(xs)
-    if count == 0:
-        return MIN_SEGMENT_MM
+    if first < 0:
+        first = 0
+    if first >= count:
+        return
     starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
     ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
-    total_path = 0.0
-    in_travel = not bool(index.layer_start_extruding[layer]
-                         if layer < len(index.layer_start_extruding) else True)
-    start_i = end_i = 0
-    last_x, last_y = float(xs[0]), float(ys[0])
-    for motion in range(1, count):
-        if start_i < len(starts) and motion == starts[start_i]:
-            in_travel = True
-            start_i += 1
-        if end_i < len(ends) and motion == ends[end_i]:
-            in_travel = False
-            end_i += 1
-        if in_travel:
+    runs = index.motion_types[layer] if layer < len(index.motion_types) else ()
+    arcs = index.motion_arcs[layer] if layer < len(index.motion_arcs) else None
+    zs: Sequence = ()
+    if arcs:
+        # The arc maths needs the third axis (a G17 arc's Z is its helix,
+        # a G18/G19 arc's is one of its plane axes), so a layer with arcs
+        # must have a Z column as long as its X and Y columns. Without
+        # one the descriptors are ignored rather than guessed at.
+        zs = index.motion_z[layer] if layer < len(index.motion_z) else ()
+        if len(zs) != count:
+            arcs = None
+            zs = ()
+    if first:
+        start_index = bisect_right(starts, first - 1)
+        end_index = bisect_right(ends, first - 1)
+        extruding = start_index <= end_index
+        x0 = float(xs[first - 1])
+        y0 = float(ys[first - 1])
+    else:
+        start_index = end_index = 0
+        extruding = True
+        if layer < len(index.layer_start_extruding):
+            extruding = bool(index.layer_start_extruding[layer])
+        x0, y0 = _layer_start(index, layer, xs, ys)
+    # The feature RLE advances once per motion (a fresh cursor beats
+    # rescanning the runs from the top for every motion of a layer).
+    run_index = 0
+    run_left = 0
+    code = _TYPE_NONE
+    skip = first
+    while skip > 0 and run_index < len(runs):
+        run = runs[run_index]
+        run_index += 1
+        try:
+            span = int(run[0])
+            code = int(run[1])
+        except (IndexError, TypeError, ValueError):
             continue
-        total_path += hypot(float(xs[motion]) - last_x, float(ys[motion]) - last_y)
-        last_x, last_y = float(xs[motion]), float(ys[motion])
-    return max(MIN_SEGMENT_MM, total_path / MAX_POINTS_PER_LAYER)
-
-
-def _decimate(index: LayerMotionIndex, layer: int) -> Dict[str, List[List[List[float]]]]:
-    """One pass over the motions: per feature class, distance-
-    filtered polylines in bed mm. Each class strides to ITS OWN path
-    (the live ruling: a class of tiny moves — the skin's 0.027 mm
-    lines — must draw as lines, not vanish under a layer-wide
-    stride). A MOVING travel between kept points breaks the segment
-    (the phantom-line guard); a stationary retract-prime pulse does
-    NOT — nothing moved, so the polyline continues invisibly across
-    it. The travel motions never enter the class polylines (they
-    belong to the travel channel). Each kept point carries its motion
-    index — the printed/unprinted split lands on these points."""
-    xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
-    ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
-    count = len(xs)
-    if count == 0:
-        return {}
-    starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
-    ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
-    # Pre-pass: each class's own path length over the non-travel
-    # motions — the per-class stride's denominator.
-    class_paths: Dict[str, float] = {}
-    previous: Dict[str, tuple] = {}
-    in_travel = not bool(index.layer_start_extruding[layer]
-                         if layer < len(index.layer_start_extruding) else True)
-    start_i = end_i = 0
-    for motion in range(count):
-        if start_i < len(starts) and motion == starts[start_i]:
-            in_travel = True
-            start_i += 1
-        if end_i < len(ends) and motion == ends[end_i]:
-            in_travel = False
-            end_i += 1
-        if in_travel:
+        if span <= 0:
             continue
-        name = _type_name(index, _code_at(index, layer, motion))
-        x, y = float(xs[motion]), float(ys[motion])
-        if name in previous:
-            class_paths[name] += hypot(x - previous[name][0], y - previous[name][1])
+        if span > skip:
+            run_left = span - skip
+            skip = 0
         else:
-            class_paths[name] = 0.0
-        previous[name] = (x, y)
-    thresholds = {name: max(MIN_SEGMENT_MM, path / MAX_POINTS_PER_CLASS)
-                  for name, path in class_paths.items()}
-    classes: Dict[str, List[List[List[float]]]] = {}
-    last_kept: Dict[str, List[float]] = {}
-    last_seen: Dict[str, List[float]] = {}
-    span_seen: Dict[str, bool] = {}
-    in_travel = not bool(index.layer_start_extruding[layer]
-                         if layer < len(index.layer_start_extruding) else True)
-    start_i = end_i = 0
-    span_first: Optional[int] = None
-    pending_join: Dict[str, Optional[List[float]]] = {}
-    for motion in range(count):
-        if start_i < len(starts) and motion == starts[start_i]:
-            in_travel = True
-            start_i += 1
-            span_first = motion
-        if end_i < len(ends) and motion == ends[end_i]:
-            in_travel = False
-            end_i += 1
-            # EVERY span breaks the class polyline: a stationary
-            # retract-prime pulse is a real seam, and merging across
-            # it chords the corner where the next line starts (the
-            # live report: straight lines read as slight diagonals).
-            # A STATIONARY seam hands the next segment its true start
-            # — the point before the pulse IS the line's beginning,
-            # so a one-motion line draws as its real line, never a
-            # dot (the live report: orange blobs at the skin's line
-            # ends).
-            stationary = False
-            if span_first is not None:
-                dx = float(xs[motion - 1]) - float(xs[span_first])
-                dy = float(ys[motion - 1]) - float(ys[span_first])
-                stationary = hypot(dx, dy) < MIN_TRAVEL_MM
-            for name in span_seen:
-                span_seen[name] = True
-                pending_join[name] = last_seen.get(name) if stationary else None
-            span_first = None
-        if in_travel:
+            skip -= span
+            run_left = 0
+    for motion in range(first, count):
+        if run_left <= 0:
+            # Past the runs a motion's feature is unknown, never the
+            # last run's value (the RLE is capped, the layer is not).
+            run_left = 0
+            code = _TYPE_NONE
+            while run_index < len(runs):
+                run = runs[run_index]
+                run_index += 1
+                try:
+                    span = int(run[0])
+                    value = int(run[1])
+                except (IndexError, TypeError, ValueError):
+                    continue
+                if span > 0:
+                    run_left = span
+                    code = value
+                    break
+        run_left -= 1
+        if start_index < len(starts) and starts[start_index] == motion:
+            extruding = False
+            start_index += 1
+        if end_index < len(ends) and ends[end_index] == motion:
+            extruding = True
+            end_index += 1
+        x1 = float(xs[motion])
+        y1 = float(ys[motion])
+        descriptor = arcs.get(motion) if arcs else None
+        if descriptor is not None:
+            start_z = _layer_start_z(index, layer, zs) if motion == 0 else float(zs[motion - 1])
+            for px, py, _pz in ArcGeometry.tessellate(descriptor, (x0, y0, start_z),
+                                                      (x1, y1, float(zs[motion]))):
+                yield motion, x0, y0, px, py, code, extruding
+                x0, y0 = px, py
             continue
-        name = _type_name(index, _code_at(index, layer, motion))
-        point = [float(xs[motion]), float(ys[motion]), float(motion)]
-        threshold = thresholds[name]
-        previous = last_kept.get(name)
-        if previous is None or span_seen.get(name, False):
-            # A fresh segment: the class's first point, or the first
-            # point after a travel. The distance never breaks a
-            # segment — a long straight move is ONE sparse raw
-            # step, and breaking on distance erased every straight
-            # line (the live report); continuous extrusion joins.
-            if previous is not None and span_seen.get(name, False):
-                # The closing segment keeps its TRUE END — the last
-                # extrusion before the travel — so the strided
-                # polyline never overshoots or falls short of the
-                # real path (the quantisation report).
-                segment = classes.get(name, [])
-                if segment and segment[-1] and last_seen.get(name) is not None \
-                        and last_seen[name] != segment[-1][-1]:
-                    segment[-1].append(last_seen[name])
-            segment = classes.setdefault(name, [])
-            join = pending_join.get(name)
-            if join is not None and join != point:
-                segment.append([join, point])
+        yield motion, x0, y0, x1, y1, code, extruding
+        x0, y0 = x1, y1
+
+
+def _douglas_peucker(points: Sequence[Sequence[float]],
+                     tolerance: float) -> List[List[float]]:
+    """One vertex chain reduced to its endpoints and its corners.
+
+    Douglas-Peucker over the chain's own vertices: both endpoints are
+    always kept and a vertex whose deviation exceeds *tolerance* is
+    kept too, so a straight run collapses to its two ends while a
+    corner keeps its corner and the run's ends never move. The result
+    is a subset of the input vertices, so every motion index survives
+    with the vertex it belongs to.
+    """
+    count = len(points)
+    if count <= 2:
+        return list(points)
+    tolerance_sq = tolerance * tolerance
+    keep = [False] * count
+    keep[0] = keep[count - 1] = True
+    stack = [(0, count - 1)]
+    while stack:
+        first, last = stack.pop()
+        if last <= first + 1:
+            continue
+        x0, y0 = points[first][0], points[first][1]
+        x1, y1 = points[last][0], points[last][1]
+        dx = x1 - x0
+        dy = y1 - y0
+        span_sq = dx * dx + dy * dy
+        worst = -1.0
+        worst_index = -1
+        for index in range(first + 1, last):
+            px, py = points[index][0], points[index][1]
+            if span_sq > 0.0:
+                cross = dx * (py - y0) - dy * (px - x0)
+                distance_sq = (cross * cross) / span_sq
             else:
-                segment.append([point])
-            pending_join[name] = None
-            span_seen[name] = False
-            last_kept[name] = point
-            last_seen[name] = point
-        elif hypot(point[0] - previous[0], point[1] - previous[1]) >= threshold:
-            classes[name][-1].append(point)
-            last_kept[name] = point
-            last_seen[name] = point
-        else:
-            last_seen[name] = point
-        # Closer than the stride: decimated away, and not the
-        # distance reference for the next kept point.
-    # The layer's last segments keep their true ends the same way.
-    for name in classes:
-        segment = classes[name]
-        if segment and segment[-1] and last_seen.get(name) is not None \
-                and last_seen[name] != segment[-1][-1]:
-            segment[-1].append(last_seen[name])
-    return classes
+                distance_sq = (px - x0) ** 2 + (py - y0) ** 2
+            if distance_sq > worst:
+                worst = distance_sq
+                worst_index = index
+        if worst > tolerance_sq:
+            keep[worst_index] = True
+            stack.append((first, worst_index))
+            stack.append((worst_index, last))
+    return [points[index] for index in range(count) if keep[index]]
 
 
-# A travel span's minimum repositioning, in bed mm: below it the span
-# is a retract-prime pulse with no movement (the live file's skin
-# seams — E pauses at every patch boundary without the toolhead going
-# anywhere) and reads as a travel only by mistake (the live report).
-MIN_TRAVEL_MM = 0.5
+def _segments_path(segments: Sequence[Sequence[Sequence[float]]]) -> float:
+    """The channels' total path length: the simplification's scale."""
+    total = 0.0
+    for segment in segments:
+        for index in range(1, len(segment)):
+            total += hypot(segment[index][0] - segment[index - 1][0],
+                           segment[index][1] - segment[index - 1][1])
+    return total
 
 
-def _travel_geometry(index: LayerMotionIndex, layer: int,
-                     threshold: float) -> tuple:
-    """The travel channel: per-span decimated segments plus the span
-    boundary glyph markers, BUILT FROM ONE SPAN WALK. Stationary
-    retract-prime pulses contribute nothing — a travel is the
-    repositioning between where extrusion stopped and where it
-    resumed (the live report: every skin seam drew a start/stop
-    glyph pair). Each point carries its motion index — the face
-    clips them to the printed portion (the live ruling: travels show
-    only after they have been passed). A layer that opened mid-travel
-    starts in the span."""
-    xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
-    ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
-    count = len(xs)
-    if count == 0:
-        return [], [], []
-    starts = list(index.travel_starts[layer] if layer < len(index.travel_starts) else ())
-    ends = list(index.travel_ends[layer] if layer < len(index.travel_ends) else ())
-    start_index = 0
-    end_index = 0
-    in_travel = not bool(index.layer_start_extruding[layer]
-                         if layer < len(index.layer_start_extruding) else True)
-    segments: List[List[List[float]]] = []
+def _budgeted(segments: List[List[List[float]]],
+              budget: int) -> List[List[List[float]]]:
+    """A channel's segments, simplified only if they exceed *budget*.
+
+    The exact vertices stand below the budget. Above it every segment
+    simplifies ALONE — the separation the walk already made (travels,
+    feature changes, disconnected runs) is never undone — with the
+    tolerance doubling until the channel fits or the passes run out. A
+    channel that cannot fit still holds a geometry-preserving subset: a
+    simplified chord draws when its last motion is printed, so the
+    printed fill lags its own chord and never runs ahead of the head.
+    """
+    total = sum(len(segment) for segment in segments)
+    if total <= budget:
+        return segments
+    tolerance = min(max(_segments_path(segments) / budget, _SIMPLIFY_FLOOR_MM), _SIMPLIFY_CEILING_MM)
+    simplified = segments
+    for _ in range(_MAX_SIMPLIFY_PASSES):
+        simplified = [_douglas_peucker(segment, tolerance) for segment in segments]
+        if sum(len(segment) for segment in simplified) <= budget:
+            return simplified
+        if tolerance >= _SIMPLIFY_CEILING_MM:
+            # The tolerance is at the fidelity ceiling: further passes
+            # would weigh the same geometry against the same bound.
+            break
+        tolerance = min(tolerance * 2.0, _SIMPLIFY_CEILING_MM)
+    return simplified
+
+
+def _push(chain: List[List[float]], x: float, y: float, motion: int) -> None:
+    """Append the edge's endpoint unless it repeats the chain's last
+    vertex. A retract or prime at one position is a real state change
+    with no XY geometry, and the duplicate vertex it would contribute
+    is a zero-length stroke, never a line — so it is not added, and a
+    chain that never moved keeps its single start vertex.
+    """
+    last = chain[-1]
+    if x == last[0] and y == last[1]:
+        return
+    chain.append([x, y, float(motion)])
+
+
+def _record_span(chain: List[List[float]], path: float, started: bool, closed: bool,
+                 travels: List[List[List[float]]],
+                 start_marks: List[List[float]],
+                 end_marks: List[List[float]]) -> None:
+    """A travel span reaches the payload only if the head moved.
+
+    The glyphs mark the boundaries THIS layer actually holds: a travel
+    that began in the previous layer draws its geometry here but gets no
+    second start glyph, and one still open at the layer's end gets no
+    end glyph — the boundary is in the next layer's file, not this one's.
+    """
+    if path <= _TRAVEL_EPSILON_MM:
+        return
+    travels.append(chain)
+    if started:
+        start_marks.append(list(chain[0]))
+    if closed:
+        end_marks.append(list(chain[-1]))
+
+
+def _build(index: LayerMotionIndex, layer: int) -> tuple:
+    """One edge walk over the layer: the class polylines, the travel
+    channel's segments and the two glyph lists.
+
+    Every motion's edge goes to the channel its motion belongs to: an
+    extruding edge joins its feature run, a travel edge joins the open
+    span. Nothing else is drawn — a pure-E retract or prime has a
+    zero-length edge and disappears on its own.
+    """
+    classes: Dict[str, List[List[List[float]]]] = {}
+    travels: List[List[List[float]]] = []
     start_marks: List[List[float]] = []
     end_marks: List[List[float]] = []
-    segment: Optional[List[List[float]]] = None
-    span_first: Optional[int] = None
-    last: Optional[List[float]] = None
-    for motion in range(count):
-        if start_index < len(starts) and motion == starts[start_index]:
-            # A new span starts its own segment.
-            in_travel = True
-            start_index += 1
-            segment = None
-            span_first = motion
-            last = None
-        if end_index < len(ends) and motion == ends[end_index]:
-            in_travel = False
-            end_index += 1
-            # The span's verdict: a real repositioning keeps its
-            # segment and both glyphs; a stationary pulse vanishes.
-            if span_first is not None:
-                dx = float(xs[motion - 1]) - float(xs[span_first])
-                dy = float(ys[motion - 1]) - float(ys[span_first])
-                if hypot(dx, dy) >= MIN_TRAVEL_MM:
-                    # A one-point segment keeps the span's last point
-                    # — the QML drops sub-2-point segments and a short
-                    # span would never draw (the skin-report twin).
-                    # A one-motion span has no interior point; its
-                    # segment stays single and the painter draws the
-                    # dot.
-                    if segment is not None and len(segment) == 1 and motion - 1 > span_first:
-                        segment[-1].append([float(xs[motion - 1]), float(ys[motion - 1]), float(motion - 1)])
-                    if segment is not None:
-                        segments.append(segment)
-                    start_marks.append([float(xs[span_first]), float(ys[span_first]), float(span_first)])
-                    end_marks.append([float(xs[motion - 1]), float(ys[motion - 1]), float(motion - 1)])
-                elif segment is not None:
-                    # The stationary pulse's segment never lands.
-                    segment = None
-                    last = None
-            span_first = None
-        if not in_travel:
+    # Whether the head was still extruding when the layer began: if it
+    # was, a span opening on the layer's very first motion STARTS here
+    # (its glyph is this layer's), and if it was not, that motion is the
+    # continuation of a travel whose start is the previous layer's.
+    opening_extruding = True
+    if layer < len(index.layer_start_extruding):
+        opening_extruding = bool(index.layer_start_extruding[layer])
+    run_name: Optional[str] = None
+    run_chain: Optional[List[List[float]]] = None
+    span_chain: Optional[List[List[float]]] = None
+    span_path = 0.0
+    span_started = False
+    for motion, x0, y0, x1, y1, code, extruding in motion_edges(index, layer):
+        if not extruding:
+            # A travel breaks the class polyline; the span's first vertex
+            # is the position the head already held, so the first travel
+            # move draws its whole edge.
+            run_name = None
+            run_chain = None
+            if span_chain is None:
+                span_chain = [[x0, y0, float(motion)]]
+                span_path = 0.0
+                # A span opening on the layer's first motion while the
+                # head was already travelling began in the previous
+                # layer: this file holds its middle, not its start.
+                span_started = motion != 0 or opening_extruding
+            _push(span_chain, x1, y1, motion)
+            span_path += hypot(x1 - x0, y1 - y0)
             continue
-        if span_first is None:
-            span_first = motion
-        point = [float(xs[motion]), float(ys[motion]), float(motion)]
-        if segment is None or last is None \
-                or hypot(point[0] - last[0], point[1] - last[1]) >= threshold:
-            if segment is None:
-                segment = []
-            segment.append(point)
-            last = point
-    # The layer's last span crossing into the next layer: the walk
-    # ends inside it — close it with the same verdict.
-    if in_travel and segment is not None and span_first is not None:
-        dx = float(xs[count - 1]) - float(xs[span_first])
-        dy = float(ys[count - 1]) - float(ys[span_first])
-        if hypot(dx, dy) >= MIN_TRAVEL_MM:
-            if len(segment) == 1 and count - 1 > span_first:
-                segment[-1].append([float(xs[count - 1]), float(ys[count - 1]), float(count - 1)])
-            segments.append(segment)
-            start_marks.append([float(xs[span_first]), float(ys[span_first]), float(span_first)])
-            end_marks.append([float(xs[count - 1]), float(ys[count - 1]), float(count - 1)])
-    return segments, start_marks, end_marks
+        if span_chain is not None:
+            _record_span(span_chain, span_path, span_started, True,
+                         travels, start_marks, end_marks)
+            span_chain = None
+        name = _type_name(index, code)
+        if run_chain is None or name != run_name:
+            # A fresh run: the edge that opens it starts where the head
+            # already stood, so the first extrusion after a travel (or
+            # after a feature change) draws its whole first move.
+            run_chain = [[x0, y0, float(motion)]]
+            classes.setdefault(name, []).append(run_chain)
+            run_name = name
+        _push(run_chain, x1, y1, motion)
+    if span_chain is not None:
+        # The layer ended inside a span: its geometry closes here, but
+        # the travel itself ends in the next layer — no end glyph.
+        _record_span(span_chain, span_path, span_started, False,
+                     travels, start_marks, end_marks)
+    return classes, travels, start_marks, end_marks
 
 
 def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
@@ -325,28 +424,43 @@ def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     if not len(xs):
         return {"classes": {}, "travels": [], "travelStarts": [], "travelEnds": [], "motions": 0}
-    threshold = _path_threshold(index, layer)
-    travels, travel_starts, travel_ends = _travel_geometry(index, layer, threshold)
+    classes, travels, start_marks, end_marks = _build(index, layer)
+    # A chain of fewer than two vertices is a run whose only motions were
+    # pure-E: it holds no edge and is dropped here, so the payload never
+    # carries a class of it and the painter never sees a point.
+    prepared = {}
+    for name, segments in classes.items():
+        drawn = [segment for segment in segments if len(segment) >= 2]
+        if drawn:
+            prepared[name] = _budgeted(drawn, MAX_POINTS_PER_CLASS)
     return {
-        "classes": _decimate(index, layer),
-        "travels": travels,
-        "travelStarts": travel_starts,
-        "travelEnds": travel_ends,
+        "classes": prepared,
+        "travels": _budgeted(travels, MAX_TRAVEL_POINTS),
+        "travelStarts": start_marks,
+        "travelEnds": end_marks,
         "motions": len(xs),
     }
 
 
 def split_index(index: LayerMotionIndex, layer: int, file_position: int) -> Optional[int]:
-    """The current layer's printed/unprinted boundary: the motion whose
-    byte offset last covers the live file position (the review's H3 —
-    bytes quantise to motions, and the dot derives from the same
-    index)."""
+    """The current layer's printed/unprinted boundary as a COUNT of
+    motions: edge m is printed exactly when m < split, so split == 0
+    paints nothing and split == N paints motions 0 .. N-1.
+
+    The boundary is the number of motion lines the position has passed,
+    which is what bisect_left over the offsets returns. bisect_right
+    also counted a motion whose line the position had only just reached,
+    so the painter — reading an inclusive index — painted the next,
+    not-yet-executed edge (the review's off-by-one). One convention now:
+    a count here, an exclusive test there, and the incremental delta
+    from an old count F to a new one S draws the edges in [F, S).
+    """
     if layer < 0 or layer >= index.layer_count():
         return None
     offsets = index.motion_offsets[layer] if layer < len(index.motion_offsets) else ()
     if not len(offsets):
         return None
-    return int(bisect_right(offsets, int(file_position)))
+    return int(bisect_left(offsets, int(file_position)))
 
 
 def plate_layers(index: LayerMotionIndex, anchor: Optional[int]) -> dict:
