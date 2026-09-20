@@ -51,6 +51,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.sectionExpandedMap["toolhead"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
