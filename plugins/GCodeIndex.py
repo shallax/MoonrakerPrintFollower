@@ -195,6 +195,11 @@ class LayerMotionIndex:
     pauses: Tuple[int, ...] = ()
     compact: bool = False
     hydrated_layers: set[int] = field(default_factory=set, repr=False)
+    # One int per layer: the motion count as of the last hydration or
+    # build. Eviction wipes the motion arrays (the retention bound's
+    # whole point) but never this — a seek to an evicted layer still
+    # resolves its FULL split and slider total instantly.
+    layer_motion_counts: List[int] = field(default_factory=list)
     # The LIVE print's layer — the retention window's anchor, updated
     # by the service every poll even when that layer is already
     # hydrated. Runtime state: never saved to or restored from the
@@ -213,9 +218,13 @@ class LayerMotionIndex:
         return len(self.ranges)
 
     def motion_count(self, layer: int) -> int:
-        if layer < 0 or layer >= len(self.motion_offsets):
+        if layer < 0:
             return 0
-        return len(self.motion_offsets[layer])
+        if layer < len(self.layer_motion_counts):
+            return self.layer_motion_counts[layer]
+        if layer < len(self.motion_offsets):
+            return len(self.motion_offsets[layer])
+        return 0
 
     def file_fraction(self, layer: int, file_position: int) -> Tuple[float, str]:
         if layer < 0 or layer >= len(self.ranges):
@@ -1019,6 +1028,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         pauses=pause_layers,
         compact=bool(compact),
         hydrated_layers=hydrated,
+        layer_motion_counts=[len(m) for m in motions],
     )
 
 
@@ -1148,7 +1158,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 index.layer_start_types.append(_TYPE_NONE); index.layer_start_e.append(0.0)
                 index.layer_start_e_absolute.append(True); index.layer_start_extruding.append(True)
                 index.layer_start_arc_plane.append(ArcGeometry.PLANE_XY)
+                if len(index.layer_motion_counts) < len(index.ranges):
+                    index.layer_motion_counts.append(0)
             index.motion_offsets[layer] = offsets
+            index.layer_motion_counts[layer] = len(offsets)
             index.motion_x[layer] = xs
             index.motion_y[layer] = ys
             index.motion_z[layer] = zs
@@ -1560,6 +1573,12 @@ class PersistentIndexCache:
                     continue
                 if 0 <= layer < len(ranges) and (not pauses or layer > pauses[-1]):
                     pauses.append(layer)
+            motion_counts = header.get("motion_counts")
+            if not (isinstance(motion_counts, list) and len(motion_counts) == len(ranges)
+                    and all(isinstance(v, int) and 0 <= v for v in motion_counts)):
+                # Legacy caches carry no eviction-proof counts; the
+                # array lengths (the evicted state) are the fallback.
+                motion_counts = list(counts)
             return LayerMotionIndex(
                 ranges=ranges,
                 motion_offsets=offsets,
@@ -1584,6 +1603,7 @@ class PersistentIndexCache:
                 pauses=tuple(pauses),
                 compact=compact,
                 hydrated_layers=hydrated,
+                layer_motion_counts=motion_counts,
             )
         except (OSError, ValueError, json.JSONDecodeError, EOFError, struct.error):
             return None
@@ -1642,6 +1662,11 @@ class PersistentIndexCache:
                 "compact": bool(index.compact),
                 "hydrated": sorted(index.hydrated_layers),
                 "counts": counts,
+                # The eviction-proof counts ride beside the array lengths
+                # (which reflect the evicted state for a compact save):
+                # a restored index knows a far layer's total before its
+                # first re-hydration.
+                "motion_counts": list(index.layer_motion_counts),
             }
             header.update(features)
             header.update(arc_columns)

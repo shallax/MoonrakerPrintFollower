@@ -26,15 +26,20 @@ Item {
     // The grid's threaded raster reads the view through a var carrier
     // (worker paints see var properties fresh, primitives stale — the
     // offscreen-harness repaint findings; the face does the same). The
-    // carrier is geometry-in only: the pan is the canvas ITEM's
-    // translation, never a paint input (the pan-agnostic rasters).
+    // pan IS a paint input: a raster image is exactly the canvas' size,
+    // so translating an already-clipped image only slides it off (the
+    // live report — panning showed blank canvas).
     property var _view: ({
-            scale: 1.0
+            scale: 1.0,
+            panX: 0.0,
+            panY: 0.0
         })
 
     function _publishView() {
         root._view = {
-            scale: root.viewScale
+            scale: root.viewScale,
+            panX: root.viewPanX,
+            panY: root.viewPanY
         };
     }
     property string hoveredName: ""
@@ -66,17 +71,24 @@ Item {
         var bedXMax = bedXMin + machineWidth;
         var bedYMin = center ? -machineDepth / 2 : 0;
         var bedYMax = bedYMin + machineDepth;
-        var plotWidth = width;
-        var plotHeight = height;
-        var offsetX = 0;
-        var offsetY = 0;
+        // The border's own allowance: the fit reserves the stroke's
+        // width at every edge, so the centred border never clips
+        // against the canvas (the live report — the top and bottom
+        // read a pixel thin).
+        var allowance = root.compact ? 1 : 2;
+        var fitW = width - 2 * allowance;
+        var fitH = height - 2 * allowance;
+        var plotWidth = fitW;
+        var plotHeight = fitH;
+        var offsetX = allowance;
+        var offsetY = allowance;
         var target = machineWidth / machineDepth;
-        if (width / height > target) {
-            plotWidth = height * target;
-            offsetX = (width - plotWidth) / 2;
+        if (fitW / fitH > target) {
+            plotWidth = fitH * target;
+            offsetX = allowance + (fitW - plotWidth) / 2;
         } else {
-            plotHeight = width / target;
-            offsetY = (height - plotHeight) / 2;
+            plotHeight = fitW / target;
+            offsetY = allowance + (fitH - plotHeight) / 2;
         }
         return {
             "offsetX": offsetX,
@@ -264,8 +276,14 @@ Item {
         _publishView();
         plateCanvas.requestPaint();
     }
-    // A pan only translates the raster item: the grid is painted once
-    // and never re-drawn for the view (the pan-agnostic rasters).
+    onViewPanXChanged: {
+        _publishView();
+        plateCanvas.requestPaint();
+    }
+    onViewPanYChanged: {
+        _publishView();
+        plateCanvas.requestPaint();
+    }
 
     // The threaded image-backed canvas (the TemperatureChart
     // doctrine): the paint callback touches only the snapshot it is
@@ -275,13 +293,6 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
-        // The view's pan as a scene-graph translation (the pan-agnostic
-        // rasters): the picker never pans, so this is the identity
-        // there.
-        transform: Translate {
-            x: root.viewPanX
-            y: root.viewPanY
-        }
         onPaint: {
             var ctx = getContext("2d");
             var plot = root._plot;
@@ -304,11 +315,11 @@ Item {
                 // The 2 px background halo under every stroke: state
                 // ink sits on arbitrary feature ink otherwise, and no
                 // contrast value holds without it (the UX ruling).
-                var blocked = row.excluded === true && row.restoreAllowed === false;
-                // The live palette ruling: current reads as Cura's
-                // highlight blue, the passed/printed objects as the
-                // green, the pending as the plain text ink.
-                var ink = row.excluded === true ? (blocked ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : row.current === true ? UM.Theme.getColor("primary") : row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
+                // The palette: current reads as Cura's highlight blue,
+                // the passed/printed objects as the green, the
+                // excluded as the red, the pending as the plain text
+                // ink.
+                var ink = row.excluded === true ? MoonrakerTheme.dangerRed : row.current === true ? UM.Theme.getColor("primary") : row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
                 // The mini halves the strokes and the halo: at its
                 // scale a 4 px halo swallows the neighbours (the
                 // live report).
@@ -324,13 +335,9 @@ Item {
                 ctx.stroke();
                 ctx.lineWidth = widthPx;
                 ctx.strokeStyle = ink;
-                if (blocked) {
-                    ctx.setLineDash([4, 3]);
-                }
                 ctx.beginPath();
                 _stroke(ctx, row, plot);
                 ctx.stroke();
-                ctx.setLineDash([]);
                 // No centre ring for the current object: the bounds
                 // highlight IS the indicator (the live ruling — two
                 // current symbols read as two states).
@@ -349,22 +356,36 @@ Item {
         var bed = plot.bed;
         var thin = UM.Theme.getColor("lining");
         var thick = UM.Theme.getColor("border");
-        // The pan is the item's translation, never a coordinate here.
-        var left = bed.offsetX * root._view.scale;
-        var top = bed.offsetY * root._view.scale;
+        // The pan rides every coordinate: the image is canvas-sized,
+        // so a zoomed view must re-draw at the new offset.
+        var left = bed.offsetX * root._view.scale + root._view.panX;
+        var top = bed.offsetY * root._view.scale + root._view.panY;
         var right = left + bed.plotWidth * root._view.scale;
         var bottom = top + bed.plotHeight * root._view.scale;
         function gridX(bedX) {
-            return root.plateToScene(bedX, bed.bedYMin).x * root._view.scale;
+            return root.plateToScene(bedX, bed.bedYMin).x * root._view.scale + root._view.panX;
         }
         function gridY(bedY) {
-            return root.plateToScene(bed.bedXMin, bedY).y * root._view.scale;
+            return root.plateToScene(bed.bedXMin, bedY).y * root._view.scale + root._view.panY;
         }
+        // The visible bed window: at zoom most graduations sit off
+        // the canvas, and each costs a stroke — the loops clamp to
+        // what the view can see (the live report's pan cost).
+        function bedXAt(px) {
+            return bed.bedXMin + ((px - root._view.panX) / root._view.scale - bed.offsetX) / plot.sx;
+        }
+        function bedYAt(py) {
+            return bed.bedYMax - ((py - root._view.panY) / root._view.scale - bed.offsetY) / plot.sy;
+        }
+        var xlo = Math.max(bed.bedXMin, bedXAt(-8));
+        var xhi = Math.min(bed.bedXMax, bedXAt(width + 8));
+        var ylo = Math.max(bed.bedYMin, bedYAt(height + 8));
+        var yhi = Math.min(bed.bedYMax, bedYAt(-8));
         if (!root.compact) {
             ctx.lineWidth = 1;
             ctx.strokeStyle = thin;
-            var gx = Math.ceil(bed.bedXMin / 10) * 10;
-            for (; gx <= bed.bedXMax; gx += 10) {
+            var gx = Math.ceil(xlo / 10) * 10;
+            for (; gx <= xhi; gx += 10) {
                 if (Math.round(gx) % 50 === 0) {
                     continue;
                 }
@@ -374,8 +395,8 @@ Item {
                 ctx.lineTo(sx, bottom);
                 ctx.stroke();
             }
-            var gy = Math.ceil(bed.bedYMin / 10) * 10;
-            for (; gy <= bed.bedYMax; gy += 10) {
+            var gy = Math.ceil(ylo / 10) * 10;
+            for (; gy <= yhi; gy += 10) {
                 if (Math.round(gy) % 50 === 0) {
                     continue;
                 }
@@ -388,24 +409,28 @@ Item {
         }
         ctx.lineWidth = root.compact ? 1 : 2;
         ctx.strokeStyle = thick;
-        var hx = Math.ceil(bed.bedXMin / 50) * 50;
-        for (; hx <= bed.bedXMax; hx += 50) {
+        var hx = Math.ceil(xlo / 50) * 50;
+        for (; hx <= xhi; hx += 50) {
             var sx50 = gridX(hx);
             ctx.beginPath();
             ctx.moveTo(sx50, top);
             ctx.lineTo(sx50, bottom);
             ctx.stroke();
         }
-        var hy = Math.ceil(bed.bedYMin / 50) * 50;
-        for (; hy <= bed.bedYMax; hy += 50) {
+        var hy = Math.ceil(ylo / 50) * 50;
+        for (; hy <= yhi; hy += 50) {
             var sy50 = gridY(hy);
             ctx.beginPath();
             ctx.moveTo(left, sy50);
             ctx.lineTo(right, sy50);
             ctx.stroke();
         }
-        // The border closes the graphic.
-        ctx.strokeRect(left, top, right - left, bottom - top);
+        // The border closes the graphic. Inset by half the stroke:
+        // the centred stroke bleeds outside the rect, and at the
+        // canvas edges the bleed clips — the top and bottom read a
+        // pixel thin (the live report).
+        var inset = root.compact ? 0.5 : 1;
+        ctx.strokeRect(left + inset, top + inset, right - left - 2 * inset, bottom - top - 2 * inset);
     }
 
     function _stroke(ctx, row, plot) {

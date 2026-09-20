@@ -989,50 +989,9 @@ class ChartCadenceTests(MonitorModelCase):
         self.assertEqual(len(self.model._history.series("extruder")), count)
 
 
-class PlateGraceTests(MonitorModelCase):
-    """The grace owner's wiring: witnessed transitions stamp the
-    exclusion, verdicts ride the published rows, and the plate geometry
-    memoises per job."""
-
-    def seed_plate(self, excluded=(), current=None):
-        self.model._data._update(core={"exclude_object": {
-            "objects": [{"name": "PART_A"}, {"name": "PART_B"}],
-            "excluded_objects": list(excluded),
-            "current_object": current,
-        }})
-
-    def rows(self):
-        self.model._publish()
-        return {row["name"]: row for row in self.model._values["excludeObjectItems"]}
-
-    def test_an_exclusion_transition_witnesses_the_stamp(self):
-        self.model = self.build()
-        self.seed_plate()
-        self.rows()
-        self.seed_plate(excluded=("PART_A",))
-        by_name = self.rows()
-        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "clean")
-        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
-
-    def test_a_departure_clears_the_stamp(self):
-        self.model = self.build()
-        self.seed_plate(excluded=("PART_A",))
-        self.rows()
-        self.seed_plate()
-        by_name = self.rows()
-        self.assertNotIn("restoreVerdict", by_name["PART_A"])
-
-    def test_the_cursor_marks_the_consumed_block(self):
-        self.model = self.build()
-        self.seed_plate(excluded=("PART_A",))
-        self.rows()
-        # The consumed block without an index layer reads past-grace:
-        # the stamp's layer is unmeasurable, and incomplete
-        # verification must not block (the fail-open rule).
-        self.seed_plate(excluded=("PART_A",), current="PART_A")
-        by_name = self.rows()
-        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "past_grace")
-        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
+class PlatePayloadTests(MonitorModelCase):
+    """The plate payload: the visited (passed) state from the print
+    snapshot and the geometry/exclusion merge."""
 
     def test_the_plate_payload_reads_visited_from_the_print_snapshot(self):
         # The green-printed fix: the visited set comes from the PRINT
@@ -1062,7 +1021,8 @@ class PlateGraceTests(MonitorModelCase):
         rows = {row["name"]: row for row in self.model._values["plateObjects"]["objects"]}
         self.assertFalse(rows["PART_A"]["passed"], "the transition kept the stale passed flag")
 
-    def test_the_plate_payload_merges_geometry_and_verdicts(self):
+
+    def test_the_plate_payload_merges_geometry_and_state(self):
         self.model = self.build()
         self.model._data._update(auxiliary={"exclude_object": {
             "objects": [{"name": "PART_A", "center": [10.0, 20.0],
@@ -1076,17 +1036,6 @@ class PlateGraceTests(MonitorModelCase):
         row = plate["objects"][0]
         self.assertEqual(row["center"], [10.0, 20.0])
         self.assertTrue(row["excluded"])
-        self.assertEqual(row["restoreVerdict"], "clean")
-
-    def test_an_epoch_clear_drops_the_stamps(self):
-        self.model = self.build()
-        self.seed_plate(excluded=("PART_A",))
-        self.rows()
-        self.model._on_invalidated()
-        self.seed_plate(excluded=("PART_A",))
-        by_name = self.rows()
-        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "unknown")
-        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
 
 
 class PlateSplitPublicationTests(MonitorModelCase):
@@ -1098,6 +1047,7 @@ class PlateSplitPublicationTests(MonitorModelCase):
         # number — the layers publish separately, with the service's
         # memoised identity.
         self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
         self.print_state = self.qt.load("PrintState").PrintSnapshot(
             plate_progress={"layers": {"current": {"classes": {}}}, "split": 7,
                             "method": "motion index", "anchor": 2})

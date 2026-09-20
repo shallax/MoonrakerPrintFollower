@@ -8,7 +8,7 @@ import "theme"
 // previous/current/next layer view. The current layer draws as a
 // grey base with the printed portion coloured in at poll cadence
 // (the walked ruling); the ghost layers and the base are legend
-// toggles, and the travel boundaries carry the start/end glyphs.
+// toggles, and the travels draw as lines alone.
 Item {
     id: root
     objectName: "moonrakerPlateProgressFace"
@@ -32,7 +32,7 @@ Item {
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
-    property bool showTravels: false  // lines AND boundary markers — one toggle (the live ruling)
+    property bool showTravels: false  // the travel lines
     // The stroke thickness multiplier (the live request). The 0.7
     // default keeps a dense hatch (the skin's ~0.4 mm pitch)
     // legible as individual lines instead of fusing into a blob
@@ -69,11 +69,16 @@ Item {
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
     // and every painter reads it (the offscreen-harness repaint
-    // findings). The carrier is geometry-in only — the pan is not a
-    // paint input. The scope, the dot and the grid bindings are
-    // scene-graph and read the properties directly.
+    // findings). The pan IS a paint input: a raster image is exactly
+    // the canvas' size, so a zoomed pan that translated the image
+    // instead of re-drawing only slid an already-clipped picture (the
+    // live report — panning showed blank canvas). The scope, the dot
+    // and the grid bindings are scene-graph and read the properties
+    // directly.
     property var _view: ({
             scale: 1.0,
+            panX: 0.0,
+            panY: 0.0,
             lineScale: 0.7,
             compact: false
         })
@@ -81,6 +86,8 @@ Item {
     function _publishView() {
         root._view = {
             scale: root.viewScale,
+            panX: root.viewPanX,
+            panY: root.viewPanY,
             lineScale: root.lineScale,
             compact: root.compact
         };
@@ -273,11 +280,18 @@ Item {
         root._scopeDocked = true;
         scopeHideTimer.restart();
     }
-    // A pan is a scene-graph translation of the raster items: no
-    // repaint, no re-accumulation — the follow's per-poll budget. The
-    // pixels the rasters hold are pan-free by construction.
-    onViewPanXChanged: _publishView()
-    onViewPanYChanged: _publishView()
+    // A pan is baked into the rasters: the image is canvas-sized and
+    // clipped, so only a re-draw moves the view (the live report).
+    // The follow's per-poll cost is the price of the option — the
+    // default path never pans.
+    onViewPanXChanged: {
+        _publishView();
+        _resetStack();
+    }
+    onViewPanYChanged: {
+        _publishView();
+        _resetStack();
+    }
     // The toolhead publish is the follow's clock: the model republishes
     // the dot when it moves, and only then.
     onDotChanged: root._followToolhead()
@@ -335,13 +349,6 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
-        // The view's pan, as a transform: the rasters hold bed geometry
-        // at the zoom alone, so panning moves the whole stack without
-        // one stroke being re-drawn (the centred-follow ruling).
-        transform: Translate {
-            x: root.viewPanX
-            y: root.viewPanY
-        }
         onPaint: {
             var ctx = getContext("2d");
             ctx.reset();
@@ -366,10 +373,6 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
-        transform: Translate {
-            x: root.viewPanX
-            y: root.viewPanY
-        }
         onPaint: {
             var ctx = getContext("2d");
             ctx.reset();
@@ -393,17 +396,24 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
-        transform: Translate {
-            x: root.viewPanX
-            y: root.viewPanY
-        }
         onPaint: {
             var ctx = getContext("2d");
             if (!root.available() || mapping._plot == null) {
+                // The unavailable surface clears its own ink — the
+                // old raster must never read through the loading text
+                // (the live report).
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
                 return;
             }
             var current = root.progress.layers.current;
             if (current == null) {
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
                 return;
             }
             var split = root.progress.split;
@@ -434,13 +444,11 @@ Item {
             // the last painted split up to the live one (the H3
             // floor).
             _drawLayer(ctx, current, 1.0, split, false, root._lastSplit);
-            // The travels: lines and boundary markers together, the
-            // CURRENT layer only, and only where the toolhead has
-            // already passed (the live rulings).
+            // The travels: the lines only. CURRENT layer only, and
+            // only where the toolhead has already passed (the live
+            // rulings).
             if (root.showTravels) {
                 _drawTravels(ctx, current.travels, split, root._lastSplit);
-                _drawGlyphs(ctx, current.travelStarts, true, split, root._lastSplit);
-                _drawGlyphs(ctx, current.travelEnds, false, split, root._lastSplit);
             }
             root._lastSplit = split;
             root._paintsSinceReset += 1;
@@ -478,6 +486,8 @@ Item {
         var bedXMin = plot.bed.bedXMin;
         var bedYMax = plot.bed.bedYMax;
         var scale = root._view.scale;
+        var panX = root._view.panX;
+        var panY = root._view.panY;
         // The physical stroke: one width for every channel (the
         // ghost/pending/printed parity rule), subpixel at 100%.
         ctx.lineWidth = root.toolpathWidthPx();
@@ -507,9 +517,9 @@ Item {
                 // OWN start vertex: the stroke never bridges a travel, a
                 // feature change, or the boundary the last poll painted.
                 // No pan term: the item's translation carries the view.
-                ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale);
+                ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
                 while (_edgePrinted(points, i, split)) {
-                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale, (offsetY + (bedYMax - points[i][1]) * sy) * scale);
+                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
                     ++i;
                 }
                 ctx.stroke();
@@ -541,52 +551,17 @@ Item {
             if (scene == null) {
                 continue;
             }
-            ctx.moveTo(scene.x * root._view.scale, scene.y * root._view.scale);
+            ctx.moveTo(scene.x * root._view.scale + root._view.panX, scene.y * root._view.scale + root._view.panY);
             while (_edgePrinted(points, i, split)) {
                 scene = mapping.plateToScene(points[i][0], points[i][1]);
                 if (scene != null) {
-                    ctx.lineTo(scene.x * root._view.scale, scene.y * root._view.scale);
+                    ctx.lineTo(scene.x * root._view.scale + root._view.panX, scene.y * root._view.scale + root._view.panY);
                 }
                 ++i;
             }
             ctx.stroke();
         }
         ctx.globalAlpha = 1.0;
-    }
-
-    function _drawGlyphs(ctx, marks, start, split, from) {
-        // A glyph belongs to the motion that owns its boundary, and is
-        // painted with the same rule as the strokes (the marks arrive in
-        // motion order, so the first unprinted one ends the sweep). The
-        // triangle SIZE is a screen-space annotation, like the toolhead
-        // dot and the grid: it never scales with the toolpath ink.
-        for (var i = 0; i < marks.length; ++i) {
-            if (from >= 0 && marks[i][2] < from) {
-                continue;
-            }
-            if (split >= 0 && marks[i][2] >= split) {
-                break;
-            }
-            var scene = mapping.plateToScene(marks[i][0], marks[i][1]);
-            if (scene == null) {
-                continue;
-            }
-            var sceneX = scene.x * root._view.scale;
-            var sceneY = scene.y * root._view.scale;
-            ctx.fillStyle = MoonrakerTheme.plateTravel;
-            ctx.beginPath();
-            if (start) {
-                ctx.moveTo(sceneX, sceneY - 3.5 * screenScaleFactor);
-                ctx.lineTo(sceneX - 3 * screenScaleFactor, sceneY + 2.5 * screenScaleFactor);
-                ctx.lineTo(sceneX + 3 * screenScaleFactor, sceneY + 2.5 * screenScaleFactor);
-            } else {
-                ctx.moveTo(sceneX, sceneY + 3.5 * screenScaleFactor);
-                ctx.lineTo(sceneX - 3 * screenScaleFactor, sceneY - 2.5 * screenScaleFactor);
-                ctx.lineTo(sceneX + 3 * screenScaleFactor, sceneY - 2.5 * screenScaleFactor);
-            }
-            ctx.closePath();
-            ctx.fill();
-        }
     }
 
     // The toolhead dot: scene-graph geometry (a Rectangle binding),
@@ -608,8 +583,14 @@ Item {
         // goes too: the position belongs to the live layer, and the
         // frozen anchor is another layer's picture (the live ruling).
         visible: root.available() && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true
-        x: visible ? root.viewPanX + mapping.plateToScene(root.dot.x, root.dot.y).x * root.viewScale - width / 2 : 0
-        y: visible ? root.viewPanY + mapping.plateToScene(root.dot.x, root.dot.y).y * root.viewScale - height / 2 : 0
+        // The transform inlined: a function call (plateToScene) hides
+        // the plot from the binding's dependencies, so a re-fitted
+        // plot (a reflow, the popover's grown size) left the dot on
+        // stale geometry until the next pan (the live report — the
+        // jump landed off the centre). The whole-var read is tracked
+        // and the binding re-runs on every re-fit.
+        x: root.dot != null && mapping._plot != null ? root.viewPanX + (mapping._plot.bed.offsetX + (root.dot.x - mapping._plot.bed.bedXMin) * mapping._plot.sx) * root.viewScale - width / 2 : 0
+        y: root.dot != null && mapping._plot != null ? root.viewPanY + (mapping._plot.bed.offsetY + (mapping._plot.bed.bedYMax - root.dot.y) * mapping._plot.sy) * root.viewScale - height / 2 : 0
     }
 
     // The zoom/pan gestures (the live request): the wheel zooms about
@@ -826,10 +807,21 @@ Item {
         visible: !root.available() && !root.compact
         spacing: UM.Theme.getSize("narrow_margin").height
 
+        // A layer mid-load reads as plain text, never as a download
+        // offer (the live request: the glyph and the button implied
+        // an action the index already satisfies).
+        UM.Label {
+            Layout.fillWidth: true
+            visible: root.progress != null && root.progress.reason !== ""
+            text: root.progress != null ? root.progress.reason : ""
+            color: UM.Theme.getColor("text_inactive")
+            horizontalAlignment: Text.AlignHCenter
+        }
         PlateDownloadAction {
             Layout.fillWidth: true
+            visible: root.progress == null || root.progress.reason === ""
             printerModel: root.printerModel
-            idleInstruction: root.progress != null && root.progress.reason !== "" ? root.progress.reason : "No index yet — the download button builds one without loading the preview."
+            idleInstruction: "No index yet — the download button builds one without loading the preview."
         }
     }
 

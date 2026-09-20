@@ -77,6 +77,10 @@ class PrintCoordinator(QObject):
         # The follower face's MANUAL anchor: an index while the face is
         # detached from the live layer, None while it follows the print.
         self._plate_anchor = None
+        # The within-layer scrub, tied to the detach: a motion count
+        # while the face is detached and the user has scrubbed, None to
+        # draw the frozen layer as its whole base.
+        self._plate_split = None
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -296,10 +300,8 @@ class PrintCoordinator(QObject):
             # detached it — refused when it points outside this file
             # (a frozen anchor outlives a print and the next one may be
             # shorter).
-            anchor = physical.index
-            if self._plate_anchor is not None and 0 <= self._plate_anchor < layer_count:
-                anchor = self._plate_anchor
             plate_progress_payload = None
+            manual_payload = None
             plate_visited = frozenset()
             if plate_available and physical.index is not None:
                 # The payload is built INSIDE the service — the raw
@@ -313,11 +315,19 @@ class PrintCoordinator(QObject):
                 # file position: the split is a live print's boundary,
                 # and on another layer it would be another print's
                 # fill.
-                # The live position rides along even when the anchor is
-                # frozen: a frozen layer carries no file position, and
-                # the split short-circuits on that before it refines.
+                # TWO payloads (the live request): the live one serves
+                # the mini and the attached popover — the mini NEVER
+                # detaches with the popover — and the frozen one the
+                # detached popover alone. Attached-ness is the test,
+                # never anchor equality — a detach that froze the
+                # CURRENT layer still read as following while the print
+                # stayed on it (the live report: detaching did nothing
+                # visible).
                 plate_progress_payload = self._index.plate_progress(
-                    anchor, position if anchor == physical.index else None, live_position)
+                    physical.index, position, live_position)
+                if self._plate_anchor is not None:
+                    manual_payload = self._index.plate_progress(
+                        self._plate_anchor, None, live_position)
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map
@@ -329,7 +339,7 @@ class PrintCoordinator(QObject):
                 exclude_rows = plate_values(exclude_status)["objects"]
                 visited = getattr(self._index, "plate_visited", None)
                 if visited is not None and plate_progress_payload.get("split") is not None:
-                    plate_visited = visited(anchor,
+                    plate_visited = visited(physical.index,
                                             plate_progress_payload["split"], exclude_rows)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
@@ -344,6 +354,7 @@ class PrintCoordinator(QObject):
                 load_active=load_active,
                 filament_total=filament_total if filament_total and filament_total > 0 else None,
                 plate_progress=plate_progress_payload,
+                plate_manual_progress=manual_payload,
                 plate_layer_count=layer_count,
                 plate_visited=plate_visited)
             if self._snapshot.active and filename:
@@ -679,6 +690,17 @@ class PrintCoordinator(QObject):
         self._plate_anchor = anchor if isinstance(anchor, int) and not isinstance(anchor, bool) \
             and anchor >= 0 else None
         self._index.set_manual_anchor(self._plate_anchor)
+        self.refresh()
+
+    def set_plate_split(self, motions):
+        """The follower face's within-layer scrub (the pop-over's
+        progress slider): a motion count the frozen layer draws up to,
+        None for the whole base, -1 for the FULL layer (a seek lands
+        at 100% — the live request). Only a detach carries it — the
+        live split is the print's own."""
+        self._plate_split = motions if isinstance(motions, int) and not isinstance(motions, bool) \
+            and motions >= -1 else None
+        self._index.set_manual_split(self._plate_split)
         self.refresh()
 
     def toggle_attachment(self):

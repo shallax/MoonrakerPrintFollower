@@ -563,9 +563,6 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(mcus["Main MCU"]["frequency"], "40.000 MHz")
         self.assertIn("TX 2.0 kB", mcus["Main MCU"]["transport"])
         self.assertEqual(mcus["Extra"]["frequency"], "—")
-        self.assertEqual([item["name"] for item in values["excludeObjectItems"]], ["cube", "sphere"])
-        self.assertTrue(values["excludeObjectItems"][1]["excluded"])
-        self.assertTrue(values["excludeObjectItems"][0]["current"])
         self.assertEqual(values["memoryAvailable"], "2.00 GB")
         self.assertEqual(values["hostLoad"], "1.50")
         self.assertEqual(values["klippyState"], "Ready")
@@ -2559,11 +2556,16 @@ if QT_AVAILABLE:
             self.service._hydrate = {2, 1}
             hydrations = []
             with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
-                       side_effect=lambda index, path, layer: hydrations.append(layer) or True):
+                       side_effect=lambda index, path, layer: (
+                           hydrations.append(layer),
+                           index.hydrated_layers.add(layer),
+                           True)[2]):
                 self.service._advance()
             # The lowest pending layer goes first, and each completion
-            # re-advances until the window is drained.
-            self.assertEqual(hydrations, [1, 2])
+            # re-advances until the window is drained. The background
+            # full-cache pass then walks the remaining layers in
+            # order (0 here — the window's own already hydrate).
+            self.assertEqual(hydrations, [1, 2, 0])
             self.assertEqual(self.service._hydrate, set())
             self.assertIsNone(self.service._hydrating)
 

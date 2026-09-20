@@ -168,6 +168,8 @@ if QT_AVAILABLE:
             self.plate_anchors = []
             self.plate_positions = []
             self.plate_lives = []
+            self.manual_anchor = None
+            self.manual_split = None
 
         def bind(self, job):
             self.bound = job
@@ -180,6 +182,12 @@ if QT_AVAILABLE:
 
         def request_hydration(self, layer):
             self.hydration.append(layer)
+
+        def set_manual_anchor(self, layer):
+            self.manual_anchor = layer
+
+        def set_manual_split(self, motions):
+            self.manual_split = motions
 
         def plate_progress(self, anchor, file_position=None, live_position=None):
             # The service-side prep's shape; the coordinator tests
@@ -787,6 +795,32 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.coordinator.refresh()
         self.assertEqual(parts.index.plate_anchors, [4, 4, 5, 5],
                          "the plate payload anchored on the previous snapshot's layer")
+
+    def test_a_detach_frozen_on_the_live_layer_carries_no_file_position(self):
+        # The live report: detaching froze the CURRENT layer, and the
+        # anchor-equality test kept feeding the payload the live file
+        # position — the split never stopped, so the detach read as
+        # dead. Attached-ness is the test: a frozen anchor is frozen
+        # even while the print is still on that layer.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.coordinator.set_plate_anchor(4)  # == the live layer
+        parts.coordinator.refresh()
+        # TWO payloads per refresh while detached: the live one for
+        # the mini, the frozen one for the popover (the live request).
+        # The detach's own refresh plus the explicit one: four calls.
+        self.assertEqual(parts.index.plate_anchors, [4, 4, 4, 4])
+        self.assertIsNone(parts.index.plate_positions[-1],
+                          "the frozen layer was still handed the live position")
+        self.assertEqual(parts.index.manual_anchor, 4)
+        # The scrub rides the same seam.
+        parts.coordinator.set_plate_split(37)
+        self.assertEqual(parts.index.manual_split, 37)
+        # Re-attaching restores the live position flow (one payload).
+        parts.coordinator.set_plate_anchor(None)
+        parts.coordinator.refresh()
+        self.assertIsNone(parts.index.manual_anchor)
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
 
     def test_the_plate_payload_shares_the_resolved_file_position(self):
         # A view with a valid position: the ONE resolved value feeds

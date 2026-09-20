@@ -318,6 +318,35 @@ G1 X5 Y0 Z0.2
             self.assertEqual(tuple(loaded.pauses), (0,))
             self.assertEqual([list(v) for v in loaded.motion_offsets], [list(v) for v in index.motion_offsets])
             self.assertEqual([list(v) for v in loaded.motion_x], [list(v) for v in index.motion_x])
+            self.assertEqual(loaded.layer_motion_counts, index.layer_motion_counts)
+
+    def test_compact_cache_carries_counts_for_evicted_layers(self):
+        # A compact save writes the arrays in their EVICTED state, but
+        # the eviction-proof counts ride beside them: a restored index
+        # resolves a far layer's total before its first re-hydration.
+        data = (b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
+                b";LAYER:2\nG1 X4 Y4 Z0.6\n;LAYER:3\nG1 X5 Y5 Z0.8\n;LAYER:4\nG1 X6 Y6 Z1.0\n")
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            path = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(path, compact=True)
+            for layer in range(4):
+                self.assertTrue(hydrate_layer_from_file(index, path, layer))
+            self.assertEqual(index.hydrated_layers, {2, 3})
+            self.assertEqual(index.motion_count(0), 2)
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
+            with tempfile.TemporaryDirectory() as directory:
+                cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
+                cache.save(identity, index)
+                loaded = cache.load(identity)
+                self.assertIsNotNone(loaded)
+                self.assertEqual(loaded.motion_count(0), 2)
+                # A layer hydration never recorded stays unknown.
+                self.assertEqual(loaded.motion_count(4), 0)
+                self.assertEqual(loaded.hydrated_layers, {2, 3})
+        finally:
+            os.remove(path)
 
     def test_compact_index_hydrates_only_requested_layer(self):
         data = b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
@@ -352,11 +381,13 @@ G1 X5 Y0 Z0.2
             for layer in range(4):
                 self.assertTrue(hydrate_layer_from_file(index, path, layer))
             self.assertEqual(index.hydrated_layers, {2, 3})
-            self.assertEqual(index.motion_count(0), 0)
+            # Eviction wipes the motion arrays but never the counts: a
+            # seek to an evicted layer still resolves its total.
+            self.assertEqual(index.motion_count(0), 2)
             self.assertEqual(index.motion_count(3), 1)
             self.assertTrue(hydrate_layer_from_file(index, path, 4))
             self.assertEqual(index.hydrated_layers, {3, 4})
-            self.assertEqual(index.motion_count(2), 0)
+            self.assertEqual(index.motion_count(2), 1)
             self.assertEqual(index.motion_count(4), 1)
         finally:
             os.remove(path)
@@ -382,7 +413,9 @@ G1 X5 Y0 Z0.2
             # around the followed layer.
             self.assertTrue(hydrate_layer_from_file(index, path, 0, keep_anchor=2))
             self.assertEqual(index.hydrated_layers, {1, 2, 3})
-            self.assertEqual(index.motion_count(0), 0)
+            # The stray hydration was evicted with its arrays, but the
+            # count it recorded persists.
+            self.assertEqual(index.motion_count(0), 2)
         finally:
             os.remove(path)
 
@@ -410,7 +443,8 @@ G1 X5 Y0 Z0.2
             index.followed_layer = 4
             self.assertTrue(hydrate_layer_from_file(index, path, 5))
             self.assertEqual(index.hydrated_layers, {3, 4, 5})
-            self.assertEqual(index.motion_count(2), 0)
+            # Evicted with its arrays, but the recorded count persists.
+            self.assertEqual(index.motion_count(2), 1)
         finally:
             os.remove(path)
 

@@ -173,6 +173,7 @@ if QT_AVAILABLE:
         def download_progress(self): return None
         def cancel_file_download(self): self.loads.append("cancel")
         def setPlateAnchor(self, anchor): self.loads.append(("anchor", anchor))
+        def setPlateSplit(self, motions): self.loads.append(("split", motions))
         def receive_preview_block(self, block): self.blocks.append(block)
         def has_toolpath(self): return True
 

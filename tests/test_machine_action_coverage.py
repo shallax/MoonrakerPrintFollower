@@ -412,25 +412,6 @@ class MachineActionCase(unittest.TestCase):
         self.assertFalse(action.settingsZFallback)
         self.assertEqual(action.settingsZTolerance, "0.012")
 
-    def test_the_restore_window_property_carries_both_shapes(self):
-        # The pane maps the property to its combo index, so the two
-        # shapes must arrive distinctly: "never" read as a number would
-        # take the zero-window arm instead of the open one.
-        for stored, expected in ((0, "0"), (1, "1"), (7, "7"), (10, "10"),
-                                 ("never", "never"), ("  NEVER  ", "never"),
-                                 (99, "10"), (-4, "0"),
-                                 (True, "3")):  # bool is an int, not a layer count
-            with self.subTest(stored=stored):
-                config = self.printer_config.PrinterConfig(restore_window=stored)
-                action = self._action(self._follower(config))
-                self.assertEqual(action.settingsRestoreWindow, expected)
-
-    def test_an_unset_restore_window_reads_the_default(self):
-        action = self._action(self._follower())
-
-        self.assertEqual(action.settingsRestoreWindow,
-                         str(self.printer_config.RESTORE_WINDOW_DEFAULT))
-
     def test_the_output_settings_properties_mirror_the_config(self):
         config = self.printer_config.PrinterConfig(
             frontend_url="http://ui:8080", output_format="ufp", upload_dialog=False,
@@ -564,32 +545,6 @@ class MachineActionCase(unittest.TestCase):
         self.assertEqual(saved.filename_translate_input, "ab")
         self.assertEqual(saved.filename_translate_output, "cd")
         self.assertEqual(saved.filename_translate_remove, "e")
-
-    def test_a_save_carries_the_restore_window(self):
-        follower = self._follower()
-        action = self._action(follower)
-
-        for sent, expected in (("never", "never"), (0, 0), (6, 6), ("9", 9)):
-            with self.subTest(sent=sent):
-                self.assertTrue(action.saveConfig(self._params(restore_window=sent)))
-                self.assertEqual(follower.applied[-1].restore_window, expected)
-
-    def test_a_save_without_the_knob_keeps_the_stored_window(self):
-        # Every payload written before the knob existed omits the key:
-        # an absent key must carry the record forward, never reset it.
-        follower = self._follower(self.printer_config.PrinterConfig(restore_window="never"))
-        action = self._action(follower)
-
-        self.assertTrue(action.saveConfig(self._params()))
-        self.assertEqual(follower.applied[-1].restore_window, "never")
-
-    def test_a_nonsense_restore_window_falls_back_to_the_default(self):
-        follower = self._follower()
-        action = self._action(follower)
-
-        self.assertTrue(action.saveConfig(self._params(restore_window="bogus")))
-        self.assertEqual(follower.applied[-1].restore_window,
-                         self.printer_config.RESTORE_WINDOW_DEFAULT)
 
     def test_a_save_payload_that_is_not_a_mapping_is_refused(self):
         follower = self._follower()

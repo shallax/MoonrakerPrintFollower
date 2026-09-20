@@ -60,6 +60,12 @@ class PrintSnapshot:
     # prev/current/next bundle with the printed/unprinted split, built
     # by the coordinator from the index — None without a live view.
     plate_progress: Optional[dict] = None
+    # The popover's own view while the follower is DETACHED: the frozen
+    # anchor's bundle with the scrubbed split. None while attached (the
+    # live payload above serves both surfaces). The mini reads only
+    # plate_progress, so it never detaches with the popover (the live
+    # request).
+    plate_manual_progress: Optional[dict] = None
     # The index's layer count: the layer slider's range, and the clamp
     # that refuses a stale manual anchor from an earlier file. 0 without
     # a view.

@@ -15,10 +15,8 @@ Item {
     property var plate: null
     property bool compact: false
     property string hoveredName: ""
-    property string selectedName: ""
     property int clickProgress: 0  // 1..3, the host's counter line
     property string pendingAction: ""  // "exclude" | "restore" while arming
-    signal selectionChanged(string name)
     signal progressChanged(int clicks)
     signal excludeRequested(string name)
     signal restoreRequested(string name)
@@ -44,21 +42,18 @@ Item {
         if (count === 1) {
             return {
                 "fire": false,
-                "select": firstName,
                 "progress": 1
             };
         }
         if (count === 2) {
             return {
                 "fire": false,
-                "select": firstName,
                 "progress": 2
             };
         }
         return {
             "fire": firstName === lastName,
             "name": firstName,
-            "select": firstName,
             "progress": 3
         };
     }
@@ -77,12 +72,8 @@ Item {
             root._pendingSince = now;
         }
         var verdict = root.resolveGesture(root._pendingClicks, root._pendingName, name, root.tripleClickWindowMs);
-        if (verdict.select !== undefined) {
-            root.selectedName = verdict.select;
-            root.selectionChanged(root.selectedName);
-            var row = root._rowFor(root.selectedName);
-            root.pendingAction = row != null && row.excluded === true ? "restore" : "exclude";
-        }
+        var row = root._rowFor(name);
+        root.pendingAction = row != null && row.excluded === true ? "restore" : "exclude";
         root.clickProgress = verdict.progress;
         root.progressChanged(verdict.progress);
         if (verdict.fire) {
@@ -112,18 +103,20 @@ Item {
         return null;
     }
 
-    function selectionDetail() {
-        var row = root._rowFor(root.selectedName);
+    function hoverDetail() {
+        // The hover readout: the name and its state — the map's
+        // colours carry the same state, the words carry it legibly.
+        var row = root._rowFor(root.hoveredName);
         if (row == null) {
             return "";
         }
-        if (row.excluded !== true) {
-            return row.name;
+        if (row.excluded === true) {
+            return row.name + " — excluded";
         }
-        if (row.restoreDetail !== undefined) {
-            return row.restoreDetail;
+        if (row.current === true) {
+            return row.name + " — current";
         }
-        return row.name + " — excluded";
+        return row.name + " — included";
     }
 
     PlateCanvas {

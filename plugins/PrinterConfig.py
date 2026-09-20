@@ -57,26 +57,6 @@ def upload_path_safe(value: Any) -> str:
     return "" if any(part.startswith(".") for part in parts if part) else text
 
 
-# The restore window's default (the panel's adjudication): 3 layers.
-RESTORE_WINDOW_DEFAULT = 3
-
-
-def normalise_restore_window(value: Any):
-    """The restore-window knob: an int (0 = immediate restrict,
-    1..10 = windowed) or the string "never". Coerced so a hand-edited
-    value cannot silently flip semantics."""
-    if isinstance(value, str):
-        if value.strip().lower() == "never":
-            return "never"
-        try:
-            value = int(value)
-        except ValueError:
-            return RESTORE_WINDOW_DEFAULT
-    if isinstance(value, bool) or not isinstance(value, int):
-        return RESTORE_WINDOW_DEFAULT
-    return max(0, min(10, value))
-
-
 def normalise_temperature_chart(value: Any) -> dict:
     """The chart config block: per-sensor visibility/colours plus the
     display toggles, coerced so hand-edited values cannot silently flip
@@ -195,9 +175,6 @@ class PrinterConfig:
     console_store_time: float = 0.0
     # The bed-mesh pop-over's probe-point overlay, per printer.
     show_probe_points: bool = False
-    # The restore-window knob (the 4.6.0 grace): an int (0 = immediate
-    # restrict, 1..10 = windowed layers) or "never".
-    restore_window: Any = RESTORE_WINDOW_DEFAULT
 
     def __post_init__(self) -> None:
         # Direct constructions (tests, hand-built records) may pass a
@@ -333,7 +310,6 @@ class PrinterConfig:
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
         data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
-        data["restore_window"] = normalise_restore_window(data.get("restore_window"))
         # A corrupt legacy record must not load an unbounded history
         # list into memory (panel security P3): trim like every other
         # retained list in this record (ConsolePolicy.MAX_HISTORY = 200;

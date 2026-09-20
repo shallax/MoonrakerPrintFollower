@@ -41,28 +41,6 @@ Cura.MachineAction {
         return "exact";
     }
 
-    // The restore-window knob: index 0 is "never", index 1 is the zero
-    // window, 2..11 are 1..10 layers. One control for all three
-    // semantics, so a value that cannot be expressed cannot be saved —
-    // and the value shown is always the value stored.
-    function restoreWindowIndex(value) {
-        if (String(value) === "never")
-            return 0;
-        var layers = Number(value);
-        // Unreachable through the manager (it normalises): this guards a
-        // host that exposes no restore-window property at all, where the
-        // pane shows the shipped default rather than a blank combo.
-        if (!isFinite(layers))
-            layers = 3;  // RESTORE_WINDOW_DEFAULT
-        return Math.max(1, Math.min(11, Math.round(layers) + 1));
-    }
-
-    function restoreWindowValue() {
-        if (restoreWindowBox.currentIndex <= 0)
-            return "never";
-        return restoreWindowBox.currentIndex - 1;
-    }
-
     function save(closeDialog) {
         if (!base.canSave) {
             saveRefused = true;
@@ -86,7 +64,6 @@ Cura.MachineAction {
             "show_toolhead_indicator": toolheadIndicatorBox.checked,
             "z_fallback": zFallbackBox.checked,
             "z_tolerance": zToleranceField.text,
-            "restore_window": base.restoreWindowValue(),
             "trace_layer": layerTraceBox.checked,
             "trace_http": httpTraceBox.checked,
             "memory_diagnostics_log": memoryDiagnosticsBox.checked,
@@ -718,25 +695,6 @@ Cura.MachineAction {
                             visible: !base.validZTolerance
                             text: "Z-height tolerance must be between 0.005 and 0.250 mm."
                             color: UM.Theme.getColor("error")
-                            font: UM.Theme.getFont("default_italic")
-                        }
-
-                        UM.Label {
-                            text: "Skipped-object restore window"
-                            font: UM.Theme.getFont("medium_bold")
-                        }
-                        Cura.ComboBox {
-                            id: restoreWindowBox
-                            objectName: "restoreWindowBox"
-                            width: parent.width
-                            model: ["Never (restore always allowed)", "Immediately (0 layers)", "1 layer", "2 layers", "3 layers", "4 layers", "5 layers", "6 layers", "7 layers", "8 layers", "9 layers", "10 layers"]
-                            currentIndex: base.restoreWindowIndex(manager.settingsRestoreWindow)
-                        }
-                        UM.Label {
-                            text: "How long after an object is skipped the Monitor still offers to restore it. \"Immediately\" closes the window as soon as the skip is seen; a layer count keeps it open that many layers longer; Never removes the limit."
-                            wrapMode: Text.WordWrap
-                            width: parent.width
-                            color: UM.Theme.getColor("text_inactive")
                             font: UM.Theme.getFont("default_italic")
                         }
                     }

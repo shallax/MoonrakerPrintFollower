@@ -666,21 +666,11 @@ def peripheral_values(snapshot):
                 "load": f"{max(0, stats['mcu_awake'] * 100):.1f}%" if "mcu_awake" in stats else "—",
                 "task": " · ".join(tasks) or "—", "frequency": f"{frequency / 1000000:.3f} MHz" if frequency else "—",
                 "memory": format_bytes(memory), "transport": " · ".join(traffic) or "—"})
-    # The volatile fields read the CORE lane (the freshest copy — the
-    # 4.6.0 lane move); the aux copy falls back while the core lane
-    # has not landed yet.
-    exclude = snapshot.core.get("exclude_object") or snapshot.auxiliary.get("exclude_object") or {}
-    excluded = exclude.get("excluded_objects") or ()
-    objects = [{"name": str(item["name"]), "excluded": item["name"] in excluded, "current": item["name"] == exclude.get("current_object")}
-        for item in exclude.get("objects", ()) if isinstance(item, Mapping) and item.get("name")]
-    # The human lexical sort (the live ruling: the status order read
-    # as 1, 10, 11, ..., 2, 20); the list never reorders after.
-    objects.sort(key=lambda row: _natural_key(row["name"]))
     system = snapshot.auxiliary.get("system_stats") or {}
     memory = number(system.get("memavail"))
     klippy = str((snapshot.auxiliary.get("webhooks") or {}).get("state") or snapshot.server.get("klippy_state") or "unknown")
     return {"temperatureItems": temperatures, "fanItems": fans, "filamentSensorItems": filament,
-        "excludeObjectItems": objects, "mcuItems": mcus, "mcuSummary": " · ".join(versions) or "—",
+        "mcuItems": mcus, "mcuSummary": " · ".join(versions) or "—",
         "hostLoad": f"{number(system.get('sysload')):.2f}" if system.get("sysload") is not None else "—",
         "memoryAvailable": f"{memory / 1048576:.2f} GB" if memory >= 1048576 else f"{memory / 1024:.0f} MB" if memory > 0 else "—",
         "cpuTemperature": f"{cpu:.1f} °C" if cpu is not None else "—", "klippyState": klippy.capitalize(),

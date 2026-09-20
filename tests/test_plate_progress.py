@@ -857,6 +857,43 @@ class SyntheticIndexTests(unittest.TestCase):
                           "travelEnds": [], "motions": 0})
 
 
+class CompactCodecTests(unittest.TestCase):
+    """The full cache's binary form: the round trip preserves every
+    channel the painter reads."""
+
+    PAYLOAD = {
+        "classes": {
+            "WALL-OUTER": [[[0.0, 0.0, 0.0], [10.0, 0.0, 1.0], [10.0, 10.0, 2.0]],
+                           [[10.0, 10.0, 2.0], [0.0, 10.0, 3.0]]],
+            "SKIN": [],
+        },
+        "travels": [[[5.0, 5.0, 4.0], [6.0, 6.0, 4.0]]],
+        "travelStarts": [[5.0, 5.0, 4.0]],
+        "travelEnds": [[6.0, 6.0, 4.0]],
+        "motions": 5,
+    }
+
+    def test_the_round_trip_preserves_every_channel(self):
+        from plugins.PlateProgress import decode_layer, encode_layer
+        raw = encode_layer(self.PAYLOAD)
+        self.assertIsInstance(raw, bytes)
+        self.assertEqual(decode_layer(raw), self.PAYLOAD)
+        # The compact form is the point count times three f32s, plus
+        # the headers: 14 points * 12 bytes.
+        self.assertLessEqual(len(raw), 14 * 12 + 256)
+
+    def test_an_empty_payload_round_trips(self):
+        from plugins.PlateProgress import decode_layer, encode_layer
+        empty = {"classes": {}, "travels": [], "travelStarts": [],
+                 "travelEnds": [], "motions": 0}
+        self.assertEqual(decode_layer(encode_layer(empty)), empty)
+
+    def test_garbage_decodes_to_the_empty_payload(self):
+        from plugins.PlateProgress import decode_layer
+        self.assertEqual(decode_layer(b"not a payload"), {})
+        self.assertEqual(decode_layer(None), {})
+
+
 class SimplificationErrorTests(unittest.TestCase):
     """The distance a kept-away vertex is measured by: the FINITE
     candidate segment the simplified polyline would draw, never the

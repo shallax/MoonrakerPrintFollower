@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import threading
+import time
 from types import MappingProxyType
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -10,8 +11,9 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
 from .MonitorFormatting import _segment_in_polygon, polygon_bounds
 from .PlateProgress import (
+    decode_layer as _decode_layer,
+    encode_layer as _encode_layer,
     motion_edges as _motion_edges,
-    plate_layers as _plate_layers,
     prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
@@ -90,11 +92,21 @@ class GCodeIndexService(QObject):
         # thread's progress callback and read by the coordinator's
         # tick — a plain float, atomic enough under the GIL.
         self._progress = None
-        self._plate_layers_key = None
-        self._plate_layers = {}
+        self._plate_layers_memos = {}
+        # The full prepared cache (the live request's instant-access
+        # store): every layer's compact payload, filled by a
+        # background pass that yields to the live demands. A layer
+        # asked before the pass reaches it prepares on demand and
+        # lands here too.
+        self._full_cache = {}
+        self._full_next = 0
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
+        # The within-layer scrub (the pop-over's progress slider): the
+        # manual split for the frozen layer, None while the live print's
+        # boundary is the one being shown.
+        self._manual_split = None
         # The boundary already painted for a (file, layer) — the floor
         # the next poll's refinement may not fall below — and the last
         # one a LIVE position established, None while there is none.
@@ -132,8 +144,10 @@ class GCodeIndexService(QObject):
         self._progress = None
         # The memoised layers belong to the previous index; a new
         # print could coincidentally match the (anchor, counts) key.
-        self._plate_layers_key = None
-        self._plate_layers = {}
+        self._plate_layers_memos = {}
+        # The full cache belongs to the file that was printing too.
+        self._full_cache = {}
+        self._full_next = 0
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
         # The painted boundary belongs to that file's layer too: a new
@@ -177,9 +191,30 @@ class GCodeIndexService(QObject):
         """
         self._manual_anchor = layer if isinstance(layer, int) and not isinstance(layer, bool) \
             and layer >= 0 else None
+        if self._manual_anchor is None:
+            # Rejoining the live print abandons the scrub: the live
+            # split is the print's own again.
+            self._manual_split = None
+        else:
+            # A seek focuses the pass: the sought window prepares
+            # before the pass resumes wherever it stood (the live
+            # report — a far seek waited for the pass to walk the
+            # whole file).
+            self._full_next = min(self._full_next, max(0, self._manual_anchor - 1))
         self._apply_manual_anchor()
         self._request_manual_window()
         self._advance()
+
+    def set_manual_split(self, motions):
+        """The follower's DETACHED split: the within-layer boundary the
+        user scrubbed to, shown instead of the live print's own while
+        the anchor is frozen. -1 is the FULL marker — the frozen
+        layer draws every motion (a seek lands at 100%, the live
+        request). ``None`` restores the frozen layer's whole-base
+        draw.
+        """
+        self._manual_split = motions if isinstance(motions, int) and not isinstance(motions, bool) \
+            and motions >= -1 else None
 
     def _apply_manual_anchor(self):
         """Hand the frozen anchor to the index's own retention bound.
@@ -212,17 +247,47 @@ class GCodeIndexService(QObject):
         """The follower's STATIC half: the prev/current/next bundle,
         memoised per anchor and hydration fill — the model republishes
         it with a stable identity so QML never re-wraps the polylines
-        on a quiet poll (the perf panel's split)."""
+        on a quiet poll (the perf panel's split). TWO slots: the live
+        payload and the frozen one alternate every poll while
+        detached, and one slot thrashed — each ask evicted the
+        other's bundle, both rebuilt every poll, and the whole plugin
+        re-churned (the live report). The hydration flags are part of
+        the key: a bundle built while the anchor's layer was still
+        hydrating must rebuild when it lands (the live report — a far
+        seek's current stayed blank forever)."""
         if self._view is None:
             return {}
         index = self._view._index
         with index.cache_lock:
-            counts = tuple(index.motion_count(layer)
-                           for layer in (anchor - 1, anchor, anchor + 1))
-            if self._plate_layers_key != (anchor, counts):
-                self._plate_layers = _plate_layers(index, anchor)
-                self._plate_layers_key = (anchor, counts)
-        return self._plate_layers
+            window = (anchor - 1, anchor, anchor + 1)
+            counts = tuple(index.motion_count(layer) for layer in window)
+            hydrated = tuple(self._view.hydrated(layer) for layer in window)
+            key = (counts, hydrated)
+            memo = self._plate_layers_memos.get(anchor)
+            if memo is not None and memo[0] == key:
+                return memo[1]
+
+            def layer_or_full(layer):
+                # The full prepared cache answers first (a decode,
+                # never a re-walk); the window's store covers what the
+                # pass has not reached, and an unprepared layer reads
+                # as not loaded.
+                if 0 <= layer < len(index.ranges):
+                    raw = self._full_cache.get(layer)
+                    if raw is not None:
+                        return _decode_layer(raw)
+                return _prepare_layer(index, layer)
+
+            bundle = {"prev": layer_or_full(anchor - 1),
+                      "current": layer_or_full(anchor),
+                      "next": layer_or_full(anchor + 1)}
+            if len(self._plate_layers_memos) >= 2:
+                # The demand alternates two anchors at most; a third
+                # (a layer change, a new seek) resets the pair.
+                self._plate_layers_memos = {anchor: (key, bundle)}
+            else:
+                self._plate_layers_memos[anchor] = (key, bundle)
+            return bundle
 
     def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -244,9 +309,20 @@ class GCodeIndexService(QObject):
         parser's position is most wrong. The floor resets with the
         layer: another layer's count is another layer's boundary.
         """
-        if self._view is None or file_position is None:
+        if self._view is None:
             return None
-        if not self._plate_layers.get("current"):
+        if file_position is None:
+            # The frozen layer's scrub: the manual split is the boundary
+            # while detached, the whole base while it is unset. The FULL
+            # marker resolves to the layer's own motion count — every
+            # edge prints (a seek lands at 100%).
+            if self._manual_split is not None and anchor == self._manual_anchor:
+                if self._manual_split == -1:
+                    return self._view._index.motion_count(anchor)
+                return self._manual_split
+            return None
+        memo = self._plate_layers_memos.get(anchor)
+        if memo is None or not memo[1].get("current"):
             return None
         index = self._view._index
         with index.cache_lock:
@@ -352,11 +428,17 @@ class GCodeIndexService(QObject):
 
     def plate_progress(self, anchor, file_position=None, live_position=None):
         """The composed payload (the tests and the one-shot consumers):
-        the memoised layers plus the volatile split."""
+        the memoised layers plus the volatile split. The motion total is
+        the progress slider's range — the layer's own edge count."""
         layers = self.plate_layers(anchor) if self._view is not None else {}
         split = self.plate_split(anchor, file_position, live_position)
         method = "motion index" if split is not None else "unavailable"
-        return {"layers": layers, "split": split, "method": method, "anchor": anchor}
+        motion_total = 0
+        if self._view is not None:
+            with self._view._index.cache_lock:
+                motion_total = self._view._index.motion_count(anchor)
+        return {"layers": layers, "split": split, "method": method,
+                "motionTotal": motion_total, "anchor": anchor}
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.
@@ -447,25 +529,88 @@ class GCodeIndexService(QObject):
             if lease is None:
                 self._files.request_file()
                 return
-            layer = min(self._hydrate)
-            self._hydrate.remove(layer)
-            self._hydrating = layer
+            window = sorted(self._hydrate)
+            self._hydrate.clear()
+            self._hydrating = set(window)
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
-            # The preparation rides the same worker task (the service's
+            # The WHOLE demanded window rides ONE task: a seek's three
+            # layers arrive together instead of through three chained
+            # round-trips (the live report's ~3s per slide). The
+            # preparation rides the same worker task (the service's
             # state machine owns ONE busy task at a time): the dense
             # polyline build never runs on the UI thread, and the
             # poll-time read hits the prepared store's memo.
             def hydrate_and_prepare():
-                result = hydrate_layer_from_file(index, lease.path, layer)
-                _prepare_layer(index, layer)
-                return result
+                failed = []
+                for layer in window:
+                    result = hydrate_layer_from_file(index, lease.path, layer)
+                    if not result:
+                        failed.append(layer)
+                        continue
+                    payload = _prepare_layer(index, layer)
+                    if payload is not None:
+                        # The demanded layer lands in the full cache too:
+                        # its prepared form survives the window's eviction.
+                        # An encode failure must never cost the hydration
+                        # itself (the latch would read the layer as failed
+                        # and the seek would wait for the pass's frontier).
+                        try:
+                            self._full_cache.setdefault(layer, _encode_layer(payload))
+                        except Exception:
+                            pass
+                return failed
             self._submit("hydrate", hydrate_and_prepare, lease)
         elif self._save and strong:
+            # The index cache save is a one-shot and must not wait for
+            # the pass to walk the whole file.
             self._save = False
             index = self._view._index
             self._submit("save", lambda: self._cache.save(identity, index))
+        elif self._view is not None and self._full_next < len(self._view.ranges):
+            # The full prepared cache's background pass (the live
+            # request): one bounded batch per worker task, so the
+            # demanded hydrates above always cut in. Every layer ends
+            # up in the compact store, and a seek only waits for the
+            # one layer it asked for.
+            lease = self._files.lease()
+            if lease is None:
+                self._files.request_file()
+                return
+            index = self._view._index
+            cache = self._full_cache
+            deadline = time.monotonic() + 0.25
+
+            def full_prep_batch():
+                encoded = {}
+                while time.monotonic() < deadline:
+                    layer = self._full_next
+                    if layer >= len(index.ranges):
+                        break
+                    if layer in self._failed_hydrate:
+                        # The latch applies to the pass too: a refused
+                        # layer must not retry every poll (the same
+                        # whole-file re-read the demand path avoids).
+                        self._full_next = layer + 1
+                        continue
+                    if layer not in cache:
+                        if index.compact and layer not in index.hydrated_layers:
+                            if not hydrate_layer_from_file(index, lease.path, layer):
+                                break
+                        payload = _prepare_layer(index, layer)
+                        if payload is not None:
+                            try:
+                                encoded[layer] = _encode_layer(payload)
+                            except Exception:
+                                # A layer the codec cannot hold simply
+                                # stays out of the cache; the pass
+                                # must walk on, never stall.
+                                pass
+                    self._full_next = layer + 1
+                return encoded
+
+            self._submit("fullprep", full_prep_batch, lease)
 
     def _submit(self, kind, work, lease=None):
         generation = self._generation
@@ -495,15 +640,26 @@ class GCodeIndexService(QObject):
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)
             elif kind == "hydrate":
-                if value:
-                    self._save = True
-                else:
-                    # A failed hydration must not be re-attempted on every
-                    # poll — each attempt re-reads the whole file. The latch
-                    # clears when a new file arrives or the index is rebuilt.
-                    if self._hydrating is not None:
-                        self._failed_hydrate.add(self._hydrating)
+                # The batch returns the layers it could not hydrate (a
+                # task exception returns None: latch the whole window).
+                # A failed hydration must not be re-attempted on every
+                # poll — each attempt re-reads the whole file. The latch
+                # clears when a new file arrives or the index is rebuilt.
+                window = self._hydrating
                 self._hydrating = None
+                if isinstance(window, (set, list, tuple)):
+                    window_layers = list(window)
+                elif window:
+                    window_layers = [window]
+                else:
+                    window_layers = []
+                failed = value if isinstance(value, list) else ([] if value else window_layers)
+                if len(failed) < len(window_layers) or (bool(value) and not window_layers):
+                    self._save = True
+                self._failed_hydrate.update(failed)
+            elif kind == "fullprep":
+                if isinstance(value, dict):
+                    self._full_cache.update(value)
             self.changed.emit()
         self._advance()
 

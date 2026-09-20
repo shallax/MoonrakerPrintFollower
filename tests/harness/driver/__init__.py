@@ -957,6 +957,14 @@ class HarnessServer(QObject):
                 scene = target.mapToScene(QPointF(0, 0))
                 x = round(scene.x() + target.width() / 2)
                 y = round(scene.y() + target.height() / 2)
+                # An aim that provably cannot land refuses HERE: a
+                # press at empty space used to report as an ordinary
+                # unaccepted click, which reads like a stolen click.
+                blocker = _viewport_blocker(window, target, x, y)
+                if blocker is not None:
+                    return {"id": request_id, "ok": False, "error": blocker,
+                            "aim": [x, y], "wanted": wanted,
+                            "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
                 delivery = _deliver_press(window, x, y, Qt.MouseButton.LeftButton, target)
                 return {"id": request_id, "ok": True, "mechanism": "deliver",
                         "aim": [x, y], "window": window.objectName() or "",
@@ -1021,9 +1029,19 @@ class HarnessServer(QObject):
                 viewport_h = flickable.height()
                 before = (round(origin.y()), round(origin.y() + target.height()))
                 if origin.y() < 0 or origin.y() + target.height() > viewport_h:
-                    flickable.setProperty(
-                        "contentY",
-                        max(0.0, origin.y() - (viewport_h - target.height()) / 2))
+                    # The origin is measured in the viewport's own space,
+                    # so the new contentY is a DELTA from the current one.
+                    # An absolute origin only landed right while the pane
+                    # sat at 0; a pane an earlier leg had scrolled stayed
+                    # below the fold and the press then missed the window.
+                    try:
+                        current = float(flickable.property("contentY"))
+                        ceiling = max(0.0, float(flickable.property("contentHeight")) - viewport_h)
+                        wanted = min(current + origin.y() - (viewport_h - target.height()) / 2,
+                                     ceiling)
+                    except Exception:
+                        wanted = origin.y() - (viewport_h - target.height()) / 2
+                    flickable.setProperty("contentY", max(0.0, wanted))
                     qtest.QTest.qWait(200)
                     origin = target.mapToItem(viewport_item, QPointF(0, 0))
                 contained = 0 <= origin.y() and origin.y() + target.height() <= viewport_h
@@ -1090,7 +1108,7 @@ class HarnessServer(QObject):
                             name = None
                         if wanted_name and name == wanted_name:
                             rect = self._rect(item)
-                            name_matches.append((rect["y"], rect["x"], rect))
+                            name_matches.append((rect["y"], rect["x"], rect, item))
                             continue
                         if wanted_text or wanted_class:
                             try:
@@ -1101,8 +1119,10 @@ class HarnessServer(QObject):
                             if (wanted_text and label == wanted_text) or \
                                (wanted_class and klass == wanted_class):
                                 if "Button" in klass:
+                                    rect = self._rect(item)
+                                    rect["in_view"] = _aim_in_view(item)
                                     return {"id": request_id, "ok": True,
-                                            "rect": self._rect(item), "found": klass,
+                                            "rect": rect, "found": klass,
                                             "walk": dict(_WALK_STATS)}
                                 if best is None or (item.width() * item.height() >
                                                     best.width() * best.height()):
@@ -1110,13 +1130,20 @@ class HarnessServer(QObject):
                 if name_matches:
                     # Repeater rows share the objectName: the topmost
                     # (then leftmost) is the row the user reads first.
-                    name_matches.sort()
+                    name_matches.sort(key=lambda row: (row[0], row[1]))
+                    rect = dict(name_matches[0][2])
+                    # Presence in the rendered tree is not presence on
+                    # screen (see _viewport_blocker): the flag rides
+                    # the reply so the evidence never conflates them.
+                    rect["in_view"] = _aim_in_view(name_matches[0][3])
                     return {"id": request_id, "ok": True,
-                            "rect": name_matches[0][2], "found": "objectName",
+                            "rect": rect, "found": "objectName",
                             "walk": dict(_WALK_STATS)}
                 if best is not None:
+                    rect = self._rect(best)
+                    rect["in_view"] = _aim_in_view(best)
                     return {"id": request_id, "ok": True,
-                            "rect": self._rect(best),
+                            "rect": rect,
                             "found": best.metaObject().className(),
                             "walk": dict(_WALK_STATS)}
                 return {"id": request_id, "ok": False,
@@ -1985,6 +2012,65 @@ def _identify(item):
             break
         chain.append(node.metaObject().className())
     return {"objectName": name or None, "class": chain[0], "chain": chain}
+
+
+def _viewport_blocker(window, target, x, y):
+    # Why a press at (x, y) cannot land on the target — None when it
+    # can. mapToScene ignores clipping: an item scrolled out of its
+    # pane's Flickable still reports a plausible rect while rendering
+    # nowhere, and a press aimed there is a click on EMPTY SPACE that
+    # surfaces only as hit=None, accepted=False (the s7 jog leg: the
+    # aim sat 28px below the window's bottom edge, and the harness
+    # could not tell that from a swallowed click). The check names the
+    # first blocker so the step fails with the reason instead.
+    try:
+        root = window.contentItem()
+        rw, rh = float(root.width()), float(root.height())
+    except Exception:
+        return None
+    if not (0 <= x < rw and 0 <= y < rh):
+        return (f"the aim {[x, y]} is outside the window content "
+                f"({round(rw)}x{round(rh)}) — nothing can receive the press")
+    node = target
+    while node is not None:
+        try:
+            node = node.parentItem()
+        except Exception:
+            return None
+        if node is None:
+            break
+        try:
+            if not bool(node.property("clip")):
+                continue
+            local = node.mapFromItem(root, QPointF(x, y))
+            w, h = float(node.width()), float(node.height())
+        except Exception:
+            continue
+        if not (-0.5 <= local.x() <= w + 0.5 and -0.5 <= local.y() <= h + 0.5):
+            try:
+                origin = node.mapToScene(QPointF(0, 0))
+                place = [round(origin.x()), round(origin.y())]
+            except Exception:
+                place = None
+            label = node.property("objectName") or node.metaObject().className()
+            return (f"the aim {[x, y]} is outside the clipped viewport of {label} "
+                    f"({round(w)}x{round(h)} at scene {place}) — scroll the target into view first")
+    return None
+
+
+def _aim_in_view(item):
+    # Whether a press at the item's centre could actually land — the
+    # observation half of _viewport_blocker, reported with every rect
+    # so a "rendered" item that is scrolled out of sight reads as such
+    # in the evidence instead of passing as visible.
+    try:
+        window = item.window()
+        scene = item.mapToScene(QPointF(0, 0))
+        x = round(scene.x() + item.width() / 2)
+        y = round(scene.y() + item.height() / 2)
+    except Exception:
+        return None
+    return _viewport_blocker(window, item, x, y) is None
 
 
 def _deliver_press(window, x, y, button, target=None):
