@@ -113,10 +113,10 @@ class GCodeIndexService(QObject):
 
     def request_hydration(self, layer):
         view = self._view
-        if view is not None and 0 <= layer < len(view.ranges) and not view.hydrated(layer):
-            # Only the current and next layer are useful; never grow a work queue.
-            self._hydrate = {int(layer), int(layer) + 1}
-            self._advance()
+        if view is None or not 0 <= layer < len(view.ranges):
+            return
+        self._request_window(int(layer))
+        self._advance()
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.
@@ -132,9 +132,31 @@ class GCodeIndexService(QObject):
         with index.cache_lock:
             index.followed_layer = layer
         # A moved anchor may have stranded a pending prefetch outside
-        # the window; drop it before the worker picks it.
+        # the window; drop it before the worker picks it. The window is
+        # then topped back up: an anchor move is exactly when the new
+        # previous layer's ghost becomes worth reading.
         self._hydrate = {n for n in self._hydrate if layer - 1 <= n <= layer + 1}
+        self._request_window(layer)
         self._advance()
+
+    def _request_window(self, layer):
+        """Ask for the anchor's own three layers, never a backlog.
+
+        The face reads the previous layer, the current one and the
+        look-ahead, and each is useful only around the live layer — so
+        the demand is a WINDOW, and asking for one already-hydrated
+        layer must not stand the others down. Any layer the latch has
+        given up on is left out; ``_advance`` would drop it anyway.
+        """
+        view = self._view
+        anchor = view._index.followed_layer
+        for candidate in (layer - 1, layer, layer + 1):
+            if not 0 <= candidate < len(view.ranges) or view.hydrated(candidate):
+                continue
+            if anchor is not None and not anchor - 1 <= candidate <= anchor + 1:
+                continue
+            if candidate not in self._failed_hydrate:
+                self._hydrate.add(candidate)
 
     def _on_files_changed(self):
         # A new file (or a re-downloaded one) invalidates failed hydration
