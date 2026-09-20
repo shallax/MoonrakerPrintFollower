@@ -138,6 +138,12 @@ Cura.RoundedRectangle {
             cameraImage.stop();
             cameraImage.source = url;
             cameraImage.visible = visible;
+            if (!shouldRun) {
+                // An applied EMPTY url clears the painted frame: the
+                // stream-off must not keep the last frame (the live
+                // request — the resume flashed it).
+                cameraImage.clearFrame();
+            }
         } finally {
             // The guard must release even if an assignment throws —
             // a stuck latch would silence the visibility lifecycle

@@ -355,6 +355,16 @@ It does not expose mutable motion arrays or worker handles. Compact layers are u
 only after hydration has published complete arrays. Index algorithms and cache
 format remain in `GCodeIndex.py`; they are not duplicated in runtime components.
 
+One indexed motion is one G-code motion, and its physical geometry is one path:
+a straight edge for G0/G1, and for G2/G3 the circular or helical path its centre
+offsets describe. `ArcGeometry.py` owns that path — the tessellation the payload and
+the printed-object walk read, and the live-position match — so no consumer branches
+on the command word and no consumer re-derives a curve. The index carries the arcs
+sparsely (a descriptor per arc motion keyed by motion index, plus the modal plane at
+each layer's start) and never pre-tessellates them. A Klipper-invalid arc (R-form,
+G91, zero centre offsets) carries no descriptor and draws as the straight edge it
+would have been, which keeps the index usable rather than failing the file.
+
 ## 7. Commands and scheduled PAUSE
 
 HTTP acceptance is distinct from observed printer-state confirmation. Only fresh

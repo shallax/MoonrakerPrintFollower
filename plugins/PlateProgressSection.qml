@@ -58,7 +58,7 @@ ColumnLayout {
                 showNext: root.printerModel != null ? root.printerModel.followerShowNext : true
                 showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                 showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
-                lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 1.0
+                lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 0.7
                 opacity: root.printerModel != null && root.printerModel.plateProgressAvailable ? 1 : 0
                 MouseArea {
                     anchors.fill: parent

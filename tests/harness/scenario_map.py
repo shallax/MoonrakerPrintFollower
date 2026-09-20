@@ -72,6 +72,7 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.saveConfig": "i6",
     "MoonrakerMonitorModel.selectWebcam": "e2",
     "MoonrakerMonitorModel.setWebcamStreamEnabled": "e2",
+    "MoonrakerMJPGImage.clearFrame": "e2",
     "MoonrakerMonitorModel.sendConsoleCommand": "d1",
     "MoonrakerMonitorModel.setBedMeshPreviewVisible": "h6",
     "MoonrakerMonitorModel.setBedMeshThresholds": "h6c",

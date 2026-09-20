@@ -19,7 +19,8 @@ ColumnLayout {
         printerModel: root.printerModel
         title: "Exclude Object Picker"
         sectionId: "plate"
-        sectionIcon: "Buildplate"
+        sectionIcon: ""
+        sectionIconUrl: Qt.resolvedUrl("ObjectExclude.svg")
     }
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["plate"] !== false

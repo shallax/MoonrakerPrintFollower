@@ -222,14 +222,14 @@ def _follower_view_state(stored) -> dict:
         try:
             parsed = float(value)
         except (TypeError, ValueError):
-            return 1.0
+            return 0.7
         return min(2.0, max(0.5, parsed))
     return {
         "showPrevious": flag("showPrevious", True),
         "showNext": flag("showNext", True),
         "showBase": flag("showBase", True),
         "showTravels": flag("showTravels", False),
-        "lineScale": scale(stored.get("lineScale", 1.0)),
+        "lineScale": scale(stored.get("lineScale", 0.7)),
     }
 
 
@@ -1496,7 +1496,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
     followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
-    followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 1.0)
+    followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 0.7)
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")
     moonrakerVersion = value_property(str, "moonrakerVersion", systemChanged, "—")

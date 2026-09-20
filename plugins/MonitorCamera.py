@@ -202,9 +202,12 @@ class MonitorCamera(QObject):
 
     def resume_stream(self):
         """The re-enable's half: rebuild the bridge for the current
-        camera. Its local listener died with the suspend, and a pane
-        pulling the dead loopback URL froze the stream until a camera
-        re-select rebuilt it (the live report)."""
+        camera. The selection-restore early-outs on an unchanged
+        signature — the suspend kept the selection, so the rebuild
+        must run regardless: the key is defeated first, and the URL
+        is re-derived and re-bridged (the live report: only a camera
+        re-select revived the frozen stream)."""
+        self._key = None
         self._restore_selection(self._config(), self._data.snapshot.webcams)
 
     def _bridge_url(self, config, url):

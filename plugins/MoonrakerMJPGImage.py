@@ -305,6 +305,14 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # The last decoded frame stays on the item: the pane's
         # disconnected veil covers a stale frame by design.
 
+    @pyqtSlot()
+    def clearFrame(self) -> None:
+        """Blank the painted frame (the live request): a disabled
+        stream must not keep the last frame on the item — the resume
+        would flash whatever was there when the stream stopped."""
+        self._image = QImage()
+        self.update()
+
     def _stop_request(self) -> None:
         # The QNAM owns its replies, so a stopped reply must be
         # released with deleteLater — dropping the Python reference

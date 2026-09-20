@@ -26,7 +26,8 @@ ColumnLayout {
         printerModel: root.printerModel
         title: "Objects"
         sectionId: "objects"
-        sectionIcon: "MeshTypeNormal"
+        sectionIcon: ""
+        sectionIconUrl: Qt.resolvedUrl("ObjectExclude.svg")
     }
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["objects"] !== false

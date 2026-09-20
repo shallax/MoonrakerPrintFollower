@@ -22,7 +22,12 @@ Item {
     property bool showNext: true
     property bool showBase: true
     property bool showTravels: false  // lines AND boundary markers — one toggle (the live ruling)
-    property real lineScale: 1.0      // the stroke thickness multiplier (the live request)
+    // The stroke thickness multiplier (the live request). The 0.7
+    // default keeps a dense hatch (the skin's ~0.4 mm pitch)
+    // legible as individual lines instead of fusing into a blob
+    // (the live report: the renderer's strokes swallowed the
+    // diagonals the reference renderers show).
+    property real lineScale: 0.7
     // The zoom/pan view (the live request): a scale and a pan in
     // canvas pixels, applied by every raster AND the shared mapping's
     // grid — one transform so the stack moves together.
@@ -246,6 +251,26 @@ Item {
         }
     }
 
+    // The painter's ONE rule, shared by the strokes and the glyphs: the
+    // payload's vertices are the G-code's own motion edges (edge i runs
+    // from points[i - 1] to points[i] and belongs to the motion
+    // points[i][2] names, and a segment's indices never decrease), the
+    // split is a COUNT of printed motions, and an edge is drawn exactly
+    // when its own motion is below it. Both halves of the paint read it
+    // the same way: the full repaint from -1, the accumulated delta on
+    // top of the last count.
+    function _firstEdge(points, from) {
+        var i = 1;
+        while (i < points.length && from >= 0 && points[i][2] < from) {
+            ++i;
+        }
+        return i;
+    }
+
+    function _edgePrinted(points, i, split) {
+        return i < points.length && (split < 0 || points[i][2] < split);
+    }
+
     function _drawLayer(ctx, layer, alpha, split, base, from) {
         // The transform inlined: hundreds of thousands of
         // plateToScene calls per paint were the follower's cost.
@@ -256,6 +281,9 @@ Item {
         var offsetY = plot.bed.offsetY;
         var bedXMin = plot.bed.bedXMin;
         var bedYMax = plot.bed.bedYMax;
+        var panX = root.viewPanX;
+        var panY = root.viewPanY;
+        var scale = root.viewScale;
         for (var name in layer.classes) {
             var segments = layer.classes[name];
             ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
@@ -265,57 +293,24 @@ Item {
             ctx.lineWidth = root.lineScale * (root.compact ? 0.5 : 1.0);
             for (var s = 0; s < segments.length; ++s) {
                 var points = segments[s];
+                // Every segment is at least one EDGE — two vertices — so
+                // a one-motion extrusion draws its true line, never a
+                // dot: the payload carries the move's start position.
                 if (points.length < 2) {
-                    // A one-motion run draws as a dot: the live file's
-                    // skin emits per-line extrusion pulses, and
-                    // dropping sub-2-point segments erased the skin
-                    // entirely (the live report).
-                    if (points.length === 1 && (from < 0 || points[0][2] > from) && (split < 0 || points[0][2] <= split)) {
-                        var dotX = root.viewPanX + (offsetX + (points[0][0] - bedXMin) * sx) * root.viewScale;
-                        var dotY = root.viewPanY + (offsetY + (bedYMax - points[0][1]) * sy) * root.viewScale;
-                        // The fill follows the stroke ink: an unset
-                        // fillStyle painted black blobs (the live
-                        // report).
-                        ctx.fillStyle = ctx.strokeStyle;
-                        ctx.beginPath();
-                        ctx.arc(dotX, dotY, root.lineScale * (root.compact ? 0.5 : 1.0), 0, Math.PI * 2);
-                        ctx.fill();
-                    }
+                    continue;
+                }
+                var i = _firstEdge(points, from);
+                if (!_edgePrinted(points, i, split)) {
                     continue;
                 }
                 ctx.beginPath();
-                var started = false;
-                var previous = null;
-                for (var i = 0; i < points.length; ++i) {
-                    if (split >= 0 && points[i][2] > split) {
-                        break;
-                    }
-                    // The travel-broken segments: a fresh path per
-                    // segment, so the stroke never bridges a travel.
-                    var sceneX = root.viewPanX + (offsetX + (points[i][0] - bedXMin) * sx) * root.viewScale;
-                    var sceneY = root.viewPanY + (offsetY + (bedYMax - points[i][1]) * sy) * root.viewScale;
-                    if (from >= 0 && points[i][2] <= from) {
-                        // Already painted; the accumulation joins the
-                        // delta to it so the poll boundary carries no
-                        // gap.
-                        previous = {
-                            "x": sceneX,
-                            "y": sceneY
-                        };
-                        continue;
-                    }
-                    if (!started) {
-                        if (previous != null) {
-                            ctx.moveTo(previous.x, previous.y);
-                            ctx.lineTo(sceneX, sceneY);
-                        } else {
-                            ctx.moveTo(sceneX, sceneY);
-                        }
-                        started = true;
-                    } else {
-                        ctx.lineTo(sceneX, sceneY);
-                    }
-                    previous = null;
+                // A fresh path per segment, opened at the first edge's
+                // OWN start vertex: the stroke never bridges a travel, a
+                // feature change, or the boundary the last poll painted.
+                ctx.moveTo(panX + (offsetX + (points[i - 1][0] - bedXMin) * sx) * scale, panY + (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale);
+                while (_edgePrinted(points, i, split)) {
+                    ctx.lineTo(panX + (offsetX + (points[i][0] - bedXMin) * sx) * scale, panY + (offsetY + (bedYMax - points[i][1]) * sy) * scale);
+                    ++i;
                 }
                 ctx.stroke();
             }
@@ -335,38 +330,22 @@ Item {
             if (points.length < 2) {
                 continue;
             }
+            var i = _firstEdge(points, from);
+            if (!_edgePrinted(points, i, split)) {
+                continue;
+            }
             ctx.beginPath();
-            var started = false;
-            var previous = null;
-            for (var i = 0; i < points.length; ++i) {
-                if (split >= 0 && points[i][2] > split) {
-                    break;
+            var scene = mapping.plateToScene(points[i - 1][0], points[i - 1][1]);
+            if (scene == null) {
+                continue;
+            }
+            ctx.moveTo(root.viewPanX + scene.x * root.viewScale, root.viewPanY + scene.y * root.viewScale);
+            while (_edgePrinted(points, i, split)) {
+                scene = mapping.plateToScene(points[i][0], points[i][1]);
+                if (scene != null) {
+                    ctx.lineTo(root.viewPanX + scene.x * root.viewScale, root.viewPanY + scene.y * root.viewScale);
                 }
-                var scene = mapping.plateToScene(points[i][0], points[i][1]);
-                if (scene == null) {
-                    continue;
-                }
-                var sceneX = root.viewPanX + scene.x * root.viewScale;
-                var sceneY = root.viewPanY + scene.y * root.viewScale;
-                if (from >= 0 && points[i][2] <= from) {
-                    previous = {
-                        "x": sceneX,
-                        "y": sceneY
-                    };
-                    continue;
-                }
-                if (!started) {
-                    if (previous != null) {
-                        ctx.moveTo(previous.x, previous.y);
-                        ctx.lineTo(sceneX, sceneY);
-                    } else {
-                        ctx.moveTo(sceneX, sceneY);
-                    }
-                    started = true;
-                } else {
-                    ctx.lineTo(sceneX, sceneY);
-                }
-                previous = null;
+                ++i;
             }
             ctx.stroke();
         }
@@ -374,11 +353,14 @@ Item {
     }
 
     function _drawGlyphs(ctx, marks, start, split, from) {
+        // A glyph belongs to the motion that owns its boundary, and is
+        // painted with the same rule as the strokes (the marks arrive in
+        // motion order, so the first unprinted one ends the sweep).
         for (var i = 0; i < marks.length; ++i) {
-            if (from >= 0 && marks[i][2] <= from) {
+            if (from >= 0 && marks[i][2] < from) {
                 continue;
             }
-            if (split >= 0 && marks[i][2] > split) {
+            if (split >= 0 && marks[i][2] >= split) {
                 break;
             }
             var scene = mapping.plateToScene(marks[i][0], marks[i][1]);
