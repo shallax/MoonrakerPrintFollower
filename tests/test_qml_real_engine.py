@@ -1949,6 +1949,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # so the geometry assertions measure a solid line.
         face.setProperty("lineScale", 0.7 / (0.2 * plot.property("sx").toNumber()))
         self.pump(20)
+        # The grown popover lays the face out AFTER the first paint;
+        # the threaded rasters only re-upload their textures on a
+        # geometry sync, so a 1 px nudge replays the live resize path
+        # and lands the repaint at the settled size.
+        face.setWidth(face.width() + 1)
+        self.pump(20)
+        face.setWidth(face.width() - 1)
+        self.pump(20)
         return face, window, self._mapping(plot), self._settled(window)
 
     def _printed(self, split, window, face, baseline, box, span):

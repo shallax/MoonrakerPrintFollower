@@ -25,6 +25,13 @@ class QtRuntimeTests(unittest.TestCase):
         self.clients = []
         self.followers = []
         self.addCleanup(self.close_runtime)
+        # The download flow opens the save picker; this harness process
+        # has no QApplication for a real dialog, so the class-level
+        # patch covers every test that drives a download.
+        self.dialog_patch = patch("PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+                                  return_value=("/tmp/never-written.gcode", ""))
+        self.dialog_patch.start()
+        self.addCleanup(self.dialog_patch.stop)
 
     def close_runtime(self):
         for follower in self.followers:
@@ -159,7 +166,13 @@ class QtRuntimeTests(unittest.TestCase):
         transport.network = SimpleNamespace(get=lambda request: NeverReply())
         messages = []
         follower.download_failed.connect(messages.append)
-        follower.request_file_download("prints/part.gcode")
+        # The download flow now opens the save picker first — patch the
+        # CLASS (this harness process has no QApplication for a real
+        # dialog, and the runtime loads its own module copies that
+        # module-level patches would miss).
+        with patch("PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+                   return_value=("/tmp/never-written.gcode", "")):
+            follower.request_file_download("prints/part.gcode")
         follower.deinitialize()
         self.assertEqual(len(messages), 1)
         self.assertIn("cancelled", messages[0])

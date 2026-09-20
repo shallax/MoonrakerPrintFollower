@@ -170,6 +170,8 @@ if QT_AVAILABLE:
         def confirmForceLoadCurrentPrint(self): self.loads.append("load")
         def confirmDownloadForMonitor(self): self.loads.append("monitor")
         def request_file_download(self, relpath): self.loads.append(relpath)
+        def download_progress(self): return None
+        def cancel_file_download(self): self.loads.append("cancel")
         def receive_preview_block(self, block): self.blocks.append(block)
         def has_toolpath(self): return True
 

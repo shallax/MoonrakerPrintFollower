@@ -742,7 +742,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("fileRequestRename(modelData.relpath)", FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
         # pre-selects the stem (the live reports).
-        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 6)
+        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 7)
         self.assertIn("renameField.select(0, root.renameStemLength(target.name))", FILE_MANAGER_QML)
         # The helper the open handler calls must be DEFINED — a
         # ReferenceError inside onOpened only fires on open, which
@@ -4816,6 +4816,7 @@ Item {
             "visible: root.printerModel != null && root.printerModel.fileRenameConflict",
             "visible: root.uploadProgressState() === \"uploading\"",
             "visible: root.uploadProgressState() === \"failed\"",
+            "visible: root.downloadProgressName() !== \"\"",
             "visible: root.thumbState(modelData.relpath) === \"ready\" && recentsThumb.status !== Image.Error",
             "visible: root.thumbState(modelData.relpath) === \"loading\"",
             "visible: root.thumbState(modelData.relpath) === \"failed\" || root.thumbState(modelData.relpath) === \"none\"",

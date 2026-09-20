@@ -777,12 +777,16 @@ if QT_AVAILABLE:
         def __init__(self):
             self.calls = []
             self.handles = []
+            self.fraction = None
 
         def download_once(self, relpath, *, on_ready):
             handle = DownloadHandle()
             self.calls.append((relpath, on_ready))
             self.handles.append(handle)
             return handle
+
+        def download_fraction(self):
+            return self.fraction
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -892,6 +896,111 @@ class FileDownloadTests(unittest.TestCase):
         download.close()
         self.assertEqual([handle.cancelled for handle in self.files.handles], [1, 1])
         self.assertEqual(download._active, set())
+
+    def test_request_save_writes_the_picked_path_and_never_loads(self):
+        # The live ruling: the file-manager Download is STRICTLY a file
+        # transfer — the stream lands at the picked path and nothing
+        # else observes it (no Cura load, no index, no state).
+        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            failures = []
+            download = self.download()
+            download.failed.connect(failures.append)
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        self.assertEqual(self.files.calls[0][0], "prints/part.gcode")
+        on_ready = self.files.calls[0][1]
+        root = tempfile.mkdtemp(prefix="mpf-temp-")
+        directory = os.path.join(root, "one-shot")
+        os.makedirs(directory)
+        path = os.path.join(directory, "part.gcode")
+        pathlib.Path(path).write_text("G1 X0\n", encoding="utf-8")
+        on_ready(path, None)
+        self.assertEqual(failures, [])
+        self.assertEqual(download._active, set())
+        self.assertEqual(self.cura.loads, [])  # the save flow NEVER loads
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "G1 X0\n")
+        self.assertFalse(os.path.exists(directory))  # the temp root is cleaned
+
+    def test_request_save_cancel_starts_nothing(self):
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = ("", "")
+            download = self.download()
+            self.assertFalse(download.request_save("part.gcode"))
+        self.assertEqual(self.files.calls, [])
+        self.assertEqual(download._active, set())
+
+    def test_request_save_opens_the_picker_in_downloads_or_home(self):
+        # The picker's default lands in the OS Downloads directory
+        # (or home when none is exposed), carrying the file's name.
+        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.download().request_save("prints/part.gcode")
+            initial = dialog.getSaveFileName.call_args[0][2]
+        self.assertTrue(initial.endswith("part.gcode"), initial)
+        self.assertTrue(os.path.dirname(initial), "the picker opened without a directory")
+
+    def test_request_save_falls_back_to_home_without_downloads(self):
+        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            with patch.object(module.QStandardPaths, "writableLocation",
+                              side_effect=lambda location: (
+                                  "" if location == module.QStandardPaths.StandardLocation.DownloadLocation
+                                  else "/home/user")):
+                self.download().request_save("part.gcode")
+            initial = dialog.getSaveFileName.call_args[0][2]
+        self.assertTrue(initial.startswith("/home/user"), initial)
+
+    def test_request_save_failure_surfaces_without_a_file(self):
+        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            failures = []
+            download = self.download()
+            download.failed.connect(failures.append)
+            download.request_save("part.gcode")
+        on_ready = self.files.calls[0][1]
+        on_ready(None, "boom")
+        self.assertEqual(failures, ["boom"])
+        self.assertFalse(os.path.exists(target))
+
+    def test_progress_reports_the_streams_fraction_and_name(self):
+        # The progress window's payload: the one-shot operation's
+        # fraction as a percent and the picked file's name; None when
+        # nothing streams (the popup's gate).
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (
+                os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode"), "")
+            download = self.download()
+            self.assertIsNone(download.progress())
+            download.request_save("prints/part.gcode")
+        self.files.handles[0]._op = SimpleNamespace(received=42, size=100)
+        self.assertEqual(download.progress(),
+                         {"name": "part.gcode", "percent": 42, "received": 42, "total": 100})
+        self.files.handles[0]._op = SimpleNamespace(received=0, size=0)  # indeterminate
+        self.assertIsNone(download.progress())
+
+    def test_cancel_retires_every_in_flight_stream(self):
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (
+                os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode"), "")
+            download = self.download()
+            download.request_save("one.gcode")
+        self.files.fraction = 0.5
+        download.cancel()
+        self.assertEqual([handle.cancelled for handle in self.files.handles], [1])
+        self.assertEqual(download._active, set())
+        self.files.fraction = None  # the real service clears on the terminal
+        self.assertIsNone(download.progress())
 
 
 # --------------------------------------------------------------------------

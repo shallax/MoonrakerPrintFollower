@@ -28,10 +28,14 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def has_toolpath(self): return self._runtime.cura.has_toolpath
 
-    def request_file_download(self, relpath): self._runtime.file_download.request(relpath)
+    def request_file_download(self, relpath): self._runtime.file_download.request_save(relpath)
 
     @property
     def download_failed(self): return self._runtime.file_download.failed
+
+    def download_progress(self): return self._runtime.file_download.progress()
+
+    def cancel_file_download(self): self._runtime.file_download.cancel()
 
     def current_printer_config(self): return self._runtime.binding.config
     def current_printer_identity(self): return self._runtime.binding.identity

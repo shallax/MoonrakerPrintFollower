@@ -376,8 +376,6 @@ Item {
         // a length that grows with the stroke width — thick lines
         // sprouted sharp edges at every text corner (the live report).
         ctx.lineJoin = "round";
-        // Round caps: square ends jut half a width past each stroke
-        // end, the same thick-line artifact at travel seams.
         ctx.lineCap = "round";
         for (var name in layer.classes) {
             var segments = layer.classes[name];
@@ -507,6 +505,9 @@ Item {
     MouseArea {
         id: viewGesture
         anchors.fill: parent
+        // The mini is a read-only thumbnail: no zoom, no pan (the
+        // live request — its click opens the pop-over instead).
+        enabled: !root.compact
         acceptedButtons: Qt.LeftButton
         onWheel: function (wheel) {
             if (mapping._plot == null) {
@@ -564,7 +565,7 @@ Item {
         // percentage overflowed the scope's bounds). Docked it hugs
         // the right edge; parked it slides fully out of view (the
         // live request).
-        width: 30 * screenScaleFactor
+        width: 38 * screenScaleFactor
         // The full canvas height minus the reserved bottom strip the
         // Reset view label owns (the live request: the bar spans the
         // canvas and the label keeps its own gap at the bottom).

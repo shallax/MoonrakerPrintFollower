@@ -406,6 +406,8 @@ class SourceContractTests(unittest.TestCase):
             "QQuickPaintedItem": "QtQuick",
             "QQuickWindow": "QtQuick",
             "QMessageBox": "QtWidgets",
+            "QFileDialog": "QtWidgets",
+            "QStandardPaths": "QtCore",
             "QAbstractAnimation": "QtCore",
             "QEasingCurve": "QtCore",
             "QPropertyAnimation": "QtCore",
