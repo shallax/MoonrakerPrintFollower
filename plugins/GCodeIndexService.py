@@ -69,6 +69,28 @@ _DECODED_LRU_MAX_BYTES = 128 * 1024 * 1024
 # payloads against the budget explicitly), so the old 4-entry floor's
 # RAM no longer outvotes the byte bound.
 _DECODED_LRU_MIN_ENTRIES = 1
+# Decoded PPL1 expands into nested Python lists. The measured branch
+# ratios peak around the mid-teens, so charge a conservative 16x packed
+# size instead of recursively walking every decoded point a second time.
+# This is accounting, not serialization: an overestimate is safe and
+# keeps the byte budget bounded without adding O(points) seek latency.
+_DECODED_PACKED_EXPANSION = 16
+_DECODED_CHARGE_FLOOR = 4 * 1024
+
+
+def _decoded_charge(raw=None, payload=None) -> int:
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        return max(_DECODED_CHARGE_FLOOR, len(raw) * _DECODED_PACKED_EXPANSION)
+    # Encoding failures are exceptional, but display must still work.
+    # Charge from the already-known motion count without another geometry
+    # traversal. 256 bytes/motion is deliberately conservative.
+    motions = 0
+    if isinstance(payload, dict):
+        try:
+            motions = max(0, int(payload.get("motions") or 0))
+        except (TypeError, ValueError):
+            motions = 0
+    return max(_DECODED_CHARGE_FLOOR, motions * 256)
 
 
 def _deep_size(obj) -> int:
@@ -224,6 +246,9 @@ class GCodeIndexService(QObject):
         self._prepared_identity = None
         self._prepared_saved = False
         self._prepared_writer = None
+        # A failed final publish gets one autonomous bounded rebuild.
+        # This is reset per print and on a successful publish.
+        self._prepared_retry_count = 0
         # The reopen policy's adoption :
         # a complete clean table takes the fast path; a complete
         # table with holes repairs. The coverage set counts every
@@ -337,6 +362,7 @@ class GCodeIndexService(QObject):
         self._prepared_table = None
         self._prepared_identity = None
         self._prepared_saved = False
+        self._prepared_retry_count = 0
         self._prepared_complete = False
         self._prepared_flag_complete = False
         self._prepared_coverage = set()
@@ -432,24 +458,37 @@ class GCodeIndexService(QObject):
         with view._index.cache_lock:
             view._index.manual_anchor = manual
 
+    def _presentation_source(self, layer):
+        """Cheapest source for the PRESENTATION payload of one layer.
+
+        Index hydration and presentation readiness are intentionally
+        different states: a non-compact index is fully hydrated from the
+        start, while its decoded presentation cache starts empty.
+        """
+        view = self._view
+        if view is None or not 0 <= layer < len(view.ranges):
+            return "invalid"
+        if layer in self._decoded_lru:
+            return "decoded"
+        if self._full_cache.peek(layer) is not None:
+            return "packed"
+        if self._prepared_served(layer):
+            return "prepared"
+        if view.hydrated(layer):
+            return "hydrated"
+        if layer in self._failed_hydrate:
+            return "failed"
+        return "raw"
+
     def _request_manual_window(self):
         view = self._view
         if view is None or self._manual_anchor is None:
             return
         for candidate in (self._manual_anchor - 1, self._manual_anchor, self._manual_anchor + 1):
-            # Demanded until the hot cache holds it — the bundle reads
-            # the decoded store and the worker hands it over, so a
-            # cached-and-decoded layer needs NO rehydration merely to
-            # display: the worker's hydrate is
-            # the compact store's own no-op when the arrays are still
-            # present, and the manual scrub's split is used as-given.
-            # The criterion covers the non-compact case too, where
-            # nothing is ever unhydrated but the decoded store can
-            # still miss — a cold seek must land via the worker,
-            # never through a UI-thread prepare.
-            if 0 <= candidate < len(view.ranges) \
-                    and candidate not in self._decoded_lru \
-                    and candidate not in self._failed_hydrate:
+            # Presentation demand remains live until DECODED data exists.
+            # Hydrated arrays, packed RAM and prepared disk are sources,
+            # not readiness signals.
+            if self._presentation_source(candidate) not in {"invalid", "decoded", "failed"}:
                 self._hydrate.add(candidate)
 
     def plate_layers(self, anchor):
@@ -854,22 +893,20 @@ class GCodeIndexService(QObject):
         self._prepared_writer = None
 
     def _request_window(self, layer):
-        """Ask for the anchor's own three layers, never a backlog.
+        """Ask for the live anchor's presentation window, never a backlog.
 
-        The face reads the previous layer, the current one and the
-        look-ahead, and each is useful only around the live layer — so
-        the demand is a WINDOW, and asking for one already-hydrated
-        layer must not stand the others down. Any layer the latch has
-        given up on is left out; ``_advance`` would drop it anyway.
+        A hydrated index layer is still demanded when its decoded
+        presentation payload is absent. Readiness means DECODED HOT;
+        hydration merely selects the cheapest worker source.
         """
         view = self._view
         anchor = view._index.followed_layer
         for candidate in (layer - 1, layer, layer + 1):
-            if not 0 <= candidate < len(view.ranges) or view.hydrated(candidate):
+            if not 0 <= candidate < len(view.ranges):
                 continue
             if anchor is not None and not anchor - 1 <= candidate <= anchor + 1:
                 continue
-            if candidate not in self._failed_hydrate:
+            if self._presentation_source(candidate) not in {"decoded", "failed"}:
                 self._hydrate.add(candidate)
 
     def _on_files_changed(self):
@@ -915,46 +952,38 @@ class GCodeIndexService(QObject):
         # window fills the hot presentation cache (a decoded layer is
         # served — no rehydrate merely to display prepared geometry).
         manual = index.manual_anchor
-        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges)
-                         and n not in self._failed_hydrate
-                         and (((index.followed_layer is None
-                                or index.followed_layer - 1 <= n <= index.followed_layer + 1)
-                               and not self._view.hydrated(n))
+        self._hydrate = {n for n in self._hydrate
+                         if self._presentation_source(n) not in {"invalid", "decoded", "failed"}
+                         and ((index.followed_layer is None
+                               or index.followed_layer - 1 <= n <= index.followed_layer + 1)
                               or (manual is not None
-                                  and manual - 1 <= n <= manual + 1
-                                  and n not in self._decoded_lru))}
+                                  and manual - 1 <= n <= manual + 1))}
         if self._hydrate:
-            # The prepared store serves the window WITHOUT the raw
-            # G-code file: a fully prepared (or RAM-cached) seek must
-            # never wait on the file lease — the lease exists only
-            # for the hydrate-from-file fallback. The probe reads the
-            # TABLE (one tuple per layer), never the payload bytes.
-            # The check runs BEFORE the queue is consumed, so an
-            # unavailable file parks the demand exactly as before.
-            served = True
-            for layer in self._hydrate:
-                if self._full_cache.peek(layer) is not None \
-                        or self._prepared_served(layer):
-                    continue
-                served = False
-                break
-            lease = None if served else self._files.lease()
-            if lease is None and not served:
+            # CURRENT is a foreground presentation demand. Detached/manual
+            # current outranks live current; live current outranks every
+            # ghost. Each current rides its own task and can publish as
+            # soon as it is ready.
+            window = sorted(self._hydrate)
+            submitted = []
+            for anchor in (manual, index.followed_layer):
+                if anchor is not None and anchor in self._hydrate:
+                    submitted = [anchor]
+                    self._hydrate.remove(anchor)
+                    break
+            if not submitted:
+                submitted = window
+                self._hydrate.clear()
+
+            # Only RAW source needs the G-code lease. Packed RAM,
+            # prepared disk and already-hydrated index arrays are all
+            # independently sufficient presentation sources.
+            needs_raw = any(self._presentation_source(layer) == "raw"
+                            for layer in submitted)
+            lease = self._files.lease() if needs_raw else None
+            if needs_raw and lease is None:
+                self._hydrate.update(submitted)
                 self._files.request_file()
                 return
-            window = sorted(self._hydrate)
-            priority = [n for n in window if n == self._manual_anchor]
-            if len(priority) == 1:
-                # A manual seek's anchor rides its own task: the
-                # bundle's CURRENT lands as soon as the anchor is
-                # decoded and the label clears, while the window's
-                # edges follow in the NEXT task (the live report:
-                # the label waited for the whole three-layer window).
-                self._hydrate.difference_update(priority)
-                submitted = priority
-            else:
-                self._hydrate.clear()
-                submitted = window
             self._hydrating = set(submitted)
             cache = self._full_cache
             # No anchor argument: the worker reads the index's
@@ -978,21 +1007,24 @@ class GCodeIndexService(QObject):
                     if raw is not None:
                         try:
                             decoded = _decode_layer(raw)
-                            stash[layer] = (raw, decoded, ram_hit, _deep_size(decoded))
+                            stash[layer] = (raw, decoded, ram_hit,
+                                            _decoded_charge(raw=raw, payload=decoded))
                         except Exception:
                             failed.append(layer)
                         continue
-                    if lease is None:
-                        # The pre-check said the prepared store (or
-                        # the RAM cache) serves this layer; a miss
-                        # here means the table changed mid-flight —
-                        # fail honestly, never touch a missing file.
-                        failed.append(layer)
-                        continue
-                    result = hydrate_layer_from_file(index, lease.path, layer)
-                    if not result:
-                        failed.append(layer)
-                        continue
+                    # Hydrated arrays are a complete source in their own
+                    # right. Non-compact indexes always take this branch;
+                    # compact indexes take it while the retention window
+                    # still holds the layer. No raw lease is needed.
+                    hydrated = not index.compact or layer in index.hydrated_layers
+                    if not hydrated:
+                        if lease is None:
+                            failed.append(layer)
+                            continue
+                        result = hydrate_layer_from_file(index, lease.path, layer)
+                        if not result:
+                            failed.append(layer)
+                            continue
                     payload = _prepare_layer(index, layer)
                     if payload is None:
                         # A hydrate that succeeded but prepared nothing
@@ -1008,7 +1040,8 @@ class GCodeIndexService(QObject):
                         encoded = _encode_layer(payload)
                     except Exception:
                         pass
-                    stash[layer] = (encoded, payload, False, _deep_size(payload))
+                    stash[layer] = (encoded, payload, False,
+                                    _decoded_charge(raw=encoded, payload=payload))
                 return failed, stash
             self._submit("hydrate", hydrate_and_prepare, lease)
         elif self._save and strong \
@@ -1045,13 +1078,28 @@ class GCodeIndexService(QObject):
             # mutation of the service  — and the freshly hydrated layer's own window
             # survives the retention until its prepare and encode
             # complete .
-            lease = self._files.lease()
-            if lease is None:
-                self._files.request_file()
-                return
             index = self._view._index
             cache = self._full_cache
             start = self._full_next
+            # A non-compact index (or a compact suffix already retained/
+            # prepared) can rebuild the prepared store without touching
+            # the raw G-code. Ask for a lease only when some remaining
+            # layer genuinely has no other source.
+            needs_raw = False
+            if index.compact:
+                for layer in range(start, len(index.ranges)):
+                    if layer in index.hydrated_layers or cache.peek(layer) is not None \
+                            or self._prepared_served(layer):
+                        continue
+                    if self._prepared_table is not None and layer < len(self._prepared_table) \
+                            and self._prepared_table[layer][0] == STATE_UNCACHEABLE:
+                        continue
+                    needs_raw = True
+                    break
+            lease = self._files.lease() if needs_raw else None
+            if needs_raw and lease is None:
+                self._files.request_file()
+                return
             # The batch's slice: short enough that a demanded hydrate
             # never queues long behind the pass, and the loop YIELDS
             # the moment a demand appears (the worker checks the
@@ -1119,7 +1167,7 @@ class GCodeIndexService(QObject):
                         frontier = layer + 1
                         continue
                     if index.compact and layer not in index.hydrated_layers:
-                        if not hydrate_layer_from_file(index, lease.path, layer):
+                        if lease is None or not hydrate_layer_from_file(index, lease.path, layer):
                             break
                     payload = _prepare_layer(index, layer)
                     if payload is not None:
@@ -1246,6 +1294,7 @@ class GCodeIndexService(QObject):
                 # The saved latch closes ONLY on the publish itself.
                 if value is not None and self._prepared_identity is not None:
                     self._prepared_saved = True
+                    self._prepared_retry_count = 0
                     loaded = self._prepared.load_table(self._prepared_identity)
                     if loaded is not None:
                         self._prepared_table = loaded["table"]
@@ -1256,6 +1305,18 @@ class GCodeIndexService(QObject):
                         self._prepared_complete = (
                             loaded["complete"]
                             and all(entry[0] != STATE_EMPTY for entry in loaded["table"]))
+                elif self._view is not None and self._prepared_retry_count < 1:
+                    # finish_write detached/closed the failed writer.
+                    # Rebuild once from the already-available prepared
+                    # sources without waiting for another user demand.
+                    self._prepared_retry_count += 1
+                    self._prepared_saved = False
+                    self._prepared_complete = False
+                    self._full_next = 0
+                    table = self._prepared_table or ()
+                    self._prepared_coverage = {
+                        i for i, entry in enumerate(table)
+                        if entry[0] != STATE_EMPTY}
             self.changed.emit()
         self._advance()
 
