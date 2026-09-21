@@ -39,6 +39,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -1097,3 +1098,210 @@ class PlateVisitedTests(unittest.TestCase):
                          "the settled geometry suppressed layer 1's own walk")
         self.assertEqual(self.service.plate_visited(0, 2, rows), frozenset(),
                          "layer 0's verdict survived the anchor move")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class PreparedReopenPolicyTests(unittest.TestCase):
+    """The reopen/repair/persist policy (the review's findings
+    13/14/15/16/17/20): the fast path, the repair copy, the
+    demand-persistence, the store-census fraction, the byte budgets
+    and the rebind abort."""
+
+    class Identity:
+        uuid = "u"
+        modified = 1
+
+        def __init__(self, key):
+            self._key = key
+
+        def stable_key(self):
+            return self._key
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Files(QObject):
+            changed = pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self.job_key = ("part.gcode", 100, 1)
+                self.identity = PreparedReopenPolicyTests.Identity("print-key")
+
+            def lease(self):
+                class Lease:
+                    path = ""
+
+                    def close(self):
+                        pass
+                return Lease()
+
+            def request_metadata(self):
+                pass
+
+            def request_file(self):
+                pass
+
+        self.files = Files()
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        from plugins.PreparedStore import PreparedCache
+        self.store = PreparedCache(self._dir.name)
+        module = self.qt.load("GCodeIndexService")
+        self.service = module.GCodeIndexService(self.files, object(), prepared=self.store)
+        self.addCleanup(self.service.close)
+        self.service.bind(self.files.job_key)
+        self.service._restored = True
+        self.service._wanted = True
+
+    def _view(self, layers=5):
+        index = make_index(layers=layers, motions=20)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        return index
+
+    def _pump(self, timeout=5.0):
+        """Drive _advance until the pass and its save settle. The
+        worker's completion rides a QUEUED signal — the loop must
+        process events, not just sleep."""
+        from PyQt6.QtCore import QCoreApplication
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.service._advance()
+            if self.service._prepared_saved and not self.service._busy:
+                return
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+        self.fail("the prepared pass did not settle")
+
+    @staticmethod
+    def _payload(layer):
+        from plugins.PlateProgress import encode_layer
+        return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, float(layer), 1.0]]]},
+                             "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})
+
+    def test_a_complete_reopen_takes_the_fast_path(self):
+        # The review's finding 13: a valid complete cache must not
+        # read its own bytes back — the table says complete, the
+        # pass stands down, and the fraction reads 100% with zero
+        # RAM residency.
+        self.store.finalise("print-key", [self._payload(i) for i in range(5)])
+        reads = []
+        original_read = self.store.read
+        self.store.read = lambda identity, table, layer: (
+            reads.append(layer) or original_read(identity, table, layer))
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        self.assertTrue(self.service._prepared_saved)
+        self.assertEqual(self.service._full_next, 5)
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
+        self.service._advance()
+        self.assertEqual(self.service._busy, "", "the pass ran after a fast-path reopen")
+        self.assertIsNone(self.service._prepared_writer)
+        self.assertEqual(reads, [], "the reopen replayed the store")
+
+    def test_a_holey_reopen_repairs_without_losing_valid_entries(self):
+        # The review's finding 15's regression: 0,1,3,4 valid and
+        # 2 missing — the repair regenerates 2 and COPIES the valid
+        # entries into the new file; nothing complementary-holes.
+        from plugins.PlateProgress import decode_layer
+        writer = self.store.open_for_write("print-key", 5)
+        for layer in (0, 1, 3, 4):
+            self.store.append(writer, layer, self._payload(layer))
+        self.store.finish_write(writer)
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        self.assertFalse(self.service._prepared_saved,
+                         "a holey table took the fast path")
+        self._pump()
+        loaded = self.store.load_table("print-key")
+        self.assertIsNotNone(loaded)
+        self.assertTrue(all(entry[1] > 0 for entry in loaded["table"]),
+                        "the repair published a complementary hole")
+        for layer in (0, 1, 3, 4):
+            # The COPIED entries keep their exact payloads.
+            raw = self.store.read("print-key", loaded["table"], layer)
+            self.assertEqual(decode_layer(raw)["classes"]["SKIN"][0][1][1],
+                             float(layer), "layer %d reads another layer's payload" % layer)
+        # The REGENERATED hole is the synthetic index's own geometry.
+        regrown = decode_layer(self.store.read("print-key", loaded["table"], 2))
+        self.assertIn("WALL-OUTER", regrown["classes"])
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
+
+    def test_a_demand_prepared_layer_persists_into_the_writer(self):
+        # The review's finding 14: a manual/live demand prepares the
+        # layer BEFORE the pass reaches it — the encoded bytes must
+        # enter the writer anyway, or the finish publishes a (0,0)
+        # hole for a layer that WAS prepared.
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        encoded = self._payload(2)
+        self.service._prepared_persist(2, encoded)
+        self.assertIsNotNone(self.service._prepared_writer,
+                             "the persist opened no writer")
+        self.assertGreater(self.service._prepared_writer["table"][2][1], 0)
+        self.assertIn(2, self.service._prepared_coverage)
+        # The pass reaching the same layer copies the cached bytes
+        # instead of skipping it (the worker's branch).
+        self.service._full_cache.set(2, encoded, len(encoded))
+        self._pump()
+        loaded = self.store.load_table("print-key")
+        self.assertIsNotNone(loaded)
+        self.assertTrue(all(entry[1] > 0 for entry in loaded["table"]),
+                        "a prepared layer published as a hole")
+
+    def test_the_pass_fraction_counts_stores_not_residency(self):
+        # The review's finding 17: a 1,000-layer print with a bounded
+        # RAM tier must report the store's coverage, not the cache's
+        # residency (a 64-entry cache must not cap the band at 6%).
+        self._view(layers=1000)
+        self.service._prepared_open(self.files.identity)
+        for layer in range(900):
+            self.service._prepared_coverage.add(layer)
+        self.assertEqual(self.service.plate_pass_fraction(), 0.9)
+        for layer in range(64):
+            self.service._full_cache.set(layer, b"x" * 1000, 1000)
+        self.assertEqual(self.service.plate_pass_fraction(), 0.9,
+                         "the fraction followed the RAM tier's residency")
+
+    def test_a_rebind_aborts_the_old_print_writer(self):
+        # The review's finding 20: bind() must close and delete the
+        # previous print's unfinished temp writer — never leave a
+        # handle or a .tmp file behind.
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self.service._prepared_persist(0, self._payload(0))
+        temp = self.service._prepared_writer["temp"]
+        self.assertTrue(os.path.exists(temp))
+        self.service.bind(("other.gcode", 100, 2))
+        self.assertIsNone(self.service._prepared_writer)
+        self.assertFalse(os.path.exists(temp),
+                         "the rebind left the old print's temp writer")
+        leftovers = [name for name in os.listdir(self._dir.name) if ".tmp-" in name]
+        self.assertEqual(leftovers, [])
+
+    def test_the_byte_budgets_bind_the_ram_tiers(self):
+        # The review's findings 18/19: the packed tier is pure bytes,
+        # the decoded tier holds its slot floor under pressure, and a
+        # read refreshes recency.
+        module = self.qt.load("GCodeIndexService")
+        packed = module._ByteBoundedLru(max_bytes=200)
+        packed.set(0, b"x" * 100, 100)
+        packed.set(1, b"y" * 50, 50)
+        self.assertIsNotNone(packed.get(0))  # the read refreshes recency
+        packed.set(2, b"z" * 70, 70)  # 220 > 200: the least recent (1) goes
+        self.assertIn(0, packed)
+        self.assertNotIn(1, packed)
+        decoded = module._ByteBoundedLru(max_bytes=100, min_entries=2)
+        decoded.set("a", object(), 90)
+        decoded.set("b", object(), 90)
+        self.assertEqual(len(decoded), 2, "the floor evicted under pressure")
+        decoded.set("c", object(), 90)
+        self.assertEqual(len(decoded), 2)
+        self.assertNotIn("a", decoded)
+        self.assertIn("b", decoded)

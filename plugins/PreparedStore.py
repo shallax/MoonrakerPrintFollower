@@ -2,10 +2,15 @@
 1-4): every layer's compact PPL1 encoding, random-accessible on disk
 so the complete print never sits in the Python heap.
 
-Layout:
+Layout (format v2):
     magic b"MPFP" + format version u32
     identity (u16 length + utf8 — the RemoteFileIdentity stable key)
     layer count u32
+    completion flag u8 — 1 once the pass has WALKED EVERY layer, so a
+        (0, 0) entry in a complete file means "the codec could not
+        hold this layer", never "not prepared yet" (the review's
+        finding 16: an uncacheable layer must not read as a hole and
+        trigger a rebuild on every reopen)
     layer table: count x (u64 offset, u32 length)
     payload area: the packed layers
 
@@ -24,8 +29,8 @@ import time
 from typing import Optional
 
 _MAGIC = b"MPFP"
-_FORMAT_VERSION = 1
-_HEADER_FMT = "<4sIHH"
+_FORMAT_VERSION = 2
+_HEADER_FMT = "<4sIHHB"
 _TABLE_ENTRY_FMT = "<QI"
 _DEFAULT_MAX_BYTES = 512 * 1024 * 1024
 
@@ -37,15 +42,29 @@ class PreparedCache:
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
         os.makedirs(self.directory, exist_ok=True)
+        # Crash leftovers (the review's finding 21): a temp writer
+        # from a previous run is never valid, and startup has no
+        # active writer to protect — remove them all.
+        try:
+            for name in os.listdir(self.directory):
+                if ".tmp-" in name:
+                    try:
+                        os.unlink(os.path.join(self.directory, name))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
 
     def _path(self, identity: str) -> str:
         import hashlib
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return os.path.join(self.directory, f"{digest}.mpfp")
 
-    def load_table(self, identity: str) -> Optional[list]:
-        """The layer table for a completed cache, or None when the
-        file is absent, partial, or belongs to another identity."""
+    def load_table(self, identity: str) -> Optional[dict]:
+        """The layer table for a published cache as
+        ``{"table": [(offset, length), ...], "complete": bool}``,
+        or None when the file is absent, partial, or belongs to
+        another identity."""
         path = self._path(identity)
         # The explicit recency (the review's finding 12): atime is
         # unreliable under relatime/noatime — a successful open
@@ -59,7 +78,7 @@ class PreparedCache:
                 header = handle.read(struct.calcsize(_HEADER_FMT))
                 if len(header) < struct.calcsize(_HEADER_FMT):
                     return None
-                magic, version, id_len, count = struct.unpack(_HEADER_FMT, header)
+                magic, version, id_len, count, complete = struct.unpack(_HEADER_FMT, header)
                 if magic != _MAGIC or version != _FORMAT_VERSION:
                     return None
                 stored = handle.read(id_len).decode("utf-8", "replace")
@@ -76,7 +95,7 @@ class PreparedCache:
                 for offset, length in table:
                     if offset + length > size:
                         return None
-                return table
+                return {"table": table, "complete": bool(complete)}
         except OSError:
             return None
 
@@ -107,7 +126,7 @@ class PreparedCache:
         try:
             with open(temp, "wb") as handle:
                 header = struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
-                                     len(identity.encode("utf-8")), len(payloads))
+                                     len(identity.encode("utf-8")), len(payloads), 1)
                 handle.write(header)
                 handle.write(identity.encode("utf-8"))
                 table_start = handle.tell()
@@ -158,32 +177,43 @@ class PreparedCache:
         handle.write(payload)
 
     def finish_write(self, writer: dict) -> Optional[str]:
-        """Write the header and the table, then atomically publish."""
+        """Write the header and the table, then atomically publish.
+        The completion flag is set unconditionally: `finish_write`
+        only runs once the pass has walked every layer, so the
+        remaining (0, 0) entries are genuinely uncacheable layers
+        (the review's finding 16)."""
         identity = writer["identity"]
         handle = writer["handle"]
         try:
             handle.seek(0)
             handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
-                                     len(identity.encode("utf-8")), writer["layer_count"]))
+                                     len(identity.encode("utf-8")), writer["layer_count"], 1))
             handle.write(identity.encode("utf-8"))
             for entry in writer["table"]:
                 if entry is None:
-                    entry = (0, 0)  # a layer the pass could not prepare
+                    entry = (0, 0)  # a layer the codec could not hold
                 handle.write(struct.pack(_TABLE_ENTRY_FMT, entry[0], entry[1]))
             handle.close()
             os.replace(writer["temp"], self._path(identity))
         except OSError:
-            try:
-                handle.close()
-            except OSError:
-                pass
-            try:
-                os.unlink(writer["temp"])
-            except OSError:
-                pass
+            self.abort_write(writer)
             return None
         self._evict(self._path(identity))
         return self._path(identity)
+
+    def abort_write(self, writer: dict) -> None:
+        """Abandon an unfinished writer: close the handle and remove
+        the temp file, however far the append got (the review's
+        finding 20). Idempotent — the caller's exit paths all reach
+        it."""
+        try:
+            writer["handle"].close()
+        except (OSError, ValueError):
+            pass
+        try:
+            os.unlink(writer["temp"])
+        except OSError:
+            pass
 
     def _evict(self, keep: str) -> None:
         """The size policy: drop the least-recently-accessed print
