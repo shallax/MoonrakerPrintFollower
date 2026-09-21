@@ -412,6 +412,18 @@ Item {
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
     property bool _textureReady: false
+    // The hold's expiry waits one frame past the painted delivery:
+    // the threaded canvas's scene texture commits in the sync AFTER
+    // the painted signal, and a hide in the same sync would leave
+    // one frame with neither owner.
+    Timer {
+        id: holdExpiryTimer
+        interval: 16
+        onTriggered: {
+            root._prefixHold = false;
+            root._prefixWasShown = false;
+        }
+    }
     // The scrub vector's SOURCE identity: a same-anchor payload swap
     // (an empty fixture replaced by the real layer) must reset the
     // accumulated bitmap — the delta path assumes ink it never drew.
@@ -470,9 +482,14 @@ Item {
         // but the canvas repaints a frame later: hold the old
         // picture on screen until the vector has repainted the
         // interval — the swap is atomic, never a frame with
-        // neither renderer owning the printed history.
+        // neither renderer owning the printed history. The repaint
+        // must be FORCED here: the invalidation's publish can land
+        // without a key change (the settle already consumed it),
+        // and an unrequested paint would never clear the hold.
         if (!_prefixModelReady() && root._prefixWasShown) {
+            holdExpiryTimer.stop();
             root._prefixHold = true;
+            progressCanvas.requestPaint();
         }
     }
 
@@ -527,8 +544,12 @@ Item {
         if (progressKey !== root._progressKey) {
             root._progressKey = progressKey;
             progressCanvas.requestPaint();
-            _holdPrefixThroughRepaint();
         }
+        // The prefix's model-side validity may flip WITHOUT a key
+        // change (the context invalidation's publish: the view key
+        // was already consumed by the settle's reset): hold the old
+        // picture until the canvas's repaint owns the interval.
+        _holdPrefixThroughRepaint();
     }
     onShowBaseChanged: {
         var key = _pendingKeyOf();
@@ -727,12 +748,22 @@ Item {
         visible: _partialPrefixReady() || root._prefixHold
         source: (_prefixModelReady() || root._prefixHold) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
         onVisibleChanged: {
-            // Track what was actually on screen: the hold's
-            // visibility keeps the last picture up while the
-            // canvas repaints the interval.
+            // Track what was actually on screen. A hide caused by
+            // the model's invalidation (prefixValid flipped false —
+            // the render-key mismatch) arms the HOLD right here: the
+            // picture stays up until the canvas's full bitmap is
+            // delivered and committed (the expiry timer's beat after
+            // the painted signal). Hides from the split arithmetic
+            // (a full layer, a backward move) are legitimate — the
+            // canvas owns the interval by then.
             if (visible) {
                 root._prefixWasShown = true;
-            } else if (!root._prefixHold) {
+            } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false) {
+                holdExpiryTimer.stop();
+                root._prefixHold = true;
+                progressCanvas.requestPaint();
+            } else {
+                root._prefixHold = false;
                 root._prefixWasShown = false;
             }
         }
@@ -746,16 +777,17 @@ Item {
         renderStrategy: Canvas.Threaded
         onPainted: {
             // The paint's bitmap is delivered: its coverage record
-            // now describes the scene's committed texture.
+            // now describes the scene's committed texture. A held
+            // prefix over a delivered FULL bitmap can finally
+            // relinquesh — one frame later, after the scene pulls
+            // the texture (the expiry timer's beat).
             root._textureReady = true;
+            if (root._prefixHold && root._vectorCoversFrom === 0) {
+                holdExpiryTimer.restart();
+            }
         }
         onPaint: {
             var ctx = getContext("2d");
-            // The hold ends with THIS paint (the canvas node updates
-            // after the prefix Image's own, so the held picture
-            // stays on screen through the repaint): whatever the
-            // vector has now drawn, the ownership swap is complete.
-            root._prefixHold = false;
             // The committed texture is now one paint behind — the
             // painted signal re-arms the confirmation when the
             // bitmap is delivered.
