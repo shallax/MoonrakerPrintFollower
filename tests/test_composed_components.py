@@ -1949,6 +1949,87 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertEqual(model.memory_accounting()["backingScale"], 2.0,
                          "the accounting never reported the backing scale")
 
+    def test_the_navigation_raster_is_warm_and_camera_independent(self):
+        # The interaction scene: the popover maintains a READY
+        # flattened full-bed raster keyed on CONTENT alone — a
+        # zoom/pan change (pure presentation) leaves the key and
+        # the URL untouched, a split change schedules the update,
+        # and the promoted buffer retires its predecessor's file.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        from PyQt6.QtCore import QUrl
+        self.assertTrue(surface.nav["url"], "the navigation raster never warmed")
+        self.assertTrue(os.path.exists(
+            QUrl(surface.nav["url"]).toLocalFile()))
+        nav_key = surface.nav["key"]
+        nav_url = surface.nav["url"]
+        # A pure camera change (zoom + pan): the content key and the
+        # ready URL stay — panning/zooming never re-renders the
+        # interaction scene.
+        model.setFollowerView("popover", 1.5, 0.7, 400, 300, False, 12.0, -8.0)
+        self.qt.events(5)
+        self.assertEqual(surface.nav["key"], nav_key,
+                         "the camera changed the navigation key")
+        self.assertEqual(surface.nav["url"], nav_url,
+                         "the camera regenerated the navigation raster")
+        # A CONTENT change (the split): the background update
+        # promotes a new URL and the old file unlinks.
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 120)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and surface.nav["url"] == nav_url:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertNotEqual(surface.nav["url"], nav_url,
+                            "the split change never updated the navigation raster")
+        self.assertFalse(os.path.exists(QUrl(nav_url).toLocalFile()),
+                         "the retired navigation buffer kept its file")
+
+    def test_a_stale_navigation_generation_never_promotes(self):
+        # The double buffer's gates: a nav completion whose epoch or
+        # key no longer matches the pending job dies on arrival —
+        # its file unlinks and the ready URL stands.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        ready = surface.nav["url"]
+        # A stale ticket from a previous epoch arrives late.
+        from PyQt6.QtGui import QImage
+        stale_key = surface.nav["key"]
+        stale_ticket = ("popover", -1, 0, 0, stale_key, "nav", 50,
+                        surface.job_epoch - 1, 99)
+        model._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+                              "file:///tmp/mpf/raster-probe/stale-nav.png", stale_key),
+                             stale_ticket)
+        self.assertEqual(surface.nav["url"], ready,
+                         "a stale epoch's navigation raster promoted")
+        # A key mismatch (the demand moved on) discards too.
+        model._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+                              "file:///tmp/mpf/raster-probe/other-nav.png",
+                              ("other-key",)), ("popover", -1, 0, 0,
+                                                ("other-key",), "nav", 50,
+                                                surface.job_epoch, 100))
+        self.assertEqual(surface.nav["url"], ready,
+                         "a stale key's navigation raster promoted")
+
     def test_a_stale_completion_cannot_touch_the_new_job(self):
         # : an old generation's worker result
         # arriving after a job switch is discarded, never committed.

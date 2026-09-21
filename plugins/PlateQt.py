@@ -296,7 +296,11 @@ def _backing_scale(view: dict) -> float:
     """The device-pixel backing factor (bounded supersampling): a
     DPR-2 screen must never take a 1x logical toolpath raster and
     merely enlarge it — the worker paints at the device resolution
-    and the scene-graph samples it down to the logical size."""
+    and the scene-graph samples it down to the logical size. An
+    explicit ``backing`` (the navigation raster's fixed 4x) rides
+    its own policy."""
+    if view.get("backing"):
+        return float(view["backing"])
     return min(2.0, max(1.0, float(view.get("dpr", 1.0))))
 
 
@@ -402,24 +406,28 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
+    _paint_below_split(painter, pen, payload, plot, view, split, cancel=cancel)
+    painter.end()
+    return image
+
+
+def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
+                       view: dict, split, cancel=None) -> None:
+    """Stroke only the edges whose owning motion is below the split
+    (the prefix's own rule — an edge draws when its motion index is
+    under the boundary, and the motions within a segment never
+    decrease, so the first boundary ends the walk)."""
     sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
     for name, segments in (payload.get("classes") or {}).items():
         if cancel is not None and cancel.is_set():
-            painter.end()
-            return image
+            return
         pen.setColor(QColor(_PLATE_CLASS_COLOURS.get(name, "#888888")))
         painter.setPen(pen)
         for points in segments:
             if cancel is not None and cancel.is_set():
-                painter.end()
-                return image
+                return
             if len(points) < 2:
                 continue
-            # The motion owning the edge ENDING here: the split is a
-            # COUNT of printed motions, and an edge draws when its
-            # own motion is below it — the same rule the face's
-            # painters read. The motions within a segment never
-            # decrease, so the first boundary ends the walk.
             path = QPainterPath()
             drew = False
             for i in range(1, len(points)):
@@ -431,6 +439,79 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
                     drew = True
                 path.lineTo(offset_x + (points[i][0] - bed_x_min) * sx,
                             offset_y + (bed_y_max - points[i][1]) * sy)
+            if drew:
+                painter.drawPath(path)
+
+
+def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
+                            cancel=None) -> QImage:
+    """The interaction scene (the pan/zoom navigation raster): ONE
+    flattened full-bed composite at a FIXED 4x the 100%-fit
+    resolution, camera-independent — the pan and the zoom are pure
+    presentation transforms over this image, never re-renders. The
+    stack mirrors the exact composition: the ghosts at 0.30, the
+    grey base, the printed portion of the current layer (the prefix
+    rule at a partial split, the full layer otherwise) and the
+    travels up to the live split. No screen-space chrome, no
+    per-viewport intermediates."""
+    image = _new_canvas(view)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = _geometry_pen(plot, view)
+    painter.setPen(pen)
+    for payload in (window.get("prev"), window.get("next")):
+        if payload is None:
+            continue
+        painter.setOpacity(0.30)
+        _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
+        painter.setOpacity(1.0)
+        if cancel is not None and cancel.is_set():
+            painter.end()
+            return image
+    current = window.get("current")
+    if current is None:
+        painter.end()
+        return image
+    motions = current.get("motions") or 0
+    if split is not None and 0 < split < motions:
+        # The partial state: the grey whole-layer base, then the
+        # printed prefix (the vector tail beyond the live split is
+        # NOT printed — the boundary is the scene's truth).
+        grey_pen = QPen(pen)
+        grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
+        painter.setPen(grey_pen)
+        painter.setOpacity(0.55)
+        _paint_segments(painter, grey_pen, current, plot, view, cancel=cancel)
+        painter.setOpacity(1.0)
+        painter.setPen(pen)
+        _paint_below_split(painter, pen, current, plot, view, split, cancel=cancel)
+    else:
+        _paint_segments(painter, pen, current, plot, view, cancel=cancel)
+    if current.get("travels"):
+        tpen = QPen(pen)
+        tpen.setWidthF(max(0.01, pen.widthF()
+                           * float(view.get("travelVisualRatio",
+                                            _PLATE_TRAVEL_VISUAL_RATIO))))
+        tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
+        painter.setPen(tpen)
+        tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
+        for points in current.get("travels") or []:
+            if cancel is not None and cancel.is_set():
+                painter.end()
+                return image
+            if len(points) < 2:
+                continue
+            path = QPainterPath()
+            drew = False
+            for i in range(1, len(points)):
+                if split is not None and split >= 0 and points[i][2] >= split:
+                    break
+                if not drew:
+                    path.moveTo(tx_ox + (points[i - 1][0] - tx_bx) * tx_sx,
+                                tx_oy + (tx_by - points[i - 1][1]) * tx_sy)
+                    drew = True
+                path.lineTo(tx_ox + (points[i][0] - tx_bx) * tx_sx,
+                            tx_oy + (tx_by - points[i][1]) * tx_sy)
             if drew:
                 painter.drawPath(path)
     painter.end()

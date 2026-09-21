@@ -37,6 +37,7 @@ from .MonitorCamera import MonitorCamera
 from .PlateQt import (
     PlateLayer, RasterBridge, _RasterJob, _PLATE_TRAVEL_VISUAL_RATIO,
     png_file, render_layer_prefix, render_layer_raster,
+    render_navigation_layer,
 )
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
@@ -328,6 +329,13 @@ class _RenderSurface:
         # The staged plot/view pair: the setters stage, one zero-tick
         # flush commits the burst .
         self.stage = {"plot": None, "view": None, "armed": False}
+        # The navigation raster's double-buffered slot: `url` is the
+        # READY interaction scene the face may switch to instantly,
+        # `job` the in-flight background update (one per surface —
+        # live updates coalesce), both camera-independent and
+        # epoch-keyed. The mini never carries one.
+        self.nav = {"key": None, "url": "", "job": None, "cancel": None,
+                    "serial": 0}
 
     def render_key(self):
         """The key a raster must carry to display on this surface
@@ -428,7 +436,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                  "followerTravelVisualRatio", "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
-                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector")),
+                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
+                                  "plateNavigationData")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -1295,6 +1304,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 values["plateProgressReason"] = "Loading layer…"
             else:
                 values["plateProgressReason"] = ""
+            # The warm interaction raster: the READY URL rides the
+            # payload, and a content change (the anchor, the split,
+            # the toggles, the line style — never the camera)
+            # schedules the background update.
+            surface = self._plate_surfaces["popover"]
+            values["plateNavigationData"] = surface.nav["url"]
+            self._schedule_navigation(surface)
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
             values["plateScrubVector"] = self._values.get("plateScrubVector")
@@ -1303,6 +1319,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateProgressAnchor"] = self._values.get("plateProgressAnchor", -1)
             values["plateProgressAvailable"] = self._values.get("plateProgressAvailable", False)
             values["plateProgressReason"] = self._values.get("plateProgressReason", "")
+            values["plateNavigationData"] = self._values.get("plateNavigationData", "")
         # The mini's own view: the live payload, always (the live
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
@@ -1594,6 +1611,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     platePassFraction = value_property(float, "platePassFraction", monitorChanged, -1.0)
     plateScrubVector = value_property(QVariant, "plateScrubVector", plateProgressChanged, None)
     plateLiveScrubVector = value_property(QVariant, "plateLiveScrubVector", plateProgressChanged, None)
+    # The interaction scene's READY flattened full-bed raster URL
+    # (camera-independent; the pan/zoom presentation transforms
+    # never re-render it).
+    plateNavigationData = value_property(str, "plateNavigationData", plateProgressChanged, "")
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
@@ -2976,6 +2997,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.job_failures = 0
         self._cancel_obsolete_job(surface)
         self._schedule_surface(surface)
+        # The interaction raster follows the CONTENT state (the
+        # window, the split, the toggles) — its warm background
+        # update schedules here, never on the camera path.
+        self._schedule_navigation(surface)
         return window
 
     def _prefix_wanted(self, surface, layer, split):
@@ -3112,6 +3137,140 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             QThreadPool.globalInstance().start(_RasterJob(build))
             return
 
+    def _navigation_backing(self, surface):
+        """The interaction raster's backing: 400% of the 100%-fit
+        view, reduced when 4x would blow the safe single-buffer
+        budget (the double-buffered peak holds two CPU images and
+        two GPU textures — the fallback logs once and shrinks)."""
+        width = int(surface.view.get("width") or 0)
+        height = int(surface.view.get("height") or 0)
+        if width <= 0 or height <= 0:
+            return 4.0
+        budget = 64 * 1024 * 1024  # one CPU buffer's safe share
+        backing = min(4.0, (budget / (width * height * 4.0)) ** 0.5)
+        if backing < 4.0:
+            logging.getLogger("MoonrakerPrintFollower").warning(
+                "navigation raster backing reduced to %.1fx for the "
+                "%dx%d surface (memory safety)", backing, width, height)
+        return max(1.0, backing)
+
+    def _navigation_key(self, surface):
+        """The interaction raster's content key: the job epoch, the
+        window's payload identity, the split, the toggles, the line
+        style, the plot and the surface's dimensions. PAN and ZOOM
+        are presentation transforms and never appear here — this is
+        why both stay free while interacting."""
+        desired = surface.desired
+        if desired is None:
+            return None
+        window = []
+        for layer in (desired["current"], desired["ghosts"].get("prev"),
+                      desired["ghosts"].get("next")):
+            wrapped = surface.layers.get(layer) if layer is not None else None
+            window.append(id(wrapped._payload) if wrapped is not None else None)
+        return (surface.name, surface.job_epoch, tuple(window),
+                desired.get("split"),
+                bool(getattr(self, "followerShowPrevious", True)),
+                bool(getattr(self, "followerShowNext", True)),
+                bool(getattr(self, "followerShowBase", True)),
+                bool(getattr(self, "followerShowTravels", False)),
+                round(float(surface.view.get("lineScale") or 0.7), 6),
+                int(surface.view.get("width") or 0),
+                int(surface.view.get("height") or 0),
+                tuple(sorted((k, round(float(v), 6))
+                             for k, v in (surface.plot or {}).items())))
+
+    def _schedule_navigation(self, surface):
+        """The warm interaction raster's demand: ONE background job
+        per surface (the live updates coalesce on the key), never on
+        the camera path, and only for the popover — the mini does
+        not carry this feature. A ready URL is what the face can
+        switch to INSTANTLY on the first camera input."""
+        if surface.name != "popover" or surface.nav["job"] is not None:
+            return
+        key = self._navigation_key(surface)
+        if key is None or key == surface.nav["key"]:
+            return
+        desired = surface.desired
+        window = {}
+        for role, layer in (("current", desired["current"]),
+                            ("prev", desired["ghosts"].get("prev")),
+                            ("next", desired["ghosts"].get("next"))):
+            wrapped = surface.layers.get(layer) if layer is not None else None
+            window[role] = wrapped._payload if wrapped is not None else None
+        if window["current"] is None:
+            return
+        backing = self._navigation_backing(surface)
+        view = {"width": int(surface.view.get("width") or 0),
+                "height": int(surface.view.get("height") or 0),
+                "scale": 1.0,
+                "lineScale": float(surface.view.get("lineScale") or 0.7),
+                "travelVisualRatio": surface.view.get("travelVisualRatio"),
+                "compact": False, "panX": 0.0, "panY": 0.0,
+                "backing": backing}
+        plot = dict(surface.plot)
+        split = desired.get("split")
+        epoch = surface.job_epoch
+        surface.nav["serial"] += 1
+        serial = surface.nav["serial"]
+        cancel = threading.Event()
+        surface.nav["cancel"] = cancel
+        surface.nav["job"] = {"key": key, "cancel": cancel, "epoch": epoch,
+                             "serial": serial}
+        ticket = (surface.name, -1, 0, 0, key, "nav", split, epoch, serial)
+
+        def build(ticket=ticket, window=window, plot=plot, view=view,
+                  split=split, cancel=cancel, surface=surface,
+                  serial=serial, epoch=epoch, key=key,
+                  directory=self._raster_cache_dir):
+            try:
+                if cancel.is_set():
+                    self._raster_bridge.done.emit(("cancelled",), ticket)
+                    return
+                image = render_navigation_layer(window, plot, view,
+                                                split, cancel=cancel)
+                if cancel.is_set():
+                    self._raster_bridge.done.emit(("cancelled",), ticket)
+                    return
+                url = png_file(image, directory,
+                               "n-%s-e%d-s%d" % (surface.name, epoch, serial))
+                self._raster_bridge.done.emit(("nav", image, url, key), ticket)
+            except Exception as exc:
+                self._raster_bridge.done.emit(("failed", str(exc)), ticket)
+        QThreadPool.globalInstance().start(_RasterJob(build))
+
+    def _nav_committed(self, images, ticket):
+        """The interaction raster's commit: the epoch and the
+        content key gate the double buffer — a superseded or stale
+        generation's file dies on arrival, the ready URL is promoted
+        atomically, and the retired buffer unlinks."""
+        name, _layer, _token, _gen, key, _kind, _split, epoch, serial = ticket
+        surface = self._plate_surfaces.get(name)
+        if surface is None:
+            return
+        job = surface.nav["job"]
+        if images and isinstance(images, tuple) and images[0] in ("failed", "cancelled"):
+            if job is not None and surface.job_epoch == epoch:
+                surface.nav["job"] = None
+            return
+        if not images or not isinstance(images, tuple) or images[0] != "nav":
+            return
+        _kind, _image, url, painted_key = images
+        if job is None or surface.job_epoch != epoch or job["key"] != key \
+                or painted_key != key:
+            self._unlink_asset_files(images)
+            return
+        surface.nav["job"] = None
+        old = surface.nav["url"]
+        surface.nav["url"] = url
+        surface.nav["key"] = key
+        if old and old != url:
+            try:
+                os.unlink(QUrl(old).toLocalFile())
+            except OSError:
+                pass
+        self._publish()
+
     @staticmethod
     def _unlink_asset_files(images):
         """A discarded job's files are dead on arrival — remove
@@ -3127,6 +3286,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 except OSError:
                     pass
         elif images[0] == "prefix":
+            url = images[2]
+            if url and url.startswith("file://"):
+                try:
+                    os.unlink(QUrl(url).toLocalFile())
+                except OSError:
+                    pass
+        elif images[0] == "nav":
             url = images[2]
             if url and url.startswith("file://"):
                 try:
@@ -3277,6 +3443,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.desired = None
         surface.job = None
         surface.tokens.clear()
+        # The navigation raster retires with its surface: the
+        # in-flight update cancels, and a retired ready URL is
+        # never shown by another surface's face.
+        if surface.nav["job"] is not None:
+            surface.nav["cancel"].set()
+            surface.nav["job"] = None
+        surface.nav["key"] = None
+        surface.nav["url"] = ""
 
     def _cancel_obsolete_job(self, surface):
         """The running job no longer matches the desired demand —
@@ -3347,6 +3521,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         name, layer, token, generation, key, kind, prefix_split, epoch, serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
+            return
+        if kind == "nav":
+            # The navigation raster's own commit: the exact scene's
+            # job slot and counters never see these tickets.
+            self._nav_committed(images, ticket)
             return
         exact_job = self._raster_job_matches(
             surface.job, layer, token, generation, epoch, serial)
