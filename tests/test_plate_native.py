@@ -66,13 +66,39 @@ class NativeStrokeParityTests(unittest.TestCase):
         prefix = render_layer_prefix(payload, plot, view, 20)
         full_width = _stroke_height(coloured, 100)
         prefix_width = _stroke_height(prefix, 100)
-        # Antialiasing is off (the painter's deliberate setting):
-        # a 2.4 px stroke snaps to 2-3 rows; a reset default-width
-        # pen would draw ONE.
+        # At a 2.4 px stroke the antialiased painter covers several
+        # rows; a reset default-width pen would still draw a hairline.
         self.assertGreater(full_width, 1,
                            "the full raster drew a hairline (the pen was reset)")
         self.assertEqual(full_width, prefix_width,
                          "the full and prefix strokes disagree")
+
+    def test_subpixel_native_strokes_use_fractional_coverage(self):
+        # Partial composition joins this native prefix to a QML Canvas
+        # tail. QML uses fractional coverage, so the native side must not
+        # snap a sub-pixel width to a binary one-pixel stroke.
+        payload = _payload()
+        plot = _plot()
+        view = _view(lineScale=0.7)
+        full = render_layer_raster(payload, plot, view)[0]
+        prefix = render_layer_prefix(payload, plot, view, 20)
+        for image, name in ((full, "full"), (prefix, "prefix")):
+            alphas = {image.pixelColor(col, row).alpha()
+                      for row in range(image.height())
+                      for col in range(image.width())}
+            self.assertTrue(any(0 < alpha < 255 for alpha in alphas),
+                            name + " lost antialiased fractional coverage")
+
+    def test_native_travel_width_reads_the_render_contract_ratio(self):
+        payload = _payload()
+        payload["travels"] = [payload["classes"]["WALL-OUTER"][0]]
+        plot = _plot()
+        narrow = render_layer_raster(
+            payload, plot, _view(lineScale=20.0, travelVisualRatio=0.25))[2]
+        wide = render_layer_raster(
+            payload, plot, _view(lineScale=20.0, travelVisualRatio=0.9))[2]
+        self.assertGreater(_stroke_height(wide, 100), _stroke_height(narrow, 100),
+                           "native travels ignored the shared visual ratio")
 
     def test_line_scale_affects_both_equally(self):
         payload = _payload()
