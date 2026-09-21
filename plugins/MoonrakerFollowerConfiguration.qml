@@ -883,6 +883,11 @@ Cura.MachineAction {
                             checked: manager.settingsTraceLayer
                         }
                         UM.CheckBox {
+                            id: seekTraceBox
+                            text: "Log follower seek timelines (diagnostics — the stage-by-stage layer-seek trace, off by default)"
+                            checked: manager.settingsSeekTrace
+                        }
+                        UM.CheckBox {
                             id: httpTraceBox
                             text: "Log HTTP requests (diagnostics)"
                             checked: manager.settingsTraceHttp

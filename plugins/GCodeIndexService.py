@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from dataclasses import dataclass
+import os
 import threading
 import time
 from types import MappingProxyType
@@ -84,6 +85,7 @@ class GCodeIndexService(QObject):
         self._prepared_table = None
         self._prepared_identity = None
         self._prepared_saved = False
+        self._prepared_writer = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MoonrakerIndex")
         self._generation = 0
         self._job = None
@@ -876,4 +878,16 @@ class GCodeIndexService(QObject):
         self._closed = True
         self._generation += 1
         self._cancel.set()
+        # An unfinished incremental writer is abandoned, never
+        # published: the temp file and its handle go here.
+        if self._prepared_writer is not None:
+            try:
+                self._prepared_writer["handle"].close()
+            except OSError:
+                pass
+            try:
+                os.unlink(self._prepared_writer["temp"])
+            except OSError:
+                pass
+            self._prepared_writer = None
         self._executor.shutdown(wait=False, cancel_futures=True)

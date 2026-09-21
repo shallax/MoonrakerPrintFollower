@@ -83,6 +83,7 @@ class PrinterConfigTests(unittest.TestCase):
             "path_follow": False,
             "trace_layer": False,
             "trace_http": False,
+            "seek_trace": False,
             "memory_diagnostics_log": False,
             "memory_diagnostics_trace": False,
         }

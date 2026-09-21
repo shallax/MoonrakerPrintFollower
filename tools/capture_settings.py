@@ -241,6 +241,10 @@ class SettingsManager(QObject):
         return False
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsSeekTrace(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceHttp(self):
         return False
 
