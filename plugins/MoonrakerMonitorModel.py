@@ -2866,7 +2866,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         : the mini and the popover hold
         separate PlateLayers, so neither's raster can ever be
         consumed by the other. Raster demand is the scheduler's —
-        never this path's."""
+        never this path's.
+
+        The wrapper's identity is (surface, layer, print epoch):
+        within ONE epoch a layer's payload is content-addressed and
+        immutable — the decoded LRU reuses the same object per layer
+        and the repair/hydration paths never replace a layer's
+        geometry under a surviving wrapper — and the epoch boundary
+        retires the wrappers wholesale, so a payload object can never
+        be swapped under a live wrapper (the pinned invariant;
+        test_a_layer_payload_is_immutable_within_a_print_epoch)."""
         if payload is None or layer < 0:
             return None
         cached = surface.layers.get(layer)
