@@ -74,9 +74,16 @@ class GCodeIndexService(QObject):
     failed = pyqtSignal(str)
     _completed = pyqtSignal(int, str, object, object, object)
 
-    def __init__(self, files, cache, parent=None):
+    def __init__(self, files, cache, parent=None, prepared=None):
         super().__init__(parent)
         self._files, self._cache = files, cache
+        # The file-backed prepared store (the review's round 3): the
+        # pass's encodings persist per print, random-accessible, so
+        # a reopened print skips the whole preparation walk.
+        self._prepared = prepared
+        self._prepared_table = None
+        self._prepared_identity = None
+        self._prepared_saved = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MoonrakerIndex")
         self._generation = 0
         self._job = None
@@ -166,6 +173,10 @@ class GCodeIndexService(QObject):
         self._full_next = 0
         # The hot presentation cache belongs to that file as well.
         self._decoded_lru = OrderedDict()
+        # The prepared store's table follows the same identity.
+        self._prepared_table = None
+        self._prepared_identity = None
+        self._prepared_saved = False
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
         # The painted boundary belongs to that file's layer too: a new
@@ -518,6 +529,25 @@ class GCodeIndexService(QObject):
         self._request_window(layer)
         self._advance()
 
+    def _prepared_read(self, layer):
+        """The file-backed store's random-access read for one
+        layer — the reopened print's path (no decode of preceding
+        layers, no RAM residency)."""
+        if self._prepared is None or self._prepared_table is None:
+            return None
+        return self._prepared.read(self._prepared_identity, self._prepared_table, layer)
+
+    def _prepared_open(self, identity):
+        """Open the table for the current file's prepared cache (a
+        one-shot per identity)."""
+        if self._prepared is None or identity is None:
+            return
+        key = identity.stable_key() if hasattr(identity, "stable_key") else None
+        if key is None or key == self._prepared_identity:
+            return
+        self._prepared_identity = key
+        self._prepared_table = self._prepared.load_table(key) or []
+
     def _request_window(self, layer):
         """Ask for the anchor's own three layers, never a backlog.
 
@@ -557,6 +587,7 @@ class GCodeIndexService(QObject):
             self._submit("restore", lambda: self._cache.load(identity))
             return
         self._restored = True
+        self._prepared_open(identity)
         if self._view is None:
             lease = self._files.lease()
             if lease is None:
@@ -624,6 +655,8 @@ class GCodeIndexService(QObject):
                 stash = {}
                 for layer in submitted:
                     raw = cache.get(layer)
+                    if raw is None:
+                        raw = self._prepared_read(layer)
                     if raw is not None:
                         try:
                             stash[layer] = (raw, _decode_layer(raw))
@@ -664,6 +697,18 @@ class GCodeIndexService(QObject):
             self._last_save_at = time.monotonic()
             index = self._view._index
             self._submit("save", lambda: self._cache.save(identity, index))
+        elif self._view is not None and self._full_next >= len(self._view.ranges) \
+                and self._prepared is not None and not self._prepared_saved \
+                and self._prepared_identity is not None:
+            # The pass's completion persists the store: the whole
+            # session's encodings finalise atomically on the worker.
+            self._prepared_saved = True
+            count = len(self._view.ranges)
+            cache = self._full_cache
+            def prepared_save():
+                payloads = [cache.get(layer) or b"" for layer in range(count)]
+                return self._prepared.finalise(self._prepared_identity, payloads)
+            self._submit("prepared_save", prepared_save)
         elif self._view is not None and self._full_next < len(self._view.ranges):
             # The full prepared cache's background pass (the live
             # request): one bounded batch per worker task, so the
@@ -682,6 +727,8 @@ class GCodeIndexService(QObject):
             cache = self._full_cache
             start = self._full_next
             deadline = time.monotonic() + 0.25
+            prepared_read = self._prepared_read
+            prepared_table = self._prepared_table
 
             def full_prep_batch():
                 encoded = {}
@@ -697,6 +744,14 @@ class GCodeIndexService(QObject):
                         frontier = layer + 1
                         continue
                     if layer not in cache:
+                        raw = prepared_read(layer) if prepared_table else None
+                        if raw is not None:
+                            # The reopened print's cached layer: the
+                            # packed form IS the prepared truth — no
+                            # re-hydrate, no re-walk.
+                            encoded[layer] = raw
+                            frontier = layer + 1
+                            continue
                         if index.compact and layer not in index.hydrated_layers:
                             if not hydrate_layer_from_file(index, lease.path, layer):
                                 break
