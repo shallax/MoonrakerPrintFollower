@@ -2068,6 +2068,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     diffs += 1
         return diffs
 
+    def _stroke_ink(self, image, face, window, plot, bed_x, bed_y, tolerance=20):
+        """The CORE stroke-ink rows at a bed point: strict matches
+        only — antialiased fringes and a grey wash over native
+        geometry must not read as the feature colour."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        col = int(origin.x() + plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+        row = int(origin.y() + plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"])
+        return sum(
+            1 for py in range(max(0, row - 12), min(image.height(), row + 13))
+            if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F),
+                             tolerance=tolerance)
+        )
+
     def _band_changed(self, image, baseline, face, window, plot, bed_x, bed_y, radius=8):
         """Any pixel changed inside a bed-space point's screen band."""
         origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
@@ -2286,12 +2299,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
                       + (bed_x - plot["bedXMin"]) * plot["sx"])
             return sum(
                 1 for py in range(max(0, row - 12), min(image.height(), row + 13))
-                if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F))
+                if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F),
+                                 tolerance=20)
             )
 
         # x=75 is native-prefix body, x=110 is the engine boundary,
         # x=155 is Canvas-tail body. One physical pixel is the maximum
-        # acceptable rasterisation disagreement.
+        # acceptable rasterisation disagreement. The census counts only
+        # CORE stroke ink: the two round caps meeting at the boundary
+        # column legitimately add half-intensity antialiased fringes
+        # there, and the grey base's wash over the prefix must not
+        # read as the feature colour — tolerance 60 accepted both.
         widths = [red_height(75.0), red_height(110.0), red_height(155.0)]
         self.assertGreater(min(widths), 0, "one side of the partial stroke vanished")
         self.assertLessEqual(max(widths) - min(widths), 1,
@@ -2307,6 +2325,129 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # PlateLayer in progress.layers.current is exactly the wrap
         # that segfaults it (QObjectWrapper::wrap -> propertyCache).
         # Restore the plain-dict payload: dicts wrap inertly.
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_a_prefix_that_never_loads_leaves_the_vector_owning_the_history(self):
+        # The prefix's model-side validity is NOT the scene's: while
+        # the prefix Image is not Ready (here its file never
+        # exists), the Canvas must draw the FULL printed interval —
+        # never a frame in which neither renderer owns the history.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        prefix_split = 10
+        from plugins.PlateQt import render_layer_prefix, png_file
+        layer = self._native_layer(payload, face)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0}
+        prefix = render_layer_prefix(payload, plot, view, prefix_split)
+        # The prefix image exists — its URL deliberately does not,
+        # so the scene-graph Image stays not-Ready forever.
+        layer.set_prefix(prefix, "file:///tmp/mpf/raster-probe/missing-%d.png"
+                         % time.monotonic_ns(), prefix_split, "fixture-key")
+        census_plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the picture never drew")
+        # Every sampled frame while the prefix stays un-Ready: the
+        # printed history (bed x=75, inside the prefix interval)
+        # must stay on screen — the vector owns it all.
+        for _ in range(10):
+            self.pump(5)
+            image = window.grabWindow()
+            self.assertGreater(
+                self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+                0, "a frame lost the printed history while the prefix "
+                   "image was not Ready")
+        # The real file lands: the loading gap must also hold ink,
+        # and once Ready the prefix takes over — the boundary column
+        # gains the two caps' fringes (loose census >= 3 rows).
+        layer.set_prefix(prefix, png_file(
+            prefix, "/tmp/mpf/raster-probe",
+            "fixture-ready-%d" % time.monotonic_ns()), prefix_split, "fixture-key")
+        deadline = time.monotonic() + 3.0
+        takeover = False
+        while time.monotonic() < deadline:
+            self.pump(5)
+            image = window.grabWindow()
+            self.assertGreater(
+                self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+                0, "the loading gap lost the printed history")
+            if self._stroke_ink(image, face, window, census_plot,
+                                110.0, 125.0, tolerance=60) >= 3:
+                takeover = True
+                break
+        self.assertTrue(takeover, "the ready prefix never took over")
+        self.assertLessEqual(
+            max(self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+                self._stroke_ink(image, face, window, census_plot, 155.0, 125.0)),
+            3, "the composed stroke swelled beyond the prefix/tail seam")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_the_grey_base_never_washes_the_printed_prefix(self):
+        # The stack order contract: ghosts < base < prefix < tail.
+        # With the base ON and the ghosts OFF, the native prefix and
+        # the vector tail must keep their feature colour — the grey
+        # base may mark the unprinted suffix, never wash printed ink.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showBase", True)
+        face.setProperty("showPrevious", False)
+        face.setProperty("showNext", False)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        census_plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the picture never drew")
+        # The grey base IS up: the unprinted suffix (motion 20, bed
+        # x=215 — beyond the split's tail) shows the base's grey
+        # where the empty baseline had none.
+        self.assertTrue(self._band_changed(image, baseline, face, window,
+                                           census_plot, 215.0, 125.0),
+                        "the grey base never rendered — the wash "
+                        "proof would be vacuous")
+        # The printed prefix and the tail keep the feature colour
+        # over the base: strict core-ink rows on both sides.
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+            0, "the grey base washed the native prefix")
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 155.0, 125.0),
+            0, "the grey base washed the vector tail")
+        window.grabWindow()
+        self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
