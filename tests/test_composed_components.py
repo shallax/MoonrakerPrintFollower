@@ -1994,6 +1994,34 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                             "the split change never updated the navigation raster")
         self.assertFalse(os.path.exists(QUrl(nav_url).toLocalFile()),
                          "the retired navigation buffer kept its file")
+        # The legend checkboxes and the line width are the scene's
+        # CONTENT: each flip regenerates the warm raster (its key
+        # carries them) — the interaction scene must mirror the
+        # exact view's toggles and stroke. The toggle changes ride
+        # the publish, which serves the OPEN popover's surface.
+        model.setFollowerPopoverOpen(True)
+        nav_url = surface.nav["url"]
+        for setter, name in ((lambda: model.setFollowerShowPrevious(False),
+                              "showPrevious"),
+                             (lambda: model.setFollowerView(
+                                 "popover", 1.0, 12.0, 400, 300, False,
+                                 0.0, 0.0),  # the face's settled feed
+                              "lineScale")):
+            setter()
+            model._publish()  # the poll's publish (the harness has no tick)
+            print("PROBE NAV", name, "key-changed=", surface.nav["key"] != nav_key,
+                  "url=", surface.nav["url"], "job=", surface.nav["job"] is not None)
+            self._pump_rasters(model, "popover")
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and surface.nav["url"] == nav_url:
+                self.qt.events(5)
+                time.sleep(0.01)
+            print("PROBE NAV post", name, "url=", surface.nav["url"],
+                  "job=", surface.nav["job"], "serial=", surface.nav["serial"])
+            self.assertNotEqual(surface.nav["url"], nav_url,
+                                "the %s change never updated the "
+                                "navigation raster" % name)
+            nav_url = surface.nav["url"]
 
     def test_a_stale_navigation_generation_never_promotes(self):
         # The double buffer's gates: a nav completion whose epoch or

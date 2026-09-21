@@ -2924,6 +2924,87 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._pump_ms(30)
         self.assertFalse(face.property("_interactionActive"),
                          "the retargeted zoom never swapped back")
+        # A drag DURING the eased zoom: the grab takes the camera —
+        # the ease stops at the grabbed scale (the wheel's target is
+        # dropped), the drag pans both transforms directly, and
+        # nothing snaps at the press or the release.
+        wheel(cx, cy, 120)
+        self._pump_ms(10)
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx + 30, cy + 15, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx + 30, cy + 15,
+              Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the drag-interrupted zoom never swapped back")
+        self.assertEqual(face.property("viewScale"), 1.5625,
+                         "the grab never dropped the wheel's zoom target")
+        self.assertAlmostEqual(face.property("displayPanX"),
+                               face.property("viewPanX"), delta=1.5,
+                               msg="the dragged pan never converged to the "
+                                   "target")
+        # A pan-only gesture: the release's re-check drives the
+        # barrier — the interaction ends without any zoom.
+        pan_before = face.property("viewPanX")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx + 25, cy + 10, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx + 25, cy + 10,
+              Qt.MouseButton.NoButton)
+        self.assertAlmostEqual(face.property("viewPanX"), pan_before + 25.0,
+                               delta=1.5, msg="the pan-only drag lost its delta")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the pan-only gesture never settled back to the "
+                         "exact scene")
+        # A wheel DURING a held drag is inert: the grab owns the
+        # camera until the pointer releases (the live ruling — no
+        # zoom while panning).
+        before_wheel = face.property("viewScale")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        wheel(cx, cy, 120)
+        self.assertEqual(face.property("viewScale"), before_wheel,
+                         "the wheel zoomed while the drag was held")
+        self.assertEqual(face.property("displayScale"), before_wheel,
+                         "the display zoomed while the drag was held")
+        mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the held-wheel gesture never settled back")
+        # Repeated drags: the display pan and the target pan stay in
+        # lockstep at every boundary — a drag must never snap at its
+        # start, and never snap back at its end.
+        for dx, dy in ((30, 15), (-30, -15), (20, -10), (-20, 10)):
+            self.assertAlmostEqual(
+                face.property("displayPanX"), face.property("viewPanX"),
+                delta=1.0, msg="the camera drifted out of lockstep "
+                               "between drags")
+            mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+            self.assertAlmostEqual(
+                face.property("displayPanX"), face.property("viewPanX"),
+                delta=1.0, msg="the drag's press snapped the camera")
+            mouse(QEvent.Type.MouseMove, cx + dx, cy + dy, Qt.MouseButton.LeftButton)
+            self.assertAlmostEqual(
+                face.property("displayPanX"), face.property("viewPanX"),
+                delta=1.0, msg="the drag's move broke the lockstep")
+            mouse(QEvent.Type.MouseButtonRelease, cx + dx, cy + dy,
+                  Qt.MouseButton.NoButton)
+            self.assertAlmostEqual(
+                face.property("displayPanX"), face.property("viewPanX"),
+                delta=1.0, msg="the drag's release snapped the camera")
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and face.property("_interactionActive"):
+                self._pump_ms(30)
+            self.assertFalse(face.property("_interactionActive"),
+                             "a repeated drag never settled back")
+            self.assertAlmostEqual(
+                face.property("displayPanX"), face.property("viewPanX"),
+                delta=1.0, msg="the settled camera ended out of lockstep")
         # The delayed exact: invalidate the exact scene's key, wheel
         # again — the interaction stays on the navigation raster
         # until the barrier can pass.
