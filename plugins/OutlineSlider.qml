@@ -28,22 +28,54 @@ Slider {
     property string controlKind: ""
     property bool tuningActive: false
     readonly property bool interacting: pressed || tuningActive
+    // The focus contract: a model refresh can disable the slider
+    // for a beat (the availability/count transitions) — a disabled
+    // item drops the focus, and the re-enable must hand it back
+    // (the reviewer's finding: the refresh stole the keyboard
+    // path). The held flag clears only when the focus leaves while
+    // the slider is enabled — a deliberate move, never the flicker.
+    property bool _heldFocus: false
+    onActiveFocusChanged: {
+        if (control.activeFocus) {
+            control._heldFocus = true;
+        } else if (control.enabled) {
+            control._heldFocus = false;
+        }
+    }
+    onEnabledChanged: {
+        if (control.enabled && control._heldFocus) {
+            control.forceActiveFocus();
+        }
+    }
     property bool handlePress: false
     property bool handleDragged: false
     property real valueBeforePress: 0
     signal valueTuning(real value)
     signal valueCommitted(real value)
+    // The repeater-rebuild contract: a model republish replaces the
+    // delegate while it holds the focus (no gesture involved), and
+    // the focus dies with the item — the host re-grants it to the
+    // fresh delegate (the reviewer's finding: a refresh killed the
+    // focused fan slider).
+    signal focusLostByDestruction(string object, string kind)
+    Component.onDestruction: {
+        if (control.activeFocus && control.controlObject !== "") {
+            control.focusLostByDestruction(control.controlObject, control.controlKind);
+        }
+    }
     function selectedValue() {
         return Math.round(valueAt(position));
     }
     function pressIsOnHandle(mouseX) {
-        // The same formula the handle paints with: availableWidth
-        // minus the handle's own width. The old availableWidth-only
-        // centre drifted up to ~8 px from the painted handle at the
-        // track ends, so a press on the handle's inner half read as
-        // a track jump (the UX re-review's measurement).
-        var centre = leftPadding + visualPosition * (availableWidth - handle.width);
-        return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+        // The handle's own extent: leftPadding + visualPosition ×
+        // (availableWidth − width) is the painted LEFT edge — the
+        // window centres on the handle's MIDDLE and spans its full
+        // width plus a 2 px slack, or the far half of the handle
+        // reads as a track click while a wide margin deadens the
+        // track around it (the reviewer's pair of findings).
+        var leftEdge = leftPadding + visualPosition * (availableWidth - handle.width);
+        var centre = leftEdge + handle.width / 2;
+        return Math.abs(mouseX - centre) <= handle.width / 2 + 2 * screenScaleFactor;
     }
 
     // The native groove path: a click/drag commits through onMoved
@@ -123,6 +155,11 @@ Slider {
         onTriggered: {
             control.valueCommitted(control.selectedValue());
             control.tuningActive = false;
+            // The apply can rebuild the host's surface (the fan/LED
+            // repeaters): re-grant the focus so the arrows keep
+            // driving the same slider (the reviewer's finding — the
+            // apply stole the keyboard path).
+            control.forceActiveFocus();
         }
     }
     Keys.onUpPressed: {

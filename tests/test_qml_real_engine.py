@@ -120,6 +120,7 @@ if QT_AVAILABLE:
         controlsCollapsedChanged = pyqtSignal()
         monitorEtaChanged = pyqtSignal()
         printActiveChanged = pyqtSignal()
+        fanItemsChanged = pyqtSignal()
 
         def __init__(self):
             super().__init__()
@@ -127,12 +128,23 @@ if QT_AVAILABLE:
             self.status_calls = []
             self.controls_calls = []
             self.section_calls = []
+            self._fan_items = []
             self._info_collapsed = False
             self._status_collapsed = False
             self._controls_collapsed = False
             self._eta = "—"
             self._finish = "—"
             self._print_active = False
+
+        @pyqtProperty("QVariant", notify=fanItemsChanged)
+        def fanControlItems(self):
+            return self._fan_items
+
+        def republishFans(self, items):
+            """The Moonraker refresh: a NEW fan list (the same fans,
+            fresh values) replaces the repeater's model."""
+            self._fan_items = items
+            self.fanItemsChanged.emit()
 
         @pyqtProperty(str, notify=monitorEtaChanged)
         def monitorEta(self):
@@ -561,7 +573,7 @@ class ReExpansionGuardTests(RealEngineTestCase):
     after the information pane down the cascade; the camera pane stays
     open throughout."""
 
-    def _mount(self, width=1100, document="MoonrakerMonitor.qml"):
+    def _mount(self, width=1100, document="MoonrakerMonitor.qml", seed_fans=None):
         class OutputDouble(QObject):
             activePrinterChanged = pyqtSignal()
 
@@ -574,6 +586,8 @@ class ReExpansionGuardTests(RealEngineTestCase):
                 return self._printer
 
         printer = PrinterModelDouble()
+        if seed_fans is not None:
+            printer._fan_items = list(seed_fans)
         # The double stays referenced from Python: the context property
         # alone does not keep it alive, and a collected double reads as
         # a null printer — every click then looks refused.
@@ -3173,6 +3187,161 @@ class PlateFaceRenderTests(RealEngineTestCase):
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_the_layer_slider_handle_click_and_keyboard_steps_hold(self):
+        # The reviewer's slider findings: a click on the handle must
+        # NOT move the slider (movement is track clicks and drags
+        # only), and a handle click focuses the slider so the arrows
+        # nudge one step — the focus must survive the settle and the
+        # apply.
+        monitor, window, face, baseline = self._mount_empty()
+        sliders = monitor.findChildren(QQuickItem, "moonrakerFollowerLayerSlider")
+        self.assertTrue(sliders, "the layer slider never mounted")
+        slider = sliders[0]
+        self.pump(10)
+        self._printer.calls.clear()
+
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QKeyEvent, QMouseEvent
+
+        def handle_centre_x():
+            return (slider.property("leftPadding")
+                    + slider.property("visualPosition")
+                    * (slider.property("availableWidth") - 16.0))
+
+        def click(x):
+            scene = slider.mapToItem(window.contentItem(),
+                                     QPointF(x, slider.height() / 2))
+            for kind in (QEvent.Type.MouseButtonPress,
+                         QEvent.Type.MouseButtonRelease):
+                QGuiApplication.sendEvent(window, QMouseEvent(
+                    kind, QPointF(scene),
+                    QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                    Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton if kind == QEvent.Type.MouseButtonPress
+                    else Qt.MouseButton.NoButton,
+                    Qt.KeyboardModifier.NoModifier))
+
+        def press(key_value):
+            for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                QGuiApplication.sendEvent(window, QKeyEvent(
+                    kind, key_value, Qt.KeyboardModifier.NoModifier))
+
+        def seek_issued():
+            return any(call[0] == "layer" for call in self._printer.calls)
+        # 1: a click on the handle must not move the value.
+        before = slider.property("value")
+        click(handle_centre_x())
+        self._pump_ms(100)
+        self.assertEqual(slider.property("value"), before,
+                         "a handle click moved the slider")
+        self.assertFalse(seek_issued(), "a handle click issued a seek")
+        # 2: a click on the track moves the slider there.
+        track_x = slider.property("leftPadding") + 0.25 * slider.property("availableWidth")
+        click(track_x)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not seek_issued():
+            self._pump_ms(30)
+        self.assertTrue(seek_issued(), "a track click never issued a seek")
+        self.assertGreater(slider.property("value"), before,
+                           "the track click never moved the value")
+        # 3: a handle click focuses the slider; the arrows nudge one
+        # step per press, and the focus survives the settle and the
+        # apply.
+        self._printer.calls.clear()
+        click(handle_centre_x())
+        self._pump_ms(30)
+        self.assertTrue(slider.property("activeFocus"),
+                        "a handle click never focused the slider")
+        # The handle's BOTH halves grab (the reviewer's finding: one
+        # side of the grab handle moved the slider, the other never
+        # grabbed).
+        def drag_from(x, dx):
+            scene = slider.mapToItem(window.contentItem(),
+                                     QPointF(x, slider.height() / 2))
+            QGuiApplication.sendEvent(window, QMouseEvent(
+                QEvent.Type.MouseButtonPress, QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier))
+            scene2 = slider.mapToItem(window.contentItem(),
+                                      QPointF(x + dx, slider.height() / 2))
+            QGuiApplication.sendEvent(window, QMouseEvent(
+                QEvent.Type.MouseMove, QPointF(scene2),
+                QPointF(window.mapToGlobal(QPoint(int(scene2.x()), int(scene2.y())))),
+                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier))
+            QGuiApplication.sendEvent(window, QMouseEvent(
+                QEvent.Type.MouseButtonRelease, QPointF(scene2),
+                QPointF(window.mapToGlobal(QPoint(int(scene2.x()), int(scene2.y())))),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier))
+        for offset in (-6.0, 6.0):
+            before_side = slider.property("value")
+            drag_from(handle_centre_x() + offset, 40.0)
+            self._pump_ms(300)
+            self.assertGreater(slider.property("value"), before_side,
+                               "the handle's far side never grabbed")
+        anchor_at = slider.property("value")
+        press(Qt.Key.Key_Right)
+        self._pump_ms(30)
+        self.assertEqual(slider.property("value"), anchor_at + 1,
+                         "an arrow key never nudged one step")
+        self._pump_ms(300)  # past the key debounce and the apply
+        self.assertTrue(slider.property("activeFocus"),
+                        "the apply stole the slider's focus")
+        press(Qt.Key.Key_Right)
+        self._pump_ms(30)
+        self.assertEqual(slider.property("value"), anchor_at + 2,
+                         "the slider lost its keyboard steps after the apply")
+        self._pump_ms(300)
+        self.pump(20)
+
+    def test_a_focused_slider_reports_its_destruction_for_the_rebuild(self):
+        # The reviewer's focus finding: a Moonraker republish replaces
+        # a repeater's delegates while the slider holds the focus. The
+        # shared component reports its own destruction with the
+        # control identity (the dashboard's re-grant walk consumes it
+        # — the token-pinned wiring), so the fresh delegate can take
+        # the focus back — fans, LEDs and PWM alike.
+        monitor, window, face, baseline = self._mount_empty()
+        sliders = monitor.findChildren(QQuickItem, "moonrakerFollowerLayerSlider")
+        self.assertTrue(sliders, "the layer slider never mounted")
+        slider = sliders[0]
+        slider.setProperty("controlObject", "fan0")
+        slider.setProperty("controlKind", "fan")
+        recorded = []
+        slider.focusLostByDestruction.connect(
+            lambda object_, kind: recorded.append((object_, kind)))
+        # The handle click takes the focus (the reviewer's flow).
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QMouseEvent
+        centre = (slider.property("leftPadding")
+                  + slider.property("visualPosition")
+                  * (slider.property("availableWidth") - 16.0) + 8.0)
+        scene = slider.mapToItem(window.contentItem(),
+                                 QPointF(centre, slider.height() / 2))
+        for kind in (QEvent.Type.MouseButtonPress,
+                     QEvent.Type.MouseButtonRelease):
+            QGuiApplication.sendEvent(window, QMouseEvent(
+                kind, QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton if kind == QEvent.Type.MouseButtonPress
+                else Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier))
+        self.pump(10)
+        self.assertTrue(slider.property("activeFocus"),
+                        "the handle click never focused the slider")
+        # The republish tears the delegate down: the dying slider
+        # reports its identity while it still holds the focus.
+        monitor.setProperty("openPopOver", "")
+        self.pump(10)
+        window.grabWindow()
+        self.pump(10)
+        self.assertEqual(recorded, [("fan0", "fan")],
+                         "the dying slider never reported itself")
         self.pump(20)
 
     def test_full_progress_travels_render_without_the_vector(self):

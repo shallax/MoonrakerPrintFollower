@@ -368,6 +368,17 @@ Component {
                 refocusTimer.start();
             }
         }
+        // A model republish outside any gesture replaces the repeater
+        // delegate while it holds the focus: the dying slider reports
+        // itself, and the same retry walk re-grants the focus to the
+        // fresh delegate (the reviewer's finding — a refresh killed
+        // the focused fan slider).
+        function receiveSliderFocus(object, kind) {
+            tuningSliderObject = object;
+            tuningSliderKind = kind;
+            refocusTimer.attempts = 0;
+            refocusTimer.start();
+        }
         // The watchdog (the security re-review's sink latch): every
         // press re-arms it; a cancelled gesture never re-arms, so the
         // freeze and the focus target clear instead of latching the
@@ -899,6 +910,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenFanItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         LedsSection {
@@ -909,6 +921,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenLedItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         PwmSection {
@@ -919,6 +932,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenPwmOutputItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         PowerSection {

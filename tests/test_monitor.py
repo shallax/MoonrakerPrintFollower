@@ -1435,7 +1435,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # arrow keys nudge one step.
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         for token in ("handlePress", "pressIsOnHandle", "parent.value = parent.valueBeforePress",
-                      "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: increase()", "forceActiveFocus()", "mouse.accepted = parent.handlePress"):
+                      "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: {", "increase()",
+                      "forceActiveFocus()", "mouse.accepted = parent.handlePress",
+                      # The handle-centre formula subtracts the
+                      # handle's own width — the old availableWidth
+                      # centre read a handle press as a track jump at
+                      # the track ends (the reviewer's finding).
+                      "availableWidth - handle.width"):
             self.assertIn(token, config)
         # The dashboard's OutlineSliders carry the same behaviours in
         # the shared component (4.2.0): the handle path drives the
@@ -1447,8 +1453,23 @@ class MonitorModelContractTests(unittest.TestCase):
         for token in ("handlePress", "pressIsOnHandle", "tuningActive", "focusPolicy: Qt.StrongFocus",
                       "forceActiveFocus()", "control.value = control.valueBeforePress",
                       "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
-                      "keyDebounce.restart()", "control.tuningActive = true"):
+                      "keyDebounce.restart()", "control.tuningActive = true",
+                      "availableWidth - handle.width",
+                      # The rebuild focus contract (the reviewer's
+                      # finding): the dying slider reports itself.
+                      "focusLostByDestruction", "_heldFocus"):
             self.assertIn(token, outline)
+        dashboard = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
+        for token in ("receiveSliderFocus", "focusSink: root.receiveSliderFocus"):
+            self.assertIn(token, dashboard)
+        for section in (FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML):
+            for token in ("focusSink", "onFocusLostByDestruction"):
+                self.assertIn(token, section)
+        # The preview card's exaggeration slider carries the same
+        # corrected formula (the shared ruling — no surface may keep
+        # the drift).
+        preview = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+        self.assertIn("availableWidth - handle.width", preview)
         self.assertIn("onValueCommitted", DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
         # The keyboard nudge holds the interaction state until its
         # value submits, and the fan/LED/PWM repeaters freeze while a

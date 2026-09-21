@@ -18,6 +18,7 @@ ColumnLayout {
     property bool freezeRepeaters: false
     property var frozenItems: []
     property var interactionSink: null
+    property var focusSink: null
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -74,6 +75,10 @@ ColumnLayout {
                     onInteractingChanged: {
                         if (root.interactionSink != null)
                             root.interactionSink(interacting, modelData.object, "fan");
+                    }
+                    onFocusLostByDestruction: {
+                        if (root.focusSink != null)
+                            root.focusSink(object, kind);
                     }
                 }
                 // Firmware-regulated fans render their
