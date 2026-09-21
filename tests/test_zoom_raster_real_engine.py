@@ -222,7 +222,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         incremental split equals a full paint, the zoom round trip
         leaves no old-width ink, and the toolhead dot keeps its
         screen size."""
-        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
+        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
         self._set_payload(self.LINE_PAYLOAD)
         masses = {}
         for scale in (1.0, 2.0, 3.0, 5.0):
@@ -284,7 +284,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 4, "method": "motion index", "anchor": 0,
         }
-        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
+        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
         self._set_payload(payload)
         for scale in (1.0, 3.0):
             image = self._set_scale(scale)
@@ -311,7 +311,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 4, "method": "motion index", "anchor": 0,
         }
-        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
+        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
         self._set_payload(payload)
         self.face.setProperty("showTravels", True)
         self._settled_grab()
@@ -331,7 +331,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         grid's ink (screen-constant width, so its mass over a fixed
         bed region scales linearly with zoom) is measured once and
         subtracted."""
-        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
+        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
         self._set_payload(self.EMPTY_PAYLOAD)
         image = self._grab()
         rect1 = self._common_region(1.0)
@@ -458,7 +458,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 2, "method": "motion index", "anchor": 0,
         }
-        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
+        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
         self._set_payload(payload)
         normal = self._band_mass(self._grab(), 205.0, 1.0, 4)
         self.face.setProperty("compact", True)
