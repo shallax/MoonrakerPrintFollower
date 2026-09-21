@@ -39,6 +39,9 @@ _PLATE_CLASS_COLOURS = {
 # The theme's seriesDefault (the pending base's grey) and plateTravel.
 _PLATE_BASE_COLOUR = "#888888"
 _PLATE_TRAVEL_COLOUR = "#b085e8"
+# One render-contract value for both the native travel raster and the
+# QML Canvas path (the model publishes this value to the face).
+_PLATE_TRAVEL_VISUAL_RATIO = 0.7
 
 
 # The null stand-in for an unrendered layer's raster property: a
@@ -384,7 +387,7 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
     superseded job stop at the next large unit."""
     image = _new_canvas(view)
     painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
     sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
@@ -431,7 +434,7 @@ def render_layer_raster(payload: dict, plot: dict, view: dict, cancel=None) -> t
     can never disagree on stroke width."""
     coloured = _new_canvas(view)
     painter = QPainter(coloured)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
     _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
@@ -441,9 +444,11 @@ def render_layer_raster(payload: dict, plot: dict, view: dict, cancel=None) -> t
     if payload.get("travels"):
         travels = _new_canvas(view)
         tpainter = QPainter(travels)
-        tpainter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        tpainter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         tpen = QPen(pen)
-        tpen.setWidthF(max(0.01, pen.widthF() * 0.6))
+        tpen.setWidthF(max(0.01, pen.widthF()
+                            * float(view.get("travelVisualRatio",
+                                             _PLATE_TRAVEL_VISUAL_RATIO))))
         tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
         tpainter.setPen(tpen)
         tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
