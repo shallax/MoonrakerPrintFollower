@@ -3583,12 +3583,13 @@ Component {
                 }
                 Timer {
                     id: layerSeekTimer
-                    // 80 ms (was 250): a hot seek's real work is
-                    // now tens of milliseconds, so the debounce was
-                    // the dominant perceived latency — it stays long
-                    // enough to coalesce the drag's ticks and no more
-                    // (the review's step 21).
-                    interval: 80
+                    // 40 ms (was 80/250): current-layer demand now
+                    // commits independently of ghosts and can preempt
+                    // background preparation. This still coalesces a
+                    // drag burst while removing another 40 ms from the
+                    // raw-tick -> available path. Explicit commits
+                    // remain immediate (the timer is stopped above).
+                    interval: 40
                     onTriggered: commitLayerSeek()
                 }
                 Connections {
