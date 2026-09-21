@@ -47,6 +47,13 @@ class PreparedCache:
         """The layer table for a completed cache, or None when the
         file is absent, partial, or belongs to another identity."""
         path = self._path(identity)
+        # The explicit recency (the review's finding 12): atime is
+        # unreliable under relatime/noatime — a successful open
+        # stamps the entry itself.
+        try:
+            os.utime(path, None)
+        except OSError:
+            pass
         try:
             with open(path, "rb") as handle:
                 header = handle.read(struct.calcsize(_HEADER_FMT))
@@ -139,9 +146,14 @@ class PreparedCache:
                     continue
                 total += stat.st_size
                 entries.append((stat.st_atime, path, stat.st_size))
+            # The policy (the review's finding 13): under budget,
+            # stop; a protected entry is SKIPPED, never a stopper —
+            # the eviction continues with the next candidate.
             for _atime, path, size in sorted(entries):
-                if total <= self.max_bytes or path == keep:
+                if total <= self.max_bytes:
                     break
+                if path == keep:
+                    continue
                 try:
                     os.unlink(path)
                     total -= size
