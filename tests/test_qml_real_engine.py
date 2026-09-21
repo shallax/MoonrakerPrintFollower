@@ -318,6 +318,16 @@ class RealEngineTestCase(unittest.TestCase):
         return document, window
 
     def _settle_window(self, window):
+        # The teardown's last binding evaluations must never wrap a
+        # QObject: while the engine's property-cache registry dies,
+        # a PlateLayer inside progress.layers.current is exactly the
+        # wrap that segfaults it (QObjectWrapper::wrap ->
+        # QQmlMetaType::propertyCache). Restore the plain-dict
+        # payload FIRST — dicts wrap inertly — then drain hidden.
+        printer = getattr(self, "_printer", None)
+        if printer is not None and hasattr(printer, "setLayers"):
+            printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+            self.pump(20)
         window.setProperty("visible", False)
         self.pump(60)
 
@@ -2286,6 +2296,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertGreater(min(widths), 0, "one side of the partial stroke vanished")
         self.assertLessEqual(max(widths) - min(widths), 1,
                              "native prefix / Canvas tail stroke widths diverge: %r" % widths)
+        # The grab forces the scene's sync (the harness's window
+        # doctrine): the threaded canvas's last frame drains here,
+        # before the teardown.
+        window.grabWindow()
+        self.pump(30)
+        # The teardown's own binding evaluations must never wrap a
+        # QObject: the engine's property-cache registry is already
+        # dying when the document's last var reads happen, and a
+        # PlateLayer in progress.layers.current is exactly the wrap
+        # that segfaults it (QObjectWrapper::wrap -> propertyCache).
+        # Restore the plain-dict payload: dicts wrap inertly.
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
 
     def test_partial_travels_on_both_sides_of_the_prefix_survive(self):
         # The prefix carries NO travels: a travel printed BEFORE
@@ -2322,6 +2345,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(self._band_changed(image, baseline, face, window, plot,
                                            60.0, 200.0),
                         "the post-boundary travel vanished")
+        # The grab forces the scene's sync, and the plain-dict
+        # restore keeps the teardown's last binding evaluations
+        # from wrapping the PlateLayer QObject (the engine's
+        # property-cache registry is already dying then).
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
 
     def test_a_raster_seek_commits_to_ready_under_the_target(self):
         # The final target's composition leg: the publish (the
