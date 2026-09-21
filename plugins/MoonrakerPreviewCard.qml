@@ -952,8 +952,15 @@ Item {
                         property bool handleDragged: false
                         property real valueBeforePress: 0
                         function pressIsOnHandle(mouseX) {
-                            var centre = leftPadding + visualPosition * availableWidth;
-                            return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                            // The handle's own extent: the painted LEFT
+                            // edge minus the width correction — the window
+                            // centres on the handle's middle and spans its
+                            // full width plus the margin (the reviewer's
+                            // finding: one side of the grab handle moved
+                            // the slider, the other never grabbed).
+                            var leftEdge = leftPadding + visualPosition * (availableWidth - handle.width);
+                            var centre = leftEdge + handle.width / 2;
+                            return Math.abs(mouseX - centre) <= handle.width / 2 + 2 * screenScaleFactor;
                         }
                         MouseArea {
                             anchors.fill: parent
@@ -985,10 +992,24 @@ Item {
                                 mouse.accepted = true;
                             }
                         }
-                        Keys.onUpPressed: increase()
-                        Keys.onDownPressed: decrease()
-                        Keys.onRightPressed: increase()
-                        Keys.onLeftPressed: decrease()
+                        Keys.onUpPressed: {
+                            increase();
+                            // The apply must not steal the keyboard
+                            // path (the reviewer's finding).
+                            forceActiveFocus();
+                        }
+                        Keys.onDownPressed: {
+                            decrease();
+                            forceActiveFocus();
+                        }
+                        Keys.onRightPressed: {
+                            increase();
+                            forceActiveFocus();
+                        }
+                        Keys.onLeftPressed: {
+                            decrease();
+                            forceActiveFocus();
+                        }
                         onValueChanged: {
                             exaggerationValueLabel.text = "×" + Math.round(value);
                             base.bedMeshExaggerationRequested(value);

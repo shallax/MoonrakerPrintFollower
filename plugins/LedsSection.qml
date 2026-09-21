@@ -15,6 +15,7 @@ ColumnLayout {
     property bool freezeRepeaters: false
     property var frozenItems: []
     property var interactionSink: null
+    property var focusSink: null
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -92,6 +93,10 @@ ColumnLayout {
                         if (root.interactionSink != null)
                             root.interactionSink(interacting, modelData.object, "led-brightness");
                     }
+                    onFocusLostByDestruction: {
+                        if (root.focusSink != null)
+                            root.focusSink(object, kind);
+                    }
                 }
 
                 GridLayout {
@@ -121,6 +126,10 @@ ColumnLayout {
                             if (root.interactionSink != null)
                                 root.interactionSink(interacting, modelData.object, "led-red");
                         }
+                        onFocusLostByDestruction: {
+                            if (root.focusSink != null)
+                                root.focusSink(object, kind);
+                        }
                     }
                     UM.Label {
                         width: 52 * screenScaleFactor
@@ -149,6 +158,10 @@ ColumnLayout {
                             if (root.interactionSink != null)
                                 root.interactionSink(interacting, modelData.object, "led-green");
                         }
+                        onFocusLostByDestruction: {
+                            if (root.focusSink != null)
+                                root.focusSink(object, kind);
+                        }
                     }
                     UM.Label {
                         width: 52 * screenScaleFactor
@@ -176,6 +189,10 @@ ColumnLayout {
                         onInteractingChanged: {
                             if (root.interactionSink != null)
                                 root.interactionSink(interacting, modelData.object, "led-blue");
+                        }
+                        onFocusLostByDestruction: {
+                            if (root.focusSink != null)
+                                root.focusSink(object, kind);
                         }
                     }
                     UM.Label {
@@ -206,6 +223,10 @@ ColumnLayout {
                         onInteractingChanged: {
                             if (root.interactionSink != null)
                                 root.interactionSink(interacting, modelData.object, "led-white");
+                        }
+                        onFocusLostByDestruction: {
+                            if (root.focusSink != null)
+                                root.focusSink(object, kind);
                         }
                     }
                     UM.Label {
