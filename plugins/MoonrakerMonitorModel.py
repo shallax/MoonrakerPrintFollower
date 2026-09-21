@@ -2805,13 +2805,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 self._publish()
         QThreadPool.globalInstance().start(_RasterJob(build))
 
-    @pyqtSlot(float, float, int, int, bool)
-    def setFollowerView(self, scale, lineScale, width, height, compact):
+    @pyqtSlot(float, float, int, int, bool, float, float)
+    def setFollowerView(self, scale, lineScale, width, height, compact, panX, panY):
         """The raster's view inputs: a change re-renders the cached
-        layers at the new zoom/size (the review's step 12's key)."""
+        layers at the new zoom/size/pan (the review's step 12's key).
+        The pan rides in at the SETTLE only — never per tick."""
         self._plate_view = {"scale": float(scale), "lineScale": float(lineScale),
                             "width": int(width), "height": int(height),
-                            "compact": bool(compact)}
+                            "compact": bool(compact),
+                            "panX": float(panX), "panY": float(panY)}
         for layer, wrapped in list(self._plate_qt_layers.items()):
             self._request_raster(wrapped, wrapped._payload, layer)
 

@@ -93,8 +93,8 @@ def render_layer_raster(payload: dict, plot: dict, view: dict) -> QImage:
     compact = bool(view.get("compact", False))
     sx = float(plot["sx"]) * scale
     sy = float(plot["sy"]) * scale
-    offset_x = float(plot["offsetX"])
-    offset_y = float(plot["offsetY"])
+    offset_x = float(plot["offsetX"]) + float(view.get("panX", 0.0))
+    offset_y = float(plot["offsetY"]) + float(view.get("panY", 0.0))
     bed_x_min = float(plot["bedXMin"])
     bed_y_max = float(plot["bedYMax"])
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
