@@ -1679,6 +1679,7 @@ if QT_AVAILABLE:
             self._split = PlateFaceRenderTests.PAYLOAD["split"]
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
+            self._scrub = None
             self._layer_count = 40
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1713,6 +1714,17 @@ if QT_AVAILABLE:
             """Install a window payload after the mount (the native
             PlateLayer fixtures need the face's own plot first)."""
             self._layers = layers
+            self.plateLayersChanged.emit()
+
+        @pyqtProperty("QVariant", notify=plateLayersChanged)
+        def plateScrubVector(self):
+            # The production partial state publishes the scrub
+            # vector beside the PlateLayer window — the face's
+            # _scrubVector reads it here.
+            return self._scrub
+
+        def setScrub(self, scrub):
+            self._scrub = scrub
             self.plateLayersChanged.emit()
 
         def setSplit(self, split):
@@ -1969,7 +1981,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # legitimately sub-pixel (the live ruling), which a colour
         # census cannot see — the fixture paints its proofs solid.
         view = {"width": int(face.width()), "height": int(face.height()),
-                "scale": 1.0, "lineScale": 4.0, "compact": False,
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
@@ -1980,13 +1992,15 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          png_file(coloured, raster_dir, stem + "-c"))
         layer.set_expected_key("fixture-key")
         if base.width() > 0:
-            layer.set_base(base, png_file(base, raster_dir, stem + "-b"))
+            layer.set_base(base, "fixture-key",
+                           png_file(base, raster_dir, stem + "-b"))
         if travels.width() > 0:
-            layer.set_travels(travels, png_file(travels, raster_dir, stem + "-t"))
+            layer.set_travels(travels, "fixture-key",
+                              png_file(travels, raster_dir, stem + "-t"))
         if prefix_split is not None:
             prefix = render_layer_prefix(payload, plot, view, prefix_split)
             layer.set_prefix(prefix, png_file(prefix, raster_dir, stem + "-p"),
-                             prefix_split)
+                             prefix_split, "fixture-key")
         return layer
 
     def _mount_empty(self):
@@ -2207,6 +2221,42 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setSplit(12)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the partial prefix never drew")
+
+    def test_partial_travels_on_both_sides_of_the_prefix_survive(self):
+        # The prefix carries NO travels: a travel printed BEFORE
+        # the prefix boundary must stay visible at partial progress
+        # — the canvas redraws the travels from the layer's start
+        # on every reset, so neither side vanishes.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("showTravels", True)
+        # The face's own lineScale too: the QML travels stroke at
+        # the live sub-pixel width is invisible to the colour
+        # census (the fixture above paints the native side solid).
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = {
+            "classes": {"WALL-OUTER": [[[30.0, 30.0, 1.0], [90.0, 30.0, 2.0]]]},
+            "travels": [
+                [[30.0, 80.0, 2.0], [90.0, 80.0, 3.0]],    # before the boundary
+                [[30.0, 200.0, 13.0], [90.0, 200.0, 14.0]],  # after it, before the split
+            ],
+            "travelStarts": [], "travelEnds": [], "motions": 20,
+        }
+        layer = self._native_layer(payload, face, prefix_split=12)
+        plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(16)
+        image, purple = self._wait_purple(window, face)
+        self.assertGreater(purple, 0, "the partial travels never drew")
+        # Ink at BOTH bands: the pre-boundary travel (bed y 80) and
+        # the post-boundary one (bed y 200).
+        self.assertTrue(self._band_changed(image, baseline, face, window, plot,
+                                           60.0, 80.0),
+                        "the pre-boundary travel vanished")
+        self.assertTrue(self._band_changed(image, baseline, face, window, plot,
+                                           60.0, 200.0),
+                        "the post-boundary travel vanished")
 
     def test_full_progress_travels_render_without_the_vector(self):
         # : showTravels at 100% — the travel

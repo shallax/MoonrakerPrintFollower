@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -313,10 +314,14 @@ class _RenderSurface:
         # to .
         self.desired = None
         self.tokens = {}                     # layer -> demand token
-        self.job = None                      # {"layer", "token", "generation", "state"}
+        self.job = None                      # {"layer", "token", "generation", "state", "cancel"}
         self.render_count = {}               # layer -> raster requests
+        self.render_serial = 0               # the immutable-asset serial
+        self.job_epoch = 0                   # the print epoch (set by the model)
+        self.visible = False                 # the surface's QML consumer gate
         self.stats = {"started": 0, "committed": 0, "superseded": 0,
-                      "discarded": 0, "depth_max": 0}
+                      "cancelled": 0, "failed": 0, "discarded": 0, "depth_max": 0}
+        self.job_failures = 0                # the persistent-failure latch
         # The staged plot/view pair: the setters stage, one zero-tick
         # flush commits the burst .
         self.stage = {"plot": None, "view": None, "armed": False}
@@ -325,10 +330,12 @@ class _RenderSurface:
         """The key a raster must carry to display on this surface
         : the generation (which bumps
         exactly when the context changes) plus the explicit
-        pixel-affecting inputs, so a key is self-describing."""
+        pixel-affecting inputs and the PRINT epoch, so a key is
+        self-describing and a stale worker from a previous print
+        can never match it."""
         view = self.view
         plot = self.plot or {}
-        return (self.name, self.generation,
+        return (self.name, self.job_epoch, self.generation,
                 int(view.get("width") or 0), int(view.get("height") or 0),
                 bool(view.get("compact")), round(float(view.get("scale") or 1.0), 6),
                 round(float(view.get("lineScale") or 0.7), 6),
@@ -567,6 +574,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._plate_surfaces = {"popover": _RenderSurface("popover"),
                                 "mini": _RenderSurface("mini")}
         self._plate_qt_job = None
+        # The PRINT epoch: a monotonic counter bumped on every job
+        # switch. It rides every ticket, render key and asset file
+        # name, so a stale worker from the previous print can never
+        # structurally match the new print's request — even when the
+        # layer, token and generation all coincide.
+        self._plate_job_epoch = 0
         self._raster_bridge = RasterBridge(self)
         # The scheduler's accounting: the
         # worker reports its start AND its completion through the
@@ -576,11 +589,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The raster cache directory (the transport ruling): the
         # QML Images consume file:// PNGs the workers write here —
         # a data: URL loads but never renders, and a QImage variant
-        # segfaults the Canvas (both engine-proven). Startup owns
-        # no live files yet, so it clears the previous session's.
-        self._raster_cache_dir = os.path.join(
-            tempfile.gettempdir(), "mpf-raster-cache")
-        self._prune_raster_cache(keep=0)
+        # segfaults the Canvas (both engine-proven). INSTANCE-OWNED:
+        # every model gets its own directory, so two printers can
+        # never collide on filenames or prune each other's assets;
+        # the model's destruction removes it.
+        self._raster_cache_dir = tempfile.mkdtemp(prefix="mpf-raster-")
+        self.destroyed.connect(self._cleanup_raster_dir)
         # The seek trace: disabled by
         # default; MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's
         # seek_trace) records the stage timeline with the queue
@@ -2329,6 +2343,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The sections map persists through the UI-state store — the
         # model's save no longer rewrites the whole map (4.3.0).
         self._ui_state.set_sections(self._sections)
+        # Collapsing the mini's section retires its demand — the
+        # thumbnail's ghost work stops while nothing shows it.
+        if str(section) == "plateprogress" and not expanded:
+            self._retire_surface(self._plate_surfaces["mini"])
         self._publish()
 
     @pyqtSlot(str, "QVariantList", "QVariantList")
@@ -2613,11 +2631,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setFollowerPopoverOpen(self, popover_open):
         """The popover's open state: closed freezes the follower's
         payload keys on their last values, open resumes them (the live
-        request — a closed surface must not re-wrap per poll)."""
+        request — a closed surface must not re-wrap per poll). Closing
+        also retires the surface's pending demand — no obsolete ghost
+        or prefix work burns while nothing shows it."""
         popover_open = bool(popover_open)
         if popover_open == self._follower_popover_open:
             return
         self._follower_popover_open = popover_open
+        if not popover_open:
+            self._retire_surface(self._plate_surfaces["popover"])
         self._publish()
 
     @pyqtSlot(bool)
@@ -2907,6 +2929,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "epoch": surface.anchor_epoch,
             "split": split,
         }
+        # A running job whose layer left the window cancels at the
+        # renderer's next segment boundary — the new current never
+        # waits out a full obsolete render. A new demand re-arms the
+        # persistent-failure latch.
+        surface.job_failures = 0
+        self._cancel_obsolete_job(surface)
         self._schedule_surface(surface)
         return window
 
@@ -2980,49 +3008,100 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.tokens[layer] = token
             surface.render_count[layer] = surface.render_count.get(layer, 0) + 1
             generation = surface.generation
+            surface.render_serial += 1
+            serial = surface.render_serial
+            epoch = surface.job_epoch
             self._trace("T9 raster start", {
                 "surface": surface.name, "layer": layer, "queue": depth,
                 "generation": generation, "token": token, "kind": kind,
-                "split": prefix_split})
+                "split": prefix_split, "epoch": epoch, "serial": serial})
             plot = surface.plot
             view = dict(surface.view)
             key = surface.render_key()
+            cancel = threading.Event()
             surface.job = {"layer": layer, "token": token,
-                           "generation": generation, "state": "submitted"}
+                           "generation": generation, "state": "submitted",
+                           "cancel": cancel, "epoch": epoch, "serial": serial}
             ticket = (surface.name, layer, token, generation, key, kind,
-                      prefix_split)
+                      prefix_split, epoch, serial)
             payload = wrapped._payload
 
             def build(ticket=ticket, payload=payload, plot=plot, view=view,
                       surface=surface, layer=layer, generation=generation,
-                      kind=kind, prefix_split=prefix_split,
+                      kind=kind, prefix_split=prefix_split, epoch=epoch,
+                      serial=serial, cancel=cancel,
                       directory=self._raster_cache_dir):
+                # Every job ends in exactly ONE terminal emit: the
+                # success payload, a cancelled marker, or a failure
+                # marker. A worker that throws can never wedge the
+                # surface's job slot.
                 self._raster_bridge.started.emit(ticket)
-                stem = "r-%s-%d-%d" % (surface.name, layer, generation)
-                if kind == "prefix":
-                    image = render_layer_prefix(payload, plot, view, prefix_split)
+                try:
+                    if cancel.is_set():
+                        self._raster_bridge.done.emit(("cancelled",), ticket)
+                        return
+                    stem = "r-%s-e%d-%d-g%d-s%d" % (
+                        surface.name, epoch, layer, generation, serial)
+                    if kind == "prefix":
+                        image = render_layer_prefix(payload, plot, view, prefix_split,
+                                                    cancel=cancel)
+                        if cancel.is_set():
+                            self._raster_bridge.done.emit(("cancelled",), ticket)
+                            return
+                        url = png_file(image, directory, stem + "-p%d" % prefix_split)
+                        self._raster_bridge.done.emit(
+                            ("prefix", image, url, prefix_split), ticket)
+                        return
+                    coloured, base, travels = render_layer_raster(
+                        payload, plot, view, cancel=cancel)
+                    if cancel.is_set():
+                        self._raster_bridge.done.emit(("cancelled",), ticket)
+                        return
                     self._raster_bridge.done.emit(
-                        ("prefix", image, png_file(image, directory, stem + "-p"),
-                         prefix_split), ticket)
-                    return
-                coloured, base, travels = render_layer_raster(payload, plot, view)
-                # The PNG writes ride the WORKER: the owner's commit
-                # stores the pre-written file URLs (the scene-graph
-                # Image transport — see PlateQt.png_file). The
-                # generation rides the stem, so a re-render never
-                # clobbers a file an Image is still reading.
-                self._raster_bridge.done.emit(
-                    ("full", coloured, png_file(coloured, directory, stem + "-c"),
-                     base, png_file(base, directory, stem + "-b"),
-                     travels, png_file(travels, directory, stem + "-t")), ticket)
+                        ("full", coloured, png_file(coloured, directory, stem + "-c"),
+                         base, png_file(base, directory, stem + "-b"),
+                         travels, png_file(travels, directory, stem + "-t")), ticket)
+                except Exception as exc:
+                    self._raster_bridge.done.emit(("failed", str(exc)), ticket)
             QThreadPool.globalInstance().start(_RasterJob(build))
             return
+
+    @staticmethod
+    def _unlink_asset_files(images):
+        """A discarded job's files are dead on arrival — remove
+        them now, never wait for the generic pruning."""
+        if not isinstance(images, tuple) or not images:
+            return
+        if images[0] == "full":
+            for url in images[2], images[4], images[6]:
+                if not url or not url.startswith("file://"):
+                    continue
+                try:
+                    os.unlink(QUrl(url).toLocalFile())
+                except OSError:
+                    pass
+        elif images[0] == "prefix":
+            url = images[2]
+            if url and url.startswith("file://"):
+                try:
+                    os.unlink(QUrl(url).toLocalFile())
+                except OSError:
+                    pass
+
+    def _cleanup_raster_dir(self):
+        """The instance's own raster directory goes with the model —
+        never another model's assets."""
+        try:
+            import shutil
+            shutil.rmtree(self._raster_cache_dir, ignore_errors=True)
+        except OSError:
+            pass
 
     def _prune_raster_cache(self, keep=64):
         """The raster cache's bound (the file-URL transport): the
         newest `keep` PNGs survive; the rest — files long superseded
-        by newer generations — go. Startup passes 0: no live Image
-        can reference anything yet."""
+        by newer generations — go. Scoped to THIS model's directory,
+        so another printer's assets are never touched."""
         try:
             entries = []
             for name in os.listdir(self._raster_cache_dir):
@@ -3043,16 +3122,48 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _raster_started(self, ticket):
         """The worker's first line: a job the demand replaced while
         still queued is countable as superseded-before-start."""
-        name, layer, token, generation, _key, _kind, _split = ticket
+        name, layer, token, generation, _key, _kind, _split, epoch, _serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
         job = surface.job
         if job is not None and job["layer"] == layer and job["token"] == token \
-                and job["generation"] == generation:
+                and job["generation"] == generation and job["epoch"] == epoch:
             job["state"] = "running"
             surface.stats["started"] += 1
             self._trace("T10 raster running", {"surface": name, "layer": layer})
+
+    def _retire_surface(self, surface):
+        """A surface whose QML consumer has gone retires its
+        demand: the running/queued job cancels cooperatively, the
+        desired state goes, and the next publish rebuilds it from
+        the payload. The hot rasters stay cached — only the
+        no-longer-needed work stops."""
+        if surface.job is not None:
+            surface.job["cancel"].set()
+            surface.stats["superseded"] += 1
+        surface.desired = None
+        surface.job = None
+        surface.tokens.clear()
+
+    def _cancel_obsolete_job(self, surface):
+        """The running job's layer is no longer in the desired
+        window (the anchor moved, or the demand was replaced):
+        cancel it at the renderer's next segment boundary so the
+        new current never waits out a full obsolete render."""
+        job = surface.job
+        if job is None:
+            return
+        desired = surface.desired
+        if desired is None:
+            job["cancel"].set()
+            return
+        layer = job["layer"]
+        if layer != desired["current"] and layer not in desired["ghosts"].values():
+            # Submitted or running: the flag stops a queued job at
+            # its pre-render check and a running one at the next
+            # segment boundary.
+            job["cancel"].set()
 
     @pyqtSlot(object, object)
     def _trace(self, stage, extra=None):
@@ -3087,34 +3198,70 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(object, object)
     def _raster_committed(self, images, ticket):
-        """The owner-thread commit: validate
-        the generation, the layer's token and the retained identity,
+        """The owner-thread commit: validate the print epoch, the
+        generation, the layer's token and the retained identity,
         hand the images to the wrapper, and let the scheduler take
-        the next demand. The bookkeeping clears on EVERY exit — a
-        stale or discarded job never leaves residue ."""
-        name, layer, token, generation, key, kind, prefix_split = ticket
+        the next demand. Only an EXACT ticket match may clear the
+        active job — a stale completion can never clear an
+        unrelated submitted one."""
+        name, layer, token, generation, key, kind, prefix_split, epoch, _serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
+        # The terminal kinds arrive without rendered assets: a
+        # cancelled job stops where it was told, a failed one
+        # reports the exception.
+        if kind == "cancelled" or (images and isinstance(images, tuple)
+                                   and images[0] == "cancelled"):
+            surface.stats["cancelled"] += 1
+            if surface.job is not None and surface.job["layer"] == layer \
+                    and surface.job["token"] == token \
+                    and surface.job["generation"] == generation \
+                    and surface.job["epoch"] == epoch:
+                surface.job = None
+            self._trace("T11 raster cancelled", {"surface": name, "layer": layer})
+            self._schedule_surface(surface)
+            return
+        if images and isinstance(images, tuple) and images[0] == "failed":
+            surface.stats["failed"] += 1
+            surface.job_failures = getattr(surface, "job_failures", 0) + 1
+            logging.getLogger("MoonrakerPrintFollower").warning(
+                "raster worker failed: %s", images[1])
+            if surface.job is not None and surface.job["layer"] == layer \
+                    and surface.job["token"] == token \
+                    and surface.job["generation"] == generation \
+                    and surface.job["epoch"] == epoch:
+                surface.job = None
+            self._trace("T11 raster failed", {"surface": name, "layer": layer,
+                                              "error": images[1][:120]})
+            if surface.job_failures >= 5:
+                # A persistently failing render must not retry every
+                # cycle; the demand retires and the next payload's
+                # change re-arms it.
+                surface.desired = None
+                self._publish()
+                return
+            self._schedule_surface(surface)
+            return
         job = surface.job
+        # Only the EXACT ticket clears the active job. Anything else
+        # is a stale completion; it must never touch a newer job.
         if job is not None and job["layer"] == layer and job["token"] == token \
-                and job["generation"] == generation:
+                and job["generation"] == generation and job["epoch"] == epoch:
             surface.job = None
-        elif job is not None and job["state"] == "submitted":
-            # The demand moved while this job waited its turn in the
-            # shared pool — superseded before it ever ran.
-            surface.stats["superseded"] += 1
-            surface.job = None
-        if generation != surface.generation or surface.tokens.get(layer) != token \
+        if epoch != surface.job_epoch or generation != surface.generation \
+                or surface.tokens.get(layer) != token \
                 or surface.layers.get(layer) is None:
             surface.stats["discarded"] += 1
+            self._unlink_asset_files(images)
             self._schedule_surface(surface)
             return
         wrapped = surface.layers[layer]
         if kind == "prefix":
             _kind, prefix, prefix_data, prefix_split = images
-            wrapped.set_prefix(prefix, prefix_data, prefix_split)
-            surface.tokens.pop(layer, None)
+            wrapped.set_prefix(prefix, prefix_data, prefix_split, key)
+            if surface.tokens.get(layer) == token:
+                surface.tokens.pop(layer, None)
             surface.stats["committed"] += 1
             self._trace("T11 raster committed", {
                 "surface": name, "layer": layer, "kind": "prefix",
@@ -3125,9 +3272,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         _kind, coloured, coloured_data, base, base_data, travels, travel_data = images
         wrapped.set_raster(coloured, key, coloured_data)
-        wrapped.set_base(base, base_data)
-        wrapped.set_travels(travels, travel_data)
-        surface.tokens.pop(layer, None)
+        wrapped.set_base(base, key, base_data)
+        wrapped.set_travels(travels, key, travel_data)
+        if surface.tokens.get(layer) == token:
+            surface.tokens.pop(layer, None)
         desired = surface.desired
         if desired is not None and (layer == desired["current"]
                                     or layer in desired["ghosts"].values()):
@@ -3197,7 +3345,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "width": int(width), "height": int(height),
                 "compact": bool(compact),
                 "panX": float(panX), "panY": float(panY)}
-        if view == surface.view:
+        # Idempotence compares against the EFFECTIVE value — the
+        # staged one when a burst is pending: A -> B -> A before
+        # the flush must end at A, never commit the intermediate B.
+        effective = surface.stage["view"]
+        if effective is None:
+            effective = surface.view
+        if view == effective:
             return
         surface.stage["view"] = view
         self._arm_context_flush(surface)
@@ -3215,7 +3369,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         plot = {"offsetX": float(offsetX), "offsetY": float(offsetY),
                 "sx": float(sx), "sy": float(sy),
                 "bedXMin": float(bedXMin), "bedYMax": float(bedYMax)}
-        if plot == surface.plot:
+        effective = surface.stage["plot"]
+        if effective is None:
+            effective = surface.plot
+        if plot == effective:
             return
         surface.stage["plot"] = plot
         self._arm_context_flush(surface)
@@ -3228,9 +3385,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # print's geometry must never answer with the old job's
             # images . The
             # reset runs per surface, scheduler state included —
-            # no residue across jobs.
+            # no residue across jobs. The PRINT epoch bumps so an
+            # in-flight worker from the previous print can never
+            # match a new print's ticket, whatever its layer, token
+            # and generation.
             self._plate_qt_job = job
+            self._plate_job_epoch += 1
             for surface in self._plate_surfaces.values():
+                surface.job_epoch = self._plate_job_epoch
+                if surface.job is not None:
+                    surface.job["cancel"].set()
                 surface.layers.clear()
                 surface.tokens.clear()
                 surface.job = None

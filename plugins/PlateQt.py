@@ -52,16 +52,29 @@ def png_file(image: QImage, directory: str, name: str) -> str:
     segfaults the Qt6 Canvas and its QML reads see nothing inside
     it, and a data: URL loads but never renders in a QQuickImage —
     a file:// PNG is the one source the scene-graph Image draws.
-    Written on the WORKER, never the owner thread; the name carries
-    the generation, so a re-render never clobbers a file an Image
-    is still reading."""
+    Written on the WORKER, never the owner thread. ATOMIC: the PNG
+    encodes to a temporary sibling and only renames into the final
+    immutable name once the save returned True — a URL is never
+    published for a failed write, and a reader never sees a
+    half-written file."""
     if image is None or image.width() <= 0:
         return ""
     path = os.path.join(directory, f"{name}.png")
+    temp = f"{path}.tmp-{os.getpid()}"
     try:
         os.makedirs(directory, exist_ok=True)
-        image.save(path, "PNG")
+        if not image.save(temp, "PNG"):
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+            return ""
+        os.replace(temp, path)
     except OSError:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
         return ""
     return QUrl.fromLocalFile(path).toString()
 
@@ -120,6 +133,9 @@ class PlateLayer(QObject):
         self._prefix_data = ""
         self._prefix_split = -1
         self._render_key = None
+        self._base_key = None
+        self._travel_key = None
+        self._prefix_key = None
         self._expected_key = None
 
     @pyqtProperty(int, constant=True)
@@ -197,12 +213,39 @@ class PlateLayer(QObject):
 
     @pyqtProperty(bool, notify=rasterReady)
     def rasterValid(self) -> bool:
-        return self._raster is not None and self._render_key is not None \
-            and self._render_key == self._expected_key
+        # Transport-aware: the QML consumes the FILE URL, not the
+        # QImage — validity needs the write to have succeeded and
+        # the source to be non-empty, not just pixels in hand. The
+        # bool() wrap matters: an and-chain short-circuiting on an
+        # empty string would hand the bool-typed property a str,
+        # which the engine's converter cannot digest.
+        return bool(self._raster is not None and self._raster_data
+                    and self._render_key is not None
+                    and self._render_key == self._expected_key)
+
+    @pyqtProperty(bool, notify=rasterReady)
+    def baseValid(self) -> bool:
+        return bool(self._base is not None and self._base_data
+                    and self._base_key is not None
+                    and self._base_key == self._expected_key)
+
+    @pyqtProperty(bool, notify=rasterReady)
+    def travelValid(self) -> bool:
+        return bool(self._travels is not None and self._travel_data
+                    and self._travel_key is not None
+                    and self._travel_key == self._expected_key)
+
+    @pyqtProperty(bool, notify=rasterReady)
+    def prefixValid(self) -> bool:
+        return bool(self._prefix is not None and self._prefix_data
+                    and self._prefix_key is not None
+                    and self._prefix_key == self._expected_key)
 
     def set_expected_key(self, key) -> None:
-        """The surface's current key: the raster reads valid only
-        while its own key equals this one."""
+        """The surface's current key: every asset reads valid only
+        while its own key equals this one — a view change
+        invalidates the prefix, the base and the travels along
+        with the coloured raster."""
         if self._expected_key != key:
             self._expected_key = key
             self.rasterReady.emit()
@@ -213,51 +256,61 @@ class PlateLayer(QObject):
         self._raster_data = data if data is not None else ""
         self.rasterReady.emit()
 
-    def set_base(self, image: QImage, data: str = None) -> None:
+    def set_base(self, image: QImage, key, data: str = None) -> None:
         # The notify rides EVERY setter: a binding on baseWidth must
         # re-evaluate when the sibling lands, or the face's key
         # caches the pre-arrival null (the live 0% leak).
         self._base = image
+        self._base_key = key
         self._base_data = data if data is not None else ""
         self.rasterReady.emit()
 
-    def set_travels(self, image: QImage, data: str = None) -> None:
+    def set_travels(self, image: QImage, key, data: str = None) -> None:
         self._travels = image
+        self._travel_key = key
         self._travel_data = data if data is not None else ""
         self.rasterReady.emit()
 
-    def set_prefix(self, image: QImage, data: str, split: int) -> None:
+    def set_prefix(self, image: QImage, data: str, split: int, key) -> None:
         self._prefix = image
         self._prefix_data = data
         self._prefix_split = split
+        self._prefix_key = key
         self.rasterReady.emit()
 
 
 def _transform(plot: dict, view: dict):
-    """The shared mapping (the face's painters' own): sx/sy scaled,
-    the offsets with the baked pan, the bed bounds."""
+    """The shared mapping (the face's painters' own): the WHOLE
+    plate term — offset plus delta — rides the zoom, exactly as the
+    QML walks it; the pan adds after, baked."""
     scale = float(view.get("scale", 1.0))
     sx = float(plot["sx"]) * scale
     sy = float(plot["sy"]) * scale
-    offset_x = float(plot["offsetX"]) + float(view.get("panX", 0.0))
-    offset_y = float(plot["offsetY"]) + float(view.get("panY", 0.0))
+    offset_x = float(plot["offsetX"]) * scale + float(view.get("panX", 0.0))
+    offset_y = float(plot["offsetY"]) * scale + float(view.get("panY", 0.0))
     return (sx, sy, offset_x, offset_y,
             float(plot["bedXMin"]), float(plot["bedYMax"]))
 
 
-def _paint_segments(painter: QPainter, payload: dict, plot: dict, view: dict,
-                    class_names=None, colour=None) -> None:
+def _paint_segments(painter: QPainter, pen: QPen, payload: dict, plot: dict, view: dict,
+                    class_names=None, colour=None, cancel=None) -> bool:
     """QPainterPath per segment (the measured winner: 92 ms vs
     drawLines' 209 ms and the per-edge loop's 307 ms on a 500k-motion
-    layer). `class_names` selects which classes to paint."""
+    layer). THE caller's configured geometry pen rides in — width,
+    RoundCap and RoundJoin come from it; only the colour changes
+    per class, so the full layer and the prefix share one physical
+    stroke. `class_names` selects which classes to paint. A
+    cooperative cancel between segments lets a superseded job stop
+    at the next large unit of work."""
     sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
-    pen = QPen()
     for name, segments in (payload.get("classes") or {}).items():
         if class_names is not None and name not in class_names:
             continue
         pen.setColor(QColor(colour if colour else _PLATE_CLASS_COLOURS.get(name, "#888888")))
         painter.setPen(pen)
         for points in segments:
+            if cancel is not None and cancel.is_set():
+                return False
             if len(points) < 2:
                 continue
             path = QPainterPath()
@@ -267,6 +320,7 @@ def _paint_segments(painter: QPainter, payload: dict, plot: dict, view: dict,
                 path.lineTo(offset_x + (points[i][0] - bed_x_min) * sx,
                             offset_y + (bed_y_max - points[i][1]) * sy)
             painter.drawPath(path)
+    return True
 
 
 def _new_canvas(view: dict) -> QImage:
@@ -289,7 +343,25 @@ def _derive_grey(coloured: QImage) -> QImage:
     return grey
 
 
-def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int) -> QImage:
+def _geometry_pen(plot: dict, view: dict) -> QPen:
+    """The ONE geometry pen every asset shares: the physical stroke
+    (nominal width x plot scale x zoom x lineScale x compact boost),
+    round caps and joins. The full layer, the prefix and the grey
+    base must never disagree on stroke width."""
+    line_scale = float(view.get("lineScale", 0.7))
+    compact = bool(view.get("compact", False))
+    sx, _sy, _ox, _oy, _bx, _by = _transform(plot, view)
+    stroke = max(0.01, float(view.get("nominalWidthMm", 0.2)) * sx * line_scale
+                 * (7.0 if compact else 1.0))
+    pen = QPen()
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
+                        cancel=None) -> QImage:
     """The printed PREFIX as its own asset (the measured verdict:
     the QML vertex walk for a partial layer costs ~900 ms at 500k
     motions on the UI thread — the initial paint, jumps and
@@ -298,25 +370,24 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int) -> QI
     the partial layer's printed portion arrives as a blit and QML
     draws only the live delta's tail. The walk is O(motions) —
     the split merely gates the stroke, the boundary cost stays in
-    the worker."""
-    line_scale = float(view.get("lineScale", 0.7))
-    compact = bool(view.get("compact", False))
-    sx, _sy, _ox, _oy, _bx, _by = _transform(plot, view)
-    stroke = max(0.01, float(view.get("nominalWidthMm", 0.2)) * sx * line_scale
-                 * (7.0 if compact else 1.0))
+    the worker. A cooperative cancel between segments lets a
+    superseded job stop at the next large unit."""
     image = _new_canvas(view)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    pen = QPen()
-    pen.setWidthF(stroke)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen = _geometry_pen(plot, view)
     painter.setPen(pen)
     sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
     for name, segments in (payload.get("classes") or {}).items():
+        if cancel is not None and cancel.is_set():
+            painter.end()
+            return image
         pen.setColor(QColor(_PLATE_CLASS_COLOURS.get(name, "#888888")))
         painter.setPen(pen)
         for points in segments:
+            if cancel is not None and cancel.is_set():
+                painter.end()
+                return image
             if len(points) < 2:
                 continue
             # The motion owning the edge ENDING here: the split is a
@@ -341,25 +412,19 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int) -> QI
     return image
 
 
-def render_layer_raster(payload: dict, plot: dict, view: dict) -> tuple:
+def render_layer_raster(payload: dict, plot: dict, view: dict, cancel=None) -> tuple:
     """Paint the layer's three sibling assets — (coloured, grey base,
     travels) — the same transform the face's vector painter used, so
     a blit lands the identical picture. Pan-baked: the pan rides the
-    offset, never a scene-graph translation."""
-    line_scale = float(view.get("lineScale", 0.7))
-    compact = bool(view.get("compact", False))
-    sx, _sy, _ox, _oy, _bx, _by = _transform(plot, view)
-    stroke = max(0.01, float(view.get("nominalWidthMm", 0.2)) * sx * line_scale
-                 * (7.0 if compact else 1.0))
+    offset, never a scene-graph translation. All three share the
+    one configured geometry pen, so the prefix and the full layer
+    can never disagree on stroke width."""
     coloured = _new_canvas(view)
     painter = QPainter(coloured)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    pen = QPen()
-    pen.setWidthF(stroke)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen = _geometry_pen(plot, view)
     painter.setPen(pen)
-    _paint_segments(painter, payload, plot, view)
+    _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
     painter.end()
     grey = _derive_grey(coloured)
     travels = _NULL_IMAGE
@@ -367,14 +432,15 @@ def render_layer_raster(payload: dict, plot: dict, view: dict) -> tuple:
         travels = _new_canvas(view)
         tpainter = QPainter(travels)
         tpainter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        tpen = QPen()
-        tpen.setWidthF(max(0.01, stroke * 0.6))
-        tpen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        tpen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        tpen = QPen(pen)
+        tpen.setWidthF(max(0.01, pen.widthF() * 0.6))
         tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
         tpainter.setPen(tpen)
         tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
         for points in payload.get("travels") or []:
+            if cancel is not None and cancel.is_set():
+                tpainter.end()
+                return coloured, grey, travels
             if len(points) < 2:
                 continue
             path = QPainterPath()
