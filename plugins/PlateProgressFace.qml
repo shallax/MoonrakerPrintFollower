@@ -239,15 +239,17 @@ Item {
         // uploaded the exact source — a model-side valid URL whose
         // image is still loading (or failed) owns nothing. A prefix
         // that has never been shown may appear only over a canvas
-        // bitmap whose PAINTED delivery is confirmed to cover the
-        // full history (or over a vector with no geometry at all —
-        // there the canvas never paints). Once shown, the prefix
-        // keeps its ownership: the paints below it extend or
-        // re-derive from its boundary, never leave a gap.
+        // bitmap whose PAINTED delivery is confirmed compatible:
+        // the full history, the tail from the prefix's own split,
+        // or a vector with no geometry at all (there the canvas
+        // never paints). Once shown, the prefix keeps its
+        // ownership: the paints below it extend or re-derive from
+        // its boundary, never leave a gap.
         if (!_prefixModelReady() || progressPrefixImage.status !== Image.Ready) {
             return false;
         }
-        return root._prefixWasShown || (root._textureReady && root._vectorCoversFrom === 0) || (root._vectorCoversFrom === -1 && _vectorInkless());
+        var layer = root.progress.layers.current;
+        return root._prefixWasShown || (root._textureReady && root._vectorCoversFrom === 0) || (root._textureReady && root._vectorCoversFrom === layer.prefixSplit) || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
     function _prefixFrom() {
@@ -877,6 +879,7 @@ Item {
             // floor). The partial scrub keeps the vector delta path;
             // a native prefix below shortens the walk to its tail.
             var prefixFrom = _prefixFrom();
+            var coversBefore = root._vectorCoversFrom;
             if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
                 // The prefix no longer owns the history (loading,
                 // stale, or invalidated) but the canvas does not hold
@@ -890,14 +893,13 @@ Item {
                 root._paintsSinceReset = 0;
                 root._progressDirty = false;
                 resetPainted = true;
-            } else if (!resetPainted && prefixFrom > 0 && root._prefixWasShown && root._vectorCoversFrom !== prefixFrom) {
-                // The prefix was on screen and its boundary moved (a
-                // fresh prefix at another split): repaint so the
-                // bitmap starts at the prefix's own boundary — the
-                // prefix covers the rest, never a gap. A prefix that
-                // was NOT shown yet leaves the canvas's full bitmap
-                // alone: it is the current owner and the prefix
-                // overlays it.
+            } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
+                // The prefix is Ready over the canvas's FULL bitmap (a
+                // re-show after a scrub through 100% or another layer):
+                // trim to the prefix's own boundary — the commit lag's
+                // stale texture is the full bitmap, complete either
+                // way, and every scrub path settles to the SAME
+                // composition.
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
@@ -908,7 +910,9 @@ Item {
             // A prefix that has never shown leaves the WHOLE interval
             // to the canvas — its first paint must cover from the
             // layer's start, not merely from the prefix's boundary.
-            var from = Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
+            // The trim above (only ever over a full bitmap) paints
+            // from the boundary instead.
+            var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
             var fresh = resetPainted || root._lastSplit < 0;
             _drawLayer(ctx, current, 1.0, split, false, from);
             // The bitmap's coverage below this paint's start: a full
