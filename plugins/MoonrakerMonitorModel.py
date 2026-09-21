@@ -3332,19 +3332,31 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # reports the exception.
         if kind == "cancelled" or (images and isinstance(images, tuple)
                                    and images[0] == "cancelled"):
+            if not exact_job:
+                # A retired/replaced job may finish cancellation after a
+                # same-layer token has been reused. It is stale terminal
+                # noise, not a cancellation of the active job.
+                surface.stats["discarded"] += 1
+                self._schedule_surface(surface)
+                return
             surface.stats["cancelled"] += 1
-            if exact_job:
-                surface.job = None
+            surface.job = None
             self._trace("T11 raster cancelled", {"surface": name, "layer": layer})
             self._schedule_surface(surface)
             return
         if images and isinstance(images, tuple) and images[0] == "failed":
+            if not exact_job:
+                # Stale failures must not poison the current job's
+                # persistent-failure latch. Serial identity applies to
+                # every terminal path, not only successful commits.
+                surface.stats["discarded"] += 1
+                self._schedule_surface(surface)
+                return
             surface.stats["failed"] += 1
             surface.job_failures = getattr(surface, "job_failures", 0) + 1
             logging.getLogger("MoonrakerPrintFollower").warning(
                 "raster worker failed: %s", images[1])
-            if exact_job:
-                surface.job = None
+            surface.job = None
             self._trace("T11 raster failed", {"surface": name, "layer": layer,
                                               "error": images[1][:120]})
             if surface.job_failures >= 5:
