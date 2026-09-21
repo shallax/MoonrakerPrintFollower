@@ -2227,6 +2227,66 @@ class PlateFaceRenderTests(RealEngineTestCase):
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the partial prefix never drew")
 
+    def test_partial_prefix_and_canvas_tail_keep_one_stroke_width(self):
+        # The live partial composition is TWO render engines: QPainter
+        # owns the native prefix and QML Canvas owns the vector tail.
+        # Native-vs-native parity cannot catch a seam whose Canvas half
+        # is a different thickness. Measure the real composed pixels on
+        # a horizontal run before, at and after the prefix boundary.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        prefix_split = 10
+        layer = self._native_layer(payload, face, prefix_split=prefix_split)
+        plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+
+        # Do not let the native prefix alone satisfy the wait: x=155 is
+        # beyond the prefix (which ends at x=110), so red ink there
+        # proves the Canvas tail has actually landed.
+        deadline = time.monotonic() + 5.0
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            if self._red_in_band(image, face, window, plot, 155.0, 125.0, radius=6):
+                self.pump(20)
+                image = window.grabWindow()
+                break
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        self.assertTrue(self._red_in_band(image, face, window, plot,
+                                          155.0, 125.0, radius=6),
+                        "the Canvas tail never landed")
+
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        row = int(origin.y() + plot["offsetY"]
+                  + (plot["bedYMax"] - 125.0) * plot["sy"])
+
+        def red_height(bed_x):
+            col = int(origin.x() + plot["offsetX"]
+                      + (bed_x - plot["bedXMin"]) * plot["sx"])
+            return sum(
+                1 for py in range(max(0, row - 12), min(image.height(), row + 13))
+                if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F))
+            )
+
+        # x=75 is native-prefix body, x=110 is the engine boundary,
+        # x=155 is Canvas-tail body. One physical pixel is the maximum
+        # acceptable rasterisation disagreement.
+        widths = [red_height(75.0), red_height(110.0), red_height(155.0)]
+        self.assertGreater(min(widths), 0, "one side of the partial stroke vanished")
+        self.assertLessEqual(max(widths) - min(widths), 1,
+                             "native prefix / Canvas tail stroke widths diverge: %r" % widths)
+
     def test_partial_travels_on_both_sides_of_the_prefix_survive(self):
         # The prefix carries NO travels: a travel printed BEFORE
         # the prefix boundary must stay visible at partial progress
