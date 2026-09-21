@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from dataclasses import dataclass
-import os
+import sys
 import threading
 import time
 from types import MappingProxyType
@@ -55,6 +55,140 @@ class IndexView:
         return min(low - 1, len(self._index.ranges) - 1) if low else None
 
 
+# The RAM tier budgets (the review's findings 18/19), from the
+# measured real print (467 MB, 327 layers): packed layers run
+# 13.5 KB - 927 KB (p50 610 KB), decoded layers 0.2 MB - 11.3 MB
+# (p50 8.0 MB). 64 MB holds ~105 median packed layers — a third of
+# the print — and 128 MB holds six dense decoded windows with room.
+_FULL_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_DECODED_LRU_MAX_BYTES = 128 * 1024 * 1024
+# The decoded LRU's guaranteed floor: the live window (3) plus the
+# frozen one (3) never drop each other below display.
+_DECODED_LRU_MIN_ENTRIES = 4
+
+
+def _deep_size(obj) -> int:
+    """A decoded payload's true byte footprint (its points dominate;
+    a shallow getsizeof misses them)."""
+    total = 0
+    seen = set()
+
+    def walk(o):
+        nonlocal total
+        oid = id(o)
+        if oid in seen:
+            return
+        seen.add(oid)
+        try:
+            total += sys.getsizeof(o)
+        except TypeError:
+            return
+        if isinstance(o, dict):
+            for key, value in o.items():
+                walk(key)
+                walk(value)
+        elif isinstance(o, (list, tuple)):
+            for value in o:
+                walk(value)
+
+    walk(obj)
+    return total
+
+
+class _ByteBoundedLru:
+    """A byte-budgeted access-order cache with a minimum-entry floor.
+    ``peek`` reads without touching the order (the worker's path —
+    only the owner mutates); ``set`` and ``get`` refresh recency.
+    Sizes are explicit (the worker measures); a bare ``__setitem__``
+    (the tests' fixture path) falls back to the deep walk."""
+
+    def __init__(self, max_bytes: int, min_entries: int = 0) -> None:
+        self._data = OrderedDict()
+        self._sizes = {}
+        self._bytes = 0
+        self.max_bytes = max_bytes
+        self.min_entries = min_entries
+
+    def __len__(self):
+        return len(self._data)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __getitem__(self, key):
+        value = self._data[key]
+        self._data.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        self.set(key, value, _deep_size(value))
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def keys(self):
+        return self._data.keys()
+
+    def peek(self, key):
+        return self._data.get(key)
+
+    def get(self, key):
+        value = self._data.get(key)
+        if value is not None:
+            self._data.move_to_end(key)
+        return value
+
+    def touch(self, key) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+
+    def set(self, key, value, size: int) -> None:
+        if key in self._data:
+            self._bytes -= self._sizes.get(key, 0)
+        self._data[key] = value
+        self._sizes[key] = size
+        self._bytes += size
+        self._trim()
+
+    def update(self, items) -> None:
+        for key, value in items.items():
+            if key in self._data:
+                self._bytes -= self._sizes.get(key, 0)
+            self._data[key] = value
+            self._sizes[key] = len(value) if isinstance(value, (bytes, bytearray)) else _deep_size(value)
+            self._bytes += self._sizes[key]
+        self._trim()
+
+    def pop(self, key, default=None):
+        value = self._data.pop(key, default)
+        if value is not default:
+            self._bytes -= self._sizes.pop(key, 0)
+        return value
+
+    def popitem(self, last=True):
+        key, value = self._data.popitem(last)
+        self._bytes -= self._sizes.pop(key, 0)
+        return key, value
+
+    def move_to_end(self, key) -> None:
+        self._data.move_to_end(key)
+
+    def clear(self) -> None:
+        self._data.clear()
+        self._sizes.clear()
+        self._bytes = 0
+
+    def total_bytes(self) -> int:
+        return self._bytes
+
+    def _trim(self) -> None:
+        # The floor (the decoded LRU's): below it, never evict — the
+        # active windows must survive a single pathological layer.
+        while self._bytes > self.max_bytes and len(self._data) > self.min_entries:
+            _key, _value = self._data.popitem(last=False)
+            self._bytes -= self._sizes.pop(_key, 0)
+
+
 def _polygon_identity(polygon):
     """A polygon's CONTENT identity: its pairs, as a hashable tuple.
 
@@ -86,6 +220,14 @@ class GCodeIndexService(QObject):
         self._prepared_identity = None
         self._prepared_saved = False
         self._prepared_writer = None
+        # The reopen policy's adoption (the review's findings 13/15):
+        # a complete clean table takes the fast path; a complete
+        # table with holes repairs. The coverage set counts every
+        # layer whose prepared representation exists — the pass
+        # fraction's truth, independent of RAM residency.
+        self._prepared_complete = False
+        self._prepared_flag_complete = False
+        self._prepared_coverage = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MoonrakerIndex")
         self._generation = 0
         self._job = None
@@ -108,7 +250,7 @@ class GCodeIndexService(QObject):
         # background pass that yields to the live demands. A layer
         # asked before the pass reaches it prepares on demand and
         # lands here too.
-        self._full_cache = {}
+        self._full_cache = _ByteBoundedLru(_FULL_CACHE_MAX_BYTES)
         self._full_next = 0
         # The index-cache save's throttle: a save every hydrate starved
         # the background pass during a live print (the save branch runs
@@ -120,11 +262,10 @@ class GCodeIndexService(QObject):
         # adjacent seek shares two of its three layers verbatim (no
         # re-decode, no QVariant re-conversion) and the worker hands
         # the first display its own payload instead of a second
-        # object decoded from the compact store. Six layers = the
-        # live and frozen windows side by side; a dense decoded layer
-        # is tens of MB, so the bound is the memory budget.
-        self._decoded_lru = OrderedDict()
-        self._decoded_lru_capacity = 6
+        # object decoded from the compact store. Byte-budgeted with
+        # a slot floor (the review's finding 19): the live and
+        # frozen windows side by side, bounded by measured bytes.
+        self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
@@ -171,18 +312,23 @@ class GCodeIndexService(QObject):
         # print could coincidentally match the (anchor, counts) key.
         self._plate_layers_memos = {}
         # The full cache belongs to the file that was printing too.
-        self._full_cache = {}
+        self._full_cache = _ByteBoundedLru(_FULL_CACHE_MAX_BYTES)
         self._full_next = 0
         # The hot presentation cache belongs to that file as well.
-        self._decoded_lru = OrderedDict()
+        self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
         # The prepared store's table follows the same identity.
         self._prepared_table = None
         self._prepared_identity = None
         self._prepared_saved = False
+        self._prepared_complete = False
+        self._prepared_flag_complete = False
+        self._prepared_coverage = set()
         # The incremental writer (the review's finding 9): the pass
         # appends the encodings layer by layer, so the first session
-        # never retains the whole cold store in RAM.
-        self._prepared_writer = None
+        # never retains the whole cold store in RAM. A rebind ABORTS
+        # the old print's unfinished writer (the review's finding 20)
+        # — never a bare drop of the reference.
+        self._abort_prepared_writer()
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
         # The painted boundary belongs to that file's layer too: a new
@@ -345,18 +491,23 @@ class GCodeIndexService(QObject):
 
     def plate_pass_fraction(self):
         """The background optimisation's honest progress: the share of
-        layers the prepared stores hold — the persistent table's
-        coverage AND the RAM cache's, so a reopened print reads
-        100% without any RAM residency (the review's finding 8)."""
+        layers whose prepared representation EXISTS (the review's
+        finding 17) — the persistent table, the incremental writer's
+        completed entries and the demand-prepared set, never the RAM
+        tier's bounded residency (a 64-entry cache must not cap a
+        1,000-layer print at 6%)."""
         if self._view is None:
             return None
         total = len(self._view.ranges)
         if not total:
             return None
-        if self._prepared_table is not None and len(self._prepared_table) == total \
-                and all(entry[1] > 0 for entry in self._prepared_table):
+        if self._prepared_complete:
             return 1.0
-        return min(1.0, len(self._full_cache) / total)
+        if self._prepared is None or self._prepared_identity is None:
+            # No persistence configured: the RAM tier's residency is
+            # the only prepared store there is.
+            return min(1.0, len(self._full_cache) / total)
+        return min(1.0, len(self._prepared_coverage) / total)
 
     def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -553,7 +704,73 @@ class GCodeIndexService(QObject):
         if key is None or key == self._prepared_identity:
             return
         self._prepared_identity = key
-        self._prepared_table = self._prepared.load_table(key) or []
+        loaded = self._prepared.load_table(key)
+        if loaded is None:
+            self._prepared_table = None
+            self._prepared_flag_complete = False
+            self._prepared_coverage = set()
+            return
+        self._prepared_table = loaded["table"]
+        self._prepared_flag_complete = loaded["complete"]
+        # The valid entries count as coverage BEFORE the pass walks:
+        # a repair session starts at the old file's fraction.
+        self._prepared_coverage = {i for i, entry in enumerate(loaded["table"]) if entry[1] > 0}
+
+    def _adopt_prepared(self):
+        """The reopen policy once the view's layer count is known
+        (the review's findings 13/15/16): a complete clean table
+        takes the FAST path — the pass never walks the file again;
+        a complete table with holes repairs (copy the valid, retry
+        the holes); anything else prepares fresh."""
+        table = self._prepared_table
+        self._prepared_complete = False
+        if not table or self._prepared is None:
+            return
+        total = len(self._view.ranges)
+        if len(table) == total and self._prepared_flag_complete \
+                and all(entry[1] > 0 for entry in table):
+            # A valid complete cache must not read its own 197 MB
+            # back merely to rediscover the table (the review's
+            # finding 13): the frontier and the saved latch both
+            # stand down the background pass for good.
+            self._prepared_complete = True
+            self._prepared_saved = True
+            self._full_next = total
+            return
+        if len(table) != total:
+            # The file's layer count no longer matches this print's
+            # index: the table is unusable, and the fresh pass will
+            # overwrite the file.
+            self._prepared_table = None
+            self._prepared_coverage = set()
+
+    def _prepared_persist(self, layer, encoded):
+        """Every successfully encoded layer enters the incremental
+        writer exactly once, whichever path produced it (the
+        review's finding 14): a demand-prepared layer must never
+        become a (0, 0) hole merely because the background pass
+        found it already in the RAM cache."""
+        self._prepared_coverage.add(layer)
+        if self._prepared is None or self._prepared_identity is None or self._prepared_saved:
+            return
+        writer = self._prepared_writer
+        if writer is None and self._view is not None:
+            writer = self._prepared.open_for_write(
+                self._prepared_identity, len(self._view.ranges))
+            self._prepared_writer = writer
+        if writer is not None:
+            self._prepared.append(writer, layer, encoded)
+
+    def _abort_prepared_writer(self):
+        """Abandon an unfinished writer on every exit path (the
+        review's finding 20): rebind, close and any abandonment —
+        the temp file goes, the handle closes, and an old
+        generation's worker can never finalise it."""
+        if self._prepared_writer is None:
+            return
+        if self._prepared is not None:
+            self._prepared.abort_write(self._prepared_writer)
+        self._prepared_writer = None
 
     def _request_window(self, layer):
         """Ask for the anchor's own three layers, never a backlog.
@@ -661,12 +878,14 @@ class GCodeIndexService(QObject):
                 failed = []
                 stash = {}
                 for layer in submitted:
-                    raw = cache.get(layer)
+                    raw = cache.peek(layer)  # peek: the worker never reorders
+                    ram_hit = raw is not None
                     if raw is None:
                         raw = self._prepared_read(layer)
                     if raw is not None:
                         try:
-                            stash[layer] = (raw, _decode_layer(raw))
+                            decoded = _decode_layer(raw)
+                            stash[layer] = (raw, decoded, ram_hit, _deep_size(decoded))
                         except Exception:
                             failed.append(layer)
                         continue
@@ -689,7 +908,7 @@ class GCodeIndexService(QObject):
                         encoded = _encode_layer(payload)
                     except Exception:
                         pass
-                    stash[layer] = (encoded, payload)
+                    stash[layer] = (encoded, payload, False, _deep_size(payload))
                 return failed, stash
             self._submit("hydrate", hydrate_and_prepare, lease)
         elif self._save and strong \
@@ -736,13 +955,13 @@ class GCodeIndexService(QObject):
             deadline = time.monotonic() + 0.25
             prepared_read = self._prepared_read
             prepared_table = self._prepared_table
-            # The incremental writer opens for a fresh (non-reopen)
-            # pass: the encodings land on disk as the pass walks, so
-            # the first session never retains the whole store in RAM.
+            # The incremental writer opens whenever a pass must walk
+            # (a fresh file, or a repair — the review's finding 15):
+            # the fast path's `_prepared_saved` latch has already
+            # stood it down for a complete clean table.
             if self._prepared is not None and self._prepared_identity is not None \
                     and self._prepared_writer is None \
-                    and not (prepared_table and len(prepared_table) == len(self._view.ranges)
-                             and all(entry[1] > 0 for entry in prepared_table)):
+                    and not self._prepared_saved:
                 self._prepared_writer = self._prepared.open_for_write(
                     self._prepared_identity, len(self._view.ranges))
             prepared_writer = self._prepared_writer
@@ -760,32 +979,46 @@ class GCodeIndexService(QObject):
                         # whole-file re-read the demand path avoids).
                         frontier = layer + 1
                         continue
-                    if layer not in cache:
-                        raw = prepared_read(layer) if prepared_table else None
-                        if raw is not None:
-                            # The reopened print's cached layer: the
-                            # file IS the prepared truth — the pass
-                            # advances WITHOUT replaying it into RAM
-                            # (the review's finding 8: a 197 MB store
-                            # must not become 197 MB of resident
-                            # bytes).
-                            frontier = layer + 1
-                            continue
-                        if index.compact and layer not in index.hydrated_layers:
-                            if not hydrate_layer_from_file(index, lease.path, layer):
-                                break
-                        payload = _prepare_layer(index, layer)
-                        if payload is not None:
-                            try:
-                                packed = _encode_layer(payload)
-                                encoded[layer] = packed
-                                if prepared_writer is not None:
-                                    self._prepared.append(prepared_writer, layer, packed)
-                            except Exception:
-                                # A layer the codec cannot hold simply
-                                # stays out of the cache; the pass
-                                # must walk on, never stall.
-                                pass
+                    packed = cache.peek(layer)
+                    if packed is not None:
+                        # A demand prepared this layer before the pass
+                        # reached it: the writer receives the bytes
+                        # HERE, so the pass's finish can never publish
+                        # a hole for a layer that WAS prepared (the
+                        # review's finding 14).
+                        if prepared_writer is not None:
+                            self._prepared.append(prepared_writer, layer, packed)
+                        frontier = layer + 1
+                        continue
+                    raw = prepared_read(layer) if prepared_table else None
+                    if raw is not None:
+                        # The repair copy (the review's finding 15):
+                        # the old file's valid layer rides into the
+                        # new writer — the rebuild never loses an
+                        # entry while regenerating another. The bytes
+                        # are read anyway for the table walk; the
+                        # copy costs a write, not a decode.
+                        if prepared_writer is not None:
+                            self._prepared.append(prepared_writer, layer, raw)
+                        frontier = layer + 1
+                        continue
+                    if index.compact and layer not in index.hydrated_layers:
+                        if not hydrate_layer_from_file(index, lease.path, layer):
+                            break
+                    payload = _prepare_layer(index, layer)
+                    if payload is not None:
+                        try:
+                            packed = _encode_layer(payload)
+                            encoded[layer] = packed
+                            if prepared_writer is not None:
+                                self._prepared.append(prepared_writer, layer, packed)
+                        except Exception:
+                            # A layer the codec cannot hold simply
+                            # stays out of the cache; the pass must
+                            # walk on, never stall. The finish's
+                            # completion flag records that the layer
+                            # was ATTEMPTED (the review's finding 16).
+                            pass
                     frontier = layer + 1
                 return frontier, encoded
 
@@ -815,6 +1048,7 @@ class GCodeIndexService(QObject):
                     self._view = IndexView(self._job, value)
                     self._save = kind == "build"
                     self._failed_hydrate.clear()
+                    self._adopt_prepared()
                 elif kind == "build":
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)
@@ -842,13 +1076,19 @@ class GCodeIndexService(QObject):
                 else:
                     failed = [] if value else window_layers
                     stash = {}
-                for layer, (encoded, decoded) in stash.items():
+                for layer, (encoded, decoded, ram_hit, size) in stash.items():
                     if encoded is not None:
-                        self._full_cache.setdefault(layer, encoded)
-                    self._decoded_lru[layer] = decoded
-                    self._decoded_lru.move_to_end(layer)
-                while len(self._decoded_lru) > self._decoded_lru_capacity:
-                    self._decoded_lru.popitem(last=False)
+                        self._full_cache.set(layer, encoded, len(encoded))
+                        # The demand's encoding persists NOW (the
+                        # review's finding 14) — the pass may walk
+                        # past it or find it cached later; the writer
+                        # must hold it either way.
+                        self._prepared_persist(layer, encoded)
+                    self._decoded_lru.set(layer, decoded, size)
+                    if ram_hit:
+                        # A RAM-cache hit refreshes the packed tier's
+                        # recency (the worker only peeked).
+                        self._full_cache.touch(layer)
                 if len(failed) < len(window_layers) or (bool(value) and not window_layers):
                     self._save = True
                 self._failed_hydrate.update(failed)
@@ -863,13 +1103,28 @@ class GCodeIndexService(QObject):
                     frontier, encoded = value
                     if isinstance(encoded, dict):
                         self._full_cache.update(encoded)
-                        # The RAM tier's bound (the review's finding
-                        # 10): the file is the source of truth; the
-                        # dict holds the recent working set only.
-                        while len(self._full_cache) > 64:
-                            self._full_cache.pop(next(iter(self._full_cache)))
+                        # The coverage follows the SAME events the
+                        # writer appended (the review's finding 17):
+                        # the fraction is a store census, never the
+                        # RAM tier's residency.
+                        self._prepared_coverage.update(encoded.keys())
                     if isinstance(frontier, int):
                         self._full_next = max(self._full_next, frontier)
+            elif kind == "prepared_save":
+                # The published file replaces the table this session
+                # holds: a fresh/repair pass's offsets differ from
+                # the old file's, and a stale table would serve
+                # mis-aligned reads for the rest of the session.
+                if value is not None and self._prepared_identity is not None:
+                    loaded = self._prepared.load_table(self._prepared_identity)
+                    if loaded is not None:
+                        self._prepared_table = loaded["table"]
+                        self._prepared_flag_complete = loaded["complete"]
+                        self._prepared_coverage = {
+                            i for i, entry in enumerate(loaded["table"]) if entry[1] > 0}
+                        self._prepared_complete = (
+                            loaded["complete"]
+                            and all(entry[1] > 0 for entry in loaded["table"]))
             self.changed.emit()
         self._advance()
 
@@ -879,15 +1134,7 @@ class GCodeIndexService(QObject):
         self._generation += 1
         self._cancel.set()
         # An unfinished incremental writer is abandoned, never
-        # published: the temp file and its handle go here.
-        if self._prepared_writer is not None:
-            try:
-                self._prepared_writer["handle"].close()
-            except OSError:
-                pass
-            try:
-                os.unlink(self._prepared_writer["temp"])
-            except OSError:
-                pass
-            self._prepared_writer = None
+        # published: the temp file and its handle go here (the
+        # review's finding 20 — the same abort the rebind takes).
+        self._abort_prepared_writer()
         self._executor.shutdown(wait=False, cancel_futures=True)
