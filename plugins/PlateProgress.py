@@ -60,7 +60,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from math import hypot
 import threading
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 import weakref
 
 from . import ArcGeometry
@@ -74,6 +74,22 @@ MAX_POINTS_PER_CLASS = 200000
 # The travel channel's budget: the same rule on its own channel, which
 # only draws while the travels are toggled on.
 MAX_TRAVEL_POINTS = 12000
+
+# Background full-layer preparation is speculative. A foreground layer
+# request may interrupt it at coarse boundaries; no partial payload is
+# ever memoised or published.
+_PREP_YIELD_GRANULARITY = 4096
+
+
+class PreparationYield(Exception):
+    """Cooperative interruption of speculative background preparation."""
+
+
+def _check_yield(should_yield: Optional[Callable[[], bool]], counter: int = 0) -> None:
+    if should_yield is not None and counter % _PREP_YIELD_GRANULARITY == 0 \
+            and should_yield():
+        raise PreparationYield()
+
 # A span whose XY path is shorter than this never moved the head: a
 # retract and prime at one position is a seam, not a repositioning. It
 # is a numerical zero, not a visual floor — a 0.3 mm travel is a real
@@ -352,7 +368,8 @@ def _douglas_peucker(points: Sequence[Sequence[float]],
 
 
 def _simplify(points: Sequence[Sequence[float]], tolerance: float,
-              spent: List[int]) -> List[List[float]]:
+              spent: List[int],
+              should_yield: Optional[Callable[[], bool]] = None) -> List[List[float]]:
     """The charged walk behind _douglas_peucker.
 
     *spent* is a one-slot list — the CHANNEL's work counter, shared
@@ -394,6 +411,7 @@ def _simplify(points: Sequence[Sequence[float]], tolerance: float,
         worst = -1.0
         worst_index = -1
         for index in range(first + 1, last):
+            _check_yield(should_yield, index - first)
             point = points[index]
             distance_sq = _point_segment_distance_sq(
                 point[0], point[1], x0, y0, dx, dy, span_sq)
@@ -424,18 +442,23 @@ def _simplify(points: Sequence[Sequence[float]], tolerance: float,
     return [points[index] for index in range(count) if keep[index]]
 
 
-def _segments_path(segments: Sequence[Sequence[Sequence[float]]]) -> float:
+def _segments_path(segments: Sequence[Sequence[Sequence[float]]],
+                   should_yield: Optional[Callable[[], bool]] = None) -> float:
     """The channels' total path length: the simplification's scale."""
     total = 0.0
+    walked = 0
     for segment in segments:
         for index in range(1, len(segment)):
+            walked += 1
+            _check_yield(should_yield, walked)
             total += hypot(segment[index][0] - segment[index - 1][0],
                            segment[index][1] - segment[index - 1][1])
     return total
 
 
 def _budgeted(segments: List[List[List[float]]],
-              budget: int) -> List[List[List[float]]]:
+              budget: int,
+              should_yield: Optional[Callable[[], bool]] = None) -> List[List[List[float]]]:
     """A channel's segments, simplified only if they exceed *budget*.
 
     The exact vertices stand below the budget. Above it every segment
@@ -461,11 +484,14 @@ def _budgeted(segments: List[List[List[float]]],
     total = sum(len(segment) for segment in segments)
     if total <= budget:
         return segments
-    tolerance = min(max(_segments_path(segments) / budget, _SIMPLIFY_FLOOR_MM), _SIMPLIFY_CEILING_MM)
+    tolerance = min(max(_segments_path(segments, should_yield) / budget,
+                        _SIMPLIFY_FLOOR_MM), _SIMPLIFY_CEILING_MM)
     simplified = segments
     spent = [_SIMPLIFY_WORK_LIMIT]
     for _ in range(_MAX_SIMPLIFY_PASSES):
-        simplified = [_simplify(segment, tolerance, spent) for segment in segments]
+        _check_yield(should_yield)
+        simplified = [_simplify(segment, tolerance, spent, should_yield)
+                      for segment in segments]
         if sum(len(segment) for segment in simplified) <= budget:
             return simplified
         if tolerance >= _SIMPLIFY_CEILING_MM:
@@ -514,7 +540,8 @@ def _record_span(chain: List[List[float]], path: float, started: bool, closed: b
         end_marks.append(list(chain[-1]))
 
 
-def _build(index: LayerMotionIndex, layer: int) -> tuple:
+def _build(index: LayerMotionIndex, layer: int,
+           should_yield: Optional[Callable[[], bool]] = None) -> tuple:
     """One edge walk over the layer: the class polylines, the travel
     channel's segments and the two glyph lists.
 
@@ -539,7 +566,9 @@ def _build(index: LayerMotionIndex, layer: int) -> tuple:
     span_chain: Optional[List[List[float]]] = None
     span_path = 0.0
     span_started = False
-    for motion, x0, y0, x1, y1, code, extruding in motion_edges(index, layer):
+    for edge_number, (motion, x0, y0, x1, y1, code, extruding) in enumerate(
+            motion_edges(index, layer)):
+        _check_yield(should_yield, edge_number)
         if not extruding:
             # A travel breaks the class polyline; the span's first vertex
             # is the position the head already held, so the first travel
@@ -615,7 +644,8 @@ def _prepared_put(index: LayerMotionIndex, layer: int, payload: dict) -> None:
             _prepared_layers.pop(next(iter(_prepared_layers)))
 
 
-def prepare_layer(index: LayerMotionIndex, layer: int) -> Optional[dict]:
+def prepare_layer(index: LayerMotionIndex, layer: int,
+                  should_yield: Optional[Callable[[], bool]] = None) -> Optional[dict]:
     """One layer's prepared geometry — the builder AND the memo.
 
     The preparation is the heavy half of this module: a full motion-edge
@@ -638,7 +668,7 @@ def prepare_layer(index: LayerMotionIndex, layer: int) -> Optional[dict]:
     cached = _prepared_get(index, layer)
     if cached is not None:
         return cached
-    payload = _prepare(index, layer)
+    payload = _prepare(index, layer, should_yield)
     _prepared_put(index, layer, payload)
     return payload
 
@@ -650,13 +680,14 @@ def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
     return prepare_layer(index, layer)
 
 
-def _prepare(index: LayerMotionIndex, layer: int) -> dict:
+def _prepare(index: LayerMotionIndex, layer: int,
+             should_yield: Optional[Callable[[], bool]] = None) -> dict:
     """The build itself: the edge walk, the per-class budgets and the
     travel channel, for a layer whose guards have already passed."""
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     if not len(xs):
         return {"classes": {}, "travels": [], "travelStarts": [], "travelEnds": [], "motions": 0}
-    classes, travels, start_marks, end_marks = _build(index, layer)
+    classes, travels, start_marks, end_marks = _build(index, layer, should_yield)
     # A chain of fewer than two vertices is a run whose only motions were
     # pure-E: it holds no edge and is dropped here, so the payload never
     # carries a class of it and the painter never sees a point.
@@ -664,10 +695,10 @@ def _prepare(index: LayerMotionIndex, layer: int) -> dict:
     for name, segments in classes.items():
         drawn = [segment for segment in segments if len(segment) >= 2]
         if drawn:
-            prepared[name] = _budgeted(drawn, MAX_POINTS_PER_CLASS)
+            prepared[name] = _budgeted(drawn, MAX_POINTS_PER_CLASS, should_yield)
     return {
         "classes": prepared,
-        "travels": _budgeted(travels, MAX_TRAVEL_POINTS),
+        "travels": _budgeted(travels, MAX_TRAVEL_POINTS, should_yield),
         "travelStarts": start_marks,
         "travelEnds": end_marks,
         "motions": len(xs),
