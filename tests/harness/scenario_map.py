@@ -339,6 +339,7 @@ PREFIX_RULES = [
     ("key", "platePassFraction", "h8"),
     ("key", "plateScrubVector", "h8"),
     ("key", "plateLiveScrubVector", "h8"),
+    ("key", "plateNavigationData", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),

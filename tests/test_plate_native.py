@@ -80,6 +80,28 @@ class NativeStrokeParityTests(unittest.TestCase):
         self.assertGreater(full_width, _stroke_height(onex, 100),
                            "the DPR-2 stroke never widened with the backing")
 
+    def test_the_navigation_composite_flattens_the_whole_scene(self):
+        # The interaction raster: ONE flattened full-bed image at
+        # the fixed 4x backing carrying the exact stack's content —
+        # the ghosts at 0.30, the grey base, the printed prefix at
+        # the partial split and the travels below the boundary —
+        # with the same stroke as the exact assets.
+        from plugins.PlateQt import render_navigation_layer
+        payload = _payload()
+        window = {"prev": payload, "next": payload, "current": payload}
+        plot = _plot()
+        view = _view(lineScale=8.0, backing=4.0)
+        image = render_navigation_layer(window, plot, view, split=10)
+        self.assertEqual((image.width(), image.height()), (1600, 1200),
+                         "the navigation raster is not 4x the logical view")
+        # The stroke rides the same scaled pen as the exact scene's:
+        # a 4x backing widens the stroke fourfold, so the displayed
+        # logical picture keeps the one-stroke contract.
+        coloured, _grey, _travels = render_layer_raster(payload, plot, _view(lineScale=8.0))
+        self.assertGreater(
+            _stroke_height(image, 400), _stroke_height(coloured, 100),
+            "the navigation stroke never scaled with the backing")
+
     def test_the_full_raster_and_the_prefix_share_one_stroke(self):
         # The full layer and the prefix rendered at the same view
         # must stroke the SAME screen thickness — the prefix used
