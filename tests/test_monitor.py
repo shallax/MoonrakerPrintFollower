@@ -4959,6 +4959,10 @@ Item {
             "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",
             "visible: _partialBase() && _baseOf(root.progress.layers.current)",
             "visible: _partialPrefixReady()",
+            # The invalidation hold: the old prefix stays one beat
+            # while the canvas repaints the interval (the atomic
+            # ownership swap).
+            "visible: _partialPrefixReady() || root._prefixHold",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).
