@@ -339,17 +339,18 @@ class GCodeIndexService(QObject):
 
     def plate_pass_fraction(self):
         """The background optimisation's honest progress: the share of
-        layers the prepared store holds. The cache IS the evidence —
-        the frontier alone would count layers the latch refused, and
-        the job bar's band must never read 100% while a layer is
-        missing (the review's completion-reporting finding). None
-        without a view; 1.0 only when every layer is prepared."""
+        layers the prepared stores hold — the persistent table's
+        coverage AND the RAM cache's, so a reopened print reads
+        100% without any RAM residency (the review's finding 8)."""
         if self._view is None:
             return None
         total = len(self._view.ranges)
         if not total:
             return None
-        return len(self._full_cache) / total
+        if self._prepared_table is not None and len(self._prepared_table) == total \
+                and all(entry[1] > 0 for entry in self._prepared_table):
+            return 1.0
+        return min(1.0, len(self._full_cache) / total)
 
     def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -747,9 +748,11 @@ class GCodeIndexService(QObject):
                         raw = prepared_read(layer) if prepared_table else None
                         if raw is not None:
                             # The reopened print's cached layer: the
-                            # packed form IS the prepared truth — no
-                            # re-hydrate, no re-walk.
-                            encoded[layer] = raw
+                            # file IS the prepared truth — the pass
+                            # advances WITHOUT replaying it into RAM
+                            # (the review's finding 8: a 197 MB store
+                            # must not become 197 MB of resident
+                            # bytes).
                             frontier = layer + 1
                             continue
                         if index.compact and layer not in index.hydrated_layers:

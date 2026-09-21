@@ -534,6 +534,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # request never invalidates another's in-flight render.
         self._plate_pending = {}
         self._raster_bridge = RasterBridge(self)
+        self._plate_ghost_queue = None
         self._raster_bridge.done.connect(self._raster_committed)
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
@@ -2756,7 +2757,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._request_plate_split is not None:
             self._request_plate_split(motions)
 
-    def _qt_layer(self, payload, layer):
+    def _qt_layer(self, payload, layer, request_raster=True):
         """The layer's RETAINED native-render object: the same
         PlateLayer for the same layer across every window that shows
         it. Its raster is requested on the first window and lands
@@ -2772,7 +2773,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._plate_qt_layers[layer] = wrapped
         while len(self._plate_qt_layers) > 6:
             self._plate_qt_layers.popitem(last=False)
-        self._request_raster(wrapped, payload, layer)
+        if request_raster:
+            self._request_raster(wrapped, payload, layer)
         return wrapped
 
     def _scrub_vector_for(self, popover):
@@ -2802,9 +2804,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return {}
         if not isinstance(anchor, int):
             anchor = 0
-        return {"prev": self._qt_layer(layers.get("prev"), anchor - 1),
-                "current": self._qt_layer(layers.get("current"), anchor),
-                "next": self._qt_layer(layers.get("next"), anchor + 1)}
+        # The CURRENT layer's raster is requested FIRST and alone
+        # (the review's findings 3 and 14): the ghosts' renders ride
+        # the current's completion, so a cold seek's user-visible
+        # layer never queues behind its context.
+        current = self._qt_layer(layers.get("current"), anchor)
+        self._queue_ghost_raster(anchor, layers.get("prev"), anchor - 1)
+        self._queue_ghost_raster(anchor, layers.get("next"), anchor + 1)
+        return {"prev": self._qt_layer(layers.get("prev"), anchor - 1, request_raster=False),
+                "current": current,
+                "next": self._qt_layer(layers.get("next"), anchor + 1, request_raster=False)}
+
+    def _queue_ghost_raster(self, anchor, payload, layer):
+        """A ghost's raster request rides the CURRENT layer's
+        completion, and only while the anchor has not moved (the
+        review's coalescing: obsolete neighbour work never burns)."""
+        if payload is None or layer < 0:
+            return
+        wrapped = self._plate_qt_layers.get(layer)
+        if wrapped is not None and wrapped.raster is not None and wrapped.raster.width() > 0:
+            return
+        self._plate_ghost_queue = (anchor, payload, layer)
 
     def _request_raster(self, wrapped, payload, layer):
         """The render demand: the worker paints the image and hands
@@ -2839,6 +2859,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         wrapped.set_raster(image)
         self._plate_pending.pop(layer, None)
+        # The ghosts' renders ride the current's completion, and
+        # only while the anchor still matches (the review's
+        # coalescing: an obsolete neighbour never burns).
+        ghost = getattr(self, "_plate_ghost_queue", None)
+        if ghost is not None:
+            ghost_anchor, ghost_payload, ghost_layer = ghost
+            if ghost_anchor == self._follower_layer_anchor \
+                    and self._plate_qt_layers.get(ghost_layer) is not None:
+                self._request_raster(self._plate_qt_layers[ghost_layer],
+                                     ghost_payload, ghost_layer)
+                self._plate_ghost_queue = None
         self._publish()
 
     @pyqtSlot(float, float, int, int, bool, float, float)
