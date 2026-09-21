@@ -65,6 +65,29 @@ Item {
     property real viewScale: 1.0
     property real viewPanX: 0.0
     property real viewPanY: 0.0
+    // The camera's TWO transforms: viewScale/viewPanX/viewPanY are
+    // the TARGET (the exact renderer works toward it, the model's
+    // rasters bake it); displayScale/displayPanX/displayPanY are
+    // what the scene actually shows. Idle, they coincide. A drag
+    // moves both directly; a wheel updates the TARGET and the
+    // display eases toward it while the bed point under the cursor
+    // stays pinned.
+    property real displayScale: 1.0
+    property real displayPanX: 0.0
+    property real displayPanY: 0.0
+    // The zoom animation's focal state: the cursor's position and
+    // the bed-fit pixel under it AT THE TARGET — the eased display
+    // pan derives from these every tick, so scale and pan converge
+    // as one coherent camera transform and the focal point never
+    // wanders.
+    property real _zoomAnchorX: 0.0
+    property real _zoomAnchorY: 0.0
+    property real _zoomBedX: 0.0
+    property real _zoomBedY: 0.0
+    // The camera interaction state: while a gesture is live (or the
+    // exact scene is still reassembling toward the final target),
+    // the warm navigation raster owns the heavy-scene presentation.
+    property bool _interactionActive: false
     // The raster paints run on the threaded canvases' worker
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
@@ -115,16 +138,55 @@ Item {
     }
     // The view-settle timer (the awful-zoom report): a zoom or line
     // change during a drag must not re-walk the dense stack per tick
-    // — the stack re-rasters ONCE, 150 ms after the last change, and
-    // the raster inputs feed the model at the same settle.
+    // — the stack re-rasters ONCE, 60 ms after the last change (the
+    // target-stability debounce: the exact scene launches while the
+    // display still eases toward the target — the animation hides
+    // the exact-render latency, not the other way round), and the
+    // raster inputs feed the model at the same settle.
     signal viewSettled
     property alias settleTimer: viewSettleTimer
     Timer {
         id: viewSettleTimer
-        interval: 150
+        interval: 60
         onTriggered: {
             _resetStack();
             root.viewSettled();
+        }
+    }
+
+    // The smooth zoom's frame driver: an exponential ease-out toward
+    // the CURRENT target (k per 16 ms tick — the display converges
+    // in roughly 150-250 ms, feels immediate, never overshoots).
+    // Retargeting is free: every tick reads the latest target, so a
+    // wheel burst glides through its intermediate targets without
+    // any velocity discontinuity. The pan derives from the focal
+    // bed point each tick — scale and pan are one camera transform.
+    Timer {
+        id: zoomAnimator
+        interval: 16
+        repeat: true
+        onTriggered: {
+            var step = 0.30;
+            var newScale = root.displayScale + (root.viewScale - root.displayScale) * step;
+            if (Math.abs(root.viewScale - newScale) < 0.005) {
+                newScale = root.viewScale;  // the exact snap at the end
+            }
+            root.displayScale = newScale;
+            // A live drag owns the pan: the scale eases underneath,
+            // the pointer's pan stands.
+            if (!viewGesture.pressed) {
+                root.displayPanX = root._zoomAnchorX - root._zoomBedX * root.displayScale;
+                root.displayPanY = root._zoomAnchorY - root._zoomBedY * root.displayScale;
+            }
+            if (newScale === root.viewScale) {
+                zoomAnimator.stop();
+                if (root._exactReady()) {
+                    // The display stands at the target and the
+                    // complete exact scene is presentation-ready:
+                    // the soft-to-sharp swap.
+                    root._interactionActive = false;
+                }
+            }
         }
     }
 
@@ -231,6 +293,71 @@ Item {
         // or its classes are empty — the canvas will never paint.
         var current = _scrubVector();
         return current == null || current.classes === undefined || Object.keys(current.classes).length === 0;
+    }
+
+    function navigationData() {
+        // The warm interaction raster's ready URL (the model
+        // maintains it on the CONTENT state — pan and zoom never
+        // regenerate it). The Image below binds this source at all
+        // times, so the texture uploads while idle and the first
+        // gesture's switch is a visibility flip, never a first-use
+        // decode/upload hitch.
+        return root.progress != null && root.progress.navigationData !== undefined ? root.progress.navigationData : "";
+    }
+
+    function _enterInteraction() {
+        // The first camera input: switch the heavy-scene
+        // presentation to the warm interaction raster immediately —
+        // no synchronous work rides this call. With no ready
+        // navigation raster the exact scene simply stays (the
+        // safe degraded path, same as before this feature).
+        if (!root._interactionActive && navigationData() !== "") {
+            root._interactionActive = true;
+        }
+    }
+
+    function _exactReady() {
+        // The exact-scene commit barrier: EVERY required component
+        // of the current scene state must be complete and
+        // presentation-ready — the full raster (or the partial
+        // prefix over its delivered canvas), the grey base, the
+        // travels' canvas, the ghosts — each with its scene-graph
+        // Image actually Ready. One missing piece keeps the
+        // interaction raster as the front buffer.
+        var layers = root.progress != null ? root.progress.layers : null;
+        if (!root.available() || layers == null || layers.current == null) {
+            return false;
+        }
+        var current = layers.current;
+        var split = root.progress.split;
+        if (_fullRaster()) {
+            if (progressRasterImage.status !== Image.Ready) {
+                return false;
+            }
+            if (root.showTravels && _travelsOf(current) && progressTravelImage.status !== Image.Ready) {
+                return false;
+            }
+        } else if (split != null && split > 0 && split < _motionsOf(current)) {
+            // The partial scene: the printed history owned coherently
+            // — the Ready prefix over a compatible canvas, or the
+            // delivered vector owning the whole interval.
+            if (_prefixModelReady() && !_partialPrefixReady()) {
+                return false;
+            }
+            if (!_prefixModelReady() && !(root._textureReady && root._vectorCoversFrom === 0)) {
+                return false;
+            }
+            if (_partialBase() && _baseOf(current) && pendingBaseImage.status !== Image.Ready) {
+                return false;
+            }
+        }
+        if (root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev")) && prevGhostImage.status !== Image.Ready) {
+            return false;
+        }
+        if (root.showNext && _ghost("next") != null && _rasterOf(_ghost("next")) && nextGhostImage.status !== Image.Ready) {
+            return false;
+        }
+        return true;
     }
 
     function _partialPrefixReady() {
@@ -355,8 +482,13 @@ Item {
         if (pan == null) {
             return false;
         }
+        // A programmatic camera change: the display lands with the
+        // target (no pan easing for a button press).
         root.viewPanX = pan.x;
         root.viewPanY = pan.y;
+        root.displayPanX = pan.x;
+        root.displayPanY = pan.y;
+        root._enterInteraction();
         return true;
     }
 
@@ -371,6 +503,8 @@ Item {
         if (pan != null && (pan.x !== root.viewPanX || pan.y !== root.viewPanY)) {
             root.viewPanX = pan.x;
             root.viewPanY = pan.y;
+            root.displayPanX = pan.x;
+            root.displayPanY = pan.y;
         }
     }
 
@@ -638,8 +772,11 @@ Item {
         // buffer and the show rebuilds it (the live report — the
         // loading flash churned the grid on every seek). An opaque
         // zero keeps the canvas alive and painted for free; the
-        // input stays gated by the availability.
-        opacity: root.available() ? 1.0 : 0.0
+        // input stays gated by the availability. During a camera
+        // interaction the grid rides the WARM RASTER (the complete
+        // scene switches as one unit — the grid must never move
+        // independently of the geometry).
+        opacity: root.available() && !root._interactionActive ? 1.0 : 0.0
         enabled: root.available()
         printerModel: root.printerModel
         plate: null
@@ -648,306 +785,337 @@ Item {
         viewPanY: root.viewPanY
     }
 
-    // The raster stack, bottom to top (the live order — ghosts,
-    // base, prefix, tail, travels): the ghost layers, the grey
-    // base, the printed native prefix, then the vector tail canvas
-    // with its travels. The rasters are SCENE-GRAPH Images — the
-    // engine's Canvas cannot hold a raster image reliably (its
-    // internal image cache re-blits a drawn URL on every later
-    // paint, and a QImage variant segfaults — engine-proven), so
-    // only the genuinely vector paths keep canvases. Transparency
-    // does the blending between the layers.
-
-    // The raster-only full state: the whole
-    // layer and its travels blit from the native data URLs; the
-    // progress canvas below clears itself while these show.
+    // The interaction scene (the pan/zoom navigation raster): one
+    // flattened warm full-bed composite at a fixed 4x backing,
+    // presented at the DISPLAY transform — the sole heavy-scene
+    // representation during any camera gesture. The source binds at
+    // all times (the texture uploads while idle; the first gesture
+    // flips the visibility, never the source), and the 4x content
+    // displayed at width/height = face x displayScale is exactly
+    // the displayScale/4 presentation of the specification.
     Image {
-        id: progressRasterImage
-        anchors.fill: parent
-        visible: _fullRaster()
-        source: _fullRaster() ? root.progress.layers.current.rasterData : ""
-    }
-    Image {
-        id: progressTravelImage
-        anchors.fill: parent
-        opacity: 0.8
-        visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
-        source: visible ? root.progress.layers.current.travelData : ""
-    }
-    // The ghost layers: the worker's rasters at ghost opacity —
-    // role-free assets, the opacity applied at composition.
-    // Until a ghost's raster lands it draws nothing —
-    // the context layer appears a beat after the seek, never blocks
-    // it.
-    Image {
-        id: prevGhostImage
-        anchors.fill: parent
-        opacity: 0.30
-        visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
-        source: visible ? _ghost("prev").rasterData : ""
-    }
-    Image {
-        id: nextGhostImage
-        anchors.fill: parent
-        opacity: 0.30
-        visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
-        source: visible ? _ghost("next").rasterData : ""
+        id: navigationImage
+        x: root.displayPanX
+        y: root.displayPanY
+        width: root.width * root.displayScale
+        height: root.height * root.displayScale
+        visible: root._interactionActive && navigationData() !== ""
+        source: navigationData()
+        smooth: true
     }
 
-    // The grey whole-layer base: the
-    // native grey sibling as a scene-graph Image, with the vector
-    // canvas below as the pre-arrival fallback.
-    Image {
-        id: pendingBaseImage
+    // The EXACT scene: everything below — the raster stack and the
+    // vector canvases — belongs to one presentation unit. During a
+    // camera interaction the unit fades out WHOLE (opacity, never
+    // visibility: the hidden canvases must keep painting so the
+    // exact generation can complete behind the interaction raster),
+    // and returns only once the commit barrier passes.
+    Item {
+        id: exactScene
         anchors.fill: parent
-        opacity: 0.55
-        visible: _partialBase() && _baseOf(root.progress.layers.current)
-        source: visible ? root.progress.layers.current.baseData : ""
-    }
+        opacity: root._interactionActive ? 0.0 : 1.0
 
-    Canvas {
-        id: pendingCanvas
-        anchors.fill: parent
-        renderTarget: Canvas.Image
-        renderStrategy: Canvas.Threaded
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            ctx.clearRect(0, 0, width, height);
-            if (!root.available() || mapping._plot == null) {
-                return;
-            }
-            var layer = root.progress.layers.current;
-            // The base marks the unprinted suffix of a PARTIAL layer:
-            // a 0% layer draws nothing (nothing has printed — no
-            // boundary to frame), and a full layer's raster covers
-            // it entirely. The native sibling's arrival hides this
-            // fallback (its Image above takes over).
-            if (!_partialBase() || layer == null || _baseOf(layer)) {
-                return;
-            }
-            var current = _scrubVector();
-            if (current == null) {
-                return;
-            }
-            _drawLayer(ctx, current, 0.55, -1, true, -1);
+        // The raster stack, bottom to top (the live order — ghosts,
+        // base, prefix, tail, travels): the ghost layers, the grey
+        // base, the printed native prefix, then the vector tail canvas
+        // with its travels. The rasters are SCENE-GRAPH Images — the
+        // engine's Canvas cannot hold a raster image reliably (its
+        // internal image cache re-blits a drawn URL on every later
+        // paint, and a QImage variant segfaults — engine-proven), so
+        // only the genuinely vector paths keep canvases. Transparency
+        // does the blending between the layers.
+
+        // The raster-only full state: the whole
+        // layer and its travels blit from the native data URLs; the
+        // progress canvas below clears itself while these show.
+        Image {
+            id: progressRasterImage
+            anchors.fill: parent
+            visible: _fullRaster()
+            source: _fullRaster() ? root.progress.layers.current.rasterData : ""
         }
-    }
-
-    // The printed PREFIX (the measured verdict: the partial states'
-    // QML walk costs ~900 ms at 500k motions): the worker paints
-    // the motions below the split and the canvas below draws only
-    // the live delta's tail. Declared ABOVE the progress canvas and
-    // BELOW the grey base (the live stack order: ghosts, base,
-    // prefix, tail) — the base must never wash over printed
-    // geometry. Hidden while stale (a backward move renders a fresh
-    // prefix first), while its image has not uploaded, and — for
-    // one frame — held on screen while the canvas repaints the
-    // interval the prefix just relinquished.
-    Image {
-        id: progressPrefixImage
-        anchors.fill: parent
-        visible: _partialPrefixReady() || root._prefixHold
-        source: (_prefixModelReady() || root._prefixHold) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
-        onVisibleChanged: {
-            // Track what was actually on screen. A hide caused by
-            // the model's invalidation (prefixValid flipped false —
-            // the render-key mismatch) arms the HOLD right here: the
-            // picture stays up until the canvas's full bitmap is
-            // delivered and committed (the expiry timer's beat after
-            // the painted signal). Hides from the split arithmetic
-            // (a full layer, a backward move) are legitimate — the
-            // canvas owns the interval by then.
-            if (visible) {
-                root._prefixWasShown = true;
-            } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false) {
-                holdExpiryTimer.stop();
-                root._prefixHold = true;
-                progressCanvas.requestPaint();
-            } else {
-                root._prefixHold = false;
-                root._prefixWasShown = false;
-            }
+        Image {
+            id: progressTravelImage
+            anchors.fill: parent
+            opacity: 0.8
+            visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
+            source: visible ? root.progress.layers.current.travelData : ""
         }
-        onStatusChanged: progressCanvas.requestPaint()
-    }
-
-    Canvas {
-        id: progressCanvas
-        anchors.fill: parent
-        renderTarget: Canvas.Image
-        renderStrategy: Canvas.Threaded
-        onPainted: {
-            // The paint's bitmap is delivered: its coverage record
-            // now describes the scene's committed texture. A held
-            // prefix over a delivered FULL bitmap can finally
-            // relinquesh — one frame later, after the scene pulls
-            // the texture (the expiry timer's beat).
-            root._textureReady = true;
-            if (root._prefixHold && root._vectorCoversFrom === 0) {
-                holdExpiryTimer.restart();
-            }
+        // The ghost layers: the worker's rasters at ghost opacity —
+        // role-free assets, the opacity applied at composition.
+        // Until a ghost's raster lands it draws nothing —
+        // the context layer appears a beat after the seek, never blocks
+        // it.
+        Image {
+            id: prevGhostImage
+            anchors.fill: parent
+            opacity: 0.30
+            visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
+            source: visible ? _ghost("prev").rasterData : ""
         }
-        onPaint: {
-            var ctx = getContext("2d");
-            // The committed texture is now one paint behind — the
-            // painted signal re-arms the confirmation when the
-            // bitmap is delivered.
-            root._textureReady = false;
-            if (!root.available() || mapping._plot == null) {
-                // The unavailable surface clears its own ink — the
-                // old raster must never read through the loading text
-                // (the live report).
+        Image {
+            id: nextGhostImage
+            anchors.fill: parent
+            opacity: 0.30
+            visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
+            source: visible ? _ghost("next").rasterData : ""
+        }
+
+        // The grey whole-layer base: the
+        // native grey sibling as a scene-graph Image, with the vector
+        // canvas below as the pre-arrival fallback.
+        Image {
+            id: pendingBaseImage
+            anchors.fill: parent
+            opacity: 0.55
+            visible: _partialBase() && _baseOf(root.progress.layers.current)
+            source: visible ? root.progress.layers.current.baseData : ""
+        }
+
+        Canvas {
+            id: pendingCanvas
+            anchors.fill: parent
+            renderTarget: Canvas.Image
+            renderStrategy: Canvas.Threaded
+            onPaint: {
+                var ctx = getContext("2d");
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._vectorCoversFrom = -1;
-                return;
+                if (!root.available() || mapping._plot == null) {
+                    return;
+                }
+                var layer = root.progress.layers.current;
+                // The base marks the unprinted suffix of a PARTIAL layer:
+                // a 0% layer draws nothing (nothing has printed — no
+                // boundary to frame), and a full layer's raster covers
+                // it entirely. The native sibling's arrival hides this
+                // fallback (its Image above takes over).
+                if (!_partialBase() || layer == null || _baseOf(layer)) {
+                    return;
+                }
+                var current = _scrubVector();
+                if (current == null) {
+                    return;
+                }
+                _drawLayer(ctx, current, 0.55, -1, true, -1);
             }
-            var layer = root.progress.layers.current;
-            if (layer == null) {
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._vectorCoversFrom = -1;
-                return;
+        }
+
+        // The printed PREFIX (the measured verdict: the partial states'
+        // QML walk costs ~900 ms at 500k motions): the worker paints
+        // the motions below the split and the canvas below draws only
+        // the live delta's tail. Declared ABOVE the progress canvas and
+        // BELOW the grey base (the live stack order: ghosts, base,
+        // prefix, tail) — the base must never wash over printed
+        // geometry. Hidden while stale (a backward move renders a fresh
+        // prefix first), while its image has not uploaded, and — for
+        // one frame — held on screen while the canvas repaints the
+        // interval the prefix just relinquished.
+        Image {
+            id: progressPrefixImage
+            anchors.fill: parent
+            visible: _partialPrefixReady() || root._prefixHold
+            source: (_prefixModelReady() || root._prefixHold) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
+            onVisibleChanged: {
+                // Track what was actually on screen. A hide caused by
+                // the model's invalidation (prefixValid flipped false —
+                // the render-key mismatch) arms the HOLD right here: the
+                // picture stays up until the canvas's full bitmap is
+                // delivered and committed (the expiry timer's beat after
+                // the painted signal). Hides from the split arithmetic
+                // (a full layer, a backward move) are legitimate — the
+                // canvas owns the interval by then.
+                if (visible) {
+                    root._prefixWasShown = true;
+                } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false) {
+                    holdExpiryTimer.stop();
+                    root._prefixHold = true;
+                    progressCanvas.requestPaint();
+                } else {
+                    root._prefixHold = false;
+                    root._prefixWasShown = false;
+                }
             }
-            var split = root.progress.split;
-            // The FULL-layer case: the
-            // PlateLayer's OWN motions are the boundary, and the
-            // scene-graph Images own the picture — scrubVector is
-            // null by design here (a 100% seek, a detached whole
-            // layer), so a full raster hit never depends on the
-            // giant vector. The vector canvas clears so nothing
-            // doubles up.
-            if (_fullRaster()) {
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
+            onStatusChanged: progressCanvas.requestPaint()
+        }
+
+        Canvas {
+            id: progressCanvas
+            anchors.fill: parent
+            renderTarget: Canvas.Image
+            renderStrategy: Canvas.Threaded
+            onPainted: {
+                // The paint's bitmap is delivered: its coverage record
+                // now describes the scene's committed texture. A held
+                // prefix over a delivered FULL bitmap can finally
+                // relinquesh — one frame later, after the scene pulls
+                // the texture (the expiry timer's beat).
+                root._textureReady = true;
+                if (root._prefixHold && root._vectorCoversFrom === 0) {
+                    holdExpiryTimer.restart();
+                }
+            }
+            onPaint: {
+                var ctx = getContext("2d");
+                // The committed texture is now one paint behind — the
+                // painted signal re-arms the confirmation when the
+                // bitmap is delivered.
+                root._textureReady = false;
+                if (!root.available() || mapping._plot == null) {
+                    // The unavailable surface clears its own ink — the
+                    // old raster must never read through the loading text
+                    // (the live report).
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._vectorCoversFrom = -1;
+                    return;
+                }
+                var layer = root.progress.layers.current;
+                if (layer == null) {
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._vectorCoversFrom = -1;
+                    return;
+                }
+                var split = root.progress.split;
+                // The FULL-layer case: the
+                // PlateLayer's OWN motions are the boundary, and the
+                // scene-graph Images own the picture — scrubVector is
+                // null by design here (a 100% seek, a detached whole
+                // layer), so a full raster hit never depends on the
+                // giant vector. The vector canvas clears so nothing
+                // doubles up.
+                if (_fullRaster()) {
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = split;
+                    root._paintsSinceReset += 1;
+                    root._vectorCoversFrom = -1;
+                    return;
+                }
+                var current = _scrubVector();
+                if (current == null) {
+                    // No vector and no full raster yet (a cold full seek,
+                    // a 0% state): nothing to accumulate.
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._vectorCoversFrom = -1;
+                    return;
+                }
+                if (split == null) {
+                    // No boundary to draw at — a print without a
+                    // position. The layer is its whole base and any
+                    // accumulated fill goes with the split.
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._progressDirty = false;
+                    root._vectorCoversFrom = -1;
+                    return;
+                }
+                // A backward split (a restart), a toggle flip, an anchor
+                // change or a SAME-ANCHOR payload swap clears the image
+                // (the delta path assumes the bitmap holds the previous
+                // vector's ink — a swapped source never drew it); the
+                // accumulation also re-rasters fully on its own cadence
+                // so it cannot drift. Otherwise the canvas keeps its
+                // image and only the new delta is stroked on top.
+                var vectorMotions = _motionsOf(current);
+                var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
+                var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
+                root._vectorSourceMotions = vectorMotions;
+                root._vectorSourceClasses = vectorClasses;
+                var resetPainted = false;
+                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20 || vectorSourceChanged) {
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._progressDirty = false;
+                    root._paintsSinceReset = 0;
+                    resetPainted = true;
+                }
+                // The printed portion, coloured in per feature class from
+                // the last painted split up to the live one (the H3
+                // floor). The partial scrub keeps the vector delta path;
+                // a native prefix below shortens the walk to its tail.
+                var prefixFrom = _prefixFrom();
+                var coversBefore = root._vectorCoversFrom;
+                if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
+                    // The prefix no longer owns the history (loading,
+                    // stale, or invalidated) but the canvas does not hold
+                    // the full picture (nothing painted yet, or only a
+                    // tail): repaint the FULL interval — a partial bitmap
+                    // under a vanished prefix is the live scrub's missing
+                    // history.
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._progressDirty = false;
+                    resetPainted = true;
+                } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
+                    // The prefix is Ready over the canvas's FULL bitmap (a
+                    // re-show after a scrub through 100% or another layer):
+                    // trim to the prefix's own boundary — the commit lag's
+                    // stale texture is the full bitmap, complete either
+                    // way, and every scrub path settles to the SAME
+                    // composition.
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._progressDirty = false;
+                    resetPainted = true;
+                }
+                // A prefix that has never shown leaves the WHOLE interval
+                // to the canvas — its first paint must cover from the
+                // layer's start, not merely from the prefix's boundary.
+                // The trim above (only ever over a full bitmap) paints
+                // from the boundary instead.
+                var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
+                var fresh = resetPainted || root._lastSplit < 0;
+                _drawLayer(ctx, current, 1.0, split, false, from);
+                // The bitmap's coverage below this paint's start: a full
+                // paint covers from the layer's start, a tail paint
+                // relies on the prefix for the rest, a delta paint
+                // extends the existing coverage. A vector with no
+                // geometry records nothing: an empty bitmap must never
+                // read as a full one (the prefix would trust a hole).
+                if (fresh) {
+                    root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
+                }
+                // The travels: the lines only. CURRENT layer only, and
+                // only where the toolhead has already passed (the live
+                // rulings). The prefix carries NO travels, so a cleared
+                // canvas redraws them from the layer's start — the
+                // travels below the prefix boundary stay visible. The
+                // accumulated delta path keeps its own start (the
+                // canvas already holds the printed travels).
+                if (root.showTravels) {
+                    // The prefix carries NO travels: a cleared canvas
+                    // redraws them from the layer's start, and a NEW
+                    // travel source does too — the delta path alone
+                    // would assume ink the canvas never drew (the
+                    // travels arriving with the prefix already in
+                    // place).
+                    var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
+                    var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
+                    var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
+                    root._travelsSourceMotions = sourceMotions;
+                    root._travelsSourceReady = sourceReady;
+                    var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
+                    _drawTravels(ctx, current.travels, split, travelFrom);
+                }
                 root._lastSplit = split;
                 root._paintsSinceReset += 1;
-                root._vectorCoversFrom = -1;
-                return;
             }
-            var current = _scrubVector();
-            if (current == null) {
-                // No vector and no full raster yet (a cold full seek,
-                // a 0% state): nothing to accumulate.
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._vectorCoversFrom = -1;
-                return;
-            }
-            if (split == null) {
-                // No boundary to draw at — a print without a
-                // position. The layer is its whole base and any
-                // accumulated fill goes with the split.
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._progressDirty = false;
-                root._vectorCoversFrom = -1;
-                return;
-            }
-            // A backward split (a restart), a toggle flip, an anchor
-            // change or a SAME-ANCHOR payload swap clears the image
-            // (the delta path assumes the bitmap holds the previous
-            // vector's ink — a swapped source never drew it); the
-            // accumulation also re-rasters fully on its own cadence
-            // so it cannot drift. Otherwise the canvas keeps its
-            // image and only the new delta is stroked on top.
-            var vectorMotions = _motionsOf(current);
-            var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
-            var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
-            root._vectorSourceMotions = vectorMotions;
-            root._vectorSourceClasses = vectorClasses;
-            var resetPainted = false;
-            if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20 || vectorSourceChanged) {
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._progressDirty = false;
-                root._paintsSinceReset = 0;
-                resetPainted = true;
-            }
-            // The printed portion, coloured in per feature class from
-            // the last painted split up to the live one (the H3
-            // floor). The partial scrub keeps the vector delta path;
-            // a native prefix below shortens the walk to its tail.
-            var prefixFrom = _prefixFrom();
-            var coversBefore = root._vectorCoversFrom;
-            if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
-                // The prefix no longer owns the history (loading,
-                // stale, or invalidated) but the canvas does not hold
-                // the full picture (nothing painted yet, or only a
-                // tail): repaint the FULL interval — a partial bitmap
-                // under a vanished prefix is the live scrub's missing
-                // history.
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._progressDirty = false;
-                resetPainted = true;
-            } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
-                // The prefix is Ready over the canvas's FULL bitmap (a
-                // re-show after a scrub through 100% or another layer):
-                // trim to the prefix's own boundary — the commit lag's
-                // stale texture is the full bitmap, complete either
-                // way, and every scrub path settles to the SAME
-                // composition.
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                root._lastSplit = -1;
-                root._paintsSinceReset = 0;
-                root._progressDirty = false;
-                resetPainted = true;
-            }
-            // A prefix that has never shown leaves the WHOLE interval
-            // to the canvas — its first paint must cover from the
-            // layer's start, not merely from the prefix's boundary.
-            // The trim above (only ever over a full bitmap) paints
-            // from the boundary instead.
-            var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
-            var fresh = resetPainted || root._lastSplit < 0;
-            _drawLayer(ctx, current, 1.0, split, false, from);
-            // The bitmap's coverage below this paint's start: a full
-            // paint covers from the layer's start, a tail paint
-            // relies on the prefix for the rest, a delta paint
-            // extends the existing coverage. A vector with no
-            // geometry records nothing: an empty bitmap must never
-            // read as a full one (the prefix would trust a hole).
-            if (fresh) {
-                root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
-            }
-            // The travels: the lines only. CURRENT layer only, and
-            // only where the toolhead has already passed (the live
-            // rulings). The prefix carries NO travels, so a cleared
-            // canvas redraws them from the layer's start — the
-            // travels below the prefix boundary stay visible. The
-            // accumulated delta path keeps its own start (the
-            // canvas already holds the printed travels).
-            if (root.showTravels) {
-                // The prefix carries NO travels: a cleared canvas
-                // redraws them from the layer's start, and a NEW
-                // travel source does too — the delta path alone
-                // would assume ink the canvas never drew (the
-                // travels arriving with the prefix already in
-                // place).
-                var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
-                var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
-                var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
-                root._travelsSourceMotions = sourceMotions;
-                root._travelsSourceReady = sourceReady;
-                var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
-                _drawTravels(ctx, current.travels, split, travelFrom);
-            }
-            root._lastSplit = split;
-            root._paintsSinceReset += 1;
         }
     }
 
@@ -1124,40 +1292,68 @@ Item {
             }
             var factor = wheel.angleDelta.y > 0 ? 1.25 : 0.8;
             var target = Math.min(20.0, Math.max(1.0, root.viewScale * factor));
-            if (target === root.viewScale) {
+            if (target === root.viewScale && root.displayScale === root.viewScale) {
                 return;
             }
+            root._enterInteraction();
+            // The bed-fit pixel under the cursor AT THE TARGET: the
+            // eased display pan derives from it every tick, so scale
+            // and pan converge as one coherent camera transform and
+            // the focal point never wanders.
             if (target <= 1.0) {
                 // 100% is the fit: centred, panning off (the live
                 // ruling — no pan at full zoom).
                 root.viewScale = 1.0;
                 root.viewPanX = 0.0;
                 root.viewPanY = 0.0;
-                return;
+            } else {
+                // The point under the cursor stays put, computed
+                // from the CURRENT DISPLAY transform (the retarget
+                // always starts where the camera actually is).
+                root.viewScale = target;
+                root.viewPanX = wheel.x - (wheel.x - root.displayPanX) / root.displayScale * target;
+                root.viewPanY = wheel.y - (wheel.y - root.displayPanY) / root.displayScale * target;
+                var clamped = root._clampPan(root.viewPanX, root.viewPanY);
+                root.viewPanX = clamped.x;
+                root.viewPanY = clamped.y;
             }
-            // The point under the cursor stays put.
-            var ratio = target / root.viewScale;
-            root.viewPanX = wheel.x - (wheel.x - root.viewPanX) * ratio;
-            root.viewPanY = wheel.y - (wheel.y - root.viewPanY) * ratio;
-            root.viewScale = target;
+            root._zoomAnchorX = wheel.x;
+            root._zoomAnchorY = wheel.y;
+            root._zoomBedX = (wheel.x - root.viewPanX) / root.viewScale;
+            root._zoomBedY = (wheel.y - root.viewPanY) / root.viewScale;
+            zoomAnimator.restart();
         }
         onPressed: function (mouse) {
+            root._enterInteraction();
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
         onPositionChanged: function (mouse) {
-            if (!pressed || root.viewScale <= 1.0) {
+            if (!pressed || root.displayScale <= 1.0) {
                 return;
             }
+            // The pan tracks the pointer directly: the display AND
+            // the target move together (no pan easing — the nav
+            // raster makes the direct pan cheap).
+            root.displayPanX += mouse.x - root._dragX;
+            root.displayPanY += mouse.y - root._dragY;
             root.viewPanX += mouse.x - root._dragX;
             root.viewPanY += mouse.y - root._dragY;
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
         onDoubleClicked: {
+            // The reset is a programmatic camera change: the target
+            // and the display land together, and the exact scene
+            // returns only once the barrier passes.
+            root._enterInteraction();
             root.viewScale = 1.0;
             root.viewPanX = 0.0;
             root.viewPanY = 0.0;
+            root.displayScale = 1.0;
+            root.displayPanX = 0.0;
+            root.displayPanY = 0.0;
+            zoomAnimator.stop();
         }
     }
 
@@ -1274,13 +1470,17 @@ Item {
                 function scopeApply(y) {
                     var fraction = Math.min(1.0, Math.max(0.0, (parent.height - y) / parent.height));
                     var target = Math.pow(20.0, fraction);
+                    root._enterInteraction();
+                    // A direct manipulation: the display follows the
+                    // handle immediately (like the drag pan).
+                    root.displayScale = target;
+                    root.viewScale = target;
                     if (target <= 1.0) {
-                        root.viewScale = 1.0;
                         root.viewPanX = 0.0;
                         root.viewPanY = 0.0;
-                        return;
+                        root.displayPanX = 0.0;
+                        root.displayPanY = 0.0;
                     }
-                    root.viewScale = target;
                 }
             }
         }

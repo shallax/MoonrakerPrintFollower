@@ -380,6 +380,7 @@ class SourceContractTests(unittest.TestCase):
             "QObject": "QtCore",
             "QPointF": "QtCore",
             "QRect": "QtCore",
+            "QRectF": "QtCore",
             "QSettings": "QtCore",
             "QThread": "QtCore",
             "QRunnable": "QtCore",

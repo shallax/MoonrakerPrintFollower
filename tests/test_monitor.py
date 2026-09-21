@@ -4963,6 +4963,9 @@ Item {
             # while the canvas repaints the interval (the atomic
             # ownership swap).
             "visible: _partialPrefixReady() || root._prefixHold",
+            # The interaction raster: the warm full-bed composite
+            # owns the heavy scene during a camera gesture.
+            "visible: root._interactionActive && navigationData() !== \"\"",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

@@ -1699,6 +1699,7 @@ if QT_AVAILABLE:
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._scrub = None
+            self._navigation = ""
             self._layer_count = 40
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1749,6 +1750,16 @@ if QT_AVAILABLE:
 
         def setScrub(self, scrub):
             self._scrub = scrub
+            self.plateLayersChanged.emit()
+
+        @pyqtProperty(str, notify=plateLayersChanged)
+        def plateNavigationData(self):
+            # The interaction raster's ready URL (the model's warm
+            # background composite — the fixture sets a real PNG).
+            return self._navigation
+
+        def setNavigation(self, url):
+            self._navigation = url or ""
             self.plateLayersChanged.emit()
 
         def setSplit(self, split):
@@ -2762,6 +2773,172 @@ class PlateFaceRenderTests(RealEngineTestCase):
                                  "%s settled to a different picture "
                                  "(%d sampled pixels differ beyond "
                                  "the antialias tolerance)" % (name, diff))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_the_interaction_raster_owns_the_camera_and_swaps_atomically(self):
+        # The camera interaction: a warm navigation raster owns the
+        # heavy scene during a smooth wheel zoom (the exact fades as
+        # ONE unit), the display eases monotonically toward the
+        # target with the focal bed point pinned, the exact scene
+        # returns only once its commit barrier passes, and the swap
+        # moves no geometry.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        # The warm interaction raster: a real flattened composite at
+        # 4x, its URL on the double (the model's role).
+        from plugins.PlateQt import render_navigation_layer, png_file
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload}, plot,
+            {"width": int(face.width()), "height": int(face.height()),
+             "scale": 1.0, "lineScale": 8.0, "compact": False,
+             "panX": 0.0, "panY": 0.0, "backing": 4.0,
+             "bedWidth": 250.0, "bedDepth": 250.0}, split=18)
+        self._printer.setNavigation(png_file(
+            nav, "/tmp/mpf/raster-probe", "nav-fixture-%d" % time.monotonic_ns()))
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the idle exact scene never drew")
+        window.grabWindow()  # the idle exact scene is up
+
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+
+        def wheel(cx, cy, delta):
+            # QTest's QWindow-level mouseWheel is unavailable in this
+            # Qt build — post the real event (the harness's own
+            # pattern for the drag injection).
+            scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+            event = QWheelEvent(
+                QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+        # Wheel-zoom in at the centre: the interaction owns the scene
+        # immediately and the display eases toward the 125% target.
+        wheel(cx, cy, 120)
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the camera gesture never entered the interaction")
+        first = face.property("displayScale")
+        if first <= 1.0:
+            self._pump_ms(30)  # the animator's first tick's beat
+            first = face.property("displayScale")
+        self.assertGreater(first, 1.0, "the first frame never moved")
+        self.assertLess(first, 1.25, "the display snapped, never eased")
+        # The eased frames: monotonic, no overshoot, the focal bed
+        # point pinned, and the exact scene hidden throughout.
+        last = first
+        before_swap = window.grabWindow()
+        while face.property("_interactionActive"):
+            self._pump_ms(20)
+            now = face.property("displayScale")
+            self.assertGreaterEqual(now, last - 1e-6,
+                                    "the display eased backwards")
+            self.assertLessEqual(now, 1.25 + 1e-6,
+                                 "the display overshot the target")
+            last = now
+            bed_x = (cx - face.property("displayPanX")) / now
+            self.assertAlmostEqual(bed_x, float(cx), delta=2.0,
+                                   msg="the focal point wandered")
+            before_swap = window.grabWindow()  # the last interaction frame
+        self.assertEqual(face.property("displayScale"), 1.25,
+                         "the display never converged exactly")
+        # The atomic swap: the frames immediately before and after
+        # it are registered identically — only the fidelity changes.
+        after = window.grabWindow()
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+
+        def differs(pixel_a, pixel_b):
+            return any(abs(((pixel_a >> shift) & 0xFF)
+                          - ((pixel_b >> shift) & 0xFF)) > 60
+                       for shift in (0, 8, 16))
+        moved = sum(
+            1 for row in range(0, int(face.height()), 4)
+            for col in range(0, int(face.width()), 4)
+            if differs(after.pixel(int(origin.x()) + col,
+                                   int(origin.y()) + row),
+                       before_swap.pixel(int(origin.x()) + col,
+                                         int(origin.y()) + row)))
+        self.assertLessEqual(moved, 8,
+                             "the swap moved the geometry (%d pixels)" % moved)
+
+        # The direct pan: the display follows the pointer exactly —
+        # no easing, no camera lag, the interaction stays live.
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QMouseEvent
+        def mouse(kind, x, y, buttons):
+            scene = face.mapToItem(window.contentItem(), QPointF(x, y))
+            event = QMouseEvent(kind, QPointF(scene),
+                                QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                                Qt.MouseButton.LeftButton, buttons,
+                                Qt.KeyboardModifier.NoModifier)
+            QGuiApplication.sendEvent(window, event)
+        pan_before = face.property("displayPanX")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx + 40, cy + 20, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx + 40, cy + 20,
+              Qt.MouseButton.NoButton)
+        self._pump_ms(30)
+        self.assertAlmostEqual(face.property("displayPanX"), pan_before + 40.0,
+                               delta=1.5, msg="the drag pan lagged the pointer")
+        self.assertTrue(face.property("_interactionActive"),
+                        "the pan never entered the interaction")
+        # The retarget from the CURRENT display: the next wheel keeps
+        # the eased motion continuous (no restart jump backwards).
+        wheel(cx, cy, 120)
+        self._pump_ms(20)
+        retargeted = face.property("displayScale")
+        if retargeted <= 1.25:
+            self._pump_ms(20)  # the animator's first tick's beat
+            retargeted = face.property("displayScale")
+        self.assertGreater(retargeted, 1.25, "the retarget snapped backwards")
+        self.assertLess(retargeted, 1.5625 + 1e-6,
+                        "the retarget overshot its new target")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the retargeted zoom never swapped back")
+        # The delayed exact: invalidate the exact scene's key, wheel
+        # again — the interaction stays on the navigation raster
+        # until the barrier can pass.
+        layer.set_expected_key("invalidated")
+        wheel(cx, cy, 120)
+        self._pump_ms(120)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the incomplete exact scene revealed itself")
+        layer.set_expected_key("fixture-key")
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the completed exact scene never swapped back")
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
