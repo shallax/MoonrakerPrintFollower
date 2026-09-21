@@ -2970,6 +2970,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         motions = wrapped.motions
         if split >= motions:
             return False
+        # A prefix rendered for an old view/plot key is no prefix at all.
+        # QML hides it; the scheduler must therefore request a replacement
+        # even when the numeric split did not move.
+        if not wrapped.prefixValid:
+            return True
         have = wrapped.prefixSplit
         if have < 0:
             return True
@@ -3190,17 +3195,31 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         except OSError:
             pass
 
+    @staticmethod
+    def _raster_job_matches(job, layer, token, generation, epoch, serial):
+        """Exact identity of one submitted raster job.
+
+        Tokens can restart after a surface retire/reopen, while generation
+        and print epoch may stay unchanged. The monotonic serial is what
+        makes those otherwise-identical jobs collision-proof.
+        """
+        return bool(job is not None
+                    and job["layer"] == layer
+                    and job["token"] == token
+                    and job["generation"] == generation
+                    and job["epoch"] == epoch
+                    and job["serial"] == serial)
+
     @pyqtSlot(object)
     def _raster_started(self, ticket):
         """The worker's first line: a job the demand replaced while
         still queued is countable as superseded-before-start."""
-        name, layer, token, generation, _key, _kind, _split, epoch, _serial = ticket
+        name, layer, token, generation, _key, _kind, _split, epoch, serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
         job = surface.job
-        if job is not None and job["layer"] == layer and job["token"] == token \
-                and job["generation"] == generation and job["epoch"] == epoch:
+        if self._raster_job_matches(job, layer, token, generation, epoch, serial):
             job["state"] = "running"
             surface.stats["started"] += 1
             self._trace("T10 raster running", {"surface": name, "layer": layer})
@@ -3293,20 +3312,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the next demand. Only an EXACT ticket match may clear the
         active job — a stale completion can never clear an
         unrelated submitted one."""
-        name, layer, token, generation, key, kind, prefix_split, epoch, _serial = ticket
+        name, layer, token, generation, key, kind, prefix_split, epoch, serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
+        exact_job = self._raster_job_matches(
+            surface.job, layer, token, generation, epoch, serial)
         # The terminal kinds arrive without rendered assets: a
         # cancelled job stops where it was told, a failed one
         # reports the exception.
         if kind == "cancelled" or (images and isinstance(images, tuple)
                                    and images[0] == "cancelled"):
             surface.stats["cancelled"] += 1
-            if surface.job is not None and surface.job["layer"] == layer \
-                    and surface.job["token"] == token \
-                    and surface.job["generation"] == generation \
-                    and surface.job["epoch"] == epoch:
+            if exact_job:
                 surface.job = None
             self._trace("T11 raster cancelled", {"surface": name, "layer": layer})
             self._schedule_surface(surface)
@@ -3316,10 +3334,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.job_failures = getattr(surface, "job_failures", 0) + 1
             logging.getLogger("MoonrakerPrintFollower").warning(
                 "raster worker failed: %s", images[1])
-            if surface.job is not None and surface.job["layer"] == layer \
-                    and surface.job["token"] == token \
-                    and surface.job["generation"] == generation \
-                    and surface.job["epoch"] == epoch:
+            if exact_job:
                 surface.job = None
             self._trace("T11 raster failed", {"surface": name, "layer": layer,
                                               "error": images[1][:120]})
@@ -3332,13 +3347,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 return
             self._schedule_surface(surface)
             return
-        job = surface.job
-        # Only the EXACT ticket clears the active job. Anything else
-        # is a stale completion; it must never touch a newer job.
-        if job is not None and job["layer"] == layer and job["token"] == token \
-                and job["generation"] == generation and job["epoch"] == epoch:
+        # Only the EXACT ticket clears or commits against the active job.
+        # A retired surface can restart token numbering at one, so
+        # layer/token/generation/epoch without serial is insufficient.
+        if exact_job:
             surface.job = None
-        if epoch != surface.job_epoch or generation != surface.generation \
+        if not exact_job or epoch != surface.job_epoch or generation != surface.generation \
                 or surface.tokens.get(layer) != token \
                 or surface.layers.get(layer) is None:
             surface.stats["discarded"] += 1
