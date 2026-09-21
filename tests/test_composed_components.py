@@ -776,6 +776,217 @@ class ComposedComponentTests(unittest.TestCase):
         app.fileCompleted.emit(parts.files.path)
         self.assertFalse(parts.cura.loading)
 
+    def test_the_mini_and_open_popover_become_available_after_the_index_builds(self):
+        # The live regressions' common root: an index-hydrated layer
+        # must still DEMAND its presentation payload — the mini's
+        # placeholder and the popover's Loading layer… clear only
+        # when the decoded current actually lands, with no other
+        # user action.
+        content = (pathlib.Path(__file__).parent / "fixtures" / "gcode" / "cura.gcode").read_bytes()
+        status = self.status(layer=2)
+        status["virtual_sdcard"]["file_size"] = len(content)
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                if self.path.startswith("/server/files/gcodes/"):
+                    body = content
+                elif self.path.startswith("/server/files/metadata"):
+                    body = json.dumps({"result": {"size": len(content), "modified": 1}}).encode()
+                else:
+                    body = json.dumps({"result": {"status": status}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        app = self.qt.Application()
+        follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
+        self.addCleanup(follower.deinitialize)
+        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True, feed_mode="http"))
+        output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(app, follower)
+        output.start()
+        self.addCleanup(output.stop)
+        model = output._current.activePrinter
+        # The initially expanded popover and the mini's section.
+        model.setFollowerPopoverOpen(True)
+        model.setSectionExpanded("plateprogress", True)
+        parts = follower._runtime
+        parts.cura._view = object()
+        parts.coordinator.request_load()
+        for _ in range(100):
+            if app.loaded_paths: break
+            self.qt.events(10)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
+        app.controller.activeViewChanged.emit()
+        for _ in range(300):
+            if parts.index.view is not None: break
+            self.qt.events(10)
+        self.assertIsNotNone(parts.index.view, "the index never built")
+        # The presentation demand fires from the hydrated index (no
+        # decoded payload exists yet) and the availability follows
+        # the decoded current, not the hydration.
+        for _ in range(400):
+            self.qt.events(10)
+            if model.plateProgressAvailable and model.plateLiveAvailable:
+                break
+        self.assertTrue(model.plateProgressAvailable,
+                        "the open popover stayed on Loading layer…")
+        self.assertTrue(model.plateLiveAvailable,
+                        "the mini stayed on the build-index placeholder")
+        self.assertEqual(model.plateProgressReason, "",
+                         "the popover's reason never cleared")
+        self.assertIsNotNone(model._values.get("plateLayers", {}).get("current"),
+                             "the popover's current never landed")
+        self.assertIsNotNone(model._values.get("plateLiveLayers", {}).get("current"),
+                             "the mini's current never landed")
+
+    def test_the_true_slider_to_available_latency_across_the_sources(self):
+        # The TRUE end-to-end T_available: the model's committed
+        # slider slot through the real service pipeline (request ->
+        # classify -> read/decode/prepare -> commit -> coordinator ->
+        # publish) until plateProgressAvailable flips for the sought
+        # layer. Four source states, one real file.
+        content = self._generated_gcode(layers=4, motions=20000)
+        status = self.status(layer=2)
+        status["virtual_sdcard"]["file_size"] = len(content)
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                if self.path.startswith("/server/files/gcodes/"):
+                    body = content
+                elif self.path.startswith("/server/files/metadata"):
+                    body = json.dumps({"result": {"size": len(content), "modified": 1}}).encode()
+                else:
+                    body = json.dumps({"result": {"status": status}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        app = self.qt.Application()
+        follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
+        self.addCleanup(follower.deinitialize)
+        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True, feed_mode="http"))
+        output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(app, follower)
+        output.start()
+        self.addCleanup(output.stop)
+        model = output._current.activePrinter
+        model.setFollowerPopoverOpen(True)
+        model.setSectionExpanded("plateprogress", True)
+        parts = follower._runtime
+        service = parts.index
+        parts.cura._view = object()
+        parts.coordinator.request_load()
+        for _ in range(100):
+            if app.loaded_paths: break
+            self.qt.events(10)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
+        app.controller.activeViewChanged.emit()
+        for _ in range(600):
+            if parts.index.view is not None: break
+            self.qt.events(10)
+        self.assertIsNotNone(parts.index.view, "the index never built")
+        # Force the COMPACT presentation: the arrays drop from the
+        # index, so a cold seek genuinely hydrates from the served
+        # file (the true RAW source), and the prepared store's disk
+        # path is the only fallback once the RAM tiers evict.
+        index = parts.index.view._index
+        index.compact = True
+        index.hydrated_layers = set()
+        # The live print's window (followed 2 -> {1,2,3}) would
+        # otherwise keep re-decoding layer 3 as its ghost after the
+        # state evictions below; park the live anchor at 0.
+        service.set_followed_layer(0)
+
+        def seek_to_available(layer):
+            start = time.monotonic()
+            model.setFollowerLayerAnchor(layer)
+            for _ in range(400):
+                self.qt.events(10)
+                if model.plateProgressAnchor == layer and model.plateProgressAvailable:
+                    # The later-layer slider contract: the range is
+                    # the sought layer's own motion count the moment
+                    # the current lands (the disabled-slider
+                    # regression's enabled side).
+                    self.assertEqual(model.plateLayerMotionCount, 20000,
+                                     "the slider's range is not the sought layer's count")
+                    return (time.monotonic() - start) * 1000.0
+            self.fail("the seek to %d never became available" % layer)
+
+        def source_of(layer):
+            return service._presentation_source(layer)
+
+        # Each leg reports the classifier's OWN verdict for the
+        # sought layer — the rows are labeled by what actually
+        # served them, never by assumption.
+        legs = []
+
+        def leg(name, seek):
+            served = source_of(3)
+            elapsed = seek()
+            legs.append((name, served, elapsed))
+            return elapsed
+
+        # RAW cold: the decoded cache holds nothing; the sought layer
+        # hydrates from the served file and decodes.
+        raw = leg("raw", lambda: seek_to_available(3))
+        # DECODED hot: a FAR seek away (layer 0's window never holds
+        # layer 3) and back — the payload is already in the
+        # presentation cache.
+        seek_to_available(0)
+        decoded = leg("decoded", lambda: seek_to_available(3))
+        # PACKED RAM: leave the window, drain in-flight demands,
+        # evict the DECODED entry only — the encoded PPL1 remains
+        # and the re-seek decodes it back.
+        seek_to_available(0)
+        for _ in range(200):
+            self.qt.events(10)
+            if not service._busy and not service._hydrate:
+                break
+        service._decoded_lru.pop(3)
+        packed = leg("packed", lambda: seek_to_available(3))
+        # PREPARED DISK: wait for the background pass to publish,
+        # LEAVE the sought layer's window (an away-seek first), let
+        # every in-flight demand drain, and only then evict both RAM
+        # tiers — the re-seek's only remaining source is the store's
+        # file.
+        for _ in range(600):
+            self.qt.events(10)
+            if service._prepared_saved:
+                break
+        seek_to_available(0)
+        for _ in range(200):
+            self.qt.events(10)
+            if not service._busy and not service._hydrate:
+                break
+        service._decoded_lru.pop(3)
+        service._full_cache.pop(3, None)
+        prepared = leg("prepared", lambda: seek_to_available(3))
+        print("T_available: " + " | ".join("%s[%s] %.1f" % (name, served, ms)
+                                           for name, served, ms in legs) + " ms")
+        self.assertLess(raw, 6000.0, "the raw seek stalled")
+        self.assertLess(decoded, 1000.0, "the decoded-hot seek stalled")
+        self.assertLess(packed, 3000.0, "the packed seek stalled")
+        self.assertLess(prepared, 3000.0, "the prepared seek stalled")
+
+    @staticmethod
+    def _generated_gcode(layers, motions):
+        lines = ["; generated seek benchmark", "G90"]
+        for layer in range(layers):
+            lines.append(";LAYER:%d" % layer)
+            for m in range(motions):
+                lines.append("G1 X%.2f Y%.2f E0.02"
+                             % ((m % 200) * 0.5, (m // 200) * 0.4))
+        return "\n".join(lines).encode("utf-8")
+
     def test_mesh_observation_flows_through_coordinator_not_monitor(self):
         model = self.monitor()
         status = self.status()
@@ -1976,10 +2187,13 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                         "a worker thread committed the raster")
 
 
-class SeekMatrixBenchmarks(NativeRenderSchedulerTests):
-    """The final seek matrix: printed evidence with generous hard
-    bounds — the numbers are read from the run output, never raced
-    against."""
+class RendererOnlySeekBenchmarks(NativeRenderSchedulerTests):
+    """A RENDERER/SCHEDULER microbenchmark, not an end-to-end latency
+    proof: the payloads arrive pre-decoded via _qt_window(), so the
+    request/classify/read/decode/prepare/coordinator/publish stages
+    are NOT in these numbers. The true slider-to-available and
+    slider-to-picture measurements live in the end-to-end
+    benchmarks."""
 
     def _time_seek(self, model, name, anchor, payload, split=None):
         surface = model._plate_surfaces[name]
@@ -1990,10 +2204,12 @@ class SeekMatrixBenchmarks(NativeRenderSchedulerTests):
         self._pump_rasters(model, name)
         return (time.monotonic() - start) * 1000.0
 
-    def test_the_final_seek_matrix(self):
-        # The 60k/150k/300k/500k matrix: the cold seek's full cost,
-        # the raster-hot seek's ZERO committed work (the final
-        # target), and the adjacent seek's one-new-layer cost.
+    def test_the_renderer_only_seek_matrix(self):
+        # The 60k/150k/300k/500k RENDERER matrix: the cold seek's
+        # render+schedule cost on a pre-decoded payload, the
+        # raster-hot seek's ZERO committed work (the final target's
+        # raster side), and the adjacent seek's one-new-layer cost.
+        # Request/read/decode/publish stages are deliberately absent.
         model = self.monitor()
         self._feed(model, "popover", width=563, height=492)
         surface = model._plate_surfaces["popover"]
