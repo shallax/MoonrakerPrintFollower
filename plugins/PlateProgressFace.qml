@@ -209,6 +209,28 @@ Item {
         return split != null && layer != null && split >= layer.motions && _rasterOf(layer);
     }
 
+    function _partialPrefixReady() {
+        // The native prefix shows while it covers the printed
+        // portion: rendered for a split not beyond the live one (a
+        // backward move hides it until the fresh prefix lands).
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return layer != null && split != null && layer.prefixWidth !== undefined && layer.prefixWidth > 0 && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
+    }
+
+    function _prefixFrom() {
+        // The canvas tail starts where the prefix ended: the
+        // accumulation draws only the motions beyond it.
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        if (layer == null || split == null || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split) {
+            return -1;
+        }
+        return layer.prefixSplit;
+    }
+
     function _partialBase() {
         // The base marks the unprinted suffix of a PARTIAL layer
         // : a 0% layer draws nothing
@@ -378,10 +400,10 @@ Item {
     function _progressKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        // The raster and travel arrivals ride the key too: the full
-        // picture's takeover must clear the vector canvas when the
-        // Images land .
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        // The raster, travel and PREFIX arrivals ride the key too:
+        // the prefix's landing must reset the stack so the canvas
+        // redraws only the tail beyond it.
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
@@ -553,6 +575,17 @@ Item {
         visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
         source: visible ? root.progress.layers.current.travelData : ""
     }
+    // The printed PREFIX (the measured verdict: the partial states'
+    // QML walk costs ~900 ms at 500k motions): the worker paints
+    // the motions below the split and the canvas below draws only
+    // the live delta's tail. Hidden while stale (a backward move
+    // renders a fresh prefix first).
+    Image {
+        id: progressPrefixImage
+        anchors.fill: parent
+        visible: _partialPrefixReady()
+        source: _partialPrefixReady() ? root.progress.layers.current.prefixData : ""
+    }
 
     // The ghost layers: the worker's rasters at ghost opacity —
     // role-free assets, the opacity applied at composition.
@@ -689,13 +722,15 @@ Item {
             }
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3
-            // floor). The partial scrub keeps the vector delta path.
-            _drawLayer(ctx, current, 1.0, split, false, root._lastSplit);
+            // floor). The partial scrub keeps the vector delta path;
+            // a native prefix below shortens the walk to its tail.
+            var from = Math.max(root._lastSplit, _prefixFrom());
+            _drawLayer(ctx, current, 1.0, split, false, from);
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live
             // rulings).
             if (root.showTravels) {
-                _drawTravels(ctx, current.travels, split, root._lastSplit);
+                _drawTravels(ctx, current.travels, split, from);
             }
             root._lastSplit = split;
             root._paintsSinceReset += 1;
@@ -711,11 +746,31 @@ Item {
     // the same way: the full repaint from -1, the accumulated delta on
     // top of the last count.
     function _firstEdge(points, from) {
-        var i = 1;
-        while (i < points.length && from >= 0 && points[i][2] < from) {
-            ++i;
+        // The motions within a segment never decrease: the first
+        // edge at or after `from` is a binary search, never a
+        // linear walk — the tail after a native prefix would
+        // otherwise re-scan the whole printed portion on every
+        // paint.
+        if (from <= 0 || points.length < 2) {
+            return 1;
         }
-        return i;
+        var low = 1;
+        var high = points.length - 1;
+        while (low < high) {
+            var mid = (low + high) >> 1;
+            if (points[mid][2] < from) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        // Every motion below `from`: the first edge past the
+        // segment's end — exactly the linear walk's off-the-end
+        // result, which the callers read as "nothing to draw".
+        if (points[low][2] < from) {
+            return points.length;
+        }
+        return low;
     }
 
     function _edgePrinted(points, i, split) {

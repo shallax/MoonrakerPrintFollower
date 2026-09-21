@@ -33,7 +33,7 @@ def _british_spelling() -> bool:
 
 
 from .MonitorCamera import MonitorCamera
-from .PlateQt import PlateLayer, RasterBridge, _RasterJob, png_file, render_layer_raster
+from .PlateQt import PlateLayer, RasterBridge, _RasterJob, png_file, render_layer_prefix, render_layer_raster
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -1238,7 +1238,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # objects; opening or expanding resumes the live values.
         if self._follower_popover_open:
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
-                                                     popover["layers"], popover.get("anchor"))
+                                                     popover["layers"], popover.get("anchor"),
+                                                     popover.get("method"), popover.get("split"))
                                      if popover is not None else {})
             values["plateScrubVector"] = self._scrub_vector_for(popover)
             values["plateSplit"] = popover["split"] if popover is not None else None
@@ -1277,7 +1278,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # mini never re-renders.
         if self._sections.get("plateprogress", True) is not False:
             values["plateLiveLayers"] = (self._qt_window(self._plate_surfaces["mini"],
-                                                         progress["layers"], progress.get("anchor"))
+                                                         progress["layers"], progress.get("anchor"),
+                                                         progress.get("method"), progress.get("split"))
                                          if progress is not None else {})
             values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
@@ -2866,13 +2868,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return None
         return current
 
-    def _qt_window(self, surface, layers, anchor):
+    def _qt_window(self, surface, layers, anchor, method=None, split=None):
         """The prev/current/next window for ONE SURFACE: the
         wrappers are created lazily and
         the desired state — current first, then the ghosts — feeds
         the surface's scheduler. The anchor lives ON the surface:
         the mini validates against its live anchor, the popover
-        against whichever layer it displays (frozen included)."""
+        against whichever layer it displays (frozen included). The
+        SPLIT rides the desired state too: a partial layer's
+        printed prefix is its own demand."""
         surface = self._surface_for(surface)
         if surface is None or not layers:
             return {}
@@ -2882,6 +2886,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.anchor = anchor
             surface.anchor_epoch += 1
         current = self._qt_layer(surface, layers.get("current"), anchor)
+        self._trace("T6 payload obtained", {
+            "surface": surface.name, "layer": anchor,
+            "method": method or (layers.get("method") if isinstance(layers, dict) else None)})
         self._trace("T7/T8 layer obtained", {
             "surface": surface.name, "layer": anchor,
             "raster": "hot" if self._raster_hot(surface, anchor) else "miss"})
@@ -2898,9 +2905,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                        for role, layer in (("prev", anchor - 1), ("next", anchor + 1))
                        if layers.get(role) is not None and layer >= 0},
             "epoch": surface.anchor_epoch,
+            "split": split,
         }
         self._schedule_surface(surface)
         return window
+
+    def _prefix_wanted(self, surface, layer, split):
+        """The partial layer's prefix demand: none yet, a backward
+        move, or the live split has run a quarter of the layer past
+        the rendered prefix — the tail's QML walk stays a cheap
+        delta between prefix refreshes."""
+        wrapped = surface.layers.get(layer)
+        if wrapped is None or split is None or split <= 0:
+            return False
+        motions = wrapped.motions
+        if split >= motions:
+            return False
+        have = wrapped.prefixSplit
+        if have < 0:
+            return True
+        if split < have:
+            return True
+        return split - have > max(100, int(motions * 0.25))
 
     def _schedule_surface(self, surface):
         """The bounded demand scheduler :
@@ -2916,47 +2942,77 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         desired = surface.desired
         if desired is None:
             return
-        order = [desired["current"]]
+        split = desired.get("split")
+        # The demand queue, highest priority first: a partial
+        # layer's printed PREFIX (the measured verdict — the QML
+        # walk for the partial states costs ~900 ms at 500k), then
+        # the full current (the grey base rides it), then the
+        # ghosts.
+        demand = []
+        current = desired["current"]
+        if self._prefix_wanted(surface, current, split):
+            demand.append(("prefix", current, split))
+        demand.append(("full", current, None))
         for role in ("prev", "next"):
             layer = desired["ghosts"].get(role)
             if layer is not None:
-                order.append(layer)
+                demand.append(("full", layer, None))
         # The scheduler's depth: the not-yet-hot demands this pass
         # could burn work for (the trace and the rapid-drag report
         # read it).
-        depth = sum(1 for layer in order if not self._raster_hot(surface, layer))
+        depth = 0
+        for _kind, layer, _split in demand:
+            if _kind == "prefix":
+                depth += 1
+            elif not self._raster_hot(surface, layer):
+                depth += 1
         surface.stats["depth_max"] = max(surface.stats["depth_max"], depth)
-        for layer in order:
+        for kind, layer, prefix_split in demand:
             wrapped = surface.layers.get(layer)
-            if wrapped is None or self._raster_hot(surface, layer):
+            if wrapped is None:
+                continue
+            if kind == "prefix":
+                if not self._prefix_wanted(surface, layer, split):
+                    continue
+            elif self._raster_hot(surface, layer):
                 continue
             token = surface.tokens.get(layer, 0) + 1
             surface.tokens[layer] = token
             surface.render_count[layer] = surface.render_count.get(layer, 0) + 1
+            generation = surface.generation
             self._trace("T9 raster start", {
-                "surface": surface.name, "layer": layer, "queue": depth})
+                "surface": surface.name, "layer": layer, "queue": depth,
+                "generation": generation, "token": token, "kind": kind,
+                "split": prefix_split})
             plot = surface.plot
             view = dict(surface.view)
-            generation = surface.generation
             key = surface.render_key()
             surface.job = {"layer": layer, "token": token,
                            "generation": generation, "state": "submitted"}
-            ticket = (surface.name, layer, token, generation, key)
+            ticket = (surface.name, layer, token, generation, key, kind,
+                      prefix_split)
             payload = wrapped._payload
 
             def build(ticket=ticket, payload=payload, plot=plot, view=view,
                       surface=surface, layer=layer, generation=generation,
+                      kind=kind, prefix_split=prefix_split,
                       directory=self._raster_cache_dir):
                 self._raster_bridge.started.emit(ticket)
+                stem = "r-%s-%d-%d" % (surface.name, layer, generation)
+                if kind == "prefix":
+                    image = render_layer_prefix(payload, plot, view, prefix_split)
+                    self._raster_bridge.done.emit(
+                        ("prefix", image, png_file(image, directory, stem + "-p"),
+                         prefix_split), ticket)
+                    return
                 coloured, base, travels = render_layer_raster(payload, plot, view)
                 # The PNG writes ride the WORKER: the owner's commit
                 # stores the pre-written file URLs (the scene-graph
                 # Image transport — see PlateQt.png_file). The
                 # generation rides the stem, so a re-render never
                 # clobbers a file an Image is still reading.
-                stem = "r-%s-%d-%d" % (surface.name, layer, generation)
                 self._raster_bridge.done.emit(
-                    (coloured, png_file(coloured, directory, stem + "-c"),
+                    ("full", coloured, png_file(coloured, directory, stem + "-c"),
                      base, png_file(base, directory, stem + "-b"),
                      travels, png_file(travels, directory, stem + "-t")), ticket)
             QThreadPool.globalInstance().start(_RasterJob(build))
@@ -2987,7 +3043,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _raster_started(self, ticket):
         """The worker's first line: a job the demand replaced while
         still queued is countable as superseded-before-start."""
-        name, layer, token, generation, _key = ticket
+        name, layer, token, generation, _key, _kind, _split = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
@@ -3000,10 +3056,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(object, object)
     def _trace(self, stage, extra=None):
-        """The seek timeline , disabled by
-        default: MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's
-        seek_trace) records each stage with its wall-clock offset
-        from the seek's entry."""
+        """The seek timeline, disabled by default:
+        MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's seek_trace)
+        records each stage with its wall-clock offset from the
+        seek's entry.
+
+        The measurable stages: T1 the debounced slider commit (the
+        raw slider tick lives in QML), T6 the payload's arrival
+        (its method says which index path served it), T7/T8 the
+        PlateLayer obtained with the raster hot/miss verdict, T9
+        the job's demand with the queue depth, generation and
+        token, T10 the worker's first line, T11 the owner-thread
+        commit with the scheduler's counters, T12 a context
+        commit. The coordinator's decode (its prepared-store
+        lookup through the hot cache) happens between T1 and T6
+        and is bracketed by them; Qt exposes no trustworthy
+        signal for the QML's own composition after T12, so the
+        timeline ends at the last measurable event."""
         if not self._seek_trace_enabled and not (self._config() is not None and self._config().seek_trace):
             return
         if stage == "T1 seek entry":
@@ -3023,8 +3092,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         hand the images to the wrapper, and let the scheduler take
         the next demand. The bookkeeping clears on EVERY exit — a
         stale or discarded job never leaves residue ."""
-        coloured, coloured_data, base, base_data, travels, travel_data = images
-        name, layer, token, generation, key = ticket
+        name, layer, token, generation, key, kind, prefix_split = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
             return
@@ -3043,6 +3111,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._schedule_surface(surface)
             return
         wrapped = surface.layers[layer]
+        if kind == "prefix":
+            _kind, prefix, prefix_data, prefix_split = images
+            wrapped.set_prefix(prefix, prefix_data, prefix_split)
+            surface.tokens.pop(layer, None)
+            surface.stats["committed"] += 1
+            self._trace("T11 raster committed", {
+                "surface": name, "layer": layer, "kind": "prefix",
+                "split": prefix_split})
+            self._prune_raster_cache()
+            self._schedule_surface(surface)
+            self._publish()
+            return
+        _kind, coloured, coloured_data, base, base_data, travels, travel_data = images
         wrapped.set_raster(coloured, key, coloured_data)
         wrapped.set_base(base, base_data)
         wrapped.set_travels(travels, travel_data)
@@ -3053,7 +3134,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.stats["committed"] += 1
         else:
             surface.stats["discarded"] += 1
-        self._trace("T11 raster committed", {"surface": name, "layer": layer})
+        self._trace("T11 raster committed", {
+            "surface": name, "layer": layer,
+            "started": surface.stats["started"],
+            "committed": surface.stats["committed"],
+            "superseded": surface.stats["superseded"],
+            "discarded": surface.stats["discarded"],
+            "depth_max": surface.stats["depth_max"]})
         self._prune_raster_cache()
         self._schedule_surface(surface)
         self._publish()

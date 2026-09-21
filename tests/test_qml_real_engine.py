@@ -1950,12 +1950,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
             image = window.grabWindow()
         return image
 
-    def _native_layer(self, payload, face):
+    def _native_layer(self, payload, face, prefix_split=None):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
         scrub vector's fallback cannot rescue a missing blit."""
-        from plugins.PlateQt import PlateLayer, png_file, render_layer_raster
+        from plugins.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
         raster_dir = "/tmp/mpf/raster-probe"
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -1983,6 +1983,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
             layer.set_base(base, png_file(base, raster_dir, stem + "-b"))
         if travels.width() > 0:
             layer.set_travels(travels, png_file(travels, raster_dir, stem + "-t"))
+        if prefix_split is not None:
+            prefix = render_layer_prefix(payload, plot, view, prefix_split)
+            layer.set_prefix(prefix, png_file(prefix, raster_dir, stem + "-p"),
+                             prefix_split)
         return layer
 
     def _mount_empty(self):
@@ -2185,6 +2189,24 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setSplit(0)
         _image, count = self._wait_red(window, face, want=False)
         self.assertEqual(count, 0, "the 0% layer leaked the full raster")
+
+    def test_the_partial_printed_portion_renders_through_the_native_prefix(self):
+        # The partial states' prefix: the printed portion blits from
+        # the native asset — the vector walk covers only the tail,
+        # and here (a PlateLayer, no .classes, split < motions)
+        # every red pixel provably came from the prefix.
+        monitor, window, face, baseline = self._mount_empty()
+        payload = {
+            "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                        [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                        [0.0, 0.0, 20.0]]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=12)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(12)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the partial prefix never drew")
 
     def test_full_progress_travels_render_without_the_vector(self):
         # : showTravels at 100% — the travel
