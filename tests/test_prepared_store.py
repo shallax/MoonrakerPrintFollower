@@ -27,7 +27,7 @@ class PreparedStoreTests(unittest.TestCase):
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._dir.cleanup)
-        self.cache = PreparedCache(self._dir.name, max_bytes=64 * 1024 * 1024)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
 
     def test_finalise_round_trips_through_random_access(self):
         encodings = [encode_layer(_payload(layer)) for layer in range(6)]
@@ -50,6 +50,25 @@ class PreparedStoreTests(unittest.TestCase):
     def test_a_different_identity_never_reads(self):
         self.cache.finalise("print-1", [encode_layer(_payload(0))])
         self.assertIsNone(self.cache.load_table("print-2"))
+
+    def test_a_protected_oldest_entry_does_not_stop_the_eviction(self):
+        # The review's finding 13: the protected CURRENT file is the
+        # oldest — the policy must skip it and evict the next
+        # candidates until the directory fits.
+        cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+        keep_path = cache.finalise("print-1", [encode_layer(_dense(i)) for i in range(200)])
+        cache.finalise("print-2", [encode_layer(_dense(i)) for i in range(200)])
+        cache.finalise("print-3", [encode_layer(_dense(i)) for i in range(200)])
+        # The bound tightens AFTER the writes (the finalise's own
+        # eviction must not pre-empt the protected file), so the
+        # protected-oldest case runs cleanly.
+        cache.max_bytes = 16 * 1024 * 1024
+        cache._evict(keep_path)
+        self.assertTrue(os.path.exists(keep_path),
+                        "the protected file was evicted")
+        survivors = [name for name in os.listdir(cache.directory) if name.endswith(".mpfp")]
+        self.assertEqual(survivors, [os.path.basename(keep_path)],
+                         "the eviction stopped at the protected entry")
 
     def test_the_size_policy_evicts_the_oldest_file(self):
         cache = PreparedCache(self._dir.name, max_bytes=16 * 1024 * 1024)
