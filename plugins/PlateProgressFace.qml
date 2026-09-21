@@ -154,6 +154,23 @@ Item {
         }
     }
 
+    // The pan-only gesture's exit drive: the zoom animator only runs
+    // for wheels, so a drag's release re-checks the barrier until the
+    // settle's invalidation and the exact re-render complete (the
+    // interaction stays on the warm raster through it — never a stale
+    // exact scene, never an endless interaction).
+    Timer {
+        id: panExitCheck
+        interval: 80
+        onTriggered: {
+            if (root._interactionActive && !zoomAnimator.running && _exactReady()) {
+                root._interactionActive = false;
+            } else if (root._interactionActive && !zoomAnimator.running) {
+                restart();  // the exact scene is still reassembling
+            }
+        }
+    }
+
     // The smooth zoom's frame driver: an exponential ease-out toward
     // the CURRENT target (k per 16 ms tick — the display converges
     // in roughly 150-250 ms, feels immediate, never overshoots).
@@ -180,7 +197,7 @@ Item {
             }
             if (newScale === root.viewScale) {
                 zoomAnimator.stop();
-                if (root._exactReady()) {
+                if (root._exactReady() && !viewGesture.pressed) {
                     // The display stands at the target and the
                     // complete exact scene is presentation-ready:
                     // the soft-to-sharp swap.
@@ -1299,6 +1316,12 @@ Item {
             if (mapping._plot == null) {
                 return;
             }
+            // A held drag owns the camera: the wheel is inert until
+            // the pointer releases (the live ruling — no zoom while
+            // panning).
+            if (viewGesture.pressed) {
+                return;
+            }
             var factor = wheel.angleDelta.y > 0 ? 1.25 : 0.8;
             var target = Math.min(20.0, Math.max(1.0, root.viewScale * factor));
             if (target === root.viewScale && root.displayScale === root.viewScale) {
@@ -1334,6 +1357,17 @@ Item {
         }
         onPressed: function (mouse) {
             root._enterInteraction();
+            // The grab takes the camera wholesale: a running ease
+            // stops at the camera the user sees and the invisible
+            // target follows the display — the drag then moves both
+            // together, so no snap at the press and none at the
+            // release.
+            if (zoomAnimator.running) {
+                zoomAnimator.stop();
+                root.viewScale = root.displayScale;
+            }
+            root.viewPanX = root.displayPanX;
+            root.viewPanY = root.displayPanY;
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
@@ -1350,6 +1384,17 @@ Item {
             root.viewPanY += mouse.y - root._dragY;
             root._dragX = mouse.x;
             root._dragY = mouse.y;
+        }
+        onReleased: {
+            // Nothing re-syncs here — the press already claimed the
+            // camera for the drag (the target follows the display,
+            // the ease stopped), and a re-anchor would jump the
+            // display (the live report's release snap). The exit's
+            // re-check drives the barrier until the complete exact
+            // scene is presentation-ready.
+            if (root._interactionActive) {
+                panExitCheck.restart();
+            }
         }
         onDoubleClicked: {
             // The reset is a programmatic camera change: the target

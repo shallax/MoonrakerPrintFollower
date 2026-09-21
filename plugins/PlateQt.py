@@ -515,15 +515,29 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
     _paint_grid(painter, plot, view)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
-    for payload in (window.get("prev"), window.get("next")):
-        if payload is None:
-            continue
-        painter.setOpacity(0.30)
-        _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
-        painter.setOpacity(1.0)
-        if cancel is not None and cancel.is_set():
-            painter.end()
-            return image
+    # The legend checkboxes are part of the scene's CONTENT: the
+    # warm raster must mirror the exact view's toggles — a ghost the
+    # user hid, a base or the travels turned off, all stay off.
+    if view.get("showPrevious", True):
+        for payload in (window.get("prev"),):
+            if payload is None:
+                continue
+            painter.setOpacity(0.30)
+            _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
+            painter.setOpacity(1.0)
+            if cancel is not None and cancel.is_set():
+                painter.end()
+                return image
+    if view.get("showNext", True):
+        for payload in (window.get("next"),):
+            if payload is None:
+                continue
+            painter.setOpacity(0.30)
+            _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
+            painter.setOpacity(1.0)
+            if cancel is not None and cancel.is_set():
+                painter.end()
+                return image
     current = window.get("current")
     if current is None:
         painter.end()
@@ -533,20 +547,24 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
         # The partial state: the grey whole-layer base, then the
         # printed prefix (the vector tail beyond the live split is
         # NOT printed — the boundary is the scene's truth).
-        grey_pen = QPen(pen)
-        grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
-        painter.setPen(grey_pen)
-        painter.setOpacity(0.55)
-        # The colour rides the CLASS unless forced: the base is the
-        # grey silhouette, never the feature colours (the live bug —
-        # the nav read as a 100%-complete layer).
-        _paint_segments(painter, grey_pen, current, plot, view,
-                        colour=_PLATE_BASE_COLOUR, cancel=cancel)
-        painter.setOpacity(1.0)
-        painter.setPen(pen)
+        if view.get("showBase", True):
+            grey_pen = QPen(pen)
+            grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
+            painter.setPen(grey_pen)
+            painter.setOpacity(0.55)
+            # The colour rides the CLASS unless forced: the base is
+            # the grey silhouette, never the feature colours (the
+            # live bug — the nav read as a 100%-complete layer).
+            _paint_segments(painter, grey_pen, current, plot, view,
+                            colour=_PLATE_BASE_COLOUR, cancel=cancel)
+            painter.setOpacity(1.0)
+            painter.setPen(pen)
         _paint_below_split(painter, pen, current, plot, view, split, cancel=cancel)
     else:
         _paint_segments(painter, pen, current, plot, view, cancel=cancel)
+    if not view.get("showTravels", False) or not current.get("travels"):
+        painter.end()
+        return image
     if current.get("travels"):
         tpen = QPen(pen)
         tpen.setWidthF(max(0.01, pen.widthF()

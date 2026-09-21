@@ -3211,6 +3211,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "travelVisualRatio": surface.view.get("travelVisualRatio"),
                 "compact": False, "panX": 0.0, "panY": 0.0,
                 "backing": backing,
+                # The legend checkboxes are the scene's CONTENT: the
+                # warm raster must mirror the exact view's toggles.
+                "showPrevious": bool(getattr(self, "followerShowPrevious", True)),
+                "showNext": bool(getattr(self, "followerShowNext", True)),
+                "showBase": bool(getattr(self, "followerShowBase", True)),
+                "showTravels": bool(getattr(self, "followerShowTravels", False)),
                 # The bed's machine bounds: the grid rides the same
                 # composite — the COMPLETE scene (the grid AND the
                 # geometry) switches to the warm raster as one.
