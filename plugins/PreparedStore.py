@@ -129,6 +129,62 @@ class PreparedCache:
         self._evict(path)
         return path
 
+    def open_for_write(self, identity: str, layer_count: int) -> Optional[dict]:
+        """The incremental writer (the review's finding 9): a temp
+        file accumulates the pass's encodings layer by layer, so the
+        first session never retains the whole cold store in RAM. The
+        header and the table are written at `finish_write`; a partial
+        temp file never reads as complete."""
+        if layer_count <= 0:
+            return None
+        path = self._path(identity)
+        temp = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
+        try:
+            handle = open(temp, "wb")
+        except OSError:
+            return None
+        # Reserve the header and the table (the payloads append
+        # behind them; the finalise back-fills).
+        handle.write(b"\0" * (struct.calcsize(_HEADER_FMT) + len(identity.encode("utf-8"))
+                              + layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
+        return {"identity": identity, "temp": temp, "handle": handle,
+                "layer_count": layer_count, "table": [None] * layer_count}
+
+    def append(self, writer: dict, layer: int, payload: bytes) -> None:
+        if layer < 0 or layer >= writer["layer_count"] or writer["table"][layer] is not None:
+            return
+        handle = writer["handle"]
+        writer["table"][layer] = (handle.tell(), len(payload))
+        handle.write(payload)
+
+    def finish_write(self, writer: dict) -> Optional[str]:
+        """Write the header and the table, then atomically publish."""
+        identity = writer["identity"]
+        handle = writer["handle"]
+        try:
+            handle.seek(0)
+            handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
+                                     len(identity.encode("utf-8")), writer["layer_count"]))
+            handle.write(identity.encode("utf-8"))
+            for entry in writer["table"]:
+                if entry is None:
+                    entry = (0, 0)  # a layer the pass could not prepare
+                handle.write(struct.pack(_TABLE_ENTRY_FMT, entry[0], entry[1]))
+            handle.close()
+            os.replace(writer["temp"], self._path(identity))
+        except OSError:
+            try:
+                handle.close()
+            except OSError:
+                pass
+            try:
+                os.unlink(writer["temp"])
+            except OSError:
+                pass
+            return None
+        self._evict(self._path(identity))
+        return self._path(identity)
+
     def _evict(self, keep: str) -> None:
         """The size policy: drop the least-recently-accessed print
         files while the directory's total exceeds the bound (the

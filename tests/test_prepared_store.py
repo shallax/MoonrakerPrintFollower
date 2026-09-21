@@ -47,6 +47,24 @@ class PreparedStoreTests(unittest.TestCase):
             handle.truncate(os.path.getsize(path) - 10)
         self.assertIsNone(self.cache.load_table("print-1"))
 
+    def test_the_incremental_writer_publishes_atomically(self):
+        # The review's finding 9: the first session appends layer by
+        # layer (no full-RAM finalisation), and an unfinished writer
+        # never reads as complete.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.assertIsNotNone(writer)
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.assertIsNone(self.cache.load_table("print-1"),
+                          "an unfinished writer read as complete")
+        path = self.cache.finish_write(writer)
+        self.assertIsNotNone(path)
+        table = self.cache.load_table("print-1")
+        self.assertEqual(len(table), 3)
+        for layer in range(3):
+            raw = self.cache.read("print-1", table, layer)
+            self.assertEqual(decode_layer(raw)["classes"]["SKIN"][0][1][1], float(layer))
+
     def test_a_different_identity_never_reads(self):
         self.cache.finalise("print-1", [encode_layer(_payload(0))])
         self.assertIsNone(self.cache.load_table("print-2"))
