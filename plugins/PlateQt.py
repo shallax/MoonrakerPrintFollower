@@ -113,9 +113,12 @@ class PlateLayer(QObject):
         self._raster = None
         self._base = None
         self._travels = None
+        self._prefix = None
         self._raster_data = ""
         self._base_data = ""
         self._travel_data = ""
+        self._prefix_data = ""
+        self._prefix_split = -1
         self._render_key = None
         self._expected_key = None
 
@@ -175,6 +178,23 @@ class PlateLayer(QObject):
     def travelData(self) -> str:
         return self._travel_data
 
+    @pyqtProperty(QImage, notify=rasterReady)
+    def prefixRaster(self) -> QImage:
+        """The printed prefix, rendered up to `prefixSplit`."""
+        return self._prefix if self._prefix is not None else _NULL_IMAGE
+
+    @pyqtProperty(int, notify=rasterReady)
+    def prefixWidth(self) -> int:
+        return self._prefix.width() if self._prefix is not None else 0
+
+    @pyqtProperty(int, notify=rasterReady)
+    def prefixSplit(self) -> int:
+        return self._prefix_split
+
+    @pyqtProperty(str, notify=rasterReady)
+    def prefixData(self) -> str:
+        return self._prefix_data
+
     @pyqtProperty(bool, notify=rasterReady)
     def rasterValid(self) -> bool:
         return self._raster is not None and self._render_key is not None \
@@ -204,6 +224,12 @@ class PlateLayer(QObject):
     def set_travels(self, image: QImage, data: str = None) -> None:
         self._travels = image
         self._travel_data = data if data is not None else ""
+        self.rasterReady.emit()
+
+    def set_prefix(self, image: QImage, data: str, split: int) -> None:
+        self._prefix = image
+        self._prefix_data = data
+        self._prefix_split = split
         self.rasterReady.emit()
 
 
@@ -261,6 +287,58 @@ def _derive_grey(coloured: QImage) -> QImage:
     painter.fillRect(0, 0, grey.width(), grey.height(), QColor(_PLATE_BASE_COLOUR))
     painter.end()
     return grey
+
+
+def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int) -> QImage:
+    """The printed PREFIX as its own asset (the measured verdict:
+    the QML vertex walk for a partial layer costs ~900 ms at 500k
+    motions on the UI thread — the initial paint, jumps and
+    backward scrubs all pay it). The worker walks the same
+    QPainterPath but strokes only the motions below the split, so
+    the partial layer's printed portion arrives as a blit and QML
+    draws only the live delta's tail. The walk is O(motions) —
+    the split merely gates the stroke, the boundary cost stays in
+    the worker."""
+    line_scale = float(view.get("lineScale", 0.7))
+    compact = bool(view.get("compact", False))
+    sx, _sy, _ox, _oy, _bx, _by = _transform(plot, view)
+    stroke = max(0.01, float(view.get("nominalWidthMm", 0.2)) * sx * line_scale
+                 * (7.0 if compact else 1.0))
+    image = _new_canvas(view)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    pen = QPen()
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
+    for name, segments in (payload.get("classes") or {}).items():
+        pen.setColor(QColor(_PLATE_CLASS_COLOURS.get(name, "#888888")))
+        painter.setPen(pen)
+        for points in segments:
+            if len(points) < 2:
+                continue
+            # The motion owning the edge ENDING here: the split is a
+            # COUNT of printed motions, and an edge draws when its
+            # own motion is below it — the same rule the face's
+            # painters read. The motions within a segment never
+            # decrease, so the first boundary ends the walk.
+            path = QPainterPath()
+            drew = False
+            for i in range(1, len(points)):
+                if split >= 0 and points[i][2] >= split:
+                    break
+                if not drew:
+                    path.moveTo(offset_x + (points[i - 1][0] - bed_x_min) * sx,
+                                offset_y + (bed_y_max - points[i - 1][1]) * sy)
+                    drew = True
+                path.lineTo(offset_x + (points[i][0] - bed_x_min) * sx,
+                            offset_y + (bed_y_max - points[i][1]) * sy)
+            if drew:
+                painter.drawPath(path)
+    painter.end()
+    return image
 
 
 def render_layer_raster(payload: dict, plot: dict, view: dict) -> tuple:

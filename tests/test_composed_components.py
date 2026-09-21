@@ -1517,6 +1517,50 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertNotIn(0, surface.tokens,
                          "the evicted layer's token survived")
 
+    def test_a_partial_layer_demands_its_prefix_before_the_full_layer(self):
+        # The partial states' prefix: the printed portion renders
+        # natively FIRST, so the QML walk never covers the whole
+        # printed prefix — only the tail beyond it.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        self.assertEqual(wrapped.prefixSplit, 50,
+                         "the prefix never landed at the split")
+        self.assertGreater(wrapped.prefixWidth, 0)
+        self.assertTrue(wrapped.rasterValid, "the full layer never followed")
+        self.assertGreater(wrapped.baseWidth, 0, "the base never followed")
+
+    def test_the_prefix_refreshes_past_the_quarter_and_backward(self):
+        # A small live advance keeps the prefix; a quarter-layer
+        # advance or a backward move demands a fresh one.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 60)
+        self.assertEqual(wrapped.prefixSplit, 50,
+                         "a small advance re-rendered the prefix")
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 160)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(wrapped.prefixSplit, 160,
+                         "the quarter-layer advance never refreshed")
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 40)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(wrapped.prefixSplit, 40,
+                         "the backward move never refreshed")
+
     def test_a_stale_completion_cannot_touch_the_new_job(self):
         # : an old generation's worker result
         # arriving after a job switch is discarded, never committed.
@@ -1524,12 +1568,13 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self._feed(model, "popover", width=400, height=300)
         surface = model._plate_surfaces["popover"]
         self._window(model, "popover", 5)
-        ticket = ("popover", 5, 1, surface.generation, surface.render_key())
+        ticket = ("popover", 5, 1, surface.generation, surface.render_key(),
+                  "full", None)
         model._observe_follower_job("new-job")
         discarded = surface.stats["discarded"]
         from PyQt6.QtGui import QImage
         blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
-        model._raster_committed((blank, "", blank, "", blank, ""), ticket)
+        model._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
         self.assertEqual(surface.layers, {})
         self.assertEqual(surface.stats["discarded"], discarded + 1)
 
