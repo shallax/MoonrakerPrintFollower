@@ -30,6 +30,12 @@ _PLATE_CLASS_COLOURS = {
 }
 
 
+# The null stand-in for an unrendered layer's raster property: a
+# QImage-typed property must never return None (the live crash — the
+# TypeError crashed Cura through its handler).
+_NULL_IMAGE = QImage()
+
+
 class _RasterJob(QRunnable):
     """A one-shot raster build on Qt's shared pool."""
 
@@ -63,7 +69,10 @@ class PlateLayer(QObject):
 
     @pyqtProperty(QImage, notify=rasterReady)
     def raster(self) -> QImage:
-        return self._raster
+        # A QImage-typed property must never return None — the null
+        # image stands in until the worker lands (width 0, which the
+        # face's _rasterOf gate already reads as "not ready").
+        return self._raster if self._raster is not None else _NULL_IMAGE
 
     def set_raster(self, image: QImage) -> None:
         self._raster = image
