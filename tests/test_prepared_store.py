@@ -1,6 +1,6 @@
 """The file-backed prepared store's contract: random access, identity
 gating, atomic completion, the size policy, the abort path and the
-startup temp cleanup (the review's findings 20/21)."""
+startup temp cleanup ."""
 from __future__ import annotations
 
 import os
@@ -53,7 +53,7 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertIsNone(self.cache.load_table("print-1"))
 
     def test_the_incremental_writer_publishes_atomically(self):
-        # The review's finding 9: the first session appends layer by
+        # : the first session appends layer by
         # layer (no full-RAM finalisation), and an unfinished writer
         # never reads as complete.
         writer = self.cache.open_for_write("print-1", 3)
@@ -75,7 +75,7 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertIsNone(self.cache.load_table("print-2"))
 
     def test_a_finished_file_carries_the_completion_flag(self):
-        # The review's finding 16: the flag is what distinguishes a
+        # : the flag is what distinguishes a
         # genuinely uncacheable (0, 0) entry from a not-prepared-yet
         # hole — a finished pass stamps it, a published file always
         # carries it.
@@ -90,7 +90,7 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertEqual(loaded["table"][1], (0, 0))
 
     def test_an_aborted_writer_leaves_no_temp_file(self):
-        # The review's finding 20: the abort closes the handle and
+        # : the abort closes the handle and
         # removes the temp, however far the append got — and it is
         # idempotent for the exit paths that reach it twice.
         writer = self.cache.open_for_write("print-1", 3)
@@ -102,7 +102,7 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertEqual(leftovers, [], "the aborted writer left a temp file")
 
     def test_startup_removes_previous_crash_temp_files(self):
-        # The review's finding 21: crash leftovers accumulate forever
+        # : crash leftovers accumulate forever
         # (eviction only sees .mpfp) — a fresh cache instance cleans
         # them, and never touches a published file.
         self.cache.finalise("print-1", [encode_layer(_payload(0))])
@@ -115,7 +115,7 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertIsNotNone(reloaded.load_table("print-1"))
 
     def test_a_protected_oldest_entry_does_not_stop_the_eviction(self):
-        # The review's finding 13: the protected CURRENT file is the
+        # : the protected CURRENT file is the
         # oldest — the policy must skip it and evict the next
         # candidates until the directory fits.
         cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)

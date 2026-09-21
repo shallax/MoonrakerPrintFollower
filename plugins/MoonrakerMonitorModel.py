@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -32,7 +33,7 @@ def _british_spelling() -> bool:
 
 
 from .MonitorCamera import MonitorCamera
-from .PlateQt import PlateLayer, RasterBridge, _RasterJob, render_layer_raster
+from .PlateQt import PlateLayer, RasterBridge, _RasterJob, png_file, render_layer_raster
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -292,6 +293,51 @@ def value_property(kind, name, signal, default=None):
 _EMPTY_PLATE = {"objects": [], "truncated": 0, "excludedCount": 0}
 
 
+class _RenderSurface:
+    """One follower surface's native render context: the popover and the mini each own their view, plot,
+    generation, layer wrappers and scheduler state, so neither can
+    overwrite the other's context or invalidate its rasters. The
+    decoded payloads stay shared between surfaces; the rendered
+    images (and their keys) never are."""
+
+    def __init__(self, name):
+        self.name = name
+        self.plot = None
+        self.view = {}
+        self.generation = 0
+        self.layers = OrderedDict()          # layer -> PlateLayer (bound 6)
+        self.anchor = None
+        self.anchor_epoch = 0
+        # The desired demand, set per publish: the current layer and
+        # the ghost pair, stamped with the anchor epoch they belong
+        # to .
+        self.desired = None
+        self.tokens = {}                     # layer -> demand token
+        self.job = None                      # {"layer", "token", "generation", "state"}
+        self.render_count = {}               # layer -> raster requests
+        self.stats = {"started": 0, "committed": 0, "superseded": 0,
+                      "discarded": 0, "depth_max": 0}
+        # The staged plot/view pair: the setters stage, one zero-tick
+        # flush commits the burst .
+        self.stage = {"plot": None, "view": None, "armed": False}
+
+    def render_key(self):
+        """The key a raster must carry to display on this surface
+        : the generation (which bumps
+        exactly when the context changes) plus the explicit
+        pixel-affecting inputs, so a key is self-describing."""
+        view = self.view
+        plot = self.plot or {}
+        return (self.name, self.generation,
+                int(view.get("width") or 0), int(view.get("height") or 0),
+                bool(view.get("compact")), round(float(view.get("scale") or 1.0), 6),
+                round(float(view.get("lineScale") or 0.7), 6),
+                round(float(view.get("panX") or 0.0), 3), round(float(view.get("panY") or 0.0), 3),
+                round(float(plot.get("offsetX") or 0.0), 6), round(float(plot.get("offsetY") or 0.0), 6),
+                round(float(plot.get("sx") or 0.0), 6), round(float(plot.get("sy") or 0.0), 6),
+                round(float(plot.get("bedXMin") or 0.0), 6), round(float(plot.get("bedYMax") or 0.0), 6))
+
+
 class MoonrakerMonitorModel(PrinterOutputModel):
     whatsNewDismissed = pyqtSignal()
     monitorChanged = pyqtSignal()
@@ -366,9 +412,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # cycle BEFORE the new layer's payload arrives, so QML never
         # paints the new current layer as a pending base while it
         # still reads the previous attached state and then clears it
-        # (the review's signal-ordering finding — plateProgressChanged
-        # used to emit first and the pending canvas paid a full walk
-        # per seek for a picture it immediately discarded).
+        # .
         ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
                                  "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
@@ -514,37 +558,35 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_layer_anchor = -1
         self._follower_layer_split = None
         self._follower_job = None
-        # The native render pipeline (the review's round 3): a bounded
-        # LRU of PlateLayer QObjects whose RASTERS a worker paints —
-        # the QML's role shrinks to composition, and the vector
-        # geometry crosses only for the scrub's delta, as its own key.
-        self._plate_qt_layers = OrderedDict()
+        # The native render pipeline: PER-
+        # SURFACE render contexts  — the
+        # compact mini and the full popover hold their own view,
+        # plot, generation, layer wrappers and scheduler state. The
+        # QML's role shrinks to composition; the vector geometry
+        # crosses only for the scrub's delta, as its own key.
+        self._plate_surfaces = {"popover": _RenderSurface("popover"),
+                                "mini": _RenderSurface("mini")}
         self._plate_qt_job = None
-        # The raster's view inputs, fed by the QML on re-fit and on
-        # zoom/line changes; the generation invalidates stale renders.
-        self._plate_plot = None
-        self._plate_view = {}
-        # The render/view generation: a global counter bumped only
-        # when the view/job inputs change — NEVER per layer request
-        # (the review's finding 2: one window's three rasters share
-        # one generation and must all commit).
-        self._raster_generation = 0
-        # Per-layer request tokens within the current generation:
-        # the newest request per layer wins, and a new layer's
-        # request never invalidates another's in-flight render.
-        self._plate_pending = {}
         self._raster_bridge = RasterBridge(self)
-        self._plate_ghost_queue = None
-        # The render-count instrument (the review's findings 15/16):
-        # per-layer raster requests, so the adjacent/revisit tests
-        # prove N and N+1 never re-render.
-        self._plate_render_count = {}
-        # The seek trace (the review's finding 18): disabled by
-        # default; MOONRAKER_FOLLOWER_SEEK_TRACE=1 records the stage
-        # timeline with the queue depth per event.
+        # The scheduler's accounting: the
+        # worker reports its start AND its completion through the
+        # bridge, so a job superseded BEFORE it ran is countable.
+        self._raster_bridge.started.connect(self._raster_started)
+        self._raster_bridge.done.connect(self._raster_committed)
+        # The raster cache directory (the transport ruling): the
+        # QML Images consume file:// PNGs the workers write here —
+        # a data: URL loads but never renders, and a QImage variant
+        # segfaults the Canvas (both engine-proven). Startup owns
+        # no live files yet, so it clears the previous session's.
+        self._raster_cache_dir = os.path.join(
+            tempfile.gettempdir(), "mpf-raster-cache")
+        self._prune_raster_cache(keep=0)
+        # The seek trace: disabled by
+        # default; MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's
+        # seek_trace) records the stage timeline with the queue
+        # depth per event.
         self._seek_trace_enabled = os.environ.get("MOONRAKER_FOLLOWER_SEEK_TRACE") == "1"
         self._seek_trace = []
-        self._raster_bridge.done.connect(self._raster_committed)
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
@@ -600,9 +642,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._chart_open = False  # the pop-over's hydration gate (K)
         self._legend_payload = None
         self._data = MonitorData(client, self)
-        # The hydrated lock reaches the policy record (the phase-6
-        # security re-review, D7): a session that starts locked must
-        # read locked, not wait for the padlock to be cycled.
+        # The hydrated lock reaches the policy record: a session
+        # that starts locked must read locked, not wait for the
+        # padlock to be cycled.
         self._data.set_controls_locked(self._controls_locked)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
@@ -687,10 +729,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The console's saved-state colouring now rides its own 2 s
         # settle after each shard write (ConsoleController); the
         # preference-flush channel retired with the transcript (4.5.0).
-        # The publication coalescer (the 2026-09-19 performance
-        # review): ONE data.changed fans out through the
-        # collaborators, each of which used to publish the full model
-        # again — one landing built the projection three or four
+        # The publication coalescer: ONE data.changed fans out
+        # through the collaborators, each of which used to publish
+        # the full model again — one landing built the projection
+        # three or four
         # times. The heartbeat signals schedule; one flush per
         # event-loop turn rebuilds once. The two USER-ACTION
         # collaborators publish synchronously so a jog or slider's
@@ -795,10 +837,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_app_state = state
         if state == Qt.ApplicationState.ApplicationActive and previous not in (None, Qt.ApplicationState.ApplicationActive):
             # Woke up: reload the camera source once — for the ACTIVE
-            # monitor only; a deposed cached monitor must not publish
-            # (the 2026-09-19 review's F3). No veil — the stream may
-            # come back instantly, and a stuck veil would read as a
-            # failure the user must recover.
+            # monitor only; a deposed cached monitor must not
+            # publish. No veil — the stream may come back instantly,
+            # and a stuck veil would read as a failure the user must
+            # recover.
             if not getattr(self._data, "active", False):
                 return
             self._camera_refresh_nonce += 1
@@ -1091,10 +1133,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         return value if value is not None else sentinel
 
     def _schedule_publish(self):
-        """The publication coalescer (the 2026-09-19 performance
-        review): heartbeat signals schedule one flush per event-loop
-        turn, so a single data landing publishes the full model once
-        instead of once per collaborator."""
+        """The publication coalescer: heartbeat signals schedule one
+        flush per event-loop turn, so a single data landing
+        publishes the full model once instead of once per
+        collaborator."""
         if self._publish_pending:
             return
         self._publish_pending = True
@@ -1143,9 +1185,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             message = str(display.get("message") or "")
             if message:
                 values["monitorMessage"] = message
-        # The lane-identity caches (the 2026-09-19 review's I): the
-        # peripheral scan and the endstop projection rebuild only
-        # when their lane's data object actually changed — a
+        # The lane-identity caches: the peripheral scan and the
+        # endstop projection rebuild only when their lane's data
+        # object actually changed — a
         # core-only heartbeat used to rescan every sensor and fan.
         # The key spans BOTH lanes: the volatile exclude fields read
         # the core lane (the 4.6.0 move), so a core-only update must
@@ -1195,7 +1237,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # request). While gated the keys carry the last published
         # objects; opening or expanding resumes the live values.
         if self._follower_popover_open:
-            values["plateLayers"] = (self._qt_window(popover["layers"], popover.get("anchor"))
+            values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
+                                                     popover["layers"], popover.get("anchor"))
                                      if popover is not None else {})
             values["plateScrubVector"] = self._scrub_vector_for(popover)
             values["plateSplit"] = popover["split"] if popover is not None else None
@@ -1233,7 +1276,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
         if self._sections.get("plateprogress", True) is not False:
-            values["plateLiveLayers"] = (self._qt_window(progress["layers"], progress.get("anchor"))
+            values["plateLiveLayers"] = (self._qt_window(self._plate_surfaces["mini"],
+                                                         progress["layers"], progress.get("anchor"))
                                          if progress is not None else {})
             values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
@@ -1257,7 +1301,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
-        # drawn live (the review's F11).
+        # drawn live .
         motion = self._data.snapshot.core.get("motion_report") or {}
         position = motion.get("live_position") or ()
         values["plateDot"] = {
@@ -1315,9 +1359,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         jog_verdict = can_jog(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
         restart_verdict = can_restart(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
         # The caption is the policy's jog_caption — the reason when
-        # disabled, the pause-first warning, AND the paused note
-        # (the re-review's blocker: the raw reason blanked the paused
-        # state, the one where the row must speak).
+        # disabled, the pause-first warning, AND the paused note (the
+        # raw reason blanked the paused state, the one where the row
+        # must speak).
         values["jogReason"] = jog_caption(observation) if observation is not None else R_UNKNOWN
         values["jogReasonDetail"] = REASON_DETAIL.get(jog_verdict.reason, "")
         if values["jogReason"] == R_PAUSED_NOTE:
@@ -2422,9 +2466,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(bool)
     def setChartOpen(self, opened):
-        # The pop-over's hydration gate (the 2026-09-19 review's K):
-        # the full chart payload materialises only while the pop-over
-        # is open; closed, it is the shared dormant object.
+        # The pop-over's hydration gate: the full chart payload
+        # materialises only while the pop-over is open; closed, it
+        # is the shared dormant object.
         opened = bool(opened)
         if opened == self._chart_open:
             return
@@ -2456,8 +2500,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The settings document's migration record via the facade;
         None in the harness's config-only double. Cached: the record
         lands once during hydration and only the dismiss slot mutates
-        it — the heartbeat must not re-read the settings file (H1 of
-        the 2026-09-19 performance review)."""
+        it — the heartbeat must not re-read the settings file."""
         if self._migration_record_read:
             return self._migration_record_cache
         self._migration_record_read = True
@@ -2766,29 +2809,47 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._request_plate_split is not None:
             self._request_plate_split(motions)
 
-    def _qt_layer(self, payload, layer, request_raster=True):
-        """The layer's RETAINED native-render object: the same
-        PlateLayer for the same layer across every window that shows
-        it. Its raster is requested on the first window and lands
-        asynchronously (the worker's QPainterPath — the measured
-        92 ms at 500k motions, off the UI thread)."""
+    def _surface_for(self, surface):
+        """The named surface, or a bare name mapped to it (the QML
+        publishes "popover"/"mini" strings; the tests may hand the
+        object)."""
+        if isinstance(surface, _RenderSurface):
+            return surface
+        return self._plate_surfaces.get(surface)
+
+    def _qt_layer(self, surface, payload, layer):
+        """The layer's retained native-render object FOR ONE SURFACE
+        : the mini and the popover hold
+        separate PlateLayers, so neither's raster can ever be
+        consumed by the other. Raster demand is the scheduler's —
+        never this path's."""
         if payload is None or layer < 0:
             return None
-        cached = self._plate_qt_layers.get(layer)
+        cached = surface.layers.get(layer)
         if cached is not None:
-            self._plate_qt_layers.move_to_end(layer)
+            surface.layers.move_to_end(layer)
             return cached
         wrapped = PlateLayer(payload)
-        self._plate_qt_layers[layer] = wrapped
-        while len(self._plate_qt_layers) > 6:
-            self._plate_qt_layers.popitem(last=False)
-        if request_raster:
-            self._request_raster(wrapped, payload, layer)
+        wrapped.set_expected_key(surface.render_key())
+        surface.layers[layer] = wrapped
+        while len(surface.layers) > 6:
+            evicted, _ = surface.layers.popitem(last=False)
+            # The bookkeeping must not outlive the wrapper: an
+            # evicted layer's tokens go with it.
+            surface.tokens.pop(evicted, None)
         return wrapped
+
+    def _raster_hot(self, surface, layer):
+        """The render key's verdict: a
+        raster is usable only when its key matches the surface's
+        CURRENT key — an old-view image never reads as current
+        after a zoom/pan/resize."""
+        wrapped = surface.layers.get(layer)
+        return wrapped is not None and wrapped.rasterValid
 
     def _scrub_vector_for(self, popover):
         """The vector crosses into QML ONLY for the partial progress
-        states (the review's finding 4): a full 100% seek — and the
+        states: a full 100% seek — and the
         empty 0% — display through the raster alone, so the measured
         ~500 ms nested QVariant wrap never rides an ordinary seek.
         The first partial scrub activates it (one wrap per layer,
@@ -2805,65 +2866,144 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return None
         return current
 
-    def _qt_window(self, layers, anchor):
-        """The prev/current/next window as three retained
-        references (the review's step 13: role-free rasters, the
-        opacity applied at composition)."""
-        if not layers:
+    def _qt_window(self, surface, layers, anchor):
+        """The prev/current/next window for ONE SURFACE: the
+        wrappers are created lazily and
+        the desired state — current first, then the ghosts — feeds
+        the surface's scheduler. The anchor lives ON the surface:
+        the mini validates against its live anchor, the popover
+        against whichever layer it displays (frozen included)."""
+        surface = self._surface_for(surface)
+        if surface is None or not layers:
             return {}
         if not isinstance(anchor, int):
             anchor = 0
-        # The CURRENT layer's raster is requested FIRST and alone
-        # (the review's findings 3 and 14): the ghosts' renders ride
-        # the current's completion, so a cold seek's user-visible
-        # layer never queues behind its context.
-        current = self._qt_layer(layers.get("current"), anchor)
+        if surface.anchor != anchor:
+            surface.anchor = anchor
+            surface.anchor_epoch += 1
+        current = self._qt_layer(surface, layers.get("current"), anchor)
         self._trace("T7/T8 layer obtained", {
-            "layer": anchor,
-            "raster": "hot" if current is not None and current.raster is not None and current.raster.width() > 0 else "miss"})
-        self._queue_ghost_raster(anchor, layers.get("prev"), anchor - 1)
-        self._queue_ghost_raster(anchor, layers.get("next"), anchor + 1)
-        return {"prev": self._qt_layer(layers.get("prev"), anchor - 1, request_raster=False),
-                "current": current,
-                "next": self._qt_layer(layers.get("next"), anchor + 1, request_raster=False)}
+            "surface": surface.name, "layer": anchor,
+            "raster": "hot" if self._raster_hot(surface, anchor) else "miss"})
+        window = {"prev": self._qt_layer(surface, layers.get("prev"), anchor - 1),
+                  "current": current,
+                  "next": self._qt_layer(surface, layers.get("next"), anchor + 1)}
+        # The desired ghost state: a full
+        # pair, never a single overwritable slot; each ghost renders
+        # at most once per demand — the scheduler's hot-check skips
+        # a ghost that is already rasterised or in flight.
+        surface.desired = {
+            "current": anchor,
+            "ghosts": {role: layer
+                       for role, layer in (("prev", anchor - 1), ("next", anchor + 1))
+                       if layers.get(role) is not None and layer >= 0},
+            "epoch": surface.anchor_epoch,
+        }
+        self._schedule_surface(surface)
+        return window
 
-    def _queue_ghost_raster(self, anchor, payload, layer):
-        """A ghost's raster request rides the CURRENT layer's
-        completion, and only while the anchor has not moved (the
-        review's coalescing: obsolete neighbour work never burns)."""
-        if payload is None or layer < 0:
+    def _schedule_surface(self, surface):
+        """The bounded demand scheduler :
+        ONE job in flight per surface; the current layer's demand
+        always outranks the ghosts; a hot layer never creates work;
+        the newest desired current supersedes an obsolete one —
+        rapid slider movement through 100..104 starts at most one
+        current job plus its ghosts, never one per visited layer."""
+        if surface.job is not None:
+            return  # the running job's completion re-schedules
+        if surface.plot is None or not surface.view.get("width"):
+            return  # no context yet — the demand waits for the feed
+        desired = surface.desired
+        if desired is None:
             return
-        wrapped = self._plate_qt_layers.get(layer)
-        if wrapped is not None and wrapped.raster is not None and wrapped.raster.width() > 0:
-            return
-        self._plate_ghost_queue = (anchor, payload, layer)
+        order = [desired["current"]]
+        for role in ("prev", "next"):
+            layer = desired["ghosts"].get(role)
+            if layer is not None:
+                order.append(layer)
+        # The scheduler's depth: the not-yet-hot demands this pass
+        # could burn work for (the trace and the rapid-drag report
+        # read it).
+        depth = sum(1 for layer in order if not self._raster_hot(surface, layer))
+        surface.stats["depth_max"] = max(surface.stats["depth_max"], depth)
+        for layer in order:
+            wrapped = surface.layers.get(layer)
+            if wrapped is None or self._raster_hot(surface, layer):
+                continue
+            token = surface.tokens.get(layer, 0) + 1
+            surface.tokens[layer] = token
+            surface.render_count[layer] = surface.render_count.get(layer, 0) + 1
+            self._trace("T9 raster start", {
+                "surface": surface.name, "layer": layer, "queue": depth})
+            plot = surface.plot
+            view = dict(surface.view)
+            generation = surface.generation
+            key = surface.render_key()
+            surface.job = {"layer": layer, "token": token,
+                           "generation": generation, "state": "submitted"}
+            ticket = (surface.name, layer, token, generation, key)
+            payload = wrapped._payload
 
-    def _request_raster(self, wrapped, payload, layer):
-        """The render demand: the worker paints the image and hands
-        it back through the bridge; the COMMIT runs here, on the
-        model's owning thread (the review's finding 7). The commit
-        validates the view generation, the layer's own request token
-        and the retained PlateLayer identity."""
-        self._plate_render_count[layer] = self._plate_render_count.get(layer, 0) + 1
-        self._trace("T9 raster start", {"layer": layer, "queue": len(self._plate_pending)})
-        plot = self._plate_plot
-        view = dict(self._plate_view)
-        if plot is None or not view.get("width"):
+            def build(ticket=ticket, payload=payload, plot=plot, view=view,
+                      surface=surface, layer=layer, generation=generation,
+                      directory=self._raster_cache_dir):
+                self._raster_bridge.started.emit(ticket)
+                coloured, base, travels = render_layer_raster(payload, plot, view)
+                # The PNG writes ride the WORKER: the owner's commit
+                # stores the pre-written file URLs (the scene-graph
+                # Image transport — see PlateQt.png_file). The
+                # generation rides the stem, so a re-render never
+                # clobbers a file an Image is still reading.
+                stem = "r-%s-%d-%d" % (surface.name, layer, generation)
+                self._raster_bridge.done.emit(
+                    (coloured, png_file(coloured, directory, stem + "-c"),
+                     base, png_file(base, directory, stem + "-b"),
+                     travels, png_file(travels, directory, stem + "-t")), ticket)
+            QThreadPool.globalInstance().start(_RasterJob(build))
             return
-        generation = self._raster_generation
-        token = self._plate_pending.get(layer, 0) + 1
-        self._plate_pending[layer] = token
 
-        def build():
-            image = render_layer_raster(payload, plot, view)
-            self._raster_bridge.done.emit(image, (layer, wrapped, generation, token))
-        QThreadPool.globalInstance().start(_RasterJob(build))
+    def _prune_raster_cache(self, keep=64):
+        """The raster cache's bound (the file-URL transport): the
+        newest `keep` PNGs survive; the rest — files long superseded
+        by newer generations — go. Startup passes 0: no live Image
+        can reference anything yet."""
+        try:
+            entries = []
+            for name in os.listdir(self._raster_cache_dir):
+                path = os.path.join(self._raster_cache_dir, name)
+                try:
+                    entries.append((os.stat(path).st_mtime, path))
+                except OSError:
+                    continue
+            for _mtime, path in sorted(entries)[:-keep] if keep else entries:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    @pyqtSlot(object)
+    def _raster_started(self, ticket):
+        """The worker's first line: a job the demand replaced while
+        still queued is countable as superseded-before-start."""
+        name, layer, token, generation, _key = ticket
+        surface = self._plate_surfaces.get(name)
+        if surface is None:
+            return
+        job = surface.job
+        if job is not None and job["layer"] == layer and job["token"] == token \
+                and job["generation"] == generation:
+            job["state"] = "running"
+            surface.stats["started"] += 1
+            self._trace("T10 raster running", {"surface": name, "layer": layer})
 
     @pyqtSlot(object, object)
     def _trace(self, stage, extra=None):
-        """The seek timeline (the review's finding 18), disabled by
-        default: MOONRAKER_FOLLOWER_SEEK_TRACE=1 records each stage
-        with its wall-clock offset from the seek's entry."""
+        """The seek timeline , disabled by
+        default: MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's
+        seek_trace) records each stage with its wall-clock offset
+        from the seek's entry."""
         if not self._seek_trace_enabled and not (self._config() is not None and self._config().seek_trace):
             return
         if stage == "T1 seek entry":
@@ -2876,70 +3016,139 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             entry.update(extra)
         self._seek_trace.append(entry)
 
-    def _raster_committed(self, image, ticket):
-        """The owner-thread commit (the review's finding 7): validate
+    @pyqtSlot(object, object)
+    def _raster_committed(self, images, ticket):
+        """The owner-thread commit: validate
         the generation, the layer's token and the retained identity,
-        then publish."""
-        layer, wrapped, generation, token = ticket
-        if generation != self._raster_generation:
+        hand the images to the wrapper, and let the scheduler take
+        the next demand. The bookkeeping clears on EVERY exit — a
+        stale or discarded job never leaves residue ."""
+        coloured, coloured_data, base, base_data, travels, travel_data = images
+        name, layer, token, generation, key = ticket
+        surface = self._plate_surfaces.get(name)
+        if surface is None:
             return
-        if self._plate_pending.get(layer) != token:
+        job = surface.job
+        if job is not None and job["layer"] == layer and job["token"] == token \
+                and job["generation"] == generation:
+            surface.job = None
+        elif job is not None and job["state"] == "submitted":
+            # The demand moved while this job waited its turn in the
+            # shared pool — superseded before it ever ran.
+            surface.stats["superseded"] += 1
+            surface.job = None
+        if generation != surface.generation or surface.tokens.get(layer) != token \
+                or surface.layers.get(layer) is None:
+            surface.stats["discarded"] += 1
+            self._schedule_surface(surface)
             return
-        if self._plate_qt_layers.get(layer) is not wrapped:
-            return
-        wrapped.set_raster(image)
-        self._plate_pending.pop(layer, None)
-        self._trace("T11 raster committed", {"layer": layer})
-        # The ghosts' renders ride the current's completion, and
-        # only while the anchor still matches (the review's
-        # coalescing: an obsolete neighbour never burns).
-        ghost = getattr(self, "_plate_ghost_queue", None)
-        if ghost is not None:
-            ghost_anchor, ghost_payload, ghost_layer = ghost
-            if ghost_anchor == self._follower_layer_anchor \
-                    and self._plate_qt_layers.get(ghost_layer) is not None:
-                self._request_raster(self._plate_qt_layers[ghost_layer],
-                                     ghost_payload, ghost_layer)
-                self._plate_ghost_queue = None
+        wrapped = surface.layers[layer]
+        wrapped.set_raster(coloured, key, coloured_data)
+        wrapped.set_base(base, base_data)
+        wrapped.set_travels(travels, travel_data)
+        surface.tokens.pop(layer, None)
+        desired = surface.desired
+        if desired is not None and (layer == desired["current"]
+                                    or layer in desired["ghosts"].values()):
+            surface.stats["committed"] += 1
+        else:
+            surface.stats["discarded"] += 1
+        self._trace("T11 raster committed", {"surface": name, "layer": layer})
+        self._prune_raster_cache()
+        self._schedule_surface(surface)
         self._publish()
 
-    @pyqtSlot(float, float, int, int, bool, float, float)
-    def setFollowerView(self, scale, lineScale, width, height, compact, panX, panY):
-        """The raster's view inputs: a change re-renders the cached
-        layers at the new zoom/size/pan (the review's step 12's key).
-        The pan rides in at the SETTLE only — never per tick. The
-        generation bumps ONCE per view change (the review's finding
-        2): every re-requested layer shares the new generation."""
-        self._plate_view = {"scale": float(scale), "lineScale": float(lineScale),
-                            "width": int(width), "height": int(height),
-                            "compact": bool(compact),
-                            "panX": float(panX), "panY": float(panY)}
-        self._raster_generation += 1
-        for layer, wrapped in list(self._plate_qt_layers.items()):
-            self._request_raster(wrapped, wrapped._payload, layer)
+    def _arm_context_flush(self, surface):
+        """One zero-tick flush per burst of staged context changes
+        : the plot+view pair a transition
+        publishes coalesces into ONE generation and ONE wave."""
+        if surface.stage["armed"]:
+            return
+        surface.stage["armed"] = True
+        QTimer.singleShot(0, lambda s=surface: self._flush_surface_context(s))
 
-    @pyqtSlot(float, float, float, float, float, float)
-    def setFollowerPlot(self, offsetX, offsetY, sx, sy, bedXMin, bedYMax):
-        """The bed plot (fed on the canvas's re-fit): the native
-        renderer uses the SAME mapping the face's painters did, so
-        the blit lands the identical picture."""
-        self._plate_plot = {"offsetX": float(offsetX), "offsetY": float(offsetY),
-                            "sx": float(sx), "sy": float(sy),
-                            "bedXMin": float(bedXMin), "bedYMax": float(bedYMax)}
-        self._raster_generation += 1
-        for layer, wrapped in list(self._plate_qt_layers.items()):
-            self._request_raster(wrapped, wrapped._payload, layer)
+    def _flush_surface_context(self, surface):
+        """The staged context commits: one generation per settled
+        burst, and only the visible current + ghosts re-raster —
+        historical LRU entries stay stale and re-render lazily when
+        revisited."""
+        surface.stage["armed"] = False
+        staged_plot = surface.stage["plot"]
+        staged_view = surface.stage["view"]
+        if staged_plot is None and staged_view is None:
+            return
+        plot = staged_plot if staged_plot is not None else surface.plot
+        view = staged_view if staged_view is not None else surface.view
+        if plot == surface.plot and view == surface.view:
+            surface.stage["plot"] = None
+            surface.stage["view"] = None
+            return
+        surface.plot = plot
+        surface.view = view
+        surface.generation += 1
+        surface.stage["plot"] = None
+        surface.stage["view"] = None
+        key = surface.render_key()
+        # The retained wrappers' rasters read invalid at the new key
+        #  but STAY cached — only the
+        # visible window re-rasters.
+        for wrapped in surface.layers.values():
+            wrapped.set_expected_key(key)
+        self._trace("T12 context committed", {"surface": surface.name,
+                                              "generation": surface.generation})
+        self._schedule_surface(surface)
+
+    @pyqtSlot(str, float, float, int, int, bool, float, float)
+    def setFollowerView(self, surface, scale, lineScale, width, height, compact, panX, panY):
+        """The raster's view inputs for ONE SURFACE . An
+        exact repeat is a no-op ; the
+        plot+view pair coalesces into one flush."""
+        surface = self._surface_for(surface)
+        if surface is None:
+            return
+        view = {"scale": float(scale), "lineScale": float(lineScale),
+                "width": int(width), "height": int(height),
+                "compact": bool(compact),
+                "panX": float(panX), "panY": float(panY)}
+        if view == surface.view:
+            return
+        surface.stage["view"] = view
+        self._arm_context_flush(surface)
+
+    @pyqtSlot(str, float, float, float, float, float, float)
+    def setFollowerPlot(self, surface, offsetX, offsetY, sx, sy, bedXMin, bedYMax):
+        """The bed plot for ONE SURFACE (fed on the canvas's
+        re-fit): the native renderer uses the SAME mapping the
+        face's painters did, so the blit lands the identical
+        picture. Staged like the view — an exact repeat is a no-op,
+        and a plot+view pair flushes once."""
+        surface = self._surface_for(surface)
+        if surface is None:
+            return
+        plot = {"offsetX": float(offsetX), "offsetY": float(offsetY),
+                "sx": float(sx), "sy": float(sy),
+                "bedXMin": float(bedXMin), "bedYMax": float(bedYMax)}
+        if plot == surface.plot:
+            return
+        surface.stage["plot"] = plot
+        self._arm_context_flush(surface)
 
     def _observe_follower_job(self, job):
         """A new print re-attaches the follower: the frozen layer
         belonged to the file that was printing."""
         if job != self._plate_qt_job:
-            # The render cache belongs to that file too: a new
+            # The render caches belong to that file too: a new
             # print's geometry must never answer with the old job's
-            # images (the review's generation-isolation test).
+            # images . The
+            # reset runs per surface, scheduler state included —
+            # no residue across jobs.
             self._plate_qt_job = job
-            self._plate_qt_layers = OrderedDict()
-            self._plate_pending = {}
+            for surface in self._plate_surfaces.values():
+                surface.layers.clear()
+                surface.tokens.clear()
+                surface.job = None
+                surface.desired = None
+                surface.render_count.clear()
         if job == self._follower_job:
             return
         self._follower_job = job

@@ -309,8 +309,17 @@ class RealEngineTestCase(unittest.TestCase):
         document.setHeight(height)
         window.show()
         self.addCleanup(window.deleteLater)
+        # The multi-test crash (engine-proven in the probe): a loaded
+        # raster texture's teardown races the next mount unless the
+        # window drains its frames hidden first — every window-mount
+        # takes the safe teardown.
+        self.addCleanup(self._settle_window, window)
         self.pump(30)
         return document, window
+
+    def _settle_window(self, window):
+        window.setProperty("visible", False)
+        self.pump(60)
 
     def resize_window(self, document, window, width, height):
         window.resize(width, height)
@@ -1120,7 +1129,7 @@ class StripVerdictRefreshTests(RealEngineTestCase):
         return card
 
     def test_a_verdict_only_change_refreshes_the_strip(self):
-        # The review's catch: the strip watched the block, the
+        # The strip watched the block, the
         # staleness and the ETA but not the verdicts, so a verdict that
         # changed alone left the outgoing copy and the dead button.
         card = self.verdict_card()
@@ -1384,11 +1393,11 @@ class TuningResetConvergenceTests(RealEngineTestCase):
 
 
 class CameraOwnershipTests(RealEngineTestCase):
-    """The camera start/stop ownership (the 2026-09-19 cold-start
-    review): one logical desired state, one application, at most one
-    start/stop transition. The forked renderer's start() used to
-    be destructive — it stopped the live reply first — so a duplicate
-    application must never touch the image."""
+    """The camera start/stop ownership: one logical desired state,
+    one application, at most one start/stop transition. The forked
+    renderer's start() used to be destructive — it stopped the live
+    reply first — so a duplicate application must never touch the
+    image."""
 
     def _apply(self, pane, url, visible):
         from PyQt6.QtCore import QMetaObject, Q_ARG, QVariant
@@ -1654,6 +1663,7 @@ if QT_AVAILABLE:
         plateSplitChanged = pyqtSignal()
         plateDotChanged = pyqtSignal()
         plateObjectsChanged = pyqtSignal()
+        plateLayersChanged = pyqtSignal()
         # The follower's own publish groups, mirroring the model's
         # _SIGNAL_KEYS: the anchor rides the plate group, the follow
         # state and the option ride the view group.
@@ -1668,6 +1678,7 @@ if QT_AVAILABLE:
             super().__init__()
             self._split = PlateFaceRenderTests.PAYLOAD["split"]
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
+            self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._layer_count = 40
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1694,9 +1705,15 @@ if QT_AVAILABLE:
         def bedMeshCenterIsZero(self):
             return False
 
-        @pyqtProperty("QVariant", constant=True)
+        @pyqtProperty("QVariant", notify=plateLayersChanged)
         def plateLayers(self):
-            return PlateFaceRenderTests.PAYLOAD["layers"]
+            return self._layers
+
+        def setLayers(self, layers):
+            """Install a window payload after the mount (the native
+            PlateLayer fixtures need the face's own plot first)."""
+            self._layers = layers
+            self.plateLayersChanged.emit()
 
         def setSplit(self, split):
             """Move the printed boundary: the layers are the mount's
@@ -1932,6 +1949,266 @@ class PlateFaceRenderTests(RealEngineTestCase):
             time.sleep(0.05)
             image = window.grabWindow()
         return image
+
+    def _native_layer(self, payload, face):
+        """A REAL PlateLayer whose rasters the native renderer
+        painted with the face's own mapping — the production object
+        the plain-dict fixtures never provide: no .classes, so the
+        scrub vector's fallback cannot rescue a missing blit."""
+        from plugins.PlateQt import PlateLayer, png_file, render_layer_raster
+        raster_dir = "/tmp/mpf/raster-probe"
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        # A THICK lineScale: the physical stroke at 100% zoom is
+        # legitimately sub-pixel (the live ruling), which a colour
+        # census cannot see — the fixture paints its proofs solid.
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 4.0, "compact": False,
+                "panX": 0.0, "panY": 0.0}
+        PlateFaceRenderTests._raster_stem = getattr(
+            PlateFaceRenderTests, "_raster_stem", 0) + 1
+        stem = "fixture-%d" % PlateFaceRenderTests._raster_stem
+        layer = PlateLayer(payload)
+        coloured, base, travels = render_layer_raster(payload, plot, view)
+        layer.set_raster(coloured, "fixture-key",
+                         png_file(coloured, raster_dir, stem + "-c"))
+        layer.set_expected_key("fixture-key")
+        if base.width() > 0:
+            layer.set_base(base, png_file(base, raster_dir, stem + "-b"))
+        if travels.width() > 0:
+            layer.set_travels(travels, png_file(travels, raster_dir, stem + "-t"))
+        return layer
+
+    def _mount_empty(self):
+        """Mount with EMPTY geometry: the mount's own vector paths
+        can draw nothing, and the returned BASELINE grab holds the
+        bed's own picture — the face's grid/background reads as ink
+        to _ink_rows (its reference pixel sits outside the bed), so
+        the raster proofs compare against this grab instead."""
+        previous = PlateFaceRenderTests.PAYLOAD
+        PlateFaceRenderTests.PAYLOAD = {
+            "available": True, "reason": "",
+            "layers": {
+                "prev": None,
+                "current": {"classes": {}, "travels": [], "travelStarts": [],
+                            "travelEnds": [], "motions": 21},
+                "next": None,
+            },
+            "split": 12, "method": "motion index", "anchor": 0,
+        }
+        self.addCleanup(setattr, PlateFaceRenderTests, "PAYLOAD", previous)
+        monitor, window, face = self._follower_popover()
+        face.setProperty("dot", None)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        baseline = window.grabWindow()
+        # The threaded bed canvas can still be painting: settle the
+        # picture until two grabs agree (the baseline must be the
+        # bed's FINAL frame, not a mid-paint one).
+        for _ in range(20):
+            self.pump(10)
+            check = window.grabWindow()
+            if self._pixel_diff(check, baseline, face, window) == 0:
+                baseline = check
+                break
+            baseline = check
+        return monitor, window, face, baseline
+
+
+    def _pixel_diff(self, image, baseline, face, window):
+        """The sampled pixels that differ from the baseline grab (a
+        threaded canvas's late frame reads as a diff; a settled
+        identical picture reads zero)."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        diffs = 0
+        for row in range(0, int(face.height()), 4):
+            for col in range(0, int(face.width()), 4):
+                if image.pixel(int(origin.x()) + col, int(origin.y()) + row) \
+                        != baseline.pixel(int(origin.x()) + col, int(origin.y()) + row):
+                    diffs += 1
+        return diffs
+
+    def _band_changed(self, image, baseline, face, window, plot, bed_x, bed_y, radius=8):
+        """Any pixel changed inside a bed-space point's screen band."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        col = int(origin.x() + plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+        row = int(origin.y() + plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"])
+        for dy in range(-radius, radius + 1, 2):
+            for dx in range(-radius, radius + 1, 2):
+                if image.pixel(col + dx, row + dy) != baseline.pixel(col + dx, row + dy):
+                    return True
+        return False
+
+    def _wait_diff(self, window, face, baseline, want, timeout=2.5):
+        """Wait until the grabbed picture differs from (want=True) or
+        equals (want=False) the baseline."""
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            diff = self._pixel_diff(image, baseline, face, window)
+            if (want and diff > 0) or (not want and diff == 0):
+                return image, diff
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image, self._pixel_diff(image, baseline, face, window)
+
+    def _bed_point(self, face, bed_x, bed_y):
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        return {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+
+    @staticmethod
+    def _matches(pixel, colour, tolerance=60):
+        return abs(((pixel >> 16) & 0xFF) - colour[0]) < tolerance \
+            and abs(((pixel >> 8) & 0xFF) - colour[1]) < tolerance \
+            and abs((pixel & 0xFF) - colour[2]) < tolerance
+
+    def _red_pixels(self, image, face, window):
+        """The wall-outer ink's red — nothing else on the face wears
+        it, so the raster's presence is a colour census (robust to
+        the bed's own jitter, which the pixel-diff baseline was
+        not)."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        count = 0
+        for row in range(0, int(face.height())):
+            for col in range(0, int(face.width())):
+                if self._matches(image.pixel(int(origin.x()) + col, int(origin.y()) + row),
+                                 (0xD3, 0x2F, 0x2F)):
+                    count += 1
+        return count
+
+    def _red_in_band(self, image, face, window, plot, bed_x, bed_y, radius=10):
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        col = int(origin.x() + plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+        row = int(origin.y() + plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"])
+        for dy in range(-radius, radius + 1, 2):
+            for dx in range(-radius, radius + 1, 2):
+                if self._matches(image.pixel(col + dx, row + dy), (0xD3, 0x2F, 0x2F)):
+                    return True
+        return False
+
+    def _purple_pixels(self, image, face, window):
+        """The travel ink's purple — nothing else on the face wears
+        it (the bed is grey, the toolpath red)."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        count = 0
+        for row in range(0, int(face.height())):
+            for col in range(0, int(face.width())):
+                pixel = image.pixel(int(origin.x()) + col, int(origin.y()) + row)
+                r, g, b = (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF
+                if b - r > 40 and b > 120 and g < r + 60:
+                    count += 1
+        return count
+
+    def _wait_purple(self, window, face, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            count = self._purple_pixels(image, face, window)
+            if count > 0:
+                return image, count
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image, self._purple_pixels(image, face, window)
+
+    def _wait_red(self, window, face, want, timeout=5.0):
+        """Wait until the raster's red ink appears (want=True) or
+        leaves the picture entirely (want=False)."""
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            count = self._red_pixels(image, face, window)
+            if (want and count > 0) or (not want and count == 0):
+                return image, count
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image, self._red_pixels(image, face, window)
+
+    def test_a_full_seek_renders_the_native_raster_with_no_scrub_vector(self):
+        # The raster-only full seek: split == motions and
+        # scrubVector == null — a real PlateLayer must still paint,
+        # through the raster alone (the vector never exists to draw).
+        monitor, window, face, baseline = self._mount_empty()
+        payload = {
+            "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                        [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                        [0.0, 0.0, 20.0]]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer = self._native_layer(payload, face)
+        plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(payload["motions"])
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the full layer drew nothing with no scrub vector")
+        # The corner geometry: every bed corner's band must carry the
+        # wall-outer red — a wrong or missing transform hides at an
+        # extreme corner.
+        for bed_x, bed_y in ((0.0, 0.0), (250.0, 0.0), (250.0, 250.0), (0.0, 250.0)):
+            self.assertTrue(self._red_in_band(image, face, window, plot, bed_x, bed_y),
+                            "the bed corner (%s, %s) never drew" % (bed_x, bed_y))
+
+    def test_a_zero_percent_layer_paints_nothing_without_the_vector(self):
+        # The 0% case: split == 0 with
+        # scrubVector == null — the raster must not leak the whole
+        # layer when nothing has printed. The proof first confirms
+        # the same layer's raster DID draw at 100%, then waits for
+        # the picture to return to the empty-mount baseline (a
+        # single grab races the render thread).
+        monitor, window, face, baseline = self._mount_empty()
+        payload = {
+            "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                        [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                        [0.0, 0.0, 20.0]]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer = self._native_layer(payload, face)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(payload["motions"])
+        _inked, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the fixture's own raster never drew")
+        self._printer.setSplit(0)
+        _image, count = self._wait_red(window, face, want=False)
+        self.assertEqual(count, 0, "the 0% layer leaked the full raster")
+
+    def test_full_progress_travels_render_without_the_vector(self):
+        # : showTravels at 100% — the travel
+        # lines ride their native sibling while scrubVector stays
+        # null, so the travels never silently vanish with the
+        # suppressed vector.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        payload = {
+            "classes": {"WALL-OUTER": [[[30.0, 30.0, 1.0], [90.0, 30.0, 2.0]]]},
+            "travels": [[[30.0, 200.0, 2.0], [90.0, 200.0, 3.0]]],
+            "travelStarts": [], "travelEnds": [], "motions": 4,
+        }
+        layer = self._native_layer(payload, face)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(4)
+        _image, red = self._wait_red(window, face, want=True)
+        self.assertGreater(red, 0, "the layer drew nothing")
+        # The travel purple: nothing else on the face wears it, so
+        # its presence proves the travel sibling blitted — the class
+        # raster alone carries no purple.
+        _image, purple = self._wait_purple(window, face)
+        self.assertGreater(purple, 0, "the travel line's sibling never drew")
 
     # The painter-fidelity fixtures: the bed-space runs a payload
     # carries as separate prepared segments. Every vertex names the

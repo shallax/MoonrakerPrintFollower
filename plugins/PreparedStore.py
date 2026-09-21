@@ -1,5 +1,4 @@
-"""The file-backed prepared cold store (the review's round 3, steps
-1-4): every layer's compact PPL1 encoding, random-accessible on disk
+"""The file-backed prepared cold store: every layer's compact PPL1 encoding, random-accessible on disk
 so the complete print never sits in the Python heap.
 
 Layout (format v2):
@@ -8,9 +7,7 @@ Layout (format v2):
     layer count u32
     completion flag u8 — 1 once the pass has WALKED EVERY layer, so a
         (0, 0) entry in a complete file means "the codec could not
-        hold this layer", never "not prepared yet" (the review's
-        finding 16: an uncacheable layer must not read as a hole and
-        trigger a rebuild on every reopen)
+        hold this layer", never "not prepared yet" 
     layer table: count x (u64 offset, u32 length)
     payload area: the packed layers
 
@@ -42,7 +39,7 @@ class PreparedCache:
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
         os.makedirs(self.directory, exist_ok=True)
-        # Crash leftovers (the review's finding 21): a temp writer
+        # Crash leftovers: a temp writer
         # from a previous run is never valid, and startup has no
         # active writer to protect — remove them all.
         try:
@@ -66,7 +63,7 @@ class PreparedCache:
         or None when the file is absent, partial, or belongs to
         another identity."""
         path = self._path(identity)
-        # The explicit recency (the review's finding 12): atime is
+        # The explicit recency: atime is
         # unreliable under relatime/noatime — a successful open
         # stamps the entry itself.
         try:
@@ -149,7 +146,7 @@ class PreparedCache:
         return path
 
     def open_for_write(self, identity: str, layer_count: int) -> Optional[dict]:
-        """The incremental writer (the review's finding 9): a temp
+        """The incremental writer: a temp
         file accumulates the pass's encodings layer by layer, so the
         first session never retains the whole cold store in RAM. The
         header and the table are written at `finish_write`; a partial
@@ -181,7 +178,7 @@ class PreparedCache:
         The completion flag is set unconditionally: `finish_write`
         only runs once the pass has walked every layer, so the
         remaining (0, 0) entries are genuinely uncacheable layers
-        (the review's finding 16)."""
+        ."""
         identity = writer["identity"]
         handle = writer["handle"]
         try:
@@ -203,8 +200,7 @@ class PreparedCache:
 
     def abort_write(self, writer: dict) -> None:
         """Abandon an unfinished writer: close the handle and remove
-        the temp file, however far the append got (the review's
-        finding 20). Idempotent — the caller's exit paths all reach
+        the temp file, however far the append got . Idempotent — the caller's exit paths all reach
         it."""
         try:
             writer["handle"].close()
@@ -232,7 +228,7 @@ class PreparedCache:
                     continue
                 total += stat.st_size
                 entries.append((stat.st_atime, path, stat.st_size))
-            # The policy (the review's finding 13): under budget,
+            # The policy: under budget,
             # stop; a protected entry is SKIPPED, never a stopper —
             # the eviction continues with the next candidate.
             for _atime, path, size in sorted(entries):

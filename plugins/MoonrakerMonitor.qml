@@ -3117,14 +3117,16 @@ Component {
                     function onPlotChanged() {
                         var plot = progressFace.plot;
                         if (root.printer != null && plot != null) {
-                            root.printer.setFollowerPlot(plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
+                            // The SURFACE is explicit (the review's
+                            // finding 1): this face is the popover.
+                            root.printer.setFollowerPlot("popover", plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
                             _feedRenderView();
                         }
                     }
                 }
                 function _feedRenderView() {
                     if (root.printer != null) {
-                        root.printer.setFollowerView(progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY);
+                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY);
                     }
                 }
 
