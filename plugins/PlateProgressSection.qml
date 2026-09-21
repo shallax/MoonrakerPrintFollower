@@ -42,6 +42,24 @@ ColumnLayout {
                 anchors.fill: parent
                 compact: true
                 printerModel: root.printerModel
+                // The mini's own render feed: its rasters bake the
+                // compact boost and the thumbnail's view state (the
+                // popover's feeder never reaches this face).
+                Connections {
+                    target: progressMini
+                    function onPlotChanged() {
+                        var plot = progressMini.plot;
+                        if (root.printerModel != null && plot != null) {
+                            root.printerModel.setFollowerPlot(plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
+                            root.printerModel.setFollowerView(progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY);
+                        }
+                    }
+                    function onViewSettled() {
+                        if (root.printerModel != null) {
+                            root.printerModel.setFollowerView(progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY);
+                        }
+                    }
+                }
                 progress: root.printerModel != null ? ({
                         "available": root.printerModel.plateLiveAvailable,
                         "reason": "",
