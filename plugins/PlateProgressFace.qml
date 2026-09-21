@@ -232,7 +232,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        if (layer == null || split == null || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split) {
+        if (layer == null || split == null || layer.prefixValid !== true || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split) {
             return -1;
         }
         return layer.prefixSplit;
