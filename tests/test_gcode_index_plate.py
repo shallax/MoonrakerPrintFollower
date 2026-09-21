@@ -33,7 +33,6 @@ GCodeIndex.py
 from __future__ import annotations
 
 import gzip
-import hashlib
 import json
 import os
 import struct
@@ -290,8 +289,9 @@ class FeatureCacheTests(unittest.TestCase):
         return RemoteFileIdentity(name, 100, 1.0, "u1")
 
     def _path(self, remote):
-        digest = hashlib.sha256(remote.stable_key().encode("utf-8")).hexdigest()
-        return os.path.join(self.directory, f"{digest}.mpfi.gz")
+        # The production cache's own path (the per-print subdirectory
+        # layout) — the raw writes must land where the loader reads.
+        return self.cache._path(remote)
 
     def _header(self, remote, **overrides):
         header = {
@@ -408,7 +408,11 @@ class FeatureCacheTests(unittest.TestCase):
                 else:
                     index.motion_types = column
                 self.cache.save(identity, index)
-                self.assertEqual(os.listdir(self.directory), [])
+                # The per-print subdirectory may exist (the path's makedirs);
+        # no blob file may have been written.
+        written = [name for _root, _dirs, names in os.walk(self.directory)
+                   for name in names]
+        self.assertEqual(written, [])
 
     def test_a_ragged_feature_column_in_a_blob_is_refused(self):
         identity = self._identity()
@@ -455,7 +459,11 @@ class FeatureCacheTests(unittest.TestCase):
             # The reader would refuse this blob, so publishing it would
             # only spend the cache's byte budget on a dead file.
             self.cache.save(identity, self._featured_index())
-        self.assertEqual(os.listdir(self.directory), [])
+        # The per-print subdirectory may exist (the path's makedirs);
+        # no blob file may have been written.
+        written = [name for _root, _dirs, names in os.walk(self.directory)
+                   for name in names]
+        self.assertEqual(written, [])
 
 
 class FeatureRetentionTests(unittest.TestCase):
@@ -1575,7 +1583,8 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertIsNone(self.service._prepared_writer)
         self.assertFalse(os.path.exists(temp),
                          "the rebind left the old print's temp writer")
-        leftovers = [name for name in os.listdir(self._dir.name) if ".tmp-" in name]
+        leftovers = [name for root, _dirs, names in os.walk(self._dir.name)
+                     for name in names if ".tmp-" in name]
         self.assertEqual(leftovers, [])
 
     def test_the_byte_budgets_bind_the_ram_tiers(self):

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 from plugins.PlateProgress import decode_layer, encode_layer
-from plugins.PreparedStore import PreparedCache
+from plugins.PreparedStore import STATE_CACHED, STATE_EMPTY, PreparedCache
 
 
 def _payload(layer):
@@ -119,7 +119,8 @@ class PreparedStoreTests(unittest.TestCase):
         self.cache.abort_write(writer)
         self.cache.abort_write(writer)
         self.assertIsNone(self.cache.load_table("print-1"))
-        leftovers = [name for name in os.listdir(self.cache.directory) if ".tmp-" in name]
+        leftovers = [name for root, _dirs, names in os.walk(self.cache.directory)
+                     for name in names if ".tmp-" in name]
         self.assertEqual(leftovers, [], "the aborted writer left a temp file")
 
     def test_startup_removes_previous_crash_temp_files(self):
@@ -134,6 +135,63 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertFalse(os.path.exists(stale),
                          "the startup cleanup left a crash temp file")
         self.assertIsNotNone(reloaded.load_table("print-1"))
+
+    def test_an_interrupted_pass_adopts_its_encoded_layers(self):
+        # The review's resumable-persistence finding: a pass that died
+        # mid-encode leaves its successfully prepared layers in the
+        # checkpointed tmp — the next session adopts them and resumes
+        # from the EMPTY slots instead of restarting from layer zero.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.append(writer, 1, encode_layer(_payload(1)))
+        # The crash: the handle drops without finish_write, and the
+        # owning process is gone — the tmp's pid must read dead for
+        # the adoption to claim it.
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table, "the interrupted pass never adopted")
+        self.assertFalse(table["complete"], "the adopted table read complete")
+        states = [entry[0] for entry in table["table"]]
+        self.assertEqual(states, [STATE_CACHED, STATE_CACHED, STATE_EMPTY],
+                         "the adopted table lost its encoded layers")
+        self.assertEqual(reloaded.read("print-1", table["table"], 0),
+                         encode_layer(_payload(0)),
+                         "the adopted payload never round-tripped")
+
+    def test_a_live_process_tmp_is_never_touched(self):
+        # The multi-process safety: another process's active writer
+        # (its pid still exists) survives the startup adoption.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        writer["handle"].flush()
+        PreparedCache(self.cache.directory)
+        self.assertTrue(os.path.exists(writer["temp"]),
+                        "the live writer's temp was adopted or deleted")
+        writer["handle"].close()
+
+    def test_two_machine_namespaces_never_collide(self):
+        # The review's two-printer test at the cache level: the SAME
+        # remote identity (the same filename, size and modified) under
+        # two machine directories — each printer's cache is its own,
+        # and neither overwrites the other's.
+        cache_a = PreparedCache(os.path.join(self._dir.name, "a"))
+        cache_b = PreparedCache(os.path.join(self._dir.name, "b"))
+        cache_a.finalise("print-1", [encode_layer(_payload(0))])
+        cache_b.finalise("print-1", [encode_layer(_payload(5))])
+        self.assertNotEqual(os.path.dirname(cache_a._path("print-1")),
+                            os.path.dirname(cache_b._path("print-1")),
+                            "the two machines share one directory")
+        self.assertEqual(cache_a.read("print-1",
+                                      cache_a.load_table("print-1")["table"], 0),
+                         encode_layer(_payload(0)),
+                         "printer A's cache was overwritten")
+        self.assertEqual(cache_b.read("print-1",
+                                      cache_b.load_table("print-1")["table"], 0),
+                         encode_layer(_payload(5)),
+                         "printer B's cache was overwritten")
 
     def test_a_protected_oldest_entry_does_not_stop_the_eviction(self):
         # : the protected CURRENT file is the
@@ -150,7 +208,9 @@ class PreparedStoreTests(unittest.TestCase):
         cache._evict(keep_path)
         self.assertTrue(os.path.exists(keep_path),
                         "the protected file was evicted")
-        survivors = [name for name in os.listdir(cache.directory) if name.endswith(".mpfp")]
+        survivors = [os.path.basename(os.path.join(root, name))
+                     for root, _dirs, names in os.walk(cache.directory)
+                     for name in names if name.endswith(".mpfp")]
         self.assertEqual(survivors, [os.path.basename(keep_path)],
                          "the eviction stopped at the protected entry")
 

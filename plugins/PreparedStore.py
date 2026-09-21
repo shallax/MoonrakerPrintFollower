@@ -49,23 +49,90 @@ class PreparedCache:
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
         os.makedirs(self.directory, exist_ok=True)
-        # Crash leftovers: a temp writer
-        # from a previous run is never valid, and startup has no
-        # active writer to protect — remove them all.
-        try:
-            for name in os.listdir(self.directory):
-                if ".tmp-" in name:
-                    try:
-                        os.unlink(os.path.join(self.directory, name))
-                    except OSError:
-                        pass
-        except OSError:
-            pass
+        # Crash leftovers: a tmp writer from a previous run now
+        # ADOPTS its successfully prepared layers (the review's
+        # resumable-persistence finding) — see _adopt_interrupted.
+        self._adopt_interrupted()
 
     def _path(self, identity: str) -> str:
         import hashlib
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        return os.path.join(self.directory, f"{digest}.mpfp")
+        # The per-print subdirectory (the review's persistence
+        # finding): the index and the prepared table live as siblings
+        # under one print's own directory.
+        print_dir = os.path.join(self.directory, f"p-{digest[:24]}")
+        os.makedirs(print_dir, exist_ok=True)
+        return os.path.join(print_dir, f"{digest}.mpfp")
+
+    def _adopt_interrupted(self) -> None:
+        """The interrupted-pass adoption: a tmp whose header was
+        written (the checkpointed writer) carries the layers the pass
+        already encoded — adopt it as the incomplete table, so the
+        next session resumes from the EMPTY slots instead of
+        restarting from layer zero. A LIVE process's writer (its pid
+        still exists) is never touched; an unsound tmp dies."""
+        try:
+            for root, _dirs, names in os.walk(self.directory):
+                for name in names:
+                    if ".tmp-" not in name:
+                        continue
+                    final_path = os.path.join(root, name.split(".tmp-", 1)[0])
+                    if not final_path.endswith(".mpfp"):
+                        continue
+                    path = os.path.join(root, name)
+                    if self._tmp_liveness(name):
+                        continue  # another process's active writer
+                    try:
+                        if os.path.exists(final_path):
+                            os.unlink(path)  # the published final wins
+                        elif self._tmp_sound(path):
+                            os.replace(path, final_path)
+                        else:
+                            os.unlink(path)
+                    except OSError:
+                        pass
+        except OSError:
+            return
+
+    def _tmp_liveness(self, name: str) -> bool:
+        """True when the tmp's owning process is still alive (the
+        pid rides the name)."""
+        try:
+            pid = int(name.split(".tmp-", 1)[1].split("-", 1)[0])
+        except (IndexError, ValueError):
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+
+    def _tmp_sound(self, path: str) -> bool:
+        """The checkpointed tmp's own validity: the header parses and
+        every CACHED entry's extent fits the file (a torn tail layer
+        reads EMPTY later, never a corrupt offset)."""
+        try:
+            with open(path, "rb") as handle:
+                header = handle.read(struct.calcsize(_HEADER_FMT))
+                if len(header) < struct.calcsize(_HEADER_FMT):
+                    return False
+                magic, version, id_len, count, _complete = struct.unpack(_HEADER_FMT, header)
+                if magic != _MAGIC or version != _FORMAT_VERSION or id_len <= 0 or count <= 0:
+                    return False
+                handle.read(id_len)
+                raw = handle.read(count * struct.calcsize(_TABLE_ENTRY_FMT))
+                if len(raw) < count * struct.calcsize(_TABLE_ENTRY_FMT):
+                    return False
+                table = [struct.unpack_from(_TABLE_ENTRY_FMT, raw,
+                                            i * struct.calcsize(_TABLE_ENTRY_FMT))
+                         for i in range(count)]
+                size = os.fstat(handle.fileno()).st_size
+                for state, offset, length in table:
+                    if state == STATE_CACHED and (offset <= 0 or offset + length > size):
+                        return False
+                return True
+        except OSError:
+            return False
 
     def load_table(self, identity: str) -> Optional[dict]:
         """The layer table for a published cache as
@@ -169,12 +236,23 @@ class PreparedCache:
             handle = open(temp, "wb")
         except OSError:
             return None
-        # Reserve the header and the table (the payloads append
-        # behind them; the finalise back-fills).
-        handle.write(b"\0" * (struct.calcsize(_HEADER_FMT) + len(identity.encode("utf-8"))
-                              + layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
+        # The checkpointed header (the review's resumable-persistence
+        # finding): the magic, the version, the identity and the
+        # completion flag are written NOW — completion 0 — so an
+        # interrupted pass leaves a structurally valid table the next
+        # session can adopt and resume. The table slots follow as
+        # reserved zeros; the payloads append behind them.
+        handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
+                                 len(identity.encode("utf-8")), layer_count, 0))
+        handle.write(identity.encode("utf-8"))
+        handle.write(b"\0" * (layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
         return {"identity": identity, "temp": temp, "handle": handle,
                 "layer_count": layer_count, "table": [None] * layer_count}
+
+    def _table_offset(self, writer: dict) -> int:
+        """The table region's byte offset: the header plus the
+        identity."""
+        return struct.calcsize(_HEADER_FMT) + len(writer["identity"].encode("utf-8"))
 
     def append(self, writer: dict, layer: int, payload: bytes) -> None:
         if layer < 0 or layer >= writer["layer_count"] or writer["table"][layer] is not None:
@@ -182,6 +260,15 @@ class PreparedCache:
         handle = writer["handle"]
         writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
         handle.write(payload)
+        # The in-place checkpoint (the review's resumable-persistence
+        # finding): the table slot writes NOW, so an interrupted pass
+        # keeps this layer's entry and the adoption resumes from the
+        # EMPTY slots.
+        end = handle.tell()
+        handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+        handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
+                                 writer["table"][layer][1], len(payload)))
+        handle.seek(end)
 
     def append_uncacheable(self, writer: dict, layer: int) -> None:
         """Record a layer the pass walked but the codec refused: no
@@ -190,26 +277,27 @@ class PreparedCache:
                 or writer["table"][layer] is not None:
             return
         writer["table"][layer] = (STATE_UNCACHEABLE, 0, 0)
+        handle = writer["handle"]
+        end = handle.tell()
+        handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+        handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_UNCACHEABLE, 0, 0))
+        handle.seek(end)
 
     def finish_write(self, writer: dict) -> Optional[str]:
-        """Write the header and the table, then atomically publish.
-        The completion flag is set unconditionally: `finish_write`
-        only runs once the pass has walked every layer, so a
-        remaining slot means the pass never resolved it — EMPTY
-        (a latched hydrate), retried on the next session, never
-        confused with an uncacheable layer (which was marked
+        """Flip the completion flag, then atomically publish. The
+        header and the per-layer table entries were already written
+        in place (the checkpoints); `finish_write` only marks the
+        pass complete. A remaining slot means the pass never resolved
+        it — EMPTY (a latched hydrate), retried on the next session,
+        never confused with an uncacheable layer (which was marked
         explicitly)."""
         identity = writer["identity"]
         handle = writer["handle"]
         try:
-            handle.seek(0)
-            handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
-                                     len(identity.encode("utf-8")), writer["layer_count"], 1))
-            handle.write(identity.encode("utf-8"))
-            for entry in writer["table"]:
-                if entry is None:
-                    entry = (STATE_EMPTY, 0, 0)
-                handle.write(struct.pack(_TABLE_ENTRY_FMT, entry[0], entry[1], entry[2]))
+            # The completion flag is the header's final byte.
+            handle.seek(struct.calcsize(_HEADER_FMT) - 1)
+            handle.write(b"\x01")
+            handle.flush()
             handle.close()
             os.replace(writer["temp"], self._path(identity))
         except OSError:
@@ -238,16 +326,17 @@ class PreparedCache:
         try:
             entries = []
             total = 0
-            for name in os.listdir(self.directory):
-                if not name.endswith(".mpfp"):
-                    continue
-                path = os.path.join(self.directory, name)
-                try:
-                    stat = os.stat(path)
-                except OSError:
-                    continue
-                total += stat.st_size
-                entries.append((stat.st_atime, path, stat.st_size))
+            for root, _dirs, names in os.walk(self.directory):
+                for name in names:
+                    if not name.endswith(".mpfp"):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        stat = os.stat(path)
+                    except OSError:
+                        continue
+                    total += stat.st_size
+                    entries.append((stat.st_atime, path, stat.st_size))
             # The policy: under budget,
             # stop; a protected entry is SKIPPED, never a stopper —
             # the eviction continues with the next candidate.

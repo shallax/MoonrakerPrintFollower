@@ -15,6 +15,7 @@ from math import cos, hypot, radians, sin
 import gzip
 import json
 import os
+import shutil
 import struct
 import tempfile
 import unittest
@@ -539,9 +540,7 @@ class ArcCacheTests(unittest.TestCase):
         self.cache = PersistentIndexCache(self.directory)
 
     def _cleanup(self):
-        for name in os.listdir(self.directory):
-            os.remove(os.path.join(self.directory, name))
-        os.rmdir(self.directory)
+        shutil.rmtree(self.directory, ignore_errors=True)
 
     def _round_trip(self, gcode: str):
         path = _write(gcode)
@@ -554,9 +553,11 @@ class ArcCacheTests(unittest.TestCase):
         path = _write(gcode)
         self.addCleanup(os.remove, path)
         self.cache.save(self.identity, build_index_from_file(path))
-        names = os.listdir(self.directory)
-        self.assertEqual(len(names), 1, "the cache wrote nothing to inspect")
-        return os.path.join(self.directory, names[0])
+        # The production cache's own path (the per-print subdirectory
+        # layout) — the blob to rewrite is the file the loader reads.
+        blob = self.cache._path(self.identity)
+        self.assertTrue(os.path.exists(blob), "the cache wrote nothing to inspect")
+        return blob
 
     def _built(self, gcode: str, *, compact: bool = False):
         """The index for *gcode*, and the file it came from (still on disk
