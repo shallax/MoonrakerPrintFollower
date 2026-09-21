@@ -324,7 +324,7 @@ class PrintCoordinator(QObject):
                 # CURRENT layer still read as following while the print
                 # stayed on it (the live report: detaching did nothing
                 # visible).
-                decode_start = time.monotonic()
+                lookup_start = time.monotonic()
                 plate_progress_payload = self._index.plate_progress(
                     physical.index, position, live_position)
                 if self._plate_anchor is not None:
@@ -334,7 +334,7 @@ class PrintCoordinator(QObject):
                 # Prepared-file I/O, decode, raw hydration and preparation
                 # happen asynchronously inside GCodeIndexService and are
                 # intentionally not mislabeled as part of this number.
-                plate_lookup_ms = (time.monotonic() - decode_start) * 1000.0
+                plate_lookup_ms = (time.monotonic() - lookup_start) * 1000.0
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map
