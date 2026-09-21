@@ -4,9 +4,10 @@ import json
 import logging
 import os
 import re
+from collections import OrderedDict
 from collections.abc import Mapping
 from copy import deepcopy
-from PyQt6.QtCore import QLocale, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
@@ -30,6 +31,7 @@ def _british_spelling() -> bool:
 
 
 from .MonitorCamera import MonitorCamera
+from .PlateQt import PlateLayer, _RasterJob, render_layer_raster
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -369,9 +371,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # per seek for a picture it immediately discarded).
         ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
                                  "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
-        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
+        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
-                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable")),
+                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -512,6 +514,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_layer_anchor = -1
         self._follower_layer_split = None
         self._follower_job = None
+        # The native render pipeline (the review's round 3): a bounded
+        # LRU of PlateLayer QObjects whose RASTERS a worker paints —
+        # the QML's role shrinks to composition, and the vector
+        # geometry crosses only for the scrub's delta, as its own key.
+        self._plate_qt_layers = OrderedDict()
+        self._plate_qt_job = None
+        # The raster's view inputs, fed by the QML on re-fit and on
+        # zoom/line changes; the generation invalidates stale renders.
+        self._plate_plot = None
+        self._plate_view = {}
+        self._raster_generation = 0
+        # The latest-wins coalescing: a pending view per layer — a
+        # new request supersedes the previous one, never queues it.
+        self._plate_pending = {}
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
@@ -1162,7 +1178,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # request). While gated the keys carry the last published
         # objects; opening or expanding resumes the live values.
         if self._follower_popover_open:
-            values["plateLayers"] = popover["layers"] if popover is not None else {}
+            values["plateLayers"] = (self._qt_window(popover["layers"], popover.get("anchor"))
+                                     if popover is not None else {})
+            values["plateScrubVector"] = (popover["layers"].get("current")
+                                          if popover is not None else None)
             values["plateSplit"] = popover["split"] if popover is not None else None
             # The progress slider's range: the layer's own motion count (0
             # while the payload has not landed — the slider reads dead).
@@ -1188,6 +1207,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 values["plateProgressReason"] = ""
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
+            values["plateScrubVector"] = self._values.get("plateScrubVector")
             values["plateSplit"] = self._values.get("plateSplit")
             values["plateLayerMotionCount"] = self._values.get("plateLayerMotionCount", 0)
             values["plateProgressAnchor"] = self._values.get("plateProgressAnchor", -1)
@@ -1197,13 +1217,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
         if self._sections.get("plateprogress", True) is not False:
-            values["plateLiveLayers"] = progress["layers"] if progress is not None else {}
+            values["plateLiveLayers"] = (self._qt_window(progress["layers"], progress.get("anchor"))
+                                         if progress is not None else {})
+            values["plateLiveScrubVector"] = (progress["layers"].get("current")
+                                              if progress is not None else None)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
             values["plateLiveAnchor"] = (progress["anchor"]
                                           if progress is not None and progress["anchor"] is not None else -1)
             values["plateLiveAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
         else:
             values["plateLiveLayers"] = self._values.get("plateLiveLayers", {})
+            values["plateLiveScrubVector"] = self._values.get("plateLiveScrubVector")
             values["plateLiveSplit"] = self._values.get("plateLiveSplit")
             values["plateLiveAnchor"] = self._values.get("plateLiveAnchor", -1)
             values["plateLiveAvailable"] = self._values.get("plateLiveAvailable", False)
@@ -1475,6 +1499,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
     monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
     platePassFraction = value_property(float, "platePassFraction", monitorChanged, -1.0)
+    plateScrubVector = value_property(QVariant, "plateScrubVector", plateProgressChanged, None)
+    plateLiveScrubVector = value_property(QVariant, "plateLiveScrubVector", plateProgressChanged, None)
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
@@ -2725,9 +2751,91 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._request_plate_split is not None:
             self._request_plate_split(motions)
 
+    def _qt_layer(self, payload, layer):
+        """The layer's RETAINED native-render object: the same
+        PlateLayer for the same layer across every window that shows
+        it. Its raster is requested on the first window and lands
+        asynchronously (the worker's QPainterPath — the measured
+        92 ms at 500k motions, off the UI thread)."""
+        if payload is None or layer < 0:
+            return None
+        cached = self._plate_qt_layers.get(layer)
+        if cached is not None:
+            self._plate_qt_layers.move_to_end(layer)
+            return cached
+        wrapped = PlateLayer(payload)
+        self._plate_qt_layers[layer] = wrapped
+        while len(self._plate_qt_layers) > 6:
+            self._plate_qt_layers.popitem(last=False)
+        self._request_raster(wrapped, payload, layer)
+        return wrapped
+
+    def _qt_window(self, layers, anchor):
+        """The prev/current/next window as three retained
+        references (the review's step 13: role-free rasters, the
+        opacity applied at composition)."""
+        if not layers:
+            return {}
+        if not isinstance(anchor, int):
+            anchor = 0
+        return {"prev": self._qt_layer(layers.get("prev"), anchor - 1),
+                "current": self._qt_layer(layers.get("current"), anchor),
+                "next": self._qt_layer(layers.get("next"), anchor + 1)}
+
+    def _request_raster(self, wrapped, payload, layer):
+        """The latest-wins render demand: a new request for the
+        layer supersedes any pending one, and a completed result
+        commits only while its generation and its layer's identity
+        still hold (the review's steps 9-10)."""
+        plot = self._plate_plot
+        view = dict(self._plate_view)
+        if plot is None or not view.get("width"):
+            return
+        self._raster_generation += 1
+        generation = self._raster_generation
+        self._plate_pending[layer] = generation
+
+        def build():
+            image = render_layer_raster(payload, plot, view)
+            if generation == self._raster_generation \
+                    and self._plate_pending.get(layer) == generation \
+                    and self._plate_qt_layers.get(layer) is wrapped:
+                wrapped.set_raster(image)
+                self._plate_pending.pop(layer, None)
+                self._publish()
+        QThreadPool.globalInstance().start(_RasterJob(build))
+
+    @pyqtSlot(float, float, int, int, bool)
+    def setFollowerView(self, scale, lineScale, width, height, compact):
+        """The raster's view inputs: a change re-renders the cached
+        layers at the new zoom/size (the review's step 12's key)."""
+        self._plate_view = {"scale": float(scale), "lineScale": float(lineScale),
+                            "width": int(width), "height": int(height),
+                            "compact": bool(compact)}
+        for layer, wrapped in list(self._plate_qt_layers.items()):
+            self._request_raster(wrapped, wrapped._payload, layer)
+
+    @pyqtSlot(float, float, float, float, float, float)
+    def setFollowerPlot(self, offsetX, offsetY, sx, sy, bedXMin, bedYMax):
+        """The bed plot (fed on the canvas's re-fit): the native
+        renderer uses the SAME mapping the face's painters did, so
+        the blit lands the identical picture."""
+        self._plate_plot = {"offsetX": float(offsetX), "offsetY": float(offsetY),
+                            "sx": float(sx), "sy": float(sy),
+                            "bedXMin": float(bedXMin), "bedYMax": float(bedYMax)}
+        for layer, wrapped in list(self._plate_qt_layers.items()):
+            self._request_raster(wrapped, wrapped._payload, layer)
+
     def _observe_follower_job(self, job):
         """A new print re-attaches the follower: the frozen layer
         belonged to the file that was printing."""
+        if job != self._plate_qt_job:
+            # The render cache belongs to that file too: a new
+            # print's geometry must never answer with the old job's
+            # images (the review's generation-isolation test).
+            self._plate_qt_job = job
+            self._plate_qt_layers = OrderedDict()
+            self._plate_pending = {}
         if job == self._follower_job:
             return
         self._follower_job = job
