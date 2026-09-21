@@ -2023,7 +2023,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
             image = window.grabWindow()
         return image
 
-    def _native_layer(self, payload, face, prefix_split=None, dpr=1.0):
+    def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
+                      line_scale=8.0):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -2038,11 +2039,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
                 "bedXMin": float(plot_value["bed"]["bedXMin"]),
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
-        # A THICK lineScale: the physical stroke at 100% zoom is
-        # legitimately sub-pixel (the live ruling), which a colour
-        # census cannot see — the fixture paints its proofs solid.
+        # A THICK lineScale by default: the physical stroke at 100%
+        # zoom is legitimately sub-pixel (the live ruling), which a
+        # colour census cannot see — the fixture paints its proofs
+        # solid. The parity test passes the production 0.7.
         view = {"width": int(face.width()), "height": int(face.height()),
-                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "scale": 1.0, "lineScale": line_scale, "compact": False,
                 "panX": 0.0, "panY": 0.0, "dpr": dpr}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
@@ -2932,6 +2934,102 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
+
+    def _parity_leg(self, dpr):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 0.7)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10,
+                                   dpr=dpr, line_scale=0.7)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        self._pump_ms(400)
+        image = window.grabWindow()
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        bed = plot_value["bed"]
+
+        def column_for(bed_x):
+            return int(round(float(bed["offsetX"])
+                             + (bed_x - float(bed["bedXMin"]))
+                             * float(plot_value["sx"])))
+
+        row = int(round(float(bed["offsetY"])
+                        + (float(bed["bedYMax"]) - 125.0)
+                        * float(plot_value["sy"])))
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+
+        def band_profile(col):
+            # The red excess over the underlying background down the
+            # perpendicular column (the stroke's thickness spans a few
+            # antialiased rows).
+            values = []
+            for r in range(row - 6, row + 7):
+                pixel = image.pixel(int(origin.x()) + col,
+                                    int(origin.y()) + r)
+                values.append(max(0, ((pixel >> 16) & 0xFF)
+                                 - ((pixel >> 8) & 0xFF)))
+            return values
+        prefix_col = column_for(60.0)   # motion 4 — the native prefix
+        tail_col = column_for(160.0)    # motion 14 — the canvas tail
+        prefix_band = band_profile(prefix_col)
+        tail_band = band_profile(tail_col)
+        prefix_peak = max(prefix_band)
+        tail_peak = max(tail_band)
+        prefix_energy = sum(prefix_band)
+        tail_energy = sum(tail_band)
+        self.assertGreater(prefix_peak, 10,
+                           "dpr %s: the native prefix drew nothing measurable" % dpr)
+        self.assertGreater(tail_peak, 10,
+                           "dpr %s: the canvas tail drew nothing measurable" % dpr)
+        self.assertGreater(prefix_peak, tail_peak * 0.6,
+                           "dpr %s: the native prefix is ghostly against the "
+                           "canvas tail (peak %s vs %s)"
+                           % (dpr, prefix_peak, tail_peak))
+        self.assertGreater(tail_peak, prefix_peak * 0.6,
+                           "dpr %s: the canvas tail is ghostly against the "
+                           "native prefix (peak %s vs %s)"
+                           % (dpr, tail_peak, prefix_peak))
+        self.assertGreater(prefix_energy, tail_energy * 0.6,
+                           "dpr %s: the native prefix's band energy washes "
+                           "out (%s vs %s)" % (dpr, prefix_energy, tail_energy))
+        self.assertGreater(tail_energy, prefix_energy * 0.6,
+                           "dpr %s: the canvas tail's band energy washes "
+                           "out (%s vs %s)" % (dpr, tail_energy, prefix_energy))
+        self.pump(20)
+
+    @unittest.expectedFailure
+    def test_the_native_prefix_and_the_qml_tail_match_intensity_at_production_width(self):
+        # The review's finding #3: at the production lineScale (0.7 —
+        # subpixel strokes) the native prefix and the QML canvas tail
+        # must carry the same perceived intensity over equivalent
+        # pieces of the same straight path: the peak feature colour,
+        # the mean delta from the background and the integrated band
+        # energy — not a stroke-height census at lineScale 8. The
+        # raster may be fractionally softer (it is an image), but it
+        # must not read ghostly, translucent or washed out against
+        # the canvas continuation.
+        #
+        # MEASURED (the finding's evidence, recorded): at lineScale
+        # 0.7 the canvas tail renders the same subpixel stroke at
+        # HALF the native prefix's per-pixel coverage (peak 21 vs
+        # 42, energy 42 vs 84, identical band shape); the ratio
+        # converges as the stroke thickens (0.57 at 1.4, 0.69 at
+        # 2.8) — the canvas rasteriser's subpixel AA deficit, worst
+        # at the production default. The renderer is untouched (the
+        # review forbids blind alpha or width factors); the fix must
+        # reproduce the native painter's coverage.
+        self._parity_leg(1.0)
+        self._parity_leg(2.0)
 
     def test_the_interaction_raster_owns_the_camera_and_swaps_atomically(self):
         # The camera interaction: a warm navigation raster owns the
