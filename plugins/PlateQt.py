@@ -278,6 +278,16 @@ class PlateLayer(QObject):
         self._prefix_key = key
         self.rasterReady.emit()
 
+    def memory_bytes(self) -> int:
+        """The wrapper's own pixel bytes — the four sibling images.
+        The payload's geometry is charged separately, through the
+        service's decoded pins."""
+        total = 0
+        for image in (self._raster, self._base, self._travels, self._prefix):
+            if image is not None and not image.isNull():
+                total += image.sizeInBytes()
+        return total
+
 
 def _transform(plot: dict, view: dict):
     """The shared mapping (the face's painters' own): the WHOLE

@@ -1626,6 +1626,113 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self._pump_rasters(model, "popover")
         self.assertTrue(surface.layers[5].rasterValid)
 
+    def test_wrapper_payloads_pin_the_decoded_budget(self):
+        # The wrappers charge their payloads against the decoded
+        # tier: pin on wrap (the second surface's wrapper adds its
+        # own), unpin on print change, and the accounting view
+        # reports the tiers' real residency.
+        model = self.monitor()
+        service = model._index_service
+        service._decoded_lru.max_bytes = 1000
+        for layer in (4, 5, 6):
+            service._decoded_lru.set(layer, self._payload(), 5000)
+            service._decoded_sizes[layer] = 5000
+        self._feed(model, "popover")
+        self._window(model, "popover", 5)
+        popover = model._plate_surfaces["popover"]
+        self.assertEqual(set(service._decoded_pins), set(popover.layers.keys()),
+                         "the pins do not track the wrappers")
+        self._feed(model, "mini", width=90, height=90)
+        self._window(model, "mini", 5)
+        self.assertEqual(service._decoded_pins[5], 2,
+                         "the second surface's wrapper did not add its pin")
+        accounting = model.memory_accounting()
+        self.assertGreater(accounting["decodedBytes"], 0)
+        self.assertGreater(accounting["pinnedDecodedBytes"], 0,
+                           "the evicted wrappers' payloads were not charged")
+        self.assertEqual(accounting["wrapperCount"], 6)
+        # A print change clears the wrappers and their pins.
+        model._observe_follower_job("new-job")
+        self.assertEqual(service._decoded_pins, {})
+        self.assertEqual(model.memory_accounting()["wrapperCount"], 0)
+        # The cancelled workers deliver their terminal commits here —
+        # a straggler's commit on a deleted model is the teardown
+        # segfault.
+        for _ in range(200):
+            self.qt.events(5)
+            if all(surface.job is None
+                   for surface in model._plate_surfaces.values()):
+                break
+
+    def test_the_raster_prune_skips_live_references_and_temps(self):
+        # The prune is reference-aware: a file a live wrapper still
+        # displays always survives (the newest-N sweep used to be
+        # able to unlink the picture on screen), and an in-flight
+        # publication's temp is never touched.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        self._window(model, "popover", 5)
+        directory = model._raster_cache_dir
+        old = os.path.join(directory, "old.png")
+        live = os.path.join(directory, "live.png")
+        temp = os.path.join(directory, "job.png.tmp-99")
+        for path in (old, live, temp):
+            with open(path, "wb") as handle:
+                handle.write(b"x")
+        from PyQt6.QtCore import QUrl
+        model._plate_surfaces["popover"].layers[5]._raster_data = \
+            QUrl.fromLocalFile(live).toString()
+        model._prune_raster_cache(keep=0)
+        self.assertFalse(os.path.exists(old), "the unreferenced file survived")
+        self.assertTrue(os.path.exists(live), "the live reference was unlinked")
+        self.assertTrue(os.path.exists(temp), "the in-flight temp was unlinked")
+        # Quiesce the submitted job before the teardown deletes the
+        # model: a straggler's commit on a deleted model is the
+        # teardown segfault.
+        surface = model._plate_surfaces["popover"]
+        if surface.job is not None:
+            surface.job["cancel"].set()
+        for _ in range(200):
+            self.qt.events(5)
+            if surface.job is None:
+                break
+
+    def test_a_discarded_completion_releases_its_images(self):
+        # The discard path keeps NO image: after the handler returns,
+        # nothing but the (dead) tuple ever referenced the rendered
+        # pixels — a superseded job's QImages free with it.
+        import gc
+        import weakref
+
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        surface.desired = None  # the discard's re-schedule finds nothing
+        if surface.job is not None:
+            surface.job["cancel"].set()
+            surface.job = None
+        module = self.qt.load("MoonrakerMonitorModel")
+        payload = self._payload()
+        payload["travels"] = [[[0.0, 0.0, 0.0], [10.0, 10.0, 1.0]]]
+        coloured, base, travels = module.render_layer_raster(
+            payload, surface.plot, surface.view)
+        refs = [weakref.ref(image) for image in (coloured, base, travels)]
+        stale = ("popover", 5, "stale-token", surface.generation,
+                 surface.render_key(), "full", None, surface.job_epoch, 0)
+        model._raster_committed(("full", coloured, "", base, "", travels, ""), stale)
+        self.assertGreaterEqual(surface.stats["discarded"], 1)
+        del coloured, base, travels
+        gc.collect()
+        self.assertEqual([ref() for ref in refs], [None] * 3,
+                         "a discarded completion's image survived")
+        # The cancelled worker's terminal commit delivers here, not
+        # on a deleted model after the teardown.
+        for _ in range(200):
+            self.qt.events(5)
+            if surface.job is None:
+                break
+
     def test_a_queued_obsolete_job_cancels_before_its_render(self):
         # A submitted (not yet running) job whose layer left the
         # window gets the cancel flag: the worker's pre-render

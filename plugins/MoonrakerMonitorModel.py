@@ -478,10 +478,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
-                 identity=None, state_store=None, persistence=None):
+                 identity=None, state_store=None, persistence=None, index_service=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
+        # The decoded cache's owner (the follower's index service):
+        # the render wrappers pin their payloads there so the decoded
+        # budget counts what the wrappers keep alive, and the memory
+        # accounting reads the tiers back. Optional — the tests and
+        # the harness mount without it.
+        self._index_service = index_service
         # The follower's anchor seam (the pop-over's layer slider): the
         # model publishes the state, the coordinator owns the payload.
         # The split seam is the progress slider's scrub, same shape.
@@ -595,6 +601,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # the model's destruction removes it.
         self._raster_cache_dir = tempfile.mkdtemp(prefix="mpf-raster-")
         self.destroyed.connect(self._cleanup_raster_dir)
+        self.destroyed.connect(self._release_all_pins)
         # The seek trace: disabled by
         # default; MOONRAKER_FOLLOWER_SEEK_TRACE=1 (or the config's
         # seek_trace) records the stage timeline with the queue
@@ -2856,11 +2863,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         wrapped = PlateLayer(payload)
         wrapped.set_expected_key(surface.render_key())
         surface.layers[layer] = wrapped
+        # The wrapper pins the payload against the decoded budget:
+        # the LRU's eviction must not uncharge bytes the wrapper
+        # keeps alive.
+        if self._index_service is not None:
+            self._index_service.pin_decoded(layer)
         while len(surface.layers) > 6:
             evicted, _ = surface.layers.popitem(last=False)
             # The bookkeeping must not outlive the wrapper: an
             # evicted layer's tokens go with it.
             surface.tokens.pop(evicted, None)
+            if self._index_service is not None:
+                self._index_service.unpin_decoded(evicted)
         return wrapped
 
     def _raster_hot(self, surface, layer):
@@ -3097,15 +3111,66 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         except OSError:
             pass
 
+    def memory_accounting(self):
+        """The model's memory story in one view: the service's RAM
+        tiers (packed, decoded, pinned), the wrappers' pixel bytes,
+        and the raster directory's disk bytes. The lifecycle frees
+        them on their own paths — wrappers unpin on eviction and
+        print change, the directory prunes on commit and print
+        change, and destruction rmtrees it."""
+        packed = decoded = pinned = 0
+        if self._index_service is not None:
+            packed = self._index_service.packed_bytes()
+            decoded = self._index_service.decoded_resident_bytes()
+            pinned = self._index_service.pinned_decoded_bytes()
+        wrappers = 0
+        wrapper_images = 0
+        for surface in self._plate_surfaces.values():
+            wrappers += len(surface.layers)
+            for wrapped in surface.layers.values():
+                wrapper_images += wrapped.memory_bytes()
+        dir_files = 0
+        dir_bytes = 0
+        try:
+            for name in os.listdir(self._raster_cache_dir):
+                try:
+                    dir_bytes += os.stat(os.path.join(self._raster_cache_dir, name)).st_size
+                    dir_files += 1
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return {"packedBytes": packed, "decodedBytes": decoded,
+                "pinnedDecodedBytes": pinned,
+                "wrapperCount": wrappers, "wrapperImageBytes": wrapper_images,
+                "rasterDirFiles": dir_files, "rasterDirBytes": dir_bytes}
+
+    def _referenced_raster_files(self):
+        """The asset files the live wrappers still display: the
+        prune must never unlink a URL a wrapper still reads."""
+        referenced = set()
+        for surface in self._plate_surfaces.values():
+            for wrapped in surface.layers.values():
+                for url in (wrapped.rasterData, wrapped.baseData,
+                            wrapped.travelData, wrapped.prefixData):
+                    if url:
+                        referenced.add(QUrl(url).toLocalFile())
+        return referenced
+
     def _prune_raster_cache(self, keep=64):
         """The raster cache's bound (the file-URL transport): the
-        newest `keep` PNGs survive; the rest — files long superseded
-        by newer generations — go. Scoped to THIS model's directory,
-        so another printer's assets are never touched."""
+        newest `keep` PNGs survive, a file a live wrapper still
+        displays ALWAYS survives (the old newest-N sweep could
+        unlink the picture on screen), and an in-flight publication's
+        temp is never touched. Scoped to THIS model's directory, so
+        another printer's assets are never touched."""
         try:
+            referenced = self._referenced_raster_files()
             entries = []
             for name in os.listdir(self._raster_cache_dir):
                 path = os.path.join(self._raster_cache_dir, name)
+                if path in referenced or ".tmp-" in name:
+                    continue
                 try:
                     entries.append((os.stat(path).st_mtime, path))
                 except OSError:
@@ -3132,6 +3197,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             job["state"] = "running"
             surface.stats["started"] += 1
             self._trace("T10 raster running", {"surface": name, "layer": layer})
+
+    def _unpin_surface(self, surface):
+        """Release the surface's wrapper pins: the decoded budget
+        uncharges the payloads only when the wrappers actually go
+        (a retire keeps the wrappers hot, so it does NOT unpin)."""
+        if self._index_service is None:
+            return
+        for layer in list(surface.layers.keys()):
+            self._index_service.unpin_decoded(layer)
+
+    def _release_all_pins(self):
+        """The model's death releases every wrapper pin: the index
+        service outlives the monitor (the follower owns it)."""
+        if self._index_service is None:
+            return
+        for surface in self._plate_surfaces.values():
+            self._unpin_surface(surface)
 
     def _retire_surface(self, surface):
         """A surface whose QML consumer has gone retires its
@@ -3395,6 +3477,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 surface.job_epoch = self._plate_job_epoch
                 if surface.job is not None:
                     surface.job["cancel"].set()
+                self._unpin_surface(surface)
                 surface.layers.clear()
                 surface.tokens.clear()
                 surface.job = None

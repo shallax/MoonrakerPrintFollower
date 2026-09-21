@@ -62,9 +62,12 @@ class IndexView:
 # the print — and 128 MB holds six dense decoded windows with room.
 _FULL_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _DECODED_LRU_MAX_BYTES = 128 * 1024 * 1024
-# The decoded LRU's guaranteed floor: the live window (3) plus the
-# frozen one (3) never drop each other below display.
-_DECODED_LRU_MIN_ENTRIES = 4
+# The decoded LRU's guaranteed floor: ONE entry — the just-committed
+# layer before its render wrappers pin it. The live and frozen
+# windows' protection moved to the pins (the wrappers charge their
+# payloads against the budget explicitly), so the old 4-entry floor's
+# RAM no longer outvotes the byte bound.
+_DECODED_LRU_MIN_ENTRIES = 1
 
 
 def _deep_size(obj) -> int:
@@ -266,6 +269,16 @@ class GCodeIndexService(QObject):
         # a slot floor: the live and
         # frozen windows side by side, bounded by measured bytes.
         self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
+        # The render wrappers' pins: a wrapper holding a decoded
+        # payload keeps its bytes charged against the budget even
+        # after the LRU evicts the entry (the wrapper keeps the
+        # object alive, so the charge must stay alive too). The
+        # sizes mirror retains every charged layer's size — one int
+        # per layer ever decoded, bounded by the file's layer count —
+        # so a memoised payload the LRU already evicted still pins
+        # with its true size.
+        self._decoded_pins = {}
+        self._decoded_sizes = {}
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
@@ -316,6 +329,9 @@ class GCodeIndexService(QObject):
         self._full_next = 0
         # The hot presentation cache belongs to that file as well.
         self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
+        # The wrappers' pins die with the file they belonged to.
+        self._decoded_pins = {}
+        self._decoded_sizes = {}
         # The prepared store's table follows the same identity.
         self._prepared_table = None
         self._prepared_identity = None
@@ -657,6 +673,55 @@ class GCodeIndexService(QObject):
                 motion_total = self._view._index.motion_count(anchor)
         return {"layers": layers, "split": split, "method": method,
                 "motionTotal": motion_total, "anchor": anchor}
+
+    # The memory accounting (the RAM tiers' honest view): the
+    # wrapper-pinned decoded payloads charge the same budget the LRU
+    # draws from, so the combined number is the tier's real
+    # residency, not just the LRU's own.
+    def pin_decoded(self, layer):
+        """A render wrapper pins the decoded payload: its bytes stay
+        charged against the decoded budget even after the LRU evicts
+        the entry (the wrapper keeps the object alive). Layers the
+        service never charged pin nothing."""
+        size = self._decoded_sizes.get(layer)
+        if size is None:
+            return
+        self._decoded_pins[layer] = self._decoded_pins.get(layer, 0) + 1
+        self._reconcile_decoded()
+
+    def unpin_decoded(self, layer):
+        """The wrapper is gone: the pin count drops, and the size
+        record stays (it is one int per layer ever decoded)."""
+        pins = self._decoded_pins.get(layer, 0)
+        if pins <= 1:
+            self._decoded_pins.pop(layer, None)
+        else:
+            self._decoded_pins[layer] = pins - 1
+
+    def _reconcile_decoded(self):
+        """The COMBINED bound: pinned payloads count against the
+        decoded budget, so the LRU yields to them — entries evict
+        until the total (LRU bytes plus pinned-evicted bytes) fits,
+        the entry floor the only stop."""
+        while (self._decoded_lru.total_bytes() + self.pinned_decoded_bytes()
+               > self._decoded_lru.max_bytes
+               and len(self._decoded_lru) > self._decoded_lru.min_entries):
+            self._decoded_lru.popitem(last=False)
+
+    def pinned_decoded_bytes(self):
+        """The wrapper-pinned payload bytes the LRU has already
+        evicted (in-LRU entries count in the LRU's own total)."""
+        return sum(size for layer, size in self._decoded_sizes.items()
+                   if self._decoded_pins.get(layer) and layer not in self._decoded_lru)
+
+    def decoded_resident_bytes(self):
+        """The decoded tier's real residency: the LRU's entries plus
+        the wrapper-pinned payloads it evicted."""
+        return self._decoded_lru.total_bytes() + self.pinned_decoded_bytes()
+
+    def packed_bytes(self):
+        """The packed tier's charged bytes."""
+        return self._full_cache.total_bytes()
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.
@@ -1076,10 +1141,14 @@ class GCodeIndexService(QObject):
                         # must hold it either way.
                         self._prepared_persist(layer, encoded)
                     self._decoded_lru.set(layer, decoded, size)
+                    self._decoded_sizes[layer] = size
                     if ram_hit:
                         # A RAM-cache hit refreshes the packed tier's
                         # recency (the worker only peeked).
                         self._full_cache.touch(layer)
+                # The pins may hold evicted layers: the combined
+                # bound yields the LRU to them after every commit.
+                self._reconcile_decoded()
                 if len(failed) < len(window_layers) or (bool(value) and not window_layers):
                     self._save = True
                 self._failed_hydrate.update(failed)
