@@ -1404,6 +1404,10 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "assert_model", "prop": "plateHasObjects", "value": False},
+         # The shared native/QML travel-width contract is a published,
+         # read-only surface. Read it explicitly so the coverage matrix
+         # has execution evidence rather than a bookkeeping-only entry.
+         {"op": "assert_model", "prop": "followerTravelVisualRatio", "value": 0.7},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────

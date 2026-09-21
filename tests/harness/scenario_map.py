@@ -162,6 +162,7 @@ SCENARIO_MAP = {
     "followerShowBase": "b11",
     "followerShowTravels": "b11",
     "followerLineScale": "b11",
+    "followerTravelVisualRatio": "b11",
     "sectionConfigurePopOver": "x1",
     "sectionConfigureRowTitle": "x1",
     "configureControlsSectionsButton": "x1",
