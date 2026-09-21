@@ -19,9 +19,10 @@ the pan stays baked into the render (the standing architecture).
 """
 from __future__ import annotations
 
+import math
 import os
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, QUrl, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QUrl, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 
 # The plate class colours — the SAME values the QML theme's
@@ -39,6 +40,11 @@ _PLATE_CLASS_COLOURS = {
 # The theme's seriesDefault (the pending base's grey) and plateTravel.
 _PLATE_BASE_COLOUR = "#888888"
 _PLATE_TRAVEL_COLOUR = "#b085e8"
+# The bed grid's colours (the face's theme tokens' values — the
+# workers cannot read the QML theme): the 10 mm thin graduations
+# and the 50 mm / border strokes.
+_PLATE_GRID_THIN = "#cccccc"
+_PLATE_GRID_BORDER = "#999999"
 # One render-contract value for both the native travel raster and the
 # QML Canvas path (the model publishes this value to the face).
 _PLATE_TRAVEL_VISUAL_RATIO = 0.7
@@ -443,6 +449,55 @@ def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
                 painter.drawPath(path)
 
 
+def _paint_grid(painter: QPainter, plot: dict, view: dict) -> None:
+    """The bed grid, the interaction scene's BOTTOM raster: the same
+    10 mm thin / 50 mm thick graduations and the border the face's
+    mapping canvas paints — so the COMPLETE scene (the grid AND the
+    geometry) switches to the warm raster as one unit, never two
+    independently-moving pictures."""
+    bed_width = float(view.get("bedWidth") or 0)
+    bed_depth = float(view.get("bedDepth") or 0)
+    if bed_width <= 0 or bed_depth <= 0:
+        return
+    sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
+    left = offset_x
+    top = offset_y
+    right = offset_x + bed_width * sx
+    bottom = offset_y + bed_depth * sy
+    bed_x_max = bed_x_min + bed_width
+    bed_y_min = bed_y_max - bed_depth
+    thin = QPen(QColor(_PLATE_GRID_THIN))
+    thin.setWidthF(4.0)  # the face's 1 logical px at the 4x backing
+    thick = QPen(QColor(_PLATE_GRID_BORDER))
+    thick.setWidthF(8.0)  # the face's 2 logical px
+    painter.setPen(thin)
+    gx = math.ceil(bed_x_min / 10.0) * 10.0
+    while gx <= bed_x_max:
+        if round(gx) % 50 != 0:
+            sxg = offset_x + (gx - bed_x_min) * sx
+            painter.drawLine(QPointF(sxg, top), QPointF(sxg, bottom))
+        gx += 10.0
+    gy = math.ceil(bed_y_min / 10.0) * 10.0
+    while gy <= bed_y_max:
+        if round(gy) % 50 != 0:
+            syg = offset_y + (bed_y_max - gy) * sy
+            painter.drawLine(QPointF(left, syg), QPointF(right, syg))
+        gy += 10.0
+    painter.setPen(thick)
+    hx = math.ceil(bed_x_min / 50.0) * 50.0
+    while hx <= bed_x_max:
+        sxg = offset_x + (hx - bed_x_min) * sx
+        painter.drawLine(QPointF(sxg, top), QPointF(sxg, bottom))
+        hx += 50.0
+    hy = math.ceil(bed_y_min / 50.0) * 50.0
+    while hy <= bed_y_max:
+        syg = offset_y + (bed_y_max - hy) * sy
+        painter.drawLine(QPointF(left, syg), QPointF(right, syg))
+        hy += 50.0
+    painter.drawRect(QRectF(left + 4.0, top + 4.0,
+                            right - left - 8.0, bottom - top - 8.0))
+
+
 def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
                             cancel=None) -> QImage:
     """The interaction scene (the pan/zoom navigation raster): ONE
@@ -457,6 +512,7 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
     image = _new_canvas(view)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    _paint_grid(painter, plot, view)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
     for payload in (window.get("prev"), window.get("next")):

@@ -3177,6 +3177,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 round(float(surface.view.get("lineScale") or 0.7), 6),
                 int(surface.view.get("width") or 0),
                 int(surface.view.get("height") or 0),
+                round(float(self.bedMeshMachineWidth or 0.0), 6),
+                round(float(self.bedMeshMachineDepth or 0.0), 6),
                 tuple(sorted((k, round(float(v), 6))
                              for k, v in (surface.plot or {}).items())))
 
@@ -3186,7 +3188,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the camera path, and only for the popover — the mini does
         not carry this feature. A ready URL is what the face can
         switch to INSTANTLY on the first camera input."""
-        if surface.name != "popover" or surface.nav["job"] is not None:
+        if surface.name != "popover" or surface.nav["job"] is not None \
+                or surface.plot is None:
             return
         key = self._navigation_key(surface)
         if key is None or key == surface.nav["key"]:
@@ -3207,7 +3210,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "lineScale": float(surface.view.get("lineScale") or 0.7),
                 "travelVisualRatio": surface.view.get("travelVisualRatio"),
                 "compact": False, "panX": 0.0, "panY": 0.0,
-                "backing": backing}
+                "backing": backing,
+                # The bed's machine bounds: the grid rides the same
+                # composite — the COMPLETE scene (the grid AND the
+                # geometry) switches to the warm raster as one.
+                "bedWidth": float(self.bedMeshMachineWidth or 0.0),
+                "bedDepth": float(self.bedMeshMachineDepth or 0.0)}
         plot = dict(surface.plot)
         split = desired.get("split")
         epoch = surface.job_epoch
