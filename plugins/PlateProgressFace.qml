@@ -173,11 +173,15 @@ Item {
     }
 
     function _baseOf(layer) {
+        // The key verdict: a base counts only while its own render
+        // key matches the surface's current one AND its file
+        // transport succeeded. The plain-dict fixtures fall back
+        // to presence.
         if (layer == null) {
             return false;
         }
-        if (layer.baseWidth !== undefined) {
-            return layer.baseWidth > 0;
+        if (layer.baseValid !== undefined) {
+            return layer.baseValid === true;
         }
         return layer.baseRaster !== undefined && layer.baseRaster != null && layer.baseRaster.width > 0;
     }
@@ -186,8 +190,8 @@ Item {
         if (layer == null) {
             return false;
         }
-        if (layer.travelWidth !== undefined) {
-            return layer.travelWidth > 0;
+        if (layer.travelValid !== undefined) {
+            return layer.travelValid === true;
         }
         return layer.travelRaster !== undefined && layer.travelRaster != null && layer.travelRaster.width > 0;
     }
@@ -216,7 +220,10 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return layer != null && split != null && layer.prefixWidth !== undefined && layer.prefixWidth > 0 && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
+        // The prefix's own render key must match the current
+        // context: a zoom/pan/resize invalidates the old prefix
+        // until the fresh one lands.
+        return layer != null && split != null && layer.prefixValid !== undefined && layer.prefixValid === true && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
     }
 
     function _prefixFrom() {
@@ -364,6 +371,12 @@ Item {
     property int _anchor: -1
     property int _paintsSinceReset: 0
     property bool _progressDirty: false
+    // The travels' SOURCE identity: when the travel payload arrives
+    // (or the layer changes), the canvas redraws them from the
+    // layer's start — the delta path alone would assume ink the
+    // canvas never drew.
+    property int _travelsSourceMotions: -1
+    property int _travelsSourceReady: 0
     // The raster state keys: each canvas records the key of the LAST
     // picture it painted, and a repaint request whose key matches is
     // skipped. That covers the unchanged state (a quiet poll, a
@@ -713,12 +726,14 @@ Item {
             // re-rasters fully on its own cadence so it cannot
             // drift. Otherwise the canvas keeps its image and only
             // the new delta is stroked on top.
+            var resetPainted = false;
             if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20) {
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
                 root._progressDirty = false;
                 root._paintsSinceReset = 0;
+                resetPainted = true;
             }
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3
@@ -728,9 +743,25 @@ Item {
             _drawLayer(ctx, current, 1.0, split, false, from);
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live
-            // rulings).
+            // rulings). The prefix carries NO travels, so a cleared
+            // canvas redraws them from the layer's start — the
+            // travels below the prefix boundary stay visible. The
+            // accumulated delta path keeps its own start (the
+            // canvas already holds the printed travels).
             if (root.showTravels) {
-                _drawTravels(ctx, current.travels, split, from);
+                // The prefix carries NO travels: a cleared canvas
+                // redraws them from the layer's start, and a NEW
+                // travel source does too — the delta path alone
+                // would assume ink the canvas never drew (the
+                // travels arriving with the prefix already in
+                // place).
+                var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
+                var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
+                var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
+                root._travelsSourceMotions = sourceMotions;
+                root._travelsSourceReady = sourceReady;
+                var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
+                _drawTravels(ctx, current.travels, split, travelFrom);
             }
             root._lastSplit = split;
             root._paintsSinceReset += 1;

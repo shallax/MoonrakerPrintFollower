@@ -1569,7 +1569,7 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         surface = model._plate_surfaces["popover"]
         self._window(model, "popover", 5)
         ticket = ("popover", 5, 1, surface.generation, surface.render_key(),
-                  "full", None)
+                  "full", None, surface.job_epoch, 1)
         model._observe_follower_job("new-job")
         discarded = surface.stats["discarded"]
         from PyQt6.QtGui import QImage
@@ -1577,6 +1577,192 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         model._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
         self.assertEqual(surface.layers, {})
         self.assertEqual(surface.stats["discarded"], discarded + 1)
+
+    def test_a_stale_completion_never_clears_an_unrelated_submitted_job(self):
+        # The exact-match rule: an old ticket's completion must not
+        # touch a NEWER submitted job — the old ticket simply
+        # discards, and the submitted job survives to run.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._dense(200000)
+        self._window(model, "popover", 100, payload)
+        submitted = dict(surface.job)
+        # A stale ticket from an older demand arrives while the
+        # 100-job is submitted (its worker has not started).
+        stale = ("popover", 100, surface.job["token"] - 1, surface.generation,
+                 surface.render_key(), "full", None, surface.job_epoch, 0)
+        from PyQt6.QtGui import QImage
+        blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
+        model._raster_committed(("full", blank, "", blank, "", blank, ""), stale)
+        self.assertIsNotNone(surface.job,
+                             "the stale completion cleared the submitted job")
+        self.assertEqual(surface.job["token"], submitted["token"],
+                         "the submitted job's token changed")
+        self.assertEqual(surface.job["layer"], submitted["layer"])
+        self._pump_rasters(model, "popover")
+
+    def test_a_worker_exception_never_wedges_the_scheduler(self):
+        # A throwing render ends as a terminal failure: the job slot
+        # clears, the failure counts, and the next demand renders.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        module = self.qt.load("MoonrakerMonitorModel")
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("injected render failure")
+        with patch.object(module, "render_layer_raster", explode):
+            self._window(model, "popover", 5)
+            for _ in range(60):
+                self.qt.events(5)
+                if surface.job is None:
+                    break
+        self.assertIsNone(surface.job, "the failed worker wedged the surface")
+        self.assertGreaterEqual(surface.stats["failed"], 1)
+        # The persistent failures retired the demand; a fresh seek
+        # re-arms the latch and renders.
+        self._window(model, "popover", 5)
+        self._pump_rasters(model, "popover")
+        self.assertTrue(surface.layers[5].rasterValid)
+
+    def test_a_queued_obsolete_job_cancels_before_its_render(self):
+        # A submitted (not yet running) job whose layer left the
+        # window gets the cancel flag: the worker's pre-render
+        # check stops it before any QPainter work.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._dense(500000)
+        self._window(model, "popover", 100, payload)
+        self.assertEqual(surface.job["state"], "submitted")
+        self._window(model, "popover", 300, payload)
+        self.assertTrue(surface.job["cancel"].is_set(),
+                        "the obsolete queued job never got its cancel flag")
+        self._pump_rasters(model, "popover")
+        self.assertTrue(surface.layers[300].rasterValid)
+
+    def test_closing_the_popover_retires_its_demand(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        model.setFollowerPopoverOpen(True)
+        payload = self._dense(500000)
+        self._window(model, "popover", 100, payload)
+        self.assertIsNotNone(surface.job)
+        model.setFollowerPopoverOpen(False)
+        self.assertIsNone(surface.desired,
+                          "the closed popover kept its demand")
+        self.assertIsNone(surface.job)
+        self.assertEqual(surface.tokens, {})
+        # Reopening rebuilds the demand from the next payload.
+        model.setFollowerPopoverOpen(True)
+        self._window(model, "popover", 100, payload)
+        self._pump_rasters(model, "popover")
+        self.assertTrue(surface.layers[100].rasterValid)
+
+    def test_a_staged_ba_reversal_commits_a(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        generation = surface.generation
+        model.setFollowerView("popover", 2.0, 0.7, 400, 300, False, 0.0, 0.0)
+        model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertEqual(surface.generation, generation,
+                         "the B->A reversal committed the intermediate")
+        self.assertEqual(surface.view["scale"], 1.0)
+
+    def test_a_staged_abc_burst_commits_c_once(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        generation = surface.generation
+        model.setFollowerView("popover", 1.2, 0.7, 563, 492, False, 0.0, 0.0)
+        model.setFollowerView("popover", 1.5, 0.7, 563, 492, False, 0.0, 0.0)
+        model.setFollowerView("popover", 1.8, 0.7, 563, 492, False, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertEqual(surface.generation, generation + 1,
+                         "the burst flushed more than one generation")
+        self.assertEqual(surface.view["scale"], 1.8)
+
+    def test_two_models_own_independent_raster_directories(self):
+        model_a = self.monitor()
+        model_b = self.monitor()
+        self.assertNotEqual(model_a._raster_cache_dir, model_b._raster_cache_dir)
+        self._feed(model_a, "popover", width=400, height=300)
+        payload = self._payload(100)
+        a_surface = model_a._plate_surfaces["popover"]
+        model_a._qt_window(a_surface, {"prev": None, "current": payload,
+                                       "next": None}, 5, "motion index", None)
+        self._pump_rasters(model_a, "popover")
+        self.assertEqual(os.listdir(model_b._raster_cache_dir), [],
+                         "model A wrote into model B's directory")
+        self.assertGreater(len(os.listdir(model_a._raster_cache_dir)), 0)
+
+    def test_prefix_refreshes_publish_distinct_urls(self):
+        from PyQt6.QtCore import QUrl
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, 5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        first = wrapped.prefixData
+        self.assertTrue(first.startswith("file://"))
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, 5, "motion index", 160)
+        self._pump_rasters(model, "popover")
+        self.assertNotEqual(first, wrapped.prefixData,
+                            "the refreshed prefix reused its URL")
+        self.assertTrue(os.path.exists(QUrl(first).toLocalFile()),
+                        "the earlier prefix's file vanished")
+        self.assertTrue(os.path.exists(QUrl(wrapped.prefixData).toLocalFile()))
+
+    def test_a_view_change_invalidates_the_prefix(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, 5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        self.assertTrue(wrapped.prefixValid)
+        model.setFollowerView("popover", 1.5, 0.7, 563, 492, False, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertFalse(wrapped.prefixValid,
+                         "the view change left the old prefix valid")
+
+    def test_the_print_epoch_blocks_a_colliding_stale_completion(self):
+        # The print switch recreates layer 100 with token 1 at
+        # generation 4 — the old print's identical ticket must be
+        # mathematically incapable of committing.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(200)
+        self._window(model, "popover", 100, payload)
+        old_epoch = surface.job_epoch
+        old_generation = surface.generation
+        model._observe_follower_job("new-job")
+        self.assertEqual(surface.job_epoch, old_epoch + 1,
+                         "the print switch never bumped the epoch")
+        # The new print recreates the SAME layer/token/generation
+        # numbers (the collision case).
+        surface.generation = old_generation
+        self._window(model, "popover", 100, payload)
+        ticket = ("popover", 100, 1, old_generation, surface.render_key(),
+                  "full", None, old_epoch, 1)
+        from PyQt6.QtGui import QImage
+        blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
+        committed_before = surface.stats["committed"]
+        model._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
+        self.assertEqual(surface.stats["committed"], committed_before,
+                         "the old print's raster committed into the new print")
+        self.assertFalse(surface.layers[100].rasterValid)
 
     def test_the_raster_commit_runs_on_the_owner_thread(self):
         # : the worker hands the images through
