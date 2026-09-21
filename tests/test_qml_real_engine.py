@@ -2482,31 +2482,36 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertFalse(self.find(monitor, "moonrakerFollowerJump").property("enabled"),
                          "the jump is live with no valid toolhead position")
 
-    def test_a_pan_re_rasters_the_stack_with_the_baked_offset(self):
-        # The live report: the pan-agnostic rewrite translated the
-        # raster items instead of re-drawing — but a raster image is
-        # exactly the canvas' size, so panning slid an already-clipped
-        # picture off the view. The pan must be a paint input: it
-        # rides the carrier and resets the stack for a full re-raster.
+    def test_a_pan_settles_before_it_re_rasters(self):
+        # The native-raster era's pan: the pan stays a paint input
+        # (the middle-canvas ghosting killed the translate), but the
+        # re-raster fires at the SETTLE — 150 ms after the last pan
+        # change — never per drag tick (the awful-panning report).
         monitor, window, face = self._follower_popover()
         face.setProperty("dot", None)
         rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
         self.assertTrue(rows, "the follower painted nothing")
         self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
                                 "the accumulation never painted")
+        # Let the mount's own settle pass first, then hold the
+        # counter still.
+        import time
+        time.sleep(0.25)
+        self.pump(30)
+        paints = face.property("_paintsSinceReset")
         face.setProperty("viewPanY", 36.0)
-        # The reset is synchronous in the change handler; the re-raster
-        # lands on the next paints.
-        self.assertEqual(face.property("_lastSplit"), -1,
-                         "a pan did not reset the raster stack")
+        self.pump(5)
+        self.assertEqual(face.property("_paintsSinceReset"), paints,
+                         "a pan re-rasters before the settle")
         self.assertEqual(face.property("_view").property("panY").toNumber(), 36.0,
                          "the painter's carrier lost the pan")
-        self.assertEqual(face.property("_view").property("scale").toNumber(),
-                         face.property("viewScale"),
-                         "the painter's carrier lost the zoom")
-        self.pump(60)
-        self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
-                                "the stack never re-rastered after the pan")
+        # The settle's reset is the timer's synchronous effect, and
+        # it fires after the timer's interval (the pump alone never
+        # advances the clock past 150 ms).
+        time.sleep(0.25)
+        self.pump(30)
+        self.assertEqual(face.property("_lastSplit"), -1,
+                         "the settle never reset the stack")
 
     def test_the_centred_follow_option_defaults_off_and_publishes(self):
         monitor, window, face = self._follower_popover()

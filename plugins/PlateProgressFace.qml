@@ -113,6 +113,20 @@ Item {
         interval: 2000
         onTriggered: root._scopeDocked = false
     }
+    // The view-settle timer (the awful-zoom report): a zoom or line
+    // change during a drag must not re-walk the dense stack per tick
+    // — the stack re-rasters ONCE, 150 ms after the last change, and
+    // the raster inputs feed the model at the same settle.
+    signal viewSettled
+    property alias settleTimer: viewSettleTimer
+    Timer {
+        id: viewSettleTimer
+        interval: 150
+        onTriggered: {
+            _resetStack();
+            root.viewSettled();
+        }
+    }
 
     function classColour(name) {
         switch (name) {
@@ -396,11 +410,11 @@ Item {
     }
     onLineScaleChanged: {
         _publishView();
-        _resetStack();
+        root.settleTimer.restart();
     }
     onViewScaleChanged: {
         _publishView();
-        _resetStack();
+        root.settleTimer.restart();
         // The scope docks while the zoom is in use and slides away
         // once it has been idle (the live request): two seconds of
         // no zoom change parks it out of view to the right.
@@ -413,11 +427,11 @@ Item {
     // default path never pans.
     onViewPanXChanged: {
         _publishView();
-        _resetStack();
+        root.settleTimer.restart();
     }
     onViewPanYChanged: {
         _publishView();
-        _resetStack();
+        root.settleTimer.restart();
     }
     // The toolhead publish is the follow's clock: the model republishes
     // the dot when it moves, and only then.
@@ -440,10 +454,10 @@ Item {
     Connections {
         target: mapping
         function onWidthChanged() {
-            root._resetStack();
+            root.settleTimer.restart();
         }
         function onHeightChanged() {
-            root._resetStack();
+            root.settleTimer.restart();
         }
     }
 
