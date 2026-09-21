@@ -34,7 +34,10 @@ def _british_spelling() -> bool:
 
 
 from .MonitorCamera import MonitorCamera
-from .PlateQt import PlateLayer, RasterBridge, _RasterJob, png_file, render_layer_prefix, render_layer_raster
+from .PlateQt import (
+    PlateLayer, RasterBridge, _RasterJob, _PLATE_TRAVEL_VISUAL_RATIO,
+    png_file, render_layer_prefix, render_layer_raster,
+)
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -421,7 +424,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # still reads the previous attached state and then clears it
         # .
         ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
-                                 "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
+                                 "followerTravelVisualRatio", "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector")),
@@ -1487,6 +1490,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowBase=self._follower_show_base,
             followerShowTravels=self._follower_show_travels,
             followerLineScale=self._follower_line_scale,
+            followerTravelVisualRatio=_PLATE_TRAVEL_VISUAL_RATIO,
             followerKeepCentred=self._follower_keep_centred,
             followerAttached=self._follower_attached,
             followerLayerAnchor=self._follower_layer_anchor,
@@ -1655,6 +1659,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
     followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
     followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 0.7)
+    followerTravelVisualRatio = value_property(float, "followerTravelVisualRatio", followerViewChanged,
+                                               _PLATE_TRAVEL_VISUAL_RATIO)
     followerKeepCentred = value_property(bool, "followerKeepCentred", followerViewChanged, False)
     followerAttached = value_property(bool, "followerAttached", followerViewChanged, True)
     followerLayerAnchor = value_property(int, "followerLayerAnchor", followerViewChanged, -1)
@@ -3449,6 +3455,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if surface is None:
             return
         view = {"scale": float(scale), "lineScale": float(lineScale),
+                "travelVisualRatio": _PLATE_TRAVEL_VISUAL_RATIO,
                 "width": int(width), "height": int(height),
                 "compact": bool(compact),
                 "panX": float(panX), "panY": float(panY)}
