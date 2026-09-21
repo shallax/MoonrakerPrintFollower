@@ -1986,7 +1986,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
             image = window.grabWindow()
         return image
 
-    def _native_layer(self, payload, face, prefix_split=None):
+    def _native_layer(self, payload, face, prefix_split=None, dpr=1.0):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -2006,7 +2006,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # census cannot see — the fixture paints its proofs solid.
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
-                "panX": 0.0, "panY": 0.0}
+                "panX": 0.0, "panY": 0.0, "dpr": dpr}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
         stem = "fixture-%d" % PlateFaceRenderTests._raster_stem
@@ -2650,14 +2650,13 @@ class PlateFaceRenderTests(RealEngineTestCase):
         window.grabWindow()
         self.pump(30)
 
-    def test_hidpi_sizing_keeps_the_raster_covering_the_logical_face(self):
-        # HiDPI's contract, pinned at the seam the upscale depends
-        # on: the worker's raster is the face's LOGICAL size (the
-        # scene-graph scales it by the device ratio), so a DPR-2
-        # screen's picture is exactly this image upscaled — the
-        # ink must reach the logical frame's edges. The offscreen
-        # harness reports DPR 1, so the physical grab is not
-        # reproducible here; the sizing contract is.
+    def test_hidpi_rasters_paint_at_device_resolution(self):
+        # D's contract: the native raster is painted at the DEVICE
+        # resolution — the face's logical size times the bounded
+        # backing scale — and the scene-graph samples it down to the
+        # logical frame. A DPR-2 screen must never take a 1x logical
+        # toolpath raster and merely enlarge it. The dimensions AND
+        # the logical-space coverage both hold.
         monitor, window, face, baseline = self._mount_empty()
         payload = {
             "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
@@ -2665,15 +2664,23 @@ class PlateFaceRenderTests(RealEngineTestCase):
                                         [0.0, 0.0, 20.0]]]},
             "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
         }
-        layer = self._native_layer(payload, face)
+        layer = self._native_layer(payload, face, dpr=2.0)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(21)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the full raster never drew")
-        self.assertEqual(layer.rasterWidth, int(face.width()),
-                         "the raster is not the face's logical width")
-        self.assertEqual(layer.rasterHeight, int(face.height()),
-                         "the raster is not the face's logical height")
+        self.assertEqual(layer.rasterWidth, int(face.width()) * 2,
+                         "the DPR-2 raster is not the device width")
+        self.assertEqual(layer.rasterHeight, int(face.height()) * 2,
+                         "the DPR-2 raster is not the device height")
+        # The logical coverage: the downsampled 2x raster's ink still
+        # reaches the logical frame's corners (the corner-pinned
+        # stroke must not clip at the backing scale).
+        plot = self._bed_point(face, 0.0, 0.0)
+        for bed_x, bed_y in ((1.0, 1.0), (249.0, 249.0)):
+            self.assertGreater(
+                self._stroke_ink(image, face, window, plot, bed_x, bed_y), 0,
+                "the DPR-2 raster's ink never reached the logical corner")
 
     def test_full_progress_travels_render_without_the_vector(self):
         # : showTravels at 100% — the travel

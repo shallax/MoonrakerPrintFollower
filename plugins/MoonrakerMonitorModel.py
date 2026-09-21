@@ -343,6 +343,7 @@ class _RenderSurface:
                 bool(view.get("compact")), round(float(view.get("scale") or 1.0), 6),
                 round(float(view.get("lineScale") or 0.7), 6),
                 round(float(view.get("panX") or 0.0), 3), round(float(view.get("panY") or 0.0), 3),
+                round(float(view.get("dpr") or 1.0), 6),
                 round(float(plot.get("offsetX") or 0.0), 6), round(float(plot.get("offsetY") or 0.0), 6),
                 round(float(plot.get("sx") or 0.0), 6), round(float(plot.get("sy") or 0.0), 6),
                 round(float(plot.get("bedXMin") or 0.0), 6), round(float(plot.get("bedYMax") or 0.0), 6))
@@ -3162,10 +3163,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     pass
         except OSError:
             pass
+        backing = 1.0
+        for surface in self._plate_surfaces.values():
+            backing = max(backing, float(surface.view.get("dpr") or 1.0))
         return {"packedBytes": packed, "decodedBytes": decoded,
                 "pinnedDecodedBytes": pinned,
                 "wrapperCount": wrappers, "wrapperImageBytes": wrapper_images,
-                "rasterDirFiles": dir_files, "rasterDirBytes": dir_bytes}
+                "rasterDirFiles": dir_files, "rasterDirBytes": dir_bytes,
+                "backingScale": backing}
 
     def _referenced_raster_files(self):
         """The asset files the live wrappers still display: the
@@ -3484,10 +3489,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._schedule_surface(surface)
 
     @pyqtSlot(str, float, float, int, int, bool, float, float)
-    def setFollowerView(self, surface, scale, lineScale, width, height, compact, panX, panY):
+    def setFollowerView(self, surface, scale, lineScale, width, height, compact,
+                        panX, panY, dpr=1.0):
         """The raster's view inputs for ONE SURFACE . An
         exact repeat is a no-op ; the
-        plot+view pair coalesces into one flush."""
+        plot+view pair coalesces into one flush. The DEVICE-PIXEL
+        backing rides the view: the worker paints at the device
+        resolution (bounded supersampling) and the scene-graph
+        samples the raster down to the logical face — a DPR-2
+        screen never enlarges a 1x toolpath raster."""
         surface = self._surface_for(surface)
         if surface is None:
             return
@@ -3495,7 +3505,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "travelVisualRatio": _PLATE_TRAVEL_VISUAL_RATIO,
                 "width": int(width), "height": int(height),
                 "compact": bool(compact),
-                "panX": float(panX), "panY": float(panY)}
+                "panX": float(panX), "panY": float(panY),
+                "dpr": min(2.0, max(1.0, float(dpr)))}
         # Idempotence compares against the EFFECTIVE value — the
         # staged one when a burst is pending: A -> B -> A before
         # the flush must end at A, never commit the intermediate B.

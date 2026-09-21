@@ -292,15 +292,26 @@ class PlateLayer(QObject):
         return total
 
 
+def _backing_scale(view: dict) -> float:
+    """The device-pixel backing factor (bounded supersampling): a
+    DPR-2 screen must never take a 1x logical toolpath raster and
+    merely enlarge it — the worker paints at the device resolution
+    and the scene-graph samples it down to the logical size."""
+    return min(2.0, max(1.0, float(view.get("dpr", 1.0))))
+
+
 def _transform(plot: dict, view: dict):
     """The shared mapping (the face's painters' own): the WHOLE
     plate term — offset plus delta — rides the zoom, exactly as the
-    QML walks it; the pan adds after, baked."""
-    scale = float(view.get("scale", 1.0))
+    QML walks it; the pan adds after, baked. The backing scale
+    multiplies everything — the canvas is dpr times larger and the
+    physical stroke widens with it, so the displayed logical
+    picture stays identical."""
+    scale = float(view.get("scale", 1.0)) * _backing_scale(view)
     sx = float(plot["sx"]) * scale
     sy = float(plot["sy"]) * scale
-    offset_x = float(plot["offsetX"]) * scale + float(view.get("panX", 0.0))
-    offset_y = float(plot["offsetY"]) * scale + float(view.get("panY", 0.0))
+    offset_x = float(plot["offsetX"]) * scale + float(view.get("panX", 0.0)) * _backing_scale(view)
+    offset_y = float(plot["offsetY"]) * scale + float(view.get("panY", 0.0)) * _backing_scale(view)
     return (sx, sy, offset_x, offset_y,
             float(plot["bedXMin"]), float(plot["bedYMax"]))
 
@@ -337,7 +348,8 @@ def _paint_segments(painter: QPainter, pen: QPen, payload: dict, plot: dict, vie
 
 
 def _new_canvas(view: dict) -> QImage:
-    image = QImage(int(view["width"]), int(view["height"]),
+    dpr = _backing_scale(view)
+    image = QImage(int(view["width"] * dpr), int(view["height"] * dpr),
                    QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(QColor(0, 0, 0, 0))
     return image

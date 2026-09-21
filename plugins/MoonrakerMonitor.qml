@@ -3126,7 +3126,11 @@ Component {
                 }
                 function _feedRenderView() {
                     if (root.printer != null) {
-                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY);
+                        // The device-pixel backing (bounded supersampling):
+                        // the worker paints at the screen's physical
+                        // resolution and the scene-graph samples down to
+                        // the logical face — never an enlarged 1x raster.
+                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)));
                     }
                 }
 
