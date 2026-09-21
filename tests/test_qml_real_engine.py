@@ -263,6 +263,15 @@ class RealEngineTestCase(unittest.TestCase):
         for _ in range(rounds):
             self.app.processEvents()
 
+    def _pump_ms(self, milliseconds):
+        """Real wall-clock pumping: the threaded canvases' paints and
+        the QML timers (the 150 ms view settle) only advance with
+        time — processEvents alone starves them."""
+        deadline = time.monotonic() + milliseconds / 1000.0
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+
     def new_messages(self):
         return [message for message in _APPLICATION["messages"][self._message_start:]
                 if "MoonrakerMonitor.qml" in message or "MoonrakerPreviewCard.qml" in message]
@@ -2490,6 +2499,123 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # restore keeps the teardown's last binding evaluations
         # from wrapping the PlateLayer QObject (the engine's
         # property-cache registry is already dying then).
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_context_changes_never_hole_the_printed_history(self):
+        # E: a lineScale/zoom/pan change invalidates the native
+        # prefix (the model's render-key flip) and its replacement
+        # lands a beat later — the printed history must stay present
+        # on EVERY intermediate frame: at the old screen position
+        # while the hold keeps the previous composition up, at the
+        # new one once the vector owns the interval. Resize rides
+        # the same view-key path (the key carries width/height).
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the picture never drew")
+        old_plot = self._bed_point(face, 0.0, 0.0)
+        self.assertGreater(
+            self._stroke_ink(image, face, window, old_plot, 75.0, 125.0), 0,
+            "the prefix side never drew before the context changes")
+
+        def view_plot(plot, scale, pan_x):
+            # The zoom multiplies the bed mapping and the pan adds
+            # after (the painters' own transform) — the census must
+            # follow the same folding.
+            adjusted = dict(plot)
+            for key in ("offsetX", "sx", "offsetY", "sy"):
+                adjusted[key] = plot[key] * scale
+            adjusted["offsetX"] += pan_x
+            return adjusted
+
+        contexts = [("lineScale", 12.0, 1.0, 0.0),
+                    ("viewScale", 1.2, 1.2, 0.0),
+                    ("viewPanX", -20.0, 1.0, -20.0)]
+        for index, (name, value, scale, pan_x) in enumerate(contexts):
+            # The production ordering: the context change settles
+            # FIRST (the 150 ms timer consumes the view key and feeds
+            # the model), and only THEN does the model's invalidation
+            # publish land — with the key already consumed, so the
+            # publish alone wakes nothing. The harness has no model:
+            # the render-key flip IS the production mechanism.
+            face.setProperty(name, value)
+            self._pump_ms(200)  # the settle consumes the view key
+            layer.set_expected_key("invalidated-%d" % index)
+            self._printer.setLayers({"prev": None, "current": layer, "next": None})
+            new_plot = view_plot(self._bed_point(face, 0.0, 0.0), scale, pan_x)
+            # The replacement prefix is DELAYED: every intermediate
+            # frame keeps the history — at the old screen position
+            # (the held composition) or the new one (the vector's).
+            # The FIRST grab is the invalidation publish's own frame:
+            # the one-frame ownership swap is exactly the race under
+            # test, so it must not hide behind a settling pump.
+            for sample in range(7):
+                if sample:
+                    self._pump_ms(30)
+                image = window.grabWindow()
+                prefix_side = max(
+                    self._stroke_ink(image, face, window, new_plot, 75.0, 125.0),
+                    self._stroke_ink(image, face, window, old_plot, 75.0, 125.0))
+                tail_side = max(
+                    self._stroke_ink(image, face, window, new_plot, 155.0, 125.0),
+                    self._stroke_ink(image, face, window, old_plot, 155.0, 125.0))
+                self.assertGreater(prefix_side, 0,
+                                   "%s holed the printed history (prefix side)" % name)
+                self.assertGreater(tail_side, 0,
+                                   "%s holed the printed history (tail side)" % name)
+            # The replacement prefix lands for the new view, and the
+            # settle fires (the production 150 ms re-raster): the
+            # composition stays whole through the takeover and the
+            # settled picture sits at the NEW positions.
+            from plugins.PlateQt import render_layer_prefix, png_file
+            plot_value = face.property("plot")
+            if hasattr(plot_value, "toVariant"):
+                plot_value = plot_value.toVariant()
+            plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                    "offsetY": float(plot_value["bed"]["offsetY"]),
+                    "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                    "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                    "bedYMax": float(plot_value["bed"]["bedYMax"])}
+            view = {"width": int(face.width()), "height": int(face.height()),
+                    "scale": scale, "lineScale": float(face.property("lineScale")),
+                    "compact": False, "panX": pan_x, "panY": 0.0}
+            prefix = render_layer_prefix(payload, plot, view, 10)
+            layer.set_prefix(prefix, png_file(
+                prefix, "/tmp/mpf/raster-probe",
+                "fixture-e%d-%d" % (index, time.monotonic_ns())), 10,
+                "invalidated-%d" % index)
+            self._printer.setLayers({"prev": None, "current": layer, "next": None})
+            self._pump_ms(250)  # past the view-settle timer
+            for _ in range(4):
+                self._pump_ms(30)
+                image = window.grabWindow()
+                self.assertGreater(
+                    self._stroke_ink(image, face, window, new_plot, 75.0, 125.0), 0,
+                    "%s lost the history at the replacement" % name)
+            # The takeover completes before the next context change
+            # (the production cadence: one settled change at a time).
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not face.property("_prefixWasShown"):
+                self._pump_ms(50)
+                window.grabWindow()
+            self.assertTrue(face.property("_prefixWasShown"),
+                            "%s: the replacement prefix never showed" % name)
+            old_plot = new_plot
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
