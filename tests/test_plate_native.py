@@ -240,6 +240,21 @@ class NativeStrokeParityTests(unittest.TestCase):
         self.assertFalse(layer.rasterValid,
                          "an empty raster read valid without a source")
 
+    def test_a_late_worker_emit_against_a_deleted_bridge_never_aborts(self):
+        # A teardown deletes the bridge's C++ side while a raster
+        # worker still runs: the guarded emit drops the job instead
+        # of raising (the aborting pool thread the full suite once
+        # hit).
+        import PyQt6.sip as sip
+
+        from plugins.PlateQt import RasterBridge, _bridge_emit
+        bridge = RasterBridge()
+        sip.delete(bridge)  # the C++ side dies outright
+        self.assertFalse(_bridge_emit(bridge, "done", ("nav",), ("ticket",)),
+                         "a dead bridge's emit reported a landing")
+        self.assertFalse(_bridge_emit(bridge, "started", ("ticket",)),
+                         "a dead bridge's started emit reported a landing")
+
     def test_dropping_the_wrapper_releases_the_images(self):
         # The wrapper is the ONLY owner of its rendered pixels (the
         # QML side holds file URLs, never the Python images), so

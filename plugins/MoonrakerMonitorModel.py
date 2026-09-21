@@ -36,7 +36,7 @@ def _british_spelling() -> bool:
 from .MonitorCamera import MonitorCamera
 from .PlateQt import (
     PlateLayer, RasterBridge, _RasterJob, _PLATE_TRAVEL_VISUAL_RATIO,
-    png_file, render_layer_prefix, render_layer_raster,
+    _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer,
 )
 from .MonitorCommands import MonitorCommands
@@ -3101,15 +3101,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                       surface=surface, layer=layer, generation=generation,
                       kind=kind, prefix_split=prefix_split, epoch=epoch,
                       serial=serial, cancel=cancel,
-                      directory=self._raster_cache_dir):
+                      directory=self._raster_cache_dir,
+                      bridge=self._raster_bridge):
                 # Every job ends in exactly ONE terminal emit: the
                 # success payload, a cancelled marker, or a failure
                 # marker. A worker that throws can never wedge the
-                # surface's job slot.
-                self._raster_bridge.started.emit(ticket)
+                # surface's job slot. The emits ride the teardown
+                # guard — a bridge whose owner died mid-build drops
+                # the job instead of aborting the pool thread.
+                def emit(payload):
+                    _bridge_emit(bridge, "done", payload, ticket)
+                if not _bridge_emit(bridge, "started", ticket):
+                    return
                 try:
                     if cancel.is_set():
-                        self._raster_bridge.done.emit(("cancelled",), ticket)
+                        emit(("cancelled",))
                         return
                     stem = "r-%s-e%d-%d-g%d-s%d" % (
                         surface.name, epoch, layer, generation, serial)
@@ -3117,23 +3123,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                         image = render_layer_prefix(payload, plot, view, prefix_split,
                                                     cancel=cancel)
                         if cancel.is_set():
-                            self._raster_bridge.done.emit(("cancelled",), ticket)
+                            emit(("cancelled",))
                             return
                         url = png_file(image, directory, stem + "-p%d" % prefix_split)
-                        self._raster_bridge.done.emit(
-                            ("prefix", image, url, prefix_split), ticket)
+                        emit(("prefix", image, url, prefix_split))
                         return
                     coloured, base, travels = render_layer_raster(
                         payload, plot, view, cancel=cancel)
                     if cancel.is_set():
-                        self._raster_bridge.done.emit(("cancelled",), ticket)
+                        emit(("cancelled",))
                         return
-                    self._raster_bridge.done.emit(
-                        ("full", coloured, png_file(coloured, directory, stem + "-c"),
-                         base, png_file(base, directory, stem + "-b"),
-                         travels, png_file(travels, directory, stem + "-t")), ticket)
+                    emit(("full", coloured, png_file(coloured, directory, stem + "-c"),
+                          base, png_file(base, directory, stem + "-b"),
+                          travels, png_file(travels, directory, stem + "-t")))
                 except Exception as exc:
-                    self._raster_bridge.done.emit(("failed", str(exc)), ticket)
+                    emit(("failed", str(exc)))
             QThreadPool.globalInstance().start(_RasterJob(build))
             return
 
@@ -3236,21 +3240,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         def build(ticket=ticket, window=window, plot=plot, view=view,
                   split=split, cancel=cancel, surface=surface,
                   serial=serial, epoch=epoch, key=key,
-                  directory=self._raster_cache_dir):
+                  directory=self._raster_cache_dir,
+                  bridge=self._raster_bridge):
+            def emit(payload):
+                _bridge_emit(bridge, "done", payload, ticket)
             try:
                 if cancel.is_set():
-                    self._raster_bridge.done.emit(("cancelled",), ticket)
+                    emit(("cancelled",))
                     return
                 image = render_navigation_layer(window, plot, view,
                                                 split, cancel=cancel)
                 if cancel.is_set():
-                    self._raster_bridge.done.emit(("cancelled",), ticket)
+                    emit(("cancelled",))
                     return
                 url = png_file(image, directory,
                                "n-%s-e%d-s%d" % (surface.name, epoch, serial))
-                self._raster_bridge.done.emit(("nav", image, url, key), ticket)
+                emit(("nav", image, url, key))
             except Exception as exc:
-                self._raster_bridge.done.emit(("failed", str(exc)), ticket)
+                emit(("failed", str(exc)))
         QThreadPool.globalInstance().start(_RasterJob(build))
 
     def _nav_committed(self, images, ticket):
