@@ -1386,11 +1386,8 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                 break
             self.service._advance()
             self.qt.events(5)
-        self.assertEqual(len(requests), 1,
-                         "the pass's single post-seek request shape changed")
-        for state in requests:
-            self.assertLessEqual({0, 1, 2}, state,
-                                 "the seek waited on the file lease")
+        self.assertEqual(requests, [],
+                         "prepared/hydrated presentation work requested the raw G-code")
         for layer in range(3):
             self.assertIn(layer, self.service._decoded_lru,
                           "layer %d never decoded from the store" % layer)
