@@ -173,6 +173,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_plate_split=self._follower.setPlateSplit,
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
+                index_service=self._follower.index(),
             )
             # The Preview wirings are NOT made here: the grant below
             # attaches them to the current monitor only, and a machine

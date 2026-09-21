@@ -1304,3 +1304,140 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(len(decoded), 2)
         self.assertNotIn("a", decoded)
         self.assertIn("b", decoded)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class DecodedBudgetTests(unittest.TestCase):
+    """The decoded tier's pin accounting: a render wrapper's
+    payload stays charged against the budget after the LRU evicts
+    it, and the combined bound yields the LRU to the pins."""
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Files(QObject):
+            changed = pyqtSignal()
+
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        module = self.qt.load("GCodeIndexService")
+        self.module = module
+        self.service = module.GCodeIndexService(Files(), object())
+        self.addCleanup(self.service.close)
+        self.service.bind(("part.gcode", 100, 1))
+        # The real 128 MB bound is unreachable in a unit test: the
+        # tests shrink it and drive the same trim paths.
+        self.service._decoded_lru.max_bytes = 200
+
+    def test_a_pin_keeps_evicted_bytes_charged(self):
+        # The mirror seeds the way the commit does in production:
+        # every charged layer's size stays known past its eviction.
+        def charge(layer, size):
+            self.service._decoded_lru.set(layer, object(), size)
+            self.service._decoded_sizes[layer] = size
+
+        lru = self.service._decoded_lru
+        charge(1, 100)
+        self.service.pin_decoded(1)
+        charge(2, 100)
+        charge(3, 100)  # 300 > 200: the LRU evicts 1 on its own
+        self.assertNotIn(1, lru)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 100,
+                         "the evicted pin's bytes were uncharged")
+        self.service._reconcile_decoded()
+        self.assertEqual(self.service.decoded_resident_bytes(), 200,
+                         "the combined bound did not yield to the pin")
+        self.service.unpin_decoded(1)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 0)
+        self.assertEqual(self.service.decoded_resident_bytes(), 100,
+                         "the unpin never released the charge")
+        # An unknown layer pins nothing.
+        self.service.pin_decoded(99)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 0)
+
+    def test_an_evicted_memo_payload_still_pins(self):
+        # The frozen window's memoised payload can outlive its LRU
+        # entry: the pin must charge it from the retained size, not
+        # from the LRU's live table.
+        self.service._decoded_sizes[9] = 700
+        self.service._decoded_lru.set(9, object(), 700)
+        self.service._decoded_lru.clear()  # the LRU dropped it
+        self.service.pin_decoded(9)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 700,
+                         "the memoised payload's pin never charged")
+        self.service.unpin_decoded(9)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 0)
+
+    def test_the_service_floor_is_one_entry(self):
+        # The windows' protection moved to the pins: the floor keeps
+        # only the just-committed layer alive under a pathological
+        # byte bound.
+        self.assertEqual(self.service._decoded_lru.min_entries, 1)
+        lru = self.service._decoded_lru
+        lru.set(7, object(), 100)
+        lru.max_bytes = 1
+        lru.set(8, object(), 100)
+        self.assertEqual(len(lru), 1, "the one-entry floor did not hold")
+
+    def test_the_pin_reads_the_charged_size_without_rewalking(self):
+        # The worker measured the payload once; the pin must reuse
+        # that size (O(1)), never re-walk the geometry on the UI
+        # thread — the exact bytes must survive the eviction through
+        # the mirror.
+        payload = {"classes": {"FILL": [
+            [[i * 0.5 % 240.0, 2.0, float(i)] for i in range(20000)]]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 20000}
+        start = time.monotonic()
+        size = self.module._deep_size(payload)
+        walked = time.monotonic() - start
+        print("deep_size: %d bytes walked in %.1f ms" % (size, walked * 1000.0))
+        lru = self.service._decoded_lru
+        lru.set(4, payload, size)
+        self.service._decoded_sizes[4] = size
+        self.service.pin_decoded(4)
+        lru.set(5, object(), 120)
+        lru.set(6, object(), 120)
+        self.assertNotIn(4, lru)
+        self.assertEqual(self.service.pinned_decoded_bytes(), size,
+                         "the pin did not retain the worker's measured size")
+        self.service.unpin_decoded(4)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 0)
+
+    def test_the_decoded_tier_plateaus_under_churn(self):
+        # Seek-style churn must not climb: fresh payloads per cycle,
+        # the byte bound evicting under pressure, and the process
+        # RSS within a slack of the early cycle (a leak would climb
+        # past it — the live-print confirmation rides the next pass).
+        import gc
+
+        def rss_kb():
+            with open("/proc/self/status", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1])
+            return 0
+
+        lru = self.service._decoded_lru
+        lru.max_bytes = 8 * 1024 * 1024
+
+        def cycle_payloads():
+            for _layer in range(12):
+                yield {"classes": {"FILL": [
+                    [[i * 0.5 % 240.0, 2.0, float(i)] for i in range(8000)]]},
+                    "travels": [], "travelStarts": [], "travelEnds": [],
+                    "motions": 8000}
+
+        for cycle in range(6):
+            for layer, payload in enumerate(cycle_payloads()):
+                lru.set(cycle * 100 + layer, payload,
+                        self.module._deep_size(payload))
+            lru.clear()
+            gc.collect()
+            if cycle == 1:
+                early = rss_kb()
+        late = rss_kb()
+        print("decoded-tier RSS: early %d KB, late %d KB" % (early, late))
+        self.assertLess(late, early + 30000,
+                        "the decoded tier's RSS climbed across the cycles")

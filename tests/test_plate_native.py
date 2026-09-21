@@ -136,6 +136,32 @@ class NativeStrokeParityTests(unittest.TestCase):
         self.assertFalse(layer.rasterValid,
                          "an empty raster read valid without a source")
 
+    def test_dropping_the_wrapper_releases_the_images(self):
+        # The wrapper is the ONLY owner of its rendered pixels (the
+        # QML side holds file URLs, never the Python images), so
+        # the wrapper's eviction must free all four siblings.
+        import gc
+        import weakref
+
+        from plugins.PlateQt import PlateLayer
+        payload = _payload()
+        payload["travels"] = [[[10.0, 50.0, 0.0], [30.0, 50.0, 1.0]]]
+        plot = _plot()
+        view = _view(lineScale=8.0)
+        coloured, base, travels = render_layer_raster(payload, plot, view)
+        prefix = render_layer_prefix(payload, plot, view, 10)
+        layer = PlateLayer(payload)
+        layer.set_raster(coloured, "key", "file:///tmp/mpf/none.png")
+        layer.set_base(base, "key", "file:///tmp/mpf/none.png")
+        layer.set_travels(travels, "key", "file:///tmp/mpf/none.png")
+        layer.set_prefix(prefix, "file:///tmp/mpf/none.png", 10, "key")
+        self.assertGreater(layer.memory_bytes(), 0)
+        refs = [weakref.ref(image) for image in (coloured, base, travels, prefix)]
+        del layer, coloured, base, travels, prefix
+        gc.collect()
+        self.assertEqual([ref() for ref in refs], [None] * 4,
+                         "an image survived the wrapper's drop")
+
 
 if __name__ == "__main__":
     unittest.main()

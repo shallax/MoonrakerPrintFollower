@@ -21,6 +21,8 @@ class MoonrakerPrintFollower(QObject, Extension):
     def transport(self): return self.client.transport
     @property
     def print_state(self): return self._runtime.coordinator.snapshot
+
+    def index(self): return self._runtime.index
     @property
     def bed_mesh(self): return self._runtime.bed_mesh
     @property

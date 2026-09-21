@@ -176,6 +176,7 @@ if QT_AVAILABLE:
         def setPlateSplit(self, motions): self.loads.append(("split", motions))
         def receive_preview_block(self, block): self.blocks.append(block)
         def has_toolpath(self): return True
+        def index(self): return None  # the render pins no-op without a service
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt runtime suite")
