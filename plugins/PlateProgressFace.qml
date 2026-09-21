@@ -50,7 +50,7 @@ Item {
     property real nominalToolpathWidthMm: 0.2
     // Travels draw thinner than extrusion ink: a VISUAL ratio over
     // the same physical basis, never its own pixel count.
-    property real travelVisualRatio: printerModel != null ? printerModel.followerTravelVisualRatio : lineScale
+    property real travelVisualRatio: printerModel != null && printerModel.followerTravelVisualRatio !== undefined ? printerModel.followerTravelVisualRatio : lineScale
     // The mini face is a fixed-size thumbnail: honest physical
     // strokes there are ~0.05 px and invisible, so the mini boosts
     // the weight (the old halved 1 px read the same way). The
