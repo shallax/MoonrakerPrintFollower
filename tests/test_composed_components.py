@@ -1797,6 +1797,131 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertEqual(wrapped.prefixSplit, 40,
                          "the backward move never refreshed")
 
+    def test_a_split_change_cancels_the_running_prefix_job(self):
+        # A prefix render's identity includes its requested split:
+        # moving the split under a RUNNING same-layer prefix must
+        # cancel it at the renderer's next boundary — the stale
+        # 80-picture may never supersede the new 60-demand.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        module = self.qt.load("MoonrakerMonitorModel")
+        real_prefix = module.render_layer_prefix
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def blocked_prefix(payload, plot, view, split, cancel=None):
+            calls.append(split)
+            entered.set()
+            release.wait(10)
+            return real_prefix(payload, plot, view, split, cancel=cancel)
+
+        with patch.object(module, "render_layer_prefix", blocked_prefix):
+            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                             5, "motion index", 80)
+            self.assertTrue(entered.wait(10), "the prefix worker never started")
+            self.assertEqual(surface.job["split"], 80,
+                             "the running job never carried its split")
+            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                             5, "motion index", 60)
+            self.assertTrue(surface.job["cancel"].is_set(),
+                            "the same-layer split change never cancelled "
+                            "the running prefix")
+            release.set()
+            self._pump_rasters(model, "popover")
+        self.assertEqual(surface.layers[5].prefixSplit, 60,
+                         "the stale split's prefix survived the cancel")
+        self.assertEqual(calls, [80, 60],
+                         "the superseded split burned a fresh render")
+        self.assertGreaterEqual(surface.stats["cancelled"], 1,
+                                "the superseded prefix never recorded its cancel")
+
+    def test_stale_split_completions_never_land_across_a_rapid_scrub(self):
+        # The rapid reverse scrub 80-60-40-55-30-70: each completion
+        # races its split change and arrives as the surface's EXACT
+        # job — only the commit-time split check keeps the stale
+        # pictures off the face. Every stale split discards and the
+        # reschedule follows the standing demand; only 70 may land.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        wrapped = model._qt_layer(surface, payload, 5)
+        generation = surface.generation
+        epoch = surface.job_epoch
+        key = surface.render_key()
+        from PyQt6.QtGui import QImage
+        prefix = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
+        stale_splits = [80, 60, 40, 55, 30]
+        next_splits = [60, 40, 55, 30, 70]
+        for index, (split, next_split) in enumerate(zip(stale_splits, next_splits,
+                                                        strict=True)):
+            # The demand submitted for THIS split...
+            surface.tokens[5] = 1
+            surface.job = {"layer": 5, "token": 1, "generation": generation,
+                           "state": "submitted", "cancel": threading.Event(),
+                           "epoch": epoch, "serial": 100 + index,
+                           "kind": "prefix", "split": split}
+            surface.desired = {"current": 5, "ghosts": {},
+                               "epoch": surface.anchor_epoch, "split": split}
+            # ...races the next scrub tick before its completion arrives.
+            surface.desired = {"current": 5, "ghosts": {},
+                               "epoch": surface.anchor_epoch, "split": next_split}
+            ticket = ("popover", 5, 1, generation, key, "prefix", split,
+                      epoch, 100 + index)
+            model._raster_committed(("prefix", prefix, "", split), ticket)
+            self.assertEqual(wrapped.prefixSplit, -1,
+                             "a stale split's completion landed on the face")
+            self.assertIsNotNone(surface.job,
+                                 "the stale discard never rescheduled the demand")
+            self.assertEqual(surface.job["split"], next_split,
+                             "the reschedule followed the stale split, "
+                             "not the standing demand")
+        self._pump_rasters(model, "popover")
+        self.assertEqual(wrapped.prefixSplit, 70,
+                         "the standing demand's split never landed")
+
+    def test_a_prefix_cancels_when_its_layer_slides_to_a_ghost(self):
+        # A-B-A: layer 5's blocked prefix slides to the prev ghost
+        # when the anchor moves to 6 — a ghost wants a full layer,
+        # never a prefix, so the in-flight 80-render must cancel and
+        # the revisit at 55 starts from a clean wrapper.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        module = self.qt.load("MoonrakerMonitorModel")
+        real_prefix = module.render_layer_prefix
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_prefix(payload, plot, view, split, cancel=None):
+            entered.set()
+            release.wait(10)
+            return real_prefix(payload, plot, view, split, cancel=cancel)
+
+        with patch.object(module, "render_layer_prefix", blocked_prefix):
+            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                             5, "motion index", 80)
+            self.assertTrue(entered.wait(10), "the prefix worker never started")
+            # The anchor moves: layer 5 slides to the prev ghost.
+            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                             6, "motion index", None)
+            self.assertTrue(surface.job["cancel"].is_set(),
+                            "a prefix whose layer became a ghost stayed live")
+            release.set()
+            self._pump_rasters(model, "popover")
+            self.assertEqual(surface.layers[5].prefixSplit, -1,
+                             "the ghost's stale prefix landed")
+        # A-B-A: the revisit demands its own prefix at the new split.
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 55)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.layers[5].prefixSplit, 55,
+                         "the revisited layer never re-rendered its prefix")
+
     def test_a_stale_completion_cannot_touch_the_new_job(self):
         # : an old generation's worker result
         # arriving after a job switch is discarded, never committed.

@@ -3056,7 +3056,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             cancel = threading.Event()
             surface.job = {"layer": layer, "token": token,
                            "generation": generation, "state": "submitted",
-                           "cancel": cancel, "epoch": epoch, "serial": serial}
+                           "cancel": cancel, "epoch": epoch, "serial": serial,
+                           "kind": kind, "split": prefix_split}
             ticket = (surface.name, layer, token, generation, key, kind,
                       prefix_split, epoch, serial)
             payload = wrapped._payload
@@ -3264,10 +3265,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.tokens.clear()
 
     def _cancel_obsolete_job(self, surface):
-        """The running job's layer is no longer in the desired
-        window (the anchor moved, or the demand was replaced):
-        cancel it at the renderer's next segment boundary so the
-        new current never waits out a full obsolete render."""
+        """The running job no longer matches the desired demand —
+        the anchor moved, the demand was replaced, or a prefix's
+        requested split changed: cancel it at the renderer's next
+        segment boundary so the new current never waits out a full
+        obsolete render."""
         job = surface.job
         if job is None:
             return
@@ -3276,7 +3278,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             job["cancel"].set()
             return
         layer = job["layer"]
-        if layer != desired["current"] and layer not in desired["ghosts"].values():
+        if job.get("split") is not None:
+            # A prefix render only ever serves the desired current:
+            # it becomes obsolete when the current moves on (a ghost
+            # wants a full, never a prefix) or when the requested
+            # split changes under it.
+            if layer != desired["current"] or desired.get("split") != job["split"]:
+                job["cancel"].set()
+        elif layer != desired["current"] and layer not in desired["ghosts"].values():
             # Submitted or running: the flag stops a queued job at
             # its pre-render check and a running one at the next
             # segment boundary.
@@ -3383,6 +3392,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         wrapped = surface.layers[layer]
         if kind == "prefix":
             _kind, prefix, prefix_data, prefix_split = images
+            desired = surface.desired
+            if desired is None or layer != desired["current"] \
+                    or desired.get("split") != prefix_split:
+                # The demand moved under this render: the painted
+                # interval is no longer the requested one (the split
+                # changed, or the layer left the current slot). The
+                # prefix must never supersede the newer demand's
+                # picture — discard it and re-schedule from the
+                # demand that actually stands.
+                surface.stats["discarded"] += 1
+                self._unlink_asset_files(images)
+                self._schedule_surface(surface)
+                return
             wrapped.set_prefix(prefix, prefix_data, prefix_split, key)
             if surface.tokens.get(layer) == token:
                 surface.tokens.pop(layer, None)
