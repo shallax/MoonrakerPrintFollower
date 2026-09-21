@@ -73,9 +73,13 @@ class PrintSnapshot:
     # The background optimisation's progress (the job bar's band): the
     # share of layers the prepared store holds, None without a view.
     plate_pass_fraction: Optional[float] = None
-    # The coordinator's own decode cost for the plate payload, in
-    # milliseconds — the seek trace's T6 records it, so the slider-to-
-    # face gap is measured rather than bracketed.
+    # The coordinator's cheap lookup/publication-side call around
+    # plate_progress(), in milliseconds. Expensive prepared read/decode/
+    # hydrate work happens asynchronously in GCodeIndexService and is NOT
+    # represented by this number.
+    plate_lookup_ms: Optional[float] = None
+    # Legacy construction compatibility only. New code never publishes
+    # this as a decode metric.
     plate_decode_ms: Optional[float] = None
     # The current layer's printed objects: the executed motions'
     # polygon visits, read back from the layer's start (the live
