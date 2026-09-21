@@ -294,7 +294,14 @@ class PrintCoordinator(QObject):
              next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
             # The follower face's prepared polylines: built HERE from
             # the index (the worker-side prep rule), not in the model.
-            layer_count = len(view.ranges) if view is not None else 0
+            # The plate deliberately accepts the monitor-only unresolved
+            # index when its filename is the active print. Its slider
+            # range and preparation-band metadata must come from that SAME
+            # accepted view, not only from the stricter preview identity
+            # view (which is None on this path).
+            plate_view = view if view is not None else (
+                self._index.view if plate_available else None)
+            layer_count = len(plate_view.ranges) if plate_view is not None else 0
             # The face's anchor: the live layer while the follower
             # follows the print, the manual one while the user has
             # detached it — refused when it points outside this file
@@ -364,7 +371,8 @@ class PrintCoordinator(QObject):
                 plate_manual_progress=manual_payload,
                 plate_lookup_ms=plate_lookup_ms,
                 plate_layer_count=layer_count,
-                plate_pass_fraction=self._index.plate_pass_fraction() if view is not None else None,
+                plate_pass_fraction=self._index.plate_pass_fraction()
+                if plate_view is not None else None,
                 plate_visited=plate_visited)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)

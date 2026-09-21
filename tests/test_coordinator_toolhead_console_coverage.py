@@ -855,6 +855,8 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertEqual(parts.index.plate_positions, [4500])
         self.assertIsNotNone(snapshot.plate_progress)
         self.assertEqual(snapshot.plate_progress["anchor"], 4)
+        self.assertEqual(snapshot.plate_layer_count, len(parts.index.view.ranges),
+                         "monitor-only plate rendered with a zero layer-slider range")
 
     def test_an_unresolved_physical_layer_builds_no_plate_payload(self):
         # The print's own layer never resolved while the index exists:
