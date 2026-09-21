@@ -686,6 +686,15 @@ Item {
         // was already consumed by the settle's reset): hold the old
         // picture until the canvas's repaint owns the interval.
         _holdPrefixThroughRepaint();
+        // The interaction's exit rides the exact scene's OWN commits
+        // (a pan-only gesture never runs the zoom animator): the
+        // settle's invalidation publish flips the assets stale, the
+        // re-render's publish flips them fresh — the barrier's
+        // verdict swaps the scene back exactly when the complete
+        // exact scene is presentation-ready.
+        if (root._interactionActive && !zoomAnimator.running && _exactReady()) {
+            root._interactionActive = false;
+        }
     }
     onShowBaseChanged: {
         var key = _pendingKeyOf();

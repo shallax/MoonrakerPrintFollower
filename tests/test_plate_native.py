@@ -102,6 +102,36 @@ class NativeStrokeParityTests(unittest.TestCase):
             _stroke_height(image, 400), _stroke_height(coloured, 100),
             "the navigation stroke never scaled with the backing")
 
+    def test_the_navigation_composite_honours_the_partial_split(self):
+        # The interaction raster must show the CURRENT layer
+        # progress, never a 100%-complete layer: below the live
+        # split the printed portion carries the class colour, beyond
+        # it only the grey base's silhouette remains.
+        from plugins.PlateQt import render_navigation_layer
+        payload = {
+            "classes": {"SKIN": [[[float(i), 240.0, float(i)]
+                                  for i in range(20)]]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 20,
+        }
+        window = {"prev": None, "next": None, "current": payload}
+        plot = _plot()
+        view = _view(lineScale=8.0, backing=4.0)
+        image = render_navigation_layer(window, plot, view, split=10)
+        # The stroke's row: bed y=10 -> the 4x-backed pixel row.
+        row = int((plot["offsetY"] + (plot["bedYMax"] - 240.0) * plot["sy"]) * 4.0)
+        def pixel(bed_x):
+            col = int((plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"]) * 4.0)
+            return image.pixelColor(col, row)
+        printed = pixel(5.0)
+        unprinted = pixel(15.0)
+        self.assertGreater(printed.red(), printed.green() + 50,
+                           "the printed portion never drew its colour")
+        self.assertLess(abs(unprinted.red() - unprinted.green()), 20,
+                        "the unprinted tail drew the class colour")
+        self.assertGreater(unprinted.alpha(), 0,
+                           "the base's silhouette never reached the tail")
+
     def test_the_full_raster_and_the_prefix_share_one_stroke(self):
         # The full layer and the prefix rendered at the same view
         # must stroke the SAME screen thickness — the prefix used

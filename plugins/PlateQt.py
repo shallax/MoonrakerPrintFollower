@@ -537,7 +537,11 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
         grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
         painter.setPen(grey_pen)
         painter.setOpacity(0.55)
-        _paint_segments(painter, grey_pen, current, plot, view, cancel=cancel)
+        # The colour rides the CLASS unless forced: the base is the
+        # grey silhouette, never the feature colours (the live bug —
+        # the nav read as a 100%-complete layer).
+        _paint_segments(painter, grey_pen, current, plot, view,
+                        colour=_PLATE_BASE_COLOUR, cancel=cancel)
         painter.setOpacity(1.0)
         painter.setPen(pen)
         _paint_below_split(painter, pen, current, plot, view, split, cancel=cancel)
