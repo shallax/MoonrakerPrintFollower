@@ -1,22 +1,27 @@
 """The file-backed prepared cold store: every layer's compact PPL1 encoding, random-accessible on disk
 so the complete print never sits in the Python heap.
 
-Layout (format v2):
+Layout (format version 3):
     magic b"MPFP" + format version u32
     identity (u16 length + utf8 — the RemoteFileIdentity stable key)
     layer count u32
-    completion flag u8 — 1 once the pass has WALKED EVERY layer, so a
-        (0, 0) entry in a complete file means "the codec could not
-        hold this layer", never "not prepared yet" 
-    layer table: count x (u64 offset, u32 length)
+    completion flag u8 — 1 once the pass has WALKED EVERY layer
+    layer table: count x (u8 state, u64 offset, u32 length)
+        state 0 EMPTY       — the pass never resolved it (a latched
+                              hydrate): retry on the next session
+        state 1 CACHED      — the packed payload follows at the offset
+        state 2 UNCACHEABLE — the pass walked it and the codec refused:
+                              never retry, the layer reads as resolved
     payload area: the packed layers
 
-Random access reads one layer by seeking the table — no preceding
-layers are ever decoded. Writes go to a temporary file and finalise
-atomically (the header and the table are written LAST, then the
-rename), so a partially written cache is never treated as complete.
-The directory's total usage is bounded by a size policy with
-print-level recency eviction.
+The per-layer truth rides the STATE — a (0, 0) entry is EMPTY, not an
+overloaded uncacheable marker: the completion flag no longer has to
+disambiguate it. Random access reads one layer by seeking the table —
+no preceding layers are ever decoded. Writes go to a temporary file
+and finalise atomically (the header and the table are written LAST,
+then the rename), so a partially written cache is never treated as
+complete. The directory's total usage is bounded by a size policy
+with print-level recency eviction.
 """
 from __future__ import annotations
 
@@ -26,10 +31,15 @@ import time
 from typing import Optional
 
 _MAGIC = b"MPFP"
-_FORMAT_VERSION = 2
+_FORMAT_VERSION = 3
 _HEADER_FMT = "<4sIHHB"
-_TABLE_ENTRY_FMT = "<QI"
+_TABLE_ENTRY_FMT = "<BQI"
 _DEFAULT_MAX_BYTES = 512 * 1024 * 1024
+
+# The per-layer states: a published file's truth rides the table.
+STATE_EMPTY = 0        # never resolved — retry on the next session
+STATE_CACHED = 1       # the packed payload follows
+STATE_UNCACHEABLE = 2  # walked and refused — never retry
 
 
 class PreparedCache:
@@ -59,7 +69,7 @@ class PreparedCache:
 
     def load_table(self, identity: str) -> Optional[dict]:
         """The layer table for a published cache as
-        ``{"table": [(offset, length), ...], "complete": bool}``,
+        ``{"table": [(state, offset, length), ...], "complete": bool}``,
         or None when the file is absent, partial, or belongs to
         another identity."""
         path = self._path(identity)
@@ -89,8 +99,8 @@ class PreparedCache:
                 # A truncated file must never read as complete: the
                 # payload area's extent must fit the file's own size.
                 size = os.fstat(handle.fileno()).st_size
-                for offset, length in table:
-                    if offset + length > size:
+                for state, offset, length in table:
+                    if state == STATE_CACHED and offset + length > size:
                         return None
                 return {"table": table, "complete": bool(complete)}
         except OSError:
@@ -98,11 +108,11 @@ class PreparedCache:
 
     def read(self, identity: str, table: list, layer: int) -> Optional[bytes]:
         """One layer's packed payload, read by offset — never through
-        its predecessors."""
+        its predecessors. EMPTY and UNCACHEABLE entries read None."""
         if layer < 0 or layer >= len(table):
             return None
-        offset, length = table[layer]
-        if length <= 0:
+        state, offset, length = table[layer]
+        if state != STATE_CACHED or length <= 0:
             return None
         path = self._path(identity)
         try:
@@ -130,11 +140,11 @@ class PreparedCache:
                 handle.seek(table_start + len(payloads) * struct.calcsize(_TABLE_ENTRY_FMT))
                 table = []
                 for payload in payloads:
-                    table.append((handle.tell(), len(payload)))
+                    table.append((STATE_CACHED, handle.tell(), len(payload)))
                     handle.write(payload)
                 handle.seek(table_start)
-                for offset, length in table:
-                    handle.write(struct.pack(_TABLE_ENTRY_FMT, offset, length))
+                for state, offset, length in table:
+                    handle.write(struct.pack(_TABLE_ENTRY_FMT, state, offset, length))
             os.replace(temp, path)
         except OSError:
             try:
@@ -170,15 +180,25 @@ class PreparedCache:
         if layer < 0 or layer >= writer["layer_count"] or writer["table"][layer] is not None:
             return
         handle = writer["handle"]
-        writer["table"][layer] = (handle.tell(), len(payload))
+        writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
         handle.write(payload)
+
+    def append_uncacheable(self, writer: dict, layer: int) -> None:
+        """Record a layer the pass walked but the codec refused: no
+        payload follows, and the state says never retry."""
+        if writer is None or layer < 0 or layer >= writer["layer_count"] \
+                or writer["table"][layer] is not None:
+            return
+        writer["table"][layer] = (STATE_UNCACHEABLE, 0, 0)
 
     def finish_write(self, writer: dict) -> Optional[str]:
         """Write the header and the table, then atomically publish.
         The completion flag is set unconditionally: `finish_write`
-        only runs once the pass has walked every layer, so the
-        remaining (0, 0) entries are genuinely uncacheable layers
-        ."""
+        only runs once the pass has walked every layer, so a
+        remaining slot means the pass never resolved it — EMPTY
+        (a latched hydrate), retried on the next session, never
+        confused with an uncacheable layer (which was marked
+        explicitly)."""
         identity = writer["identity"]
         handle = writer["handle"]
         try:
@@ -188,8 +208,8 @@ class PreparedCache:
             handle.write(identity.encode("utf-8"))
             for entry in writer["table"]:
                 if entry is None:
-                    entry = (0, 0)  # a layer the codec could not hold
-                handle.write(struct.pack(_TABLE_ENTRY_FMT, entry[0], entry[1]))
+                    entry = (STATE_EMPTY, 0, 0)
+                handle.write(struct.pack(_TABLE_ENTRY_FMT, entry[0], entry[1], entry[2]))
             handle.close()
             os.replace(writer["temp"], self._path(identity))
         except OSError:

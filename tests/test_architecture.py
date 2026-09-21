@@ -149,7 +149,7 @@ class SourceContractTests(unittest.TestCase):
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "ArcGeometry": set(),
             "GCodeIndex": {"ArcGeometry", "MoonrakerProtocol"},
-            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting"},
+            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting", "PreparedStore"},
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
             "MonitorCommands": {"MonitorPermissions"},

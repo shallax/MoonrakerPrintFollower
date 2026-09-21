@@ -19,6 +19,7 @@ from .PlateProgress import (
     prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
+from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
 
 
 @dataclass(frozen=True)
@@ -506,10 +507,11 @@ class GCodeIndexService(QObject):
 
     def plate_pass_fraction(self):
         """The background optimisation's honest progress: the share of
-        layers whose prepared representation EXISTS  — the persistent table, the incremental writer's
-        completed entries and the demand-prepared set, never the RAM
-        tier's bounded residency (a 64-entry cache must not cap a
-        1,000-layer print at 6%)."""
+        layers the pass has RESOLVED — CACHED and UNCACHEABLE alike (a
+        refused layer is as resolved as a held one) — the persistent
+        table, the incremental writer's completed entries and the
+        demand-prepared set, never the RAM tier's bounded residency
+        (a 64-entry cache must not cap a 1,000-layer print at 6%)."""
         if self._view is None:
             return None
         total = len(self._view.ranges)
@@ -758,6 +760,18 @@ class GCodeIndexService(QObject):
             return None
         return self._prepared.read(self._prepared_identity, self._prepared_table, layer)
 
+    def _prepared_served(self, layer):
+        """The prepared store's table says this layer's payload is
+        READABLE without the raw G-code file — a table-tuple probe,
+        never a payload read (the lease decision must not cost a
+        disk read on the owner thread)."""
+        if self._prepared is None or self._prepared_table is None:
+            return False
+        if layer < 0 or layer >= len(self._prepared_table):
+            return False
+        state, _offset, length = self._prepared_table[layer]
+        return state == STATE_CACHED and length > 0
+
     def _prepared_open(self, identity):
         """Open the table for the current file's prepared cache (a
         one-shot per identity)."""
@@ -775,9 +789,12 @@ class GCodeIndexService(QObject):
             return
         self._prepared_table = loaded["table"]
         self._prepared_flag_complete = loaded["complete"]
-        # The valid entries count as coverage BEFORE the pass walks:
-        # a repair session starts at the old file's fraction.
-        self._prepared_coverage = {i for i, entry in enumerate(loaded["table"]) if entry[1] > 0}
+        # The resolved entries (CACHED and UNCACHEABLE alike) count
+        # as coverage BEFORE the pass walks: a repair session starts
+        # at the old file's fraction. The coverage truth — a layer
+        # the codec refused is as resolved as one it held.
+        self._prepared_coverage = {i for i, entry in enumerate(loaded["table"])
+                                   if entry[0] != STATE_EMPTY}
 
     def _adopt_prepared(self):
         """The reopen policy once the view's layer count is known
@@ -791,10 +808,12 @@ class GCodeIndexService(QObject):
             return
         total = len(self._view.ranges)
         if len(table) == total and self._prepared_flag_complete \
-                and all(entry[1] > 0 for entry in table):
+                and all(entry[0] != STATE_EMPTY for entry in table):
             # A valid complete cache must not read its own 197 MB
             # back merely to rediscover the table: the frontier and the saved latch both
-            # stand down the background pass for good.
+            # stand down the background pass for good. UNCACHEABLE
+            # layers count as complete — the pass already gave them
+            # its best attempt.
             self._prepared_complete = True
             self._prepared_saved = True
             self._full_next = total
@@ -905,8 +924,22 @@ class GCodeIndexService(QObject):
                                   and manual - 1 <= n <= manual + 1
                                   and n not in self._decoded_lru))}
         if self._hydrate:
-            lease = self._files.lease()
-            if lease is None:
+            # The prepared store serves the window WITHOUT the raw
+            # G-code file: a fully prepared (or RAM-cached) seek must
+            # never wait on the file lease — the lease exists only
+            # for the hydrate-from-file fallback. The probe reads the
+            # TABLE (one tuple per layer), never the payload bytes.
+            # The check runs BEFORE the queue is consumed, so an
+            # unavailable file parks the demand exactly as before.
+            served = True
+            for layer in self._hydrate:
+                if self._full_cache.peek(layer) is not None \
+                        or self._prepared_served(layer):
+                    continue
+                served = False
+                break
+            lease = None if served else self._files.lease()
+            if lease is None and not served:
                 self._files.request_file()
                 return
             window = sorted(self._hydrate)
@@ -949,6 +982,13 @@ class GCodeIndexService(QObject):
                         except Exception:
                             failed.append(layer)
                         continue
+                    if lease is None:
+                        # The pre-check said the prepared store (or
+                        # the RAM cache) serves this layer; a miss
+                        # here means the table changed mid-flight —
+                        # fail honestly, never touch a missing file.
+                        failed.append(layer)
+                        continue
                     result = hydrate_layer_from_file(index, lease.path, layer)
                     if not result:
                         failed.append(layer)
@@ -985,9 +1025,11 @@ class GCodeIndexService(QObject):
             self._submit("save", lambda: self._cache.save(identity, index))
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
                 and self._prepared is not None and not self._prepared_saved:
-            # The pass's completion finishes the incremental writer
-            # .
-            self._prepared_saved = True
+            # The pass's completion finishes the incremental writer.
+            # The latch rides the COMMIT: a failed publish never
+            # reads as saved. A failed attempt self-heals — the next
+            # demand's persist opens a fresh writer and this branch
+            # retries the finish.
             writer = self._prepared_writer
             self._prepared_writer = None
             if writer is not None:
@@ -1010,7 +1052,11 @@ class GCodeIndexService(QObject):
             index = self._view._index
             cache = self._full_cache
             start = self._full_next
-            deadline = time.monotonic() + 0.25
+            # The batch's slice: short enough that a demanded hydrate
+            # never queues long behind the pass, and the loop YIELDS
+            # the moment a demand appears (the worker checks the
+            # demand set between layers — the owner fills it).
+            deadline = time.monotonic() + 0.12
             prepared_read = self._prepared_read
             prepared_table = self._prepared_table
             # The incremental writer opens whenever a pass must walk
@@ -1026,8 +1072,11 @@ class GCodeIndexService(QObject):
 
             def full_prep_batch():
                 encoded = {}
+                uncacheable = set()
                 frontier = start
                 while time.monotonic() < deadline:
+                    if self._hydrate:
+                        break  # a demand arrived — it outranks the pass
                     layer = frontier
                     if layer >= len(index.ranges):
                         break
@@ -1035,6 +1084,8 @@ class GCodeIndexService(QObject):
                         # The latch applies to the pass too: a refused
                         # layer must not retry every poll (the same
                         # whole-file re-read the demand path avoids).
+                        # Its slot stays EMPTY: the next session
+                        # retries it.
                         frontier = layer + 1
                         continue
                     packed = cache.peek(layer)
@@ -1045,6 +1096,14 @@ class GCodeIndexService(QObject):
                         # a hole for a layer that WAS prepared.
                         if prepared_writer is not None:
                             self._prepared.append(prepared_writer, layer, packed)
+                        frontier = layer + 1
+                        continue
+                    if prepared_table is not None and layer < len(prepared_table) \
+                            and prepared_table[layer][0] == STATE_UNCACHEABLE:
+                        # The repair copy: an UNCACHEABLE layer rides
+                        # into the new writer WITHOUT a re-walk — the
+                        # codec's refusal stands across sessions.
+                        uncacheable.add(layer)
                         frontier = layer + 1
                         continue
                     raw = prepared_read(layer) if prepared_table else None
@@ -1072,12 +1131,12 @@ class GCodeIndexService(QObject):
                         except Exception:
                             # A layer the codec cannot hold simply
                             # stays out of the cache; the pass must
-                            # walk on, never stall. The finish's
-                            # completion flag records that the layer
-                            # was ATTEMPTED .
-                            pass
+                            # walk on, never stall. The explicit
+                            # UNCACHEABLE state records the refusal —
+                            # the next session never retries it.
+                            uncacheable.add(layer)
                     frontier = layer + 1
-                return frontier, encoded
+                return frontier, encoded, uncacheable
 
             self._submit("fullprep", full_prep_batch, lease)
 
@@ -1153,14 +1212,14 @@ class GCodeIndexService(QObject):
                     self._save = True
                 self._failed_hydrate.update(failed)
             elif kind == "fullprep":
-                # (frontier, encoded): the worker's LOCAL results —
-                # committed here, never mutated across the thread
-                # boundary . The
+                # (frontier, encoded, uncacheable): the worker's
+                # LOCAL results — committed here, never mutated
+                # across the thread boundary. The
                 # frontier never regresses; a mid-flight seek rewind
                 # is superseded by the demand, which owns the sought
                 # window now.
-                if isinstance(value, tuple) and len(value) == 2:
-                    frontier, encoded = value
+                if isinstance(value, tuple) and len(value) == 3:
+                    frontier, encoded, uncacheable = value
                     if isinstance(encoded, dict):
                         self._full_cache.update(encoded)
                         # The coverage follows the SAME events the
@@ -1168,6 +1227,15 @@ class GCodeIndexService(QObject):
                         # the fraction is a store census, never the
                         # RAM tier's residency.
                         self._prepared_coverage.update(encoded.keys())
+                    if isinstance(uncacheable, (set, list, tuple)):
+                        # The codec's refusals resolve too: coverage
+                        # counts them, and the writer records the
+                        # state so the next session never retries.
+                        self._prepared_coverage.update(uncacheable)
+                        writer = self._prepared_writer
+                        if writer is not None:
+                            for layer in uncacheable:
+                                self._prepared.append_uncacheable(writer, layer)
                     if isinstance(frontier, int):
                         self._full_next = max(self._full_next, frontier)
             elif kind == "prepared_save":
@@ -1175,16 +1243,19 @@ class GCodeIndexService(QObject):
                 # holds: a fresh/repair pass's offsets differ from
                 # the old file's, and a stale table would serve
                 # mis-aligned reads for the rest of the session.
+                # The saved latch closes ONLY on the publish itself.
                 if value is not None and self._prepared_identity is not None:
+                    self._prepared_saved = True
                     loaded = self._prepared.load_table(self._prepared_identity)
                     if loaded is not None:
                         self._prepared_table = loaded["table"]
                         self._prepared_flag_complete = loaded["complete"]
                         self._prepared_coverage = {
-                            i for i, entry in enumerate(loaded["table"]) if entry[1] > 0}
+                            i for i, entry in enumerate(loaded["table"])
+                            if entry[0] != STATE_EMPTY}
                         self._prepared_complete = (
                             loaded["complete"]
-                            and all(entry[1] > 0 for entry in loaded["table"]))
+                            and all(entry[0] != STATE_EMPTY for entry in loaded["table"]))
             self.changed.emit()
         self._advance()
 
