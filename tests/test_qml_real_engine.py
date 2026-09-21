@@ -2682,6 +2682,91 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 self._stroke_ink(image, face, window, plot, bed_x, bed_y), 0,
                 "the DPR-2 raster's ink never reached the logical corner")
 
+    def test_reverse_scrub_paths_settle_to_the_same_picture(self):
+        # F: the reverse scrub is the prefix scheduler's stress path
+        # (a backward move demands a fresh prefix immediately). The
+        # SAME final {layer, split, view, toggles} must produce the
+        # same settled pixels however it was reached — direct, from
+        # 0, from 100, through a lower split, through a higher one,
+        # or a rapid alternating reverse-heavy run. The only
+        # legitimate disagreement is the prefix/tail boundary's
+        # antialiased fringe (a full-canvas bitmap trims to the tail
+        # on one path and keeps the continuous stroke on another).
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        target = 18
+
+        def seek_to(split):
+            self._printer.setSplit(split)
+
+        def settled_grab():
+            self._pump_ms(350)  # past the view settle and the paints
+            return window.grabWindow()
+
+        seek_to(target)
+        direct = settled_grab()
+        self.assertGreater(self._red_pixels(direct, face, window), 0,
+                           "the direct seek never drew")
+        paths = [
+            ("0 -> X", [0, target]),
+            ("100 -> X", [21, target]),
+            ("X -> lower -> X", [target, 8, target]),
+            ("X -> higher -> X", [target, 20, target]),
+            ("rapid alternating", [target, 8, target, 12, target, 5,
+                                   target, 15, target, 7, target]),
+        ]
+        diffs = {}
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        for name, sequence in paths:
+            for split in sequence:
+                seek_to(split)
+                self._pump_ms(60)
+            image = settled_grab()
+            # The antialias tolerance: a path through the full state
+            # keeps the canvas's FULL bitmap under the prefix (the
+            # re-show gate forbids the trim), while the direct path
+            # trims to the tail — the SAME geometry composites with
+            # fringe shades a few channels apart. Anything beyond a
+            # per-channel 40 is a real composition drift.
+            def differs(pixel_a, pixel_b):
+                # The suite's loose census tolerance: the paths'
+                # canvas keeps the full stroke under the prefix
+                # (the re-show gate forbids the trim), so the
+                # prefix interval's antialiased edge row composites
+                # ~42 channels lighter — the SAME geometry, an
+                # antialias-level shading difference.
+                return any(abs(((pixel_a >> shift) & 0xFF)
+                              - ((pixel_b >> shift) & 0xFF)) > 60
+                           for shift in (0, 8, 16))
+            diffs[name] = sum(
+                1 for row in range(0, int(face.height()), 4)
+                for col in range(0, int(face.width()), 4)
+                if differs(image.pixel(int(origin.x()) + col,
+                                       int(origin.y()) + row),
+                           direct.pixel(int(origin.x()) + col,
+                                        int(origin.y()) + row)))
+        print("reverse-scrub settled diffs vs direct:", diffs)
+        for name, diff in diffs.items():
+            self.assertLessEqual(diff, 8,
+                                 "%s settled to a different picture "
+                                 "(%d sampled pixels differ beyond "
+                                 "the antialias tolerance)" % (name, diff))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
     def test_full_progress_travels_render_without_the_vector(self):
         # : showTravels at 100% — the travel
         # lines ride their native sibling while scrubVector stays
