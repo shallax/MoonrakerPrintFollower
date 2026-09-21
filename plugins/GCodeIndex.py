@@ -1431,7 +1431,13 @@ class PersistentIndexCache:
 
     def _path(self, identity: RemoteFileIdentity) -> str:
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
-        return os.path.join(self.directory, f"{digest}.mpfi.gz")
+        # The per-print subdirectory (the review's persistence
+        # finding): the index and the prepared table live as siblings
+        # under one print's own directory — an entire print's cache
+        # is one folder to delete.
+        print_dir = os.path.join(self.directory, f"p-{digest[:24]}")
+        os.makedirs(print_dir, exist_ok=True)
+        return os.path.join(print_dir, f"{digest}.mpfi.gz")
 
     def load(self, identity: Optional[RemoteFileIdentity]) -> Optional[LayerMotionIndex]:
         if identity is None:
@@ -1462,8 +1468,14 @@ class PersistentIndexCache:
                         return None
                     if identity.modified > 0 and float(fields[2]) > 0 and float(fields[2]) != identity.modified:
                         return None
-                    if str(fields[3]) != identity.uuid:
-                        return None
+                    # The uuid is Moonraker's per-extraction token: a
+                    # metadata re-extraction rolls it without the gcode
+                    # changing, so it must never invalidate an
+                    # otherwise-valid entry (the review's UUID-policy
+                    # finding — the stable key already ignores it, and
+                    # the load may not contradict the key).
+                    # The per-machine namespace resolves cross-printer
+                    # collisions instead.
                 if header.get("byteorder") != sys.byteorder:
                     return None
                 ranges = [(int(a), int(b)) for a, b in header.get("ranges", [])]
@@ -1705,19 +1717,27 @@ class PersistentIndexCache:
     def prune(self) -> None:
         try:
             entries = []
-            for name in os.listdir(self.directory):
-                if not name.endswith(".mpfi.gz"):
-                    continue
-                path = os.path.join(self.directory, name)
-                try:
-                    st = os.stat(path)
-                except OSError:
-                    continue
-                entries.append((st.st_mtime, st.st_size, path))
+            for root, _dirs, names in os.walk(self.directory):
+                for name in names:
+                    if not name.endswith(".mpfi.gz"):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        st = os.stat(path)
+                    except OSError:
+                        continue
+                    entries.append((st.st_mtime, st.st_size, path))
             entries.sort(reverse=True)
             total = 0
             for idx, (_mtime, size, path) in enumerate(entries):
                 total += size
+                if idx == 0:
+                    # The just-written (or currently used) entry is
+                    # never evicted — a single index larger than the
+                    # whole budget survives its own write (the
+                    # review's oversized-entry finding) — but its
+                    # bytes still count against the budget.
+                    continue
                 if idx >= self.max_entries or total > self.max_bytes:
                     try:
                         os.remove(path)

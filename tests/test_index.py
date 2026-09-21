@@ -497,13 +497,70 @@ G1 X5 Y0 Z0.2
         finally:
             os.remove(path)
 
+    def test_a_uuid_regeneration_never_invalidates_a_valid_cache(self):
+        # The review's UUID-policy finding: Moonraker rolls a fresh
+        # uuid per metadata extraction, and the loader must not
+        # reject an otherwise-valid entry over it — the stable key
+        # already keys on size/modified.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-old")
+            cache.save(identity, index)
+            reextracted = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-fresh")
+            self.assertIsNotNone(cache.load(reextracted),
+                                 "the fresh extraction uuid invalidated the cache")
+            # A genuinely different file still refuses.
+            other = RemoteFileIdentity("a.gcode", len(data) + 1, 100.0, "uuid-fresh")
+            self.assertIsNone(cache.load(other),
+                              "a different size read the old cache")
+
+    def test_an_oversized_index_survives_its_own_prune(self):
+        # The review's oversized-entry finding: a single index larger
+        # than the whole budget must not be written and then
+        # immediately evicted — the just-written entry is protected.
+        data = b";LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 40000
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_bytes=1024, max_entries=1)
+            identity = RemoteFileIdentity("big.gcode", len(data), 100.0, "uuid-1")
+            cache.save(identity, index)
+            loaded = cache.load(identity)
+            self.assertIsNotNone(loaded,
+                                 "the oversized index evicted itself after the write")
+
+    def test_two_machine_namespaces_never_collide(self):
+        # The review's two-printer test: the SAME remote identity (the
+        # same filename, size and modified) under two machine
+        # directories — each printer's cache is its own.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache_a = PersistentIndexCache(os.path.join(directory, "a"))
+            cache_b = PersistentIndexCache(os.path.join(directory, "b"))
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
+            cache_a.save(identity, index)
+            cache_b.save(identity, index)
+            self.assertNotEqual(os.path.dirname(cache_a._path(identity)),
+                                os.path.dirname(cache_b._path(identity)),
+                                "the two machines share one directory")
+            self.assertIsNotNone(cache_a.load(identity))
+            self.assertIsNotNone(cache_b.load(identity))
+
     def test_persistent_cache_rejects_wrong_identity(self):
+        # The new UUID policy (the review's finding): the same
+        # filename/size/modified with ANY uuid is the same content —
+        # the load succeeds. A genuinely different size refuses.
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)
         with tempfile.TemporaryDirectory() as directory:
             cache = PersistentIndexCache(directory)
             cache.save(RemoteFileIdentity("a", len(data), 1, "u1"), index)
-            self.assertIsNone(cache.load(RemoteFileIdentity("a", len(data), 1, "u2")))
+            self.assertIsNotNone(cache.load(RemoteFileIdentity("a", len(data), 1, "u2")),
+                                 "a fresh uuid refused the same content")
+            self.assertIsNone(cache.load(RemoteFileIdentity("a", len(data) + 1, 1, "u1")),
+                              "a different size read the cache")
 
     def test_persistent_cache_rejects_truncation(self):
         data = b";LAYER:0\nG1 X1\nG1 X2\n"
@@ -526,7 +583,9 @@ G1 X5 Y0 Z0.2
             cache = PersistentIndexCache(directory, max_entries=2)
             for i in range(4):
                 cache.save(RemoteFileIdentity(f"{i}.gcode", len(data), float(i), f"u{i}"), index)
-            self.assertLessEqual(len([n for n in os.listdir(directory) if n.endswith('.mpfi.gz')]), 2)
+            blobs = [name for _root, _dirs, names in os.walk(directory)
+                     for name in names if name.endswith('.mpfi.gz')]
+            self.assertLessEqual(len(blobs), 2)
 
     def test_cura_orca_prusa_and_variable_layer_fixtures(self):
         cura = build_index_from_file(str(FIXTURES / "cura.gcode"), compact=False)
@@ -631,7 +690,8 @@ G00 X2 Y2 Z0.2
             self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "path-uuid")))
             self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 200, 1.0, "path-uuid")))
             self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 2.0, "path-uuid")))
-            self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")))
+            self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")),
+                                 "a fresh extraction uuid refused the same content")
 
 
 if __name__ == "__main__":

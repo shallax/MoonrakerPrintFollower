@@ -529,8 +529,9 @@ class CacheTests(unittest.TestCase):
         return RemoteFileIdentity(name, size, modified, uuid)
 
     def _path(self, remote):
-        digest = hashlib.sha256(remote.stable_key().encode("utf-8")).hexdigest()
-        return os.path.join(self.directory, f"{digest}.mpfi.gz")
+        # The production cache's own path (the per-print subdirectory
+        # layout) — the raw writes must land where the loader reads.
+        return PersistentIndexCache(self.directory)._path(remote)
 
     def _write_raw(self, remote, payload, magic=_CACHE_MAGIC, header=None):
         """Place a cache file at the identity's own path, bypassing save()."""
@@ -592,7 +593,10 @@ class CacheTests(unittest.TestCase):
         cache.save(identity, index)
         self.assertIsNone(cache.load(self._identity(size=200)))
         self.assertIsNone(cache.load(self._identity(modified=2.0)))
-        self.assertIsNone(cache.load(self._identity(uuid="u2")))
+        # The uuid is Moonraker's per-extraction token (the review's
+        # UUID-policy finding): any uuid with the same filename, size
+        # and modified is the same content.
+        self.assertIsNotNone(cache.load(self._identity(uuid="u2")))
         # A different filename is a different cache slot entirely.
         self.assertIsNone(cache.load(self._identity(name="other.gcode")))
 
@@ -656,8 +660,9 @@ class CacheTests(unittest.TestCase):
 
     def test_identity_fields_are_advisory_when_absent(self):
         # A header without the field list (or with one that is not a list)
-        # still loads on its own key; a mismatched uuid does not, and an
-        # unknown size vouches for nothing.
+        # still loads on its own key; a mismatched uuid loads too (the
+        # review's UUID-policy finding — only size/modified vouch for
+        # the content), and an unknown size vouches for nothing.
         identity = self._identity()
         cache = PersistentIndexCache(self.directory)
         self._write_raw(identity, self._body(), header=self._header(identity, identity_fields=None))
@@ -666,7 +671,7 @@ class CacheTests(unittest.TestCase):
         self.assertIsNotNone(cache.load(identity))
         self._write_raw(identity, self._body(),
                         header=self._header(identity, identity_fields=["part.gcode", 100, 1.0, "stale"]))
-        self.assertIsNone(cache.load(identity))
+        self.assertIsNotNone(cache.load(identity))
         self._write_raw(identity, self._body(),
                         header=self._header(identity, identity_fields=["part.gcode", 0, 1.0, "u1"]))
         self.assertIsNotNone(cache.load(identity))
@@ -718,7 +723,9 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory)
         with patch("os.replace", side_effect=OSError("disk full")):
             cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1\n"))
-        self.assertEqual(os.listdir(self.directory), [])
+        leftovers = [name for _root, _dirs, names in os.walk(self.directory)
+                     for name in names]
+        self.assertEqual(leftovers, [], "the failed write left a file behind")
         self.assertIsNone(cache.load(identity))
         # Even a cleanup that fails must not propagate: the cache is
         # best-effort, and a partial blob is never published either way.
@@ -726,7 +733,8 @@ class CacheTests(unittest.TestCase):
         with patch("os.replace", side_effect=OSError("disk full")), \
                 patch("os.remove", side_effect=OSError("locked")):
             cache.save(identity, index)
-        leftovers = os.listdir(self.directory)
+        leftovers = [name for _root, _dirs, names in os.walk(self.directory)
+                     for name in names]
         self.assertEqual(len(leftovers), 1)
         self.assertIn(".mpfi.gz.tmp-", leftovers[0])
         self.assertIsNone(cache.load(identity))
@@ -749,7 +757,9 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory, max_entries=1)
         for value in range(3):
             cache.save(self._identity(name=f"{value}.gcode"), index)
-        self.assertLessEqual(len([n for n in os.listdir(self.directory) if n.endswith(".mpfi.gz")]), 1)
+        blobs = [name for _root, _dirs, names in os.walk(self.directory)
+                 for name in names if name.endswith(".mpfi.gz")]
+        self.assertLessEqual(len(blobs), 1)
 
         with tempfile.TemporaryDirectory(prefix="mpfi-bytes-") as directory:
             cache = PersistentIndexCache(directory, max_bytes=1024 * 1024)
@@ -802,7 +812,11 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory)
         cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1\n"))
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
-        self.assertEqual(os.listdir(self.directory), [f"{digest}.mpfi.gz"])
+        # The per-print subdirectory: one folder per print, the blob
+        # inside named by the full content digest.
+        self.assertEqual(os.listdir(self.directory), [f"p-{digest[:24]}"])
+        self.assertEqual(os.listdir(os.path.join(self.directory, f"p-{digest[:24]}")),
+                         [f"{digest}.mpfi.gz"])
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")

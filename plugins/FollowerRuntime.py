@@ -10,6 +10,7 @@ destructive half of the boot runs from Cura's initializationFinished
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 from UM.Logger import Logger
@@ -142,9 +143,15 @@ class FollowerRuntime:
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
         cache_dir = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        # The per-machine namespace (the review's persistence finding):
+        # the configured printer's stable identity hashes into the
+        # cache's own subtree, so two printers can never collide on a
+        # filename, an eviction budget or a prepared table.
+        machine_id = self.binding.identity[0] if self.binding.identity else ""
+        machine_hash = hashlib.sha256(str(machine_id).encode("utf-8")).hexdigest()[:24]
         from .PreparedStore import PreparedCache
-        cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
-        prepared = PreparedCache(os.path.join(cache_dir, "prepared"))
+        cache = PersistentIndexCache(os.path.join(cache_dir, "cache-v2", machine_hash, "indexes"))
+        prepared = PreparedCache(os.path.join(cache_dir, "cache-v2", machine_hash, "prepared"))
         self.index = GCodeIndexService(self.files, cache, parent, prepared)
         self.preview = PreviewFollower(self.cura)
         # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
