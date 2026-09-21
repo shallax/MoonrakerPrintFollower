@@ -142,8 +142,10 @@ class FollowerRuntime:
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
         cache_dir = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        from .PreparedStore import PreparedCache
         cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
-        self.index = GCodeIndexService(self.files, cache, parent)
+        prepared = PreparedCache(os.path.join(cache_dir, "prepared"))
+        self.index = GCodeIndexService(self.files, cache, parent, prepared)
         self.preview = PreviewFollower(self.cura)
         # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
         # "Diagnostics"); it is never written in ordinary operation.

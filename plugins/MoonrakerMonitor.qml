@@ -3575,7 +3575,12 @@ Component {
                 }
                 Timer {
                     id: layerSeekTimer
-                    interval: 250
+                    // 80 ms (was 250): a hot seek's real work is
+                    // now tens of milliseconds, so the debounce was
+                    // the dominant perceived latency — it stays long
+                    // enough to coalesce the drag's ticks and no more
+                    // (the review's step 21).
+                    interval: 80
                     onTriggered: commitLayerSeek()
                 }
                 Connections {
