@@ -47,6 +47,18 @@ class _RasterJob(QRunnable):
         self._work()
 
 
+class RasterBridge(QObject):
+    """The worker -> owner handoff (the review's finding 7): the
+    worker emits the COMPLETED image through this bridge, and the
+    queued cross-thread delivery runs the commit on the model's
+    owning thread — workers never touch the model's QObjects."""
+
+    done = pyqtSignal(object, object)
+
+    def __init__(self, parent: QObject = None) -> None:
+        super().__init__(parent)
+
+
 class PlateLayer(QObject):
     """One prepared layer as a rendered image plus its motion count.
 
