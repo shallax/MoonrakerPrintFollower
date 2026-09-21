@@ -31,7 +31,7 @@ def _british_spelling() -> bool:
 
 
 from .MonitorCamera import MonitorCamera
-from .PlateQt import PlateLayer, _RasterJob, render_layer_raster
+from .PlateQt import PlateLayer, RasterBridge, _RasterJob, render_layer_raster
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -524,10 +524,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # zoom/line changes; the generation invalidates stale renders.
         self._plate_plot = None
         self._plate_view = {}
+        # The render/view generation: a global counter bumped only
+        # when the view/job inputs change — NEVER per layer request
+        # (the review's finding 2: one window's three rasters share
+        # one generation and must all commit).
         self._raster_generation = 0
-        # The latest-wins coalescing: a pending view per layer — a
-        # new request supersedes the previous one, never queues it.
+        # Per-layer request tokens within the current generation:
+        # the newest request per layer wins, and a new layer's
+        # request never invalidates another's in-flight render.
         self._plate_pending = {}
+        self._raster_bridge = RasterBridge(self)
+        self._raster_bridge.done.connect(self._raster_committed)
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
@@ -1180,8 +1187,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._follower_popover_open:
             values["plateLayers"] = (self._qt_window(popover["layers"], popover.get("anchor"))
                                      if popover is not None else {})
-            values["plateScrubVector"] = (popover["layers"].get("current")
-                                          if popover is not None else None)
+            values["plateScrubVector"] = self._scrub_vector_for(popover)
             values["plateSplit"] = popover["split"] if popover is not None else None
             # The progress slider's range: the layer's own motion count (0
             # while the payload has not landed — the slider reads dead).
@@ -1219,8 +1225,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._sections.get("plateprogress", True) is not False:
             values["plateLiveLayers"] = (self._qt_window(progress["layers"], progress.get("anchor"))
                                          if progress is not None else {})
-            values["plateLiveScrubVector"] = (progress["layers"].get("current")
-                                              if progress is not None else None)
+            values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
             values["plateLiveAnchor"] = (progress["anchor"]
                                           if progress is not None and progress["anchor"] is not None else -1)
@@ -2770,6 +2775,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._request_raster(wrapped, payload, layer)
         return wrapped
 
+    def _scrub_vector_for(self, popover):
+        """The vector crosses into QML ONLY for the partial progress
+        states (the review's finding 4): a full 100% seek — and the
+        empty 0% — display through the raster alone, so the measured
+        ~500 ms nested QVariant wrap never rides an ordinary seek.
+        The first partial scrub activates it (one wrap per layer,
+        lazily)."""
+        if popover is None:
+            return None
+        layers = popover.get("layers") or {}
+        current = layers.get("current")
+        split = popover.get("split")
+        motions = popover.get("motionTotal") or 0
+        if current is None or split is None or motions <= 0:
+            return None
+        if split <= 0 or split >= motions:
+            return None
+        return current
+
     def _qt_window(self, layers, anchor):
         """The prev/current/next window as three retained
         references (the review's step 13: role-free rasters, the
@@ -2783,37 +2807,52 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "next": self._qt_layer(layers.get("next"), anchor + 1)}
 
     def _request_raster(self, wrapped, payload, layer):
-        """The latest-wins render demand: a new request for the
-        layer supersedes any pending one, and a completed result
-        commits only while its generation and its layer's identity
-        still hold (the review's steps 9-10)."""
+        """The render demand: the worker paints the image and hands
+        it back through the bridge; the COMMIT runs here, on the
+        model's owning thread (the review's finding 7). The commit
+        validates the view generation, the layer's own request token
+        and the retained PlateLayer identity."""
         plot = self._plate_plot
         view = dict(self._plate_view)
         if plot is None or not view.get("width"):
             return
-        self._raster_generation += 1
         generation = self._raster_generation
-        self._plate_pending[layer] = generation
+        token = self._plate_pending.get(layer, 0) + 1
+        self._plate_pending[layer] = token
 
         def build():
             image = render_layer_raster(payload, plot, view)
-            if generation == self._raster_generation \
-                    and self._plate_pending.get(layer) == generation \
-                    and self._plate_qt_layers.get(layer) is wrapped:
-                wrapped.set_raster(image)
-                self._plate_pending.pop(layer, None)
-                self._publish()
+            self._raster_bridge.done.emit(image, (layer, wrapped, generation, token))
         QThreadPool.globalInstance().start(_RasterJob(build))
+
+    @pyqtSlot(object, object)
+    def _raster_committed(self, image, ticket):
+        """The owner-thread commit (the review's finding 7): validate
+        the generation, the layer's token and the retained identity,
+        then publish."""
+        layer, wrapped, generation, token = ticket
+        if generation != self._raster_generation:
+            return
+        if self._plate_pending.get(layer) != token:
+            return
+        if self._plate_qt_layers.get(layer) is not wrapped:
+            return
+        wrapped.set_raster(image)
+        self._plate_pending.pop(layer, None)
+        self._publish()
 
     @pyqtSlot(float, float, int, int, bool, float, float)
     def setFollowerView(self, scale, lineScale, width, height, compact, panX, panY):
         """The raster's view inputs: a change re-renders the cached
         layers at the new zoom/size/pan (the review's step 12's key).
-        The pan rides in at the SETTLE only — never per tick."""
+        The pan rides in at the SETTLE only — never per tick. The
+        generation bumps ONCE per view change (the review's finding
+        2): every re-requested layer shares the new generation."""
         self._plate_view = {"scale": float(scale), "lineScale": float(lineScale),
                             "width": int(width), "height": int(height),
                             "compact": bool(compact),
                             "panX": float(panX), "panY": float(panY)}
+        self._raster_generation += 1
         for layer, wrapped in list(self._plate_qt_layers.items()):
             self._request_raster(wrapped, wrapped._payload, layer)
 
@@ -2825,6 +2864,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._plate_plot = {"offsetX": float(offsetX), "offsetY": float(offsetY),
                             "sx": float(sx), "sy": float(sy),
                             "bedXMin": float(bedXMin), "bedYMax": float(bedYMax)}
+        self._raster_generation += 1
         for layer, wrapped in list(self._plate_qt_layers.items()):
             self._request_raster(wrapped, wrapped._payload, layer)
 

@@ -3107,28 +3107,24 @@ Component {
                 Component.onCompleted: layerSlider.forceActiveFocus()
                 Connections {
                     target: progressFace
-                    function onViewScaleChanged() {
-                        _feedRenderView();
-                    }
-                    function onLineScaleChanged() {
-                        _feedRenderView();
-                    }
-                    function onWidthChanged() {
-                        _feedRenderView();
-                    }
-                    function onHeightChanged() {
+                    // The settle owns the native-render feed: the
+                    // view re-rasters ONCE, 150 ms after the last
+                    // zoom/pan/line change (the review's finding 1 —
+                    // per-tick feeds churned the renderer).
+                    function onViewSettled() {
                         _feedRenderView();
                     }
                     function onPlotChanged() {
                         var plot = progressFace.plot;
                         if (root.printer != null && plot != null) {
                             root.printer.setFollowerPlot(plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
+                            _feedRenderView();
                         }
                     }
                 }
                 function _feedRenderView() {
                     if (root.printer != null) {
-                        root.printer.setFollowerView(progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact);
+                        root.printer.setFollowerView(progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY);
                     }
                 }
 
