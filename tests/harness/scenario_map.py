@@ -113,6 +113,9 @@ SCENARIO_MAP = {
     # The owner-thread raster commit (an internal handler, not a
     # QML-driven surface — exercised through the follower scenarios).
     "MoonrakerMonitorModel._raster_committed": "b11",
+    # The worker's start report (the scheduler's superseded-before-
+    # start accounting — exercised through the follower scenarios).
+    "MoonrakerMonitorModel._raster_started": "b11",
     # The seek-trace stage log (a diagnostics instrument, gated on
     # the seek_trace config — exercised by the trace scenarios).
     "MoonrakerMonitorModel._trace": "b11",
@@ -352,7 +355,7 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
-    # The T0-T9 cold-camera timing chain (the reviewer's diagnostics):
+    # The T0-T9 cold-camera timing chain:
     # the QML-invoked first-frame slot and the trace-gate key are
     # instrumentation, never scenario verbs.
     "MoonrakerMonitorModel.cameraFirstFrameRendered": {

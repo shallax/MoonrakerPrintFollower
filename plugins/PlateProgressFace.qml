@@ -151,18 +151,81 @@ Item {
         return root.progress != null && root.progress.available === true;
     }
 
-    // The bed plot, exposed for the model's native renderer (the
-    // review's round 3): the same mapping the painters used, so the
+    // The bed plot, exposed for the model's native renderer: the
+    // same mapping the painters used, so the
     // worker-painted raster lands the identical picture.
     property var plot: mapping._plot
 
     function _rasterOf(layer) {
-        return layer != null && layer.raster !== undefined && layer.raster != null && layer.raster.width > 0;
+        // The render key's verdict: a
+        // raster counts only while its key matches the surface's
+        // CURRENT key — an old-view image never reads as current.
+        // The PlateLayer publishes its pixel extents as INTs (the
+        // engine cannot see inside a QImage variant); the plain-dict
+        // fixtures fall back to the image's own width.
+        if (layer == null) {
+            return false;
+        }
+        if (layer.rasterWidth !== undefined) {
+            return layer.rasterValid === true && layer.rasterWidth > 0;
+        }
+        return layer.raster !== undefined && layer.raster != null && layer.raster.width > 0;
+    }
+
+    function _baseOf(layer) {
+        if (layer == null) {
+            return false;
+        }
+        if (layer.baseWidth !== undefined) {
+            return layer.baseWidth > 0;
+        }
+        return layer.baseRaster !== undefined && layer.baseRaster != null && layer.baseRaster.width > 0;
+    }
+
+    function _travelsOf(layer) {
+        if (layer == null) {
+            return false;
+        }
+        if (layer.travelWidth !== undefined) {
+            return layer.travelWidth > 0;
+        }
+        return layer.travelRaster !== undefined && layer.travelRaster != null && layer.travelRaster.width > 0;
+    }
+
+    function _ghost(role) {
+        var layers = root.progress != null ? root.progress.layers : null;
+        return layers != null ? layers[role] : null;
+    }
+
+    function _fullRaster() {
+        // The raster-only full state: the whole current layer shows
+        // through the native Images — no vector, no canvas walk.
+        if (!root.available()) {
+            return false;
+        }
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return split != null && layer != null && split >= layer.motions && _rasterOf(layer);
+    }
+
+    function _partialBase() {
+        // The base marks the unprinted suffix of a PARTIAL layer
+        // : a 0% layer draws nothing
+        // (nothing has printed — no boundary to frame), and a full
+        // layer's raster covers it entirely.
+        if (!root.showBase || !root.available()) {
+            return false;
+        }
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return split != null && layer != null && split > 0 && split < layer.motions;
     }
 
     // The scrub's vector: the current layer's prepared payload,
     // published as its own key — the ONLY geometry QML still walks,
-    // and only for the within-layer delta (the review's step 16).
+    // and only for the within-layer delta .
     function _scrubVector() {
         if (root.progress == null) {
             return null;
@@ -284,14 +347,12 @@ Item {
     // skipped. That covers the unchanged state (a quiet poll, a
     // payload re-publish of the same content) — it is NOT a cache of
     // previously visited layers: an A → B → A flip re-walks A, since
-    // each canvas holds one image (the review's ruling — the claim
-    // stood without an implementation). The measured walk cost is
+    // each canvas holds one image . The measured walk cost is
     // ~150 ms for a 150k-point stack at 150% zoom; whether revisit
     // caching is worth a bounded raster pool is decided on the
     // end-to-end measurement, not assumed here. One key per canvas,
     // covering only that canvas' own inputs, so a toggle repaints
     // only what it touches.
-    property string _ghostKey: ""
     property string _pendingKey: ""
     property string _progressKey: ""
 
@@ -303,35 +364,31 @@ Item {
         return layer != null && layer.motions !== undefined ? layer.motions : -1;
     }
 
-    function _ghostKeyOf() {
-        var progress = root.progress;
-        var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, layers != null && _rasterOf(layers.prev) ? 1 : 0, layers != null && _rasterOf(layers.next) ? 1 : 0, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
-    }
-
     function _pendingKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, root.showBase ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        // The base raster's own arrival is part of the key: the grey
+        // sibling landing must repaint the pending canvas even with
+        // every other input unchanged . The
+        // SPLIT rides the key too: the base exists only for the
+        // partial states — a 0% or 100% move must clear it.
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _baseOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showBase ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _progressKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        // The raster and travel arrivals ride the key too: the full
+        // picture's takeover must clear the vector canvas when the
+        // Images land .
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
-        // Everything repaints: a toggle flip, a resize, or an anchor
-        // change — the ghosts and the pending base are static
-        // rasterisations, the progress starts over from motion zero.
-        // A canvas whose key still matches keeps its image (the
-        // raster-reuse ruling above).
-        var ghostKey = _ghostKeyOf();
-        if (ghostKey !== root._ghostKey) {
-            root._ghostKey = ghostKey;
-            ghostCanvas.requestPaint();
-        }
+        // The canvas repaints on a toggle flip, a resize or an
+        // anchor change; the ghost Images bind themselves and need
+        // no repaint gating. A canvas whose key still matches keeps
+        // its image (the raster-reuse ruling above).
         var pendingKey = _pendingKeyOf();
         if (pendingKey !== root._pendingKey) {
             root._pendingKey = pendingKey;
@@ -360,33 +417,21 @@ Item {
         }
         // The same anchor, new content: the loading→loaded transition
         // flips the motions from -1 to the real count (and the
-        // availability), and the static canvases' keys catch it — the
+        // availability), and the pending canvas' key catches it — the
         // cleared raster must never read as already drawn (the live
         // report: the pending base stayed missing on the first load).
-        var ghostKey = _ghostKeyOf();
-        if (ghostKey !== root._ghostKey) {
-            root._ghostKey = ghostKey;
-            ghostCanvas.requestPaint();
-        }
         var pendingKey = _pendingKeyOf();
         if (pendingKey !== root._pendingKey) {
             root._pendingKey = pendingKey;
             pendingCanvas.requestPaint();
         }
-        progressCanvas.requestPaint();
-    }
-    onShowPreviousChanged: {
-        var key = _ghostKeyOf();
-        if (key !== root._ghostKey) {
-            root._ghostKey = key;
-            ghostCanvas.requestPaint();
-        }
-    }
-    onShowNextChanged: {
-        var key = _ghostKeyOf();
-        if (key !== root._ghostKey) {
-            root._ghostKey = key;
-            ghostCanvas.requestPaint();
+        // The progress repaint follows its OWN key: an unchanged split/anchor/payload — a
+        // raster or ghost arrival, a quiet poll — never wakes the
+        // painter, whose partial path walks dense geometry.
+        var progressKey = _progressKeyOf();
+        if (progressKey !== root._progressKey) {
+            root._progressKey = progressKey;
+            progressCanvas.requestPaint();
         }
     }
     onShowBaseChanged: {
@@ -484,42 +529,60 @@ Item {
     }
 
     // The raster stack, bottom to top (the live design): the ghost
-    // layers, the pending base, and the accumulated progress — each
-    // an image-backed canvas that only repaints when its content
-    // changes. The ghosts and the pending base never move while the
-    // current layer progresses, so they rasterise once per anchor or
-    // toggle; the progress accumulates the printed delta per poll
-    // and re-rasters fully every ~20 paints. Transparency does the
-    // blending between the layers.
-    Canvas {
-        id: ghostCanvas
+    // layers, the pending base, the full-layer rasters and the
+    // accumulated progress. The rasters are SCENE-GRAPH Images — the
+    // engine's Canvas cannot hold a raster image reliably (its
+    // internal image cache re-blits a drawn URL on every later
+    // paint, and a QImage variant segfaults — engine-proven), so
+    // only the genuinely vector paths keep canvases. Transparency
+    // does the blending between the layers.
+
+    // The raster-only full state: the whole
+    // layer and its travels blit from the native data URLs; the
+    // progress canvas below clears itself while these show.
+    Image {
+        id: progressRasterImage
         anchors.fill: parent
-        renderTarget: Canvas.Image
-        renderStrategy: Canvas.Threaded
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            ctx.clearRect(0, 0, width, height);
-            if (!root.available() || mapping._plot == null) {
-                return;
-            }
-            var layers = root.progress.layers;
-            // The ghost layers: the worker's rasters blitted at ghost
-            // opacity (the review's step 13: role-free assets, the
-            // opacity applied at composition). Until a ghost's raster
-            // lands it draws nothing — the context layer appears a
-            // beat after the seek, never blocks it.
-            if (root.showPrevious && layers.prev != null && _rasterOf(layers.prev)) {
-                ctx.globalAlpha = 0.30;
-                ctx.drawImage(layers.prev.raster, 0, 0);
-                ctx.globalAlpha = 1.0;
-            }
-            if (root.showNext && layers.next != null && _rasterOf(layers.next)) {
-                ctx.globalAlpha = 0.30;
-                ctx.drawImage(layers.next.raster, 0, 0);
-                ctx.globalAlpha = 1.0;
-            }
-        }
+        visible: _fullRaster()
+        source: _fullRaster() ? root.progress.layers.current.rasterData : ""
+    }
+    Image {
+        id: progressTravelImage
+        anchors.fill: parent
+        opacity: 0.8
+        visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
+        source: visible ? root.progress.layers.current.travelData : ""
+    }
+
+    // The ghost layers: the worker's rasters at ghost opacity —
+    // role-free assets, the opacity applied at composition.
+    // Until a ghost's raster lands it draws nothing —
+    // the context layer appears a beat after the seek, never blocks
+    // it.
+    Image {
+        id: prevGhostImage
+        anchors.fill: parent
+        opacity: 0.30
+        visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
+        source: visible ? _ghost("prev").rasterData : ""
+    }
+    Image {
+        id: nextGhostImage
+        anchors.fill: parent
+        opacity: 0.30
+        visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
+        source: visible ? _ghost("next").rasterData : ""
+    }
+
+    // The grey whole-layer base: the
+    // native grey sibling as a scene-graph Image, with the vector
+    // canvas below as the pre-arrival fallback.
+    Image {
+        id: pendingBaseImage
+        anchors.fill: parent
+        opacity: 0.55
+        visible: _partialBase() && _baseOf(root.progress.layers.current)
+        source: visible ? root.progress.layers.current.baseData : ""
     }
 
     Canvas {
@@ -534,14 +597,20 @@ Item {
             if (!root.available() || mapping._plot == null) {
                 return;
             }
+            var layer = root.progress.layers.current;
+            // The base marks the unprinted suffix of a PARTIAL layer:
+            // a 0% layer draws nothing (nothing has printed — no
+            // boundary to frame), and a full layer's raster covers
+            // it entirely. The native sibling's arrival hides this
+            // fallback (its Image above takes over).
+            if (!_partialBase() || layer == null || _baseOf(layer)) {
+                return;
+            }
             var current = _scrubVector();
             if (current == null) {
                 return;
             }
-            // The grey base: the whole layer, one honest colour.
-            if (root.showBase) {
-                _drawLayer(ctx, current, 0.55, -1, true, -1);
-            }
+            _drawLayer(ctx, current, 0.55, -1, true, -1);
         }
     }
 
@@ -563,8 +632,7 @@ Item {
                 return;
             }
             var layer = root.progress.layers.current;
-            var current = _scrubVector();
-            if (current == null) {
+            if (layer == null) {
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
@@ -572,10 +640,34 @@ Item {
                 return;
             }
             var split = root.progress.split;
+            // The FULL-layer case: the
+            // PlateLayer's OWN motions are the boundary, and the
+            // scene-graph Images own the picture — scrubVector is
+            // null by design here (a 100% seek, a detached whole
+            // layer), so a full raster hit never depends on the
+            // giant vector. The vector canvas clears so nothing
+            // doubles up.
+            if (_fullRaster()) {
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = split;
+                root._paintsSinceReset += 1;
+                return;
+            }
+            var current = _scrubVector();
+            if (current == null) {
+                // No vector and no full raster yet (a cold full seek,
+                // a 0% state): nothing to accumulate.
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
+                return;
+            }
             if (split == null) {
-                // No boundary to draw at — a detached (frozen) anchor,
-                // or a print without a position. The layer is its whole
-                // base and any accumulated fill goes with the split.
+                // No boundary to draw at — a print without a
+                // position. The layer is its whole base and any
+                // accumulated fill goes with the split.
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
@@ -595,23 +687,9 @@ Item {
                 root._progressDirty = false;
                 root._paintsSinceReset = 0;
             }
-            // The whole-layer case blits the worker's raster (the
-            // review's step 14: the static geometry never regenerates
-            // for a progress count). The partial scrub keeps the
-            // vector delta path.
-            if (split >= current.motions && layer != null && _rasterOf(layer)) {
-                ctx.globalAlpha = 1.0;
-                ctx.drawImage(layer.raster, 0, 0);
-                if (root.showTravels) {
-                    _drawTravels(ctx, current.travels, split, root._lastSplit);
-                }
-                root._lastSplit = split;
-                root._paintsSinceReset += 1;
-                return;
-            }
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3
-            // floor).
+            // floor). The partial scrub keeps the vector delta path.
             _drawLayer(ctx, current, 1.0, split, false, root._lastSplit);
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live

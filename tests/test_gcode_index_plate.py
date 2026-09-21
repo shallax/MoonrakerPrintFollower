@@ -4,8 +4,8 @@ Two surfaces share this file because they are one feature seen from both
 ends. The index derives, for every motion, the slicer's feature type (the
 plate payload's colours) and whether the motion is extruding (its travel
 glyphs), and the index service's hydration window is what makes those
-columns exist for the layers the live print sits on. That window was the
-review's F2 finding: the request stood down whenever the current layer was
+columns exist for the layers the live print sits on. The request stood
+down whenever the current layer was
 already hydrated, so the layer behind the print never filled and the face
 degraded to an empty ghost.
 
@@ -576,7 +576,8 @@ class HydrationWindowTests(unittest.TestCase):
     def test_a_request_for_a_hydrated_layer_still_asks_for_its_neighbours(self):
         self._bind(hydrated=(2,))
         self.service.request_hydration(2)
-        # The review repro: the current layer was already hydrated, so the
+        # The request-standing-down repro: the current layer was already
+        # hydrated, so the
         # request did nothing and the ghost never filled.
         self.assertEqual(self.service._hydrate, {1, 3})
 
@@ -683,10 +684,9 @@ class HydrationWindowTests(unittest.TestCase):
         # The full prepared cache's promise: a layer the window's
         # store no longer holds is served from the compact form —
         # decoded by the WORKER into the hot cache (never on the UI
-        # thread, the review's ruling), and the bundle's first display
+        # thread), and the bundle's first display
         # reuses the worker's own payload instead of decoding a second
-        # object (the review's regression: the worker-prepared layer
-        # must not be decoded again).
+        # object .
         index = self._bind(layers=8, hydrated=(5,))
         from plugins.PlateProgress import encode_layer, prepare_layer
         payload = prepare_layer(index, 5)
@@ -1102,8 +1102,7 @@ class PlateVisitedTests(unittest.TestCase):
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class PreparedReopenPolicyTests(unittest.TestCase):
-    """The reopen/repair/persist policy (the review's findings
-    13/14/15/16/17/20): the fast path, the repair copy, the
+    """The reopen/repair/persist policy: the fast path, the repair copy, the
     demand-persistence, the store-census fraction, the byte budgets
     and the rebind abort."""
 
@@ -1184,7 +1183,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                              "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})
 
     def test_a_complete_reopen_takes_the_fast_path(self):
-        # The review's finding 13: a valid complete cache must not
+        # : a valid complete cache must not
         # read its own bytes back — the table says complete, the
         # pass stands down, and the fraction reads 100% with zero
         # RAM residency.
@@ -1205,7 +1204,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(reads, [], "the reopen replayed the store")
 
     def test_a_holey_reopen_repairs_without_losing_valid_entries(self):
-        # The review's finding 15's regression: 0,1,3,4 valid and
+        # The sparse-repair regression: 0,1,3,4 valid and
         # 2 missing — the repair regenerates 2 and COPIES the valid
         # entries into the new file; nothing complementary-holes.
         from plugins.PlateProgress import decode_layer
@@ -1234,7 +1233,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
 
     def test_a_demand_prepared_layer_persists_into_the_writer(self):
-        # The review's finding 14: a manual/live demand prepares the
+        # : a manual/live demand prepares the
         # layer BEFORE the pass reaches it — the encoded bytes must
         # enter the writer anyway, or the finish publishes a (0,0)
         # hole for a layer that WAS prepared.
@@ -1256,7 +1255,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                         "a prepared layer published as a hole")
 
     def test_the_pass_fraction_counts_stores_not_residency(self):
-        # The review's finding 17: a 1,000-layer print with a bounded
+        # : a 1,000-layer print with a bounded
         # RAM tier must report the store's coverage, not the cache's
         # residency (a 64-entry cache must not cap the band at 6%).
         self._view(layers=1000)
@@ -1270,7 +1269,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                          "the fraction followed the RAM tier's residency")
 
     def test_a_rebind_aborts_the_old_print_writer(self):
-        # The review's finding 20: bind() must close and delete the
+        # : bind() must close and delete the
         # previous print's unfinished temp writer — never leave a
         # handle or a .tmp file behind.
         self._view(5)
@@ -1286,7 +1285,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(leftovers, [])
 
     def test_the_byte_budgets_bind_the_ram_tiers(self):
-        # The review's findings 18/19: the packed tier is pure bytes,
+        # : the packed tier is pure bytes,
         # the decoded tier holds its slot floor under pressure, and a
         # read refreshes recency.
         module = self.qt.load("GCodeIndexService")

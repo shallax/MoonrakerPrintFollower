@@ -259,7 +259,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(service._failed_hydrate, set())
 
     def test_the_background_pass_caches_layers_outside_both_windows(self):
-        # The review's repro: a 10-layer compact index with the live
+        # A 10-layer compact index with the live
         # and manual anchors fixed — the pass used to reach the end
         # while the cache held only the two windows (each background
         # hydrate was evicted by the retention before its prepare).
@@ -312,7 +312,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(index.hydrated_layers, {0, 1, 2, 8, 9})
 
     def test_a_stale_workers_results_never_commit_after_a_rebind(self):
-        # The review's ownership finding: the worker returns LOCAL
+        # The worker returns LOCAL
         # results and only the generation-checked _finish commits —
         # a worker from the previous job must never touch the new
         # job's stores.
@@ -339,7 +339,7 @@ class ComposedComponentTests(unittest.TestCase):
                          "a stale worker's payload reached the new job's hot cache")
 
     def test_a_completed_seek_republishes_without_new_telemetry(self):
-        # The review's finding: a completed manual seek republishes
+        # A completed manual seek republishes
         # off the worker's own completion — never waiting on the next
         # printer heartbeat.
         service, files = self.parts.index, self.parts.files
@@ -378,8 +378,7 @@ class ComposedComponentTests(unittest.TestCase):
     def test_the_job_bar_band_tracks_the_prepared_share(self):
         # The optimisation band's value: the share of layers the
         # prepared store holds — the cache is the evidence, so a
-        # latched failure keeps the band below 100% (the review's
-        # completion-reporting finding). None without a view.
+        # latched failure keeps the band below 100% . None without a view.
         service = self.parts.index
         service.bind(("part.gcode", 100, 1))
         self.assertIsNone(service.plate_pass_fraction())
@@ -394,19 +393,20 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertAlmostEqual(service.plate_pass_fraction(), 0.4)
 
     def test_the_native_render_window_reuses_layer_objects(self):
-        # The review's step 13: role-free rasters — a seek changes
+        # Role-free rasters — a seek changes
         # three references, never the render assets; adjacent anchors
         # share the exact same PlateLayer objects, and a raster that
         # lands commits only while its layer still lives in the cache.
         model = self.monitor()
         payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0]]]},
                    "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
+        surface = model._plate_surfaces["popover"]
 
         def layers(anchor):
             return {"prev": payload if anchor > 0 else None,
                     "current": payload, "next": payload}
-        w1 = model._qt_window(layers(200), 200)
-        w2 = model._qt_window(layers(201), 201)
+        w1 = model._qt_window(surface, layers(200), 200)
+        w2 = model._qt_window(surface, layers(201), 201)
         self.assertIs(w1["current"], w2["prev"],
                       "adjacent windows rebuilt the shared render object")
         self.assertIs(w1["next"], w2["current"],
@@ -414,42 +414,49 @@ class ComposedComponentTests(unittest.TestCase):
         # The layer object carries its motion count across roles.
         self.assertEqual(w1["current"].motions, 2)
         # A -> B -> A: the same retained object (capacity 6).
-        w3 = model._qt_window(layers(200), 200)
+        w3 = model._qt_window(surface, layers(200), 200)
         self.assertIs(w3["current"], w1["current"],
                       "the revisit rebuilt the retained render object")
 
     def test_the_render_cache_is_bounded_and_generation_isolated(self):
         model = self.monitor()
+        surface = model._plate_surfaces["popover"]
         payload = {"classes": {}, "travels": [], "travelStarts": [],
                    "travelEnds": [], "motions": 1}
         for layer in range(10):
-            model._qt_layer(payload, layer)
-        self.assertLessEqual(len(model._plate_qt_layers), 6)
-        self.assertNotIn(0, model._plate_qt_layers,
+            model._qt_layer(surface, payload, layer)
+        self.assertLessEqual(len(surface.layers), 6)
+        self.assertNotIn(0, surface.layers,
                          "the oldest render object never evicted")
-        # A new job clears the cache: the old geometry can never
-        # answer the new print's window.
+        # A new job clears every surface's cache: the old geometry
+        # can never answer the new print's window.
         model._observe_follower_job("new-job")
-        self.assertEqual(model._plate_qt_layers, {})
+        self.assertEqual(surface.layers, {})
         self.assertEqual(model._plate_qt_job, "new-job")
 
     def test_adjacent_windows_render_only_the_new_layer(self):
-        # The review's findings 15/16: N -> N+1 renders ONLY N+2 —
+        # : N -> N+1 renders ONLY N+2 —
         # N and N+1 keep their retained rasters; and a full 100%
         # seek publishes no scrub vector (finding 4's gate).
         model = self.monitor()
+        surface = model._plate_surfaces["popover"]
+        # The scheduler only demands once a context exists — feed it
+        # and let the staged flush land.
+        model.setFollowerPlot("popover", 0.0, 0.0, 1.0, 1.0, 0.0, 300.0)
+        model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
+        self.qt.events(5)
         payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0]]]},
                    "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
 
         def layers(anchor):
             return {"prev": payload if anchor > 0 else None,
                     "current": payload, "next": payload}
-        model._qt_window(layers(200), 200)
-        counts = dict(model._plate_render_count)
-        model._qt_window(layers(201), 201)
-        self.assertEqual(model._plate_render_count.get(200), counts.get(200),
+        model._qt_window(surface, layers(200), 200)
+        counts = dict(surface.render_count)
+        model._qt_window(surface, layers(201), 201)
+        self.assertEqual(surface.render_count.get(200), counts.get(200),
                          "the adjacent window re-rendered the retained layer")
-        self.assertEqual(model._plate_render_count.get(201), counts.get(201),
+        self.assertEqual(surface.render_count.get(201), counts.get(201),
                          "the adjacent window re-rendered the retained layer")
         # The 100% seek carries no scrub vector; the partial split does.
         full = {"layers": {"current": payload}, "split": 2, "motionTotal": 2}
@@ -460,7 +467,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIsNotNone(model._scrub_vector_for(partial))
 
     def test_the_follower_view_signal_precedes_the_plate_payloads(self):
-        # The review's signal-ordering finding: followerAttached must
+        # The signal ordering: followerAttached must
         # flip BEFORE the new layer's payload lands, or QML paints
         # the new current layer as a pending base for one frame and
         # then clears it.
@@ -1231,6 +1238,317 @@ class ComposedComponentTests(unittest.TestCase):
         for name in "pausePrint resumePrint cancelPrint reconnect refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible setBedMeshThresholds macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setSectionLayout sectionLayoutFor setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileClearWalkError fileRequestVisibleThumbnails".split():
             self.assertTrue(any(bytes(meta.method(i).name()).decode() == name for i in range(meta.methodCount())), name)
         self.assertEqual(type(model).__bases__[0].__name__, "PrinterModel")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeRenderSchedulerTests(unittest.TestCase):
+    """The round-4 render architecture: per-surface contexts, bounded demand scheduling,
+    ghost state, idempotent setters and scheduler hygiene."""
+
+    def setUp(self):
+        context = runtime()
+        self.qt = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+        self.transport = ScriptedTransport()
+        root = self.qt.load("FollowerRuntime")
+        real = root.MoonrakerClient
+        self.app = self.qt.Application()
+        self.socket = ScriptedSocket()
+        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport, socket=self.socket)):
+            self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
+        self.addCleanup(self.qt.events)
+        self.addCleanup(self.follower.deinitialize)
+        self.config_type = self.qt.load("PrinterConfig").PrinterConfig
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
+
+    def monitor(self):
+        output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
+        output.start()
+        self.addCleanup(output.stop)
+        return output._current.activePrinter
+
+    @staticmethod
+    def _payload(motions=2):
+        points = [[float(i), 0.0, float(i)] for i in range(motions + 1)]
+        return {"classes": {"SKIN": [points]},
+                "travels": [], "travelStarts": [], "travelEnds": [], "motions": motions}
+
+    @staticmethod
+    def _dense(motions=200000):
+        points = [[i * 0.5 % 240.0, 2.0, float(i)] for i in range(motions + 1)]
+        return {"classes": {"FILL": [points]},
+                "travels": [], "travelStarts": [], "travelEnds": [], "motions": motions}
+
+    def _feed(self, model, name, width=400, height=300, compact=False, pan_x=0.0, pan_y=0.0):
+        model.setFollowerPlot(name, 0.0, 0.0, 1.0, 1.0, 0.0, float(height))
+        model.setFollowerView(name, 1.0, 0.7, width, height, compact, pan_x, pan_y)
+        self.qt.events(5)  # the staged flush
+
+    def _window(self, model, name, anchor, payload=None):
+        surface = model._plate_surfaces[name]
+        payload = payload or self._payload()
+        model._qt_window(surface, {"prev": payload if anchor > 0 else None,
+                                   "current": payload, "next": payload}, anchor)
+
+    def _hot(self, surface, layer):
+        wrapped = surface.layers.get(layer)
+        return wrapped is not None and wrapped.rasterValid
+
+    def _pump_rasters(self, model, name, timeout=400):
+        """Drive the event loop until the surface's desired window is
+        fully rasterised (the workers deliver through the queued
+        bridge signals)."""
+        surface = model._plate_surfaces[name]
+
+        def settled():
+            if surface.job is not None:
+                return False
+            desired = surface.desired
+            if desired is None:
+                return True
+            if not self._hot(surface, desired["current"]):
+                return False
+            return all(self._hot(surface, layer) for layer in desired["ghosts"].values())
+
+        for _ in range(timeout):
+            self.qt.events(5)
+            if settled():
+                return
+        self.fail("the rasters did not settle")
+
+    def test_mini_and_popover_render_contexts_are_independent(self):
+        # : the same decoded layer feeds both
+        # surfaces, but each surface's wrappers, views, generations
+        # and rasters are its own — feeding one never invalidates
+        # the other's.
+        model = self.monitor()
+        self._feed(model, "popover", width=600, height=400)
+        self._feed(model, "mini", width=90, height=90, compact=True)
+        self._window(model, "popover", 5)
+        self._window(model, "mini", 5)
+        popover = model._plate_surfaces["popover"]
+        mini = model._plate_surfaces["mini"]
+        self.assertIsNot(popover.layers[5], mini.layers[5],
+                         "the surfaces shared a PlateLayer")
+        self._pump_rasters(model, "popover")
+        self._pump_rasters(model, "mini")
+        self.assertTrue(popover.layers[5].rasterValid)
+        self.assertTrue(mini.layers[5].rasterValid)
+        self.assertEqual(popover.layers[5].raster.width(), 600)
+        self.assertEqual(mini.layers[5].raster.width(), 90)
+        pop_gen, mini_gen = popover.generation, mini.generation
+        model.setFollowerView("mini", 1.0, 0.7, 120, 120, True, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertEqual(popover.generation, pop_gen,
+                         "the mini's re-feed bumped the popover's generation")
+        self.assertNotEqual(mini.generation, mini_gen)
+        self.assertTrue(popover.layers[5].rasterValid,
+                        "the mini's re-feed invalidated the popover's raster")
+        mini_gen = mini.generation
+        model.setFollowerView("popover", 1.5, 0.7, 600, 400, False, 10.0, 0.0)
+        self.qt.events(5)
+        self.assertNotEqual(popover.generation, pop_gen)
+        self.assertEqual(mini.generation, mini_gen,
+                         "the popover's re-feed bumped the mini's generation")
+
+    def test_a_detached_popover_does_not_disturb_the_live_mini(self):
+        # : the popover's frozen anchor is ITS
+        # surface state — the mini keeps its live anchor and its
+        # rasters stay valid while the popover seeks elsewhere.
+        model = self.monitor()
+        self._feed(model, "popover", width=600, height=400)
+        self._feed(model, "mini", width=90, height=90, compact=True)
+        self._window(model, "mini", 3)
+        mini = model._plate_surfaces["mini"]
+        self._pump_rasters(model, "mini")
+        self._window(model, "popover", 200)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(mini.desired["current"], 3)
+        self.assertTrue(all(wrapped.rasterValid for wrapped in mini.layers.values()),
+                        "the popover's seek disturbed the mini's rasters")
+
+    def test_the_current_layer_renders_before_the_ghosts(self):
+        # A cold random anchor
+        # lands current first, then each ghost exactly once — in
+        # any order, but never before the current.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        landed = {}
+
+        def on_ready(layer, wrapped):
+            # The commit's three setters each notify; only the FIRST
+            # validity (the raster's own landing) marks the order.
+            if wrapped.rasterValid and layer not in landed:
+                landed[layer] = True
+        for layer in (4, 5, 6):
+            surface.layers[layer].rasterReady.connect(
+                lambda l=layer: on_ready(l, surface.layers[l]))
+        self._pump_rasters(model, "popover")
+        self.assertEqual(list(landed)[0], 5, "a ghost rendered before the current layer")
+        self.assertEqual(set(landed), {4, 5, 6},
+                         "a ghost never rendered, or rendered twice")
+
+    def test_a_quiet_publish_never_reenqueues_a_pending_ghost(self):
+        # The duplicate-render repro: repeated
+        # publishes while a ghost is pending must not enqueue it
+        # again — and once everything is hot, nothing re-renders.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        for _ in range(5):
+            self._window(model, "popover", 5)  # the publish churn
+        self._pump_rasters(model, "popover")
+        for layer in (4, 5, 6):
+            self.assertEqual(surface.render_count[layer], 1,
+                             "layer %d rendered more than once" % layer)
+
+    def test_a_rapid_drag_schedules_bounded_work(self):
+        # : a rapid 100..104 drag while 100's
+        # job is in flight starts at most the final current plus its
+        # ghosts — the obsolete visited layers never rasterise.
+        model = self.monitor()
+        surface = model._plate_surfaces["popover"]
+        self._feed(model, "popover", width=400, height=300)
+        payload = self._dense(200000)
+        self._window(model, "popover", 100, payload)
+        self.assertEqual(surface.render_count.get(100), 1)
+        for anchor in (101, 102, 103, 104):
+            self._window(model, "popover", anchor, payload)
+        self.assertIsNotNone(surface.job, "the drag started a second job mid-flight")
+        for anchor in (101, 102, 103):
+            self.assertNotIn(anchor, surface.render_count,
+                             "an obsolete visited layer started rendering")
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.render_count.get(100), 1)
+        for anchor in (101, 102):
+            self.assertNotIn(anchor, surface.render_count,
+                             "an obsolete visited layer rendered after the settle")
+        self.assertIn(104, surface.render_count)
+        # 103 rides the final anchor's own window as its previous
+        # ghost — exactly once, like 105.
+        self.assertEqual(surface.render_count.get(103), 1)
+        self.assertLessEqual(surface.stats["started"], 4,
+                             "the drag started unbounded raster jobs")
+
+    def test_hot_revisits_and_reverses_are_raster_hits(self):
+        # The warm-seek matrix: N -> N+1 renders only
+        # N+2; N+1 -> N and A -> B -> A are pure raster hits.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        self._pump_rasters(model, "popover")
+        counts = dict(surface.render_count)
+        self._window(model, "popover", 6)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.render_count.get(5), counts.get(5),
+                         "the adjacent window re-rendered N")
+        self.assertEqual(surface.render_count.get(6), counts.get(6),
+                         "the adjacent window re-rendered N+1")
+        self.assertEqual(surface.render_count.get(7), 1)
+        counts = dict(surface.render_count)
+        self._window(model, "popover", 5)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.render_count, counts,
+                         "the reverse N+1 -> N was not a raster hit")
+
+    def test_an_identical_context_publication_is_a_no_op(self):
+        # : the exact same view/plot pair — a
+        # settle's repeat feed — bumps nothing, invalidates nothing,
+        # requests nothing.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        self._pump_rasters(model, "popover")
+        generation = surface.generation
+        counts = dict(surface.render_count)
+        model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
+        model.setFollowerPlot("popover", 0.0, 0.0, 1.0, 1.0, 0.0, 300.0)
+        self.qt.events(5)
+        self.assertEqual(surface.generation, generation)
+        self.assertEqual(surface.render_count, counts)
+        self.assertTrue(all(wrapped.rasterValid for wrapped in surface.layers.values()))
+
+    def test_a_plot_plus_view_transition_is_one_generation(self):
+        # : the QML's plot+view pair (the
+        # onPlotChanged handler) coalesces into ONE generation and
+        # one wave — never plot-generation-then-view-generation.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        generation = surface.generation
+        model.setFollowerPlot("popover", 5.0, 6.0, 1.0, 1.0, 0.0, 300.0)
+        model.setFollowerView("popover", 1.2, 0.7, 400, 300, False, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertEqual(surface.generation, generation + 1,
+                         "the plot+view pair flushed more than one generation")
+
+    def test_the_scheduler_bookkeeping_stays_bounded(self):
+        # : seeking through hundreds of
+        # layers leaves no pending tokens, no job residue, and the
+        # render counts stay bounded by the final window.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload()
+        for anchor in range(300):
+            self._window(model, "popover", anchor, payload)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.tokens, {}, "stale tokens survived the seek")
+        self.assertIsNone(surface.job)
+        self.assertLessEqual(len(surface.render_count), 4,
+                             "obsolete layers burned raster work")
+        self.assertLessEqual(surface.stats["depth_max"], 3)
+
+    def test_an_evicted_layer_leaves_no_scheduler_residue(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload()
+        self._window(model, "popover", 0, payload)
+        self._pump_rasters(model, "popover")
+        for layer in range(6, 12):
+            model._qt_layer(surface, payload, layer)
+        self.assertNotIn(0, surface.layers)
+        self.assertNotIn(0, surface.tokens,
+                         "the evicted layer's token survived")
+
+    def test_a_stale_completion_cannot_touch_the_new_job(self):
+        # : an old generation's worker result
+        # arriving after a job switch is discarded, never committed.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        ticket = ("popover", 5, 1, surface.generation, surface.render_key())
+        model._observe_follower_job("new-job")
+        discarded = surface.stats["discarded"]
+        from PyQt6.QtGui import QImage
+        blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
+        model._raster_committed((blank, "", blank, "", blank, ""), ticket)
+        self.assertEqual(surface.layers, {})
+        self.assertEqual(surface.stats["discarded"], discarded + 1)
+
+    def test_the_raster_commit_runs_on_the_owner_thread(self):
+        # : the worker hands the images through
+        # the bridge, and the commit (and every rasterReady it
+        # fires) runs on the model's thread.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        self._window(model, "popover", 5)
+        from PyQt6.QtCore import QThread
+        threads = []
+        surface.layers[5].rasterReady.connect(
+            lambda: threads.append(QThread.currentThread()))
+        self._pump_rasters(model, "popover")
+        self.assertTrue(threads, "the raster never landed")
+        self.assertTrue(all(thread is QThread.currentThread() for thread in threads),
+                        "a worker thread committed the raster")
 
 
 if __name__ == "__main__": unittest.main()

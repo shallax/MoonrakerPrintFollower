@@ -4949,6 +4949,15 @@ Item {
             # requests).
             "visible: progressFace.viewScale > 1.0 && progressFace.attached",
             "visible: progressFace.attached",
+            # The plate face's native raster stack (the 4.6.0 render
+            # architecture): the images own their state gates — a
+            # full layer's raster, its travels, the grey partial
+            # base and the ghost pair.
+            "visible: _fullRaster()",
+            "visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)",
+            "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && _rasterOf(_ghost(\"prev\"))",
+            "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",
+            "visible: _partialBase() && _baseOf(root.progress.layers.current)",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

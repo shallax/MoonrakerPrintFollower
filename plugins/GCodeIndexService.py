@@ -55,7 +55,7 @@ class IndexView:
         return min(low - 1, len(self._index.ranges) - 1) if low else None
 
 
-# The RAM tier budgets (the review's findings 18/19), from the
+# The RAM tier budgets , from the
 # measured real print (467 MB, 327 layers): packed layers run
 # 13.5 KB - 927 KB (p50 610 KB), decoded layers 0.2 MB - 11.3 MB
 # (p50 8.0 MB). 64 MB holds ~105 median packed layers — a third of
@@ -212,7 +212,7 @@ class GCodeIndexService(QObject):
     def __init__(self, files, cache, parent=None, prepared=None):
         super().__init__(parent)
         self._files, self._cache = files, cache
-        # The file-backed prepared store (the review's round 3): the
+        # The file-backed prepared store: the
         # pass's encodings persist per print, random-accessible, so
         # a reopened print skips the whole preparation walk.
         self._prepared = prepared
@@ -220,7 +220,7 @@ class GCodeIndexService(QObject):
         self._prepared_identity = None
         self._prepared_saved = False
         self._prepared_writer = None
-        # The reopen policy's adoption (the review's findings 13/15):
+        # The reopen policy's adoption :
         # a complete clean table takes the fast path; a complete
         # table with holes repairs. The coverage set counts every
         # layer whose prepared representation exists — the pass
@@ -256,14 +256,14 @@ class GCodeIndexService(QObject):
         # the background pass during a live print (the save branch runs
         # before the pass branch — the "no quicker" live report).
         self._last_save_at = None
-        # The hot presentation cache (the review's design): DECODED
+        # The hot presentation cache: DECODED
         # payloads, keyed by layer, access-order bounded. The bundle
         # reads it first and reuses the same Python object, so an
         # adjacent seek shares two of its three layers verbatim (no
         # re-decode, no QVariant re-conversion) and the worker hands
         # the first display its own payload instead of a second
         # object decoded from the compact store. Byte-budgeted with
-        # a slot floor (the review's finding 19): the live and
+        # a slot floor: the live and
         # frozen windows side by side, bounded by measured bytes.
         self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
         # The follower's frozen layer (the pop-over's detach): a second
@@ -323,10 +323,10 @@ class GCodeIndexService(QObject):
         self._prepared_complete = False
         self._prepared_flag_complete = False
         self._prepared_coverage = set()
-        # The incremental writer (the review's finding 9): the pass
+        # The incremental writer: the pass
         # appends the encodings layer by layer, so the first session
         # never retains the whole cold store in RAM. A rebind ABORTS
-        # the old print's unfinished writer (the review's finding 20)
+        # the old print's unfinished writer 
         # — never a bare drop of the reference.
         self._abort_prepared_writer()
         # The frozen layer belongs to the file that was printing.
@@ -423,7 +423,7 @@ class GCodeIndexService(QObject):
             # Demanded until the hot cache holds it — the bundle reads
             # the decoded store and the worker hands it over, so a
             # cached-and-decoded layer needs NO rehydration merely to
-            # display (the review's finding): the worker's hydrate is
+            # display: the worker's hydrate is
             # the compact store's own no-op when the arrays are still
             # present, and the manual scrub's split is used as-given.
             # The criterion covers the non-compact case too, where
@@ -446,11 +446,10 @@ class GCodeIndexService(QObject):
 
         The bundle reads the HOT presentation cache first: an adjacent
         seek shares two of its three layers as the SAME Python objects
-        (no re-decode, no QVariant re-conversion — the review's warm-
-        seek finding), and the worker hands the first display its own
+        (no re-decode, no QVariant re-conversion), and the worker hands the first display its own
         payload instead of a second object decoded from the compact
         store. A miss reads as not loaded — the UI thread NEVER walks
-        geometry (the review's cold-seek finding); the demand owns it.
+        geometry ; the demand owns it.
         The counts/hydration/decoded states are all part of the memo
         key: a bundle built while a layer was still landing rebuilds
         when it does."""
@@ -468,7 +467,7 @@ class GCodeIndexService(QObject):
             return memo[1]
 
         # The decode-heavy work runs OUTSIDE the critical section
-        # (the review's lock finding): the hot cache's reads are the
+        # : the hot cache's reads are the
         # only per-layer cost here.
         def layer_or_full(layer):
             if 0 <= layer < len(index.ranges):
@@ -491,8 +490,7 @@ class GCodeIndexService(QObject):
 
     def plate_pass_fraction(self):
         """The background optimisation's honest progress: the share of
-        layers whose prepared representation EXISTS (the review's
-        finding 17) — the persistent table, the incremental writer's
+        layers whose prepared representation EXISTS  — the persistent table, the incremental writer's
         completed entries and the demand-prepared set, never the RAM
         tier's bounded residency (a 64-entry cache must not cap a
         1,000-layer print at 6%)."""
@@ -666,7 +664,7 @@ class GCodeIndexService(QObject):
         Updated every poll, even when that layer is already hydrated,
         so the window follows the print between hydrations — the anchor
         is never the REQUESTED layer (a prefetch would drift the window
-        one layer ahead of the print, the review repro).
+        one layer ahead of the print).
         """
         if not isinstance(layer, int) or layer < 0 or self._view is None:
             return
@@ -718,7 +716,7 @@ class GCodeIndexService(QObject):
 
     def _adopt_prepared(self):
         """The reopen policy once the view's layer count is known
-        (the review's findings 13/15/16): a complete clean table
+        : a complete clean table
         takes the FAST path — the pass never walks the file again;
         a complete table with holes repairs (copy the valid, retry
         the holes); anything else prepares fresh."""
@@ -730,8 +728,7 @@ class GCodeIndexService(QObject):
         if len(table) == total and self._prepared_flag_complete \
                 and all(entry[1] > 0 for entry in table):
             # A valid complete cache must not read its own 197 MB
-            # back merely to rediscover the table (the review's
-            # finding 13): the frontier and the saved latch both
+            # back merely to rediscover the table: the frontier and the saved latch both
             # stand down the background pass for good.
             self._prepared_complete = True
             self._prepared_saved = True
@@ -746,8 +743,8 @@ class GCodeIndexService(QObject):
 
     def _prepared_persist(self, layer, encoded):
         """Every successfully encoded layer enters the incremental
-        writer exactly once, whichever path produced it (the
-        review's finding 14): a demand-prepared layer must never
+        writer exactly once, whichever path produced it: a
+        demand-prepared layer must never
         become a (0, 0) hole merely because the background pass
         found it already in the RAM cache."""
         self._prepared_coverage.add(layer)
@@ -762,8 +759,8 @@ class GCodeIndexService(QObject):
             self._prepared.append(writer, layer, encoded)
 
     def _abort_prepared_writer(self):
-        """Abandon an unfinished writer on every exit path (the
-        review's finding 20): rebind, close and any abandonment —
+        """Abandon an unfinished writer on every exit path: rebind,
+        close and any abandonment —
         the temp file goes, the handle closes, and an old
         generation's worker can never finalise it."""
         if self._prepared_writer is None:
@@ -832,8 +829,7 @@ class GCodeIndexService(QObject):
         # other's demand. Each keeps what it needs: the LIVE window
         # hydrates for the physical refinement's arrays, the MANUAL
         # window fills the hot presentation cache (a decoded layer is
-        # served — no rehydrate merely to display prepared geometry,
-        # the review's finding).
+        # served — no rehydrate merely to display prepared geometry).
         manual = index.manual_anchor
         self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges)
                          and n not in self._failed_hydrate
@@ -868,8 +864,7 @@ class GCodeIndexService(QObject):
             # after an anchor change applies the latest policy.
             # The WHOLE demanded window rides ONE task: a seek's three
             # layers arrive together instead of through three chained
-            # round-trips. The worker OWNS NOTHING (the review's
-            # ownership finding): it returns (failed, stash) and the
+            # round-trips. The worker OWNS NOTHING: it returns (failed, stash) and the
             # generation-checked _finish commits — a stale old-job
             # worker can never touch the new job's stores. A cached
             # layer decodes straight off the compact store instead of
@@ -926,8 +921,7 @@ class GCodeIndexService(QObject):
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
                 and self._prepared is not None and not self._prepared_saved:
             # The pass's completion finishes the incremental writer
-            # (the review's finding 9: the header and the table are
-            # back-filled, then the atomic rename publishes).
+            # .
             self._prepared_saved = True
             writer = self._prepared_writer
             self._prepared_writer = None
@@ -941,10 +935,9 @@ class GCodeIndexService(QObject):
             # demanded hydrates above always cut in. Every layer ends
             # up in the compact store. The frontier is the worker's
             # LOCAL state and its return value — never a live
-            # mutation of the service (the review's ownership
-            # finding) — and the freshly hydrated layer's own window
+            # mutation of the service  — and the freshly hydrated layer's own window
             # survives the retention until its prepare and encode
-            # complete (the review's incomplete-pass finding).
+            # complete .
             lease = self._files.lease()
             if lease is None:
                 self._files.request_file()
@@ -956,7 +949,7 @@ class GCodeIndexService(QObject):
             prepared_read = self._prepared_read
             prepared_table = self._prepared_table
             # The incremental writer opens whenever a pass must walk
-            # (a fresh file, or a repair — the review's finding 15):
+            # (a fresh file, or a repair):
             # the fast path's `_prepared_saved` latch has already
             # stood it down for a complete clean table.
             if self._prepared is not None and self._prepared_identity is not None \
@@ -984,15 +977,14 @@ class GCodeIndexService(QObject):
                         # A demand prepared this layer before the pass
                         # reached it: the writer receives the bytes
                         # HERE, so the pass's finish can never publish
-                        # a hole for a layer that WAS prepared (the
-                        # review's finding 14).
+                        # a hole for a layer that WAS prepared.
                         if prepared_writer is not None:
                             self._prepared.append(prepared_writer, layer, packed)
                         frontier = layer + 1
                         continue
                     raw = prepared_read(layer) if prepared_table else None
                     if raw is not None:
-                        # The repair copy (the review's finding 15):
+                        # The repair copy :
                         # the old file's valid layer rides into the
                         # new writer — the rebuild never loses an
                         # entry while regenerating another. The bytes
@@ -1017,7 +1009,7 @@ class GCodeIndexService(QObject):
                             # stays out of the cache; the pass must
                             # walk on, never stall. The finish's
                             # completion flag records that the layer
-                            # was ATTEMPTED (the review's finding 16).
+                            # was ATTEMPTED .
                             pass
                     frontier = layer + 1
                 return frontier, encoded
@@ -1059,7 +1051,7 @@ class GCodeIndexService(QObject):
                 # the whole window. The commit runs HERE, under the
                 # generation the worker was submitted for — a stale
                 # worker's results never touch the new job's stores
-                # (the review's ownership finding). A failed hydration
+                # . A failed hydration
                 # must not be re-attempted on every poll — each attempt
                 # re-reads the whole file. The latch clears when a new
                 # file arrives or the index is rebuilt.
@@ -1079,8 +1071,7 @@ class GCodeIndexService(QObject):
                 for layer, (encoded, decoded, ram_hit, size) in stash.items():
                     if encoded is not None:
                         self._full_cache.set(layer, encoded, len(encoded))
-                        # The demand's encoding persists NOW (the
-                        # review's finding 14) — the pass may walk
+                        # The demand's encoding persists NOW — the pass may walk
                         # past it or find it cached later; the writer
                         # must hold it either way.
                         self._prepared_persist(layer, encoded)
@@ -1095,7 +1086,7 @@ class GCodeIndexService(QObject):
             elif kind == "fullprep":
                 # (frontier, encoded): the worker's LOCAL results —
                 # committed here, never mutated across the thread
-                # boundary (the review's ownership finding). The
+                # boundary . The
                 # frontier never regresses; a mid-flight seek rewind
                 # is superseded by the demand, which owns the sought
                 # window now.
@@ -1104,7 +1095,7 @@ class GCodeIndexService(QObject):
                     if isinstance(encoded, dict):
                         self._full_cache.update(encoded)
                         # The coverage follows the SAME events the
-                        # writer appended (the review's finding 17):
+                        # writer appended :
                         # the fraction is a store census, never the
                         # RAM tier's residency.
                         self._prepared_coverage.update(encoded.keys())
@@ -1135,6 +1126,6 @@ class GCodeIndexService(QObject):
         self._cancel.set()
         # An unfinished incremental writer is abandoned, never
         # published: the temp file and its handle go here (the
-        # review's finding 20 — the same abort the rebind takes).
+        # same abort the rebind takes).
         self._abort_prepared_writer()
         self._executor.shutdown(wait=False, cancel_futures=True)
