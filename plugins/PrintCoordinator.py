@@ -303,7 +303,7 @@ class PrintCoordinator(QObject):
             plate_progress_payload = None
             manual_payload = None
             plate_visited = frozenset()
-            plate_decode_ms = None
+            plate_lookup_ms = None
             if plate_available and physical.index is not None:
                 # The payload is built INSIDE the service — the raw
                 # index's arrays never cross its boundary (the
@@ -330,11 +330,11 @@ class PrintCoordinator(QObject):
                 if self._plate_anchor is not None:
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)
-                # The seek trace's T6 records the coordinator's own
-                # decode cost — the payload build between the slider's
-                # commit and the face's arrival, no longer an
-                # unbracketed gap.
-                plate_decode_ms = (time.monotonic() - decode_start) * 1000.0
+                # This is ONLY the coordinator-side service lookup.
+                # Prepared-file I/O, decode, raw hydration and preparation
+                # happen asynchronously inside GCodeIndexService and are
+                # intentionally not mislabeled as part of this number.
+                plate_lookup_ms = (time.monotonic() - decode_start) * 1000.0
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map
@@ -362,7 +362,7 @@ class PrintCoordinator(QObject):
                 filament_total=filament_total if filament_total and filament_total > 0 else None,
                 plate_progress=plate_progress_payload,
                 plate_manual_progress=manual_payload,
-                plate_decode_ms=plate_decode_ms,
+                plate_lookup_ms=plate_lookup_ms,
                 plate_layer_count=layer_count,
                 plate_pass_fraction=self._index.plate_pass_fraction() if view is not None else None,
                 plate_visited=plate_visited)
