@@ -475,14 +475,18 @@ class GCodeIndexService(QObject):
             return "invalid"
         if layer in self._decoded_lru:
             return "decoded"
+        # A failed presentation source is latched until the underlying
+        # file/index changes. Check the latch before selecting packed,
+        # prepared or hydrated sources; otherwise the same broken source
+        # is immediately re-demanded on the next poll.
+        if layer in self._failed_hydrate:
+            return "failed"
         if self._full_cache.peek(layer) is not None:
             return "packed"
         if self._prepared_served(layer):
             return "prepared"
         if view.hydrated(layer):
             return "hydrated"
-        if layer in self._failed_hydrate:
-            return "failed"
         return "raw"
 
     def _request_manual_window(self):

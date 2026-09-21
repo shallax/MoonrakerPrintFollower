@@ -589,11 +589,14 @@ class HydrationWindowTests(unittest.TestCase):
         self.assertEqual(self.service._hydrate, set())
 
     def test_a_refused_layer_is_not_asked_for_again(self):
-        self._bind()
+        # The latch outranks every presentation source. In particular an
+        # already-hydrated layer must not bypass it and spin forever after
+        # a decode/prepare failure.
+        self._bind(hydrated=(2,))
         self.service._failed_hydrate.add(2)
+        self.assertEqual(self.service._presentation_source(2), "failed")
         self.service.request_hydration(2)
-        # The latch spares the next poll a whole-file re-read; the other
-        # two layers are still worth asking for.
+        # The other two layers remain useful and are still demanded.
         self.assertEqual(self.service._hydrate, {1, 3})
 
     def test_a_moved_anchor_retops_the_window(self):
