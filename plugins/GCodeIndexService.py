@@ -1237,6 +1237,13 @@ class GCodeIndexService(QObject):
                     self._view = IndexView(self._job, value)
                     self._save = kind == "build"
                     self._failed_hydrate.clear()
+                    # The restore path returns BEFORE _advance's open
+                    # (the submission is its last step): open the
+                    # table HERE so the adoption right below sees it —
+                    # a reopened complete store must take the fast
+                    # path, never wait for a later _advance that never
+                    # re-adopts.
+                    self._prepared_open(self._files.identity)
                     self._adopt_prepared()
                 elif kind == "build":
                     self._error = error or "Remote G-code contains no supported layer markers"

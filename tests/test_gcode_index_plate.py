@@ -1208,6 +1208,66 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertIsNone(self.service._prepared_writer)
         self.assertEqual(reads, [], "the reopen replayed the store")
 
+    def test_the_public_restore_adopts_the_prepared_store(self):
+        # G: the PRODUCTION lifecycle — _finish("restore") installs
+        # the view, and must OPEN the prepared table BEFORE adopting
+        # it (the restore path returns before _advance's open, and
+        # _advance never re-adopts). A persisted complete store
+        # takes the fast path through the real restore: no raw
+        # download, no full-prepare rebuild, and the window's
+        # payloads decode from the prepared store.
+        # The harness's qt.load duplicates the plugin modules, so the
+        # index must come from the HARNESS namespace's GCodeIndex —
+        # the restore's isinstance guard reads the service's class
+        # from that same namespace.
+        index = self.qt.load("GCodeIndex").build_index_from_bytes(
+            b"".join(b";LAYER:%d\nG1 X0 Y0 E0.1\n" % layer for layer in range(5)))
+        self.store.finalise("print-key", [self._payload(i) for i in range(5)])
+        requested = []
+
+        class Cache:
+            def load(self, identity):
+                return index
+
+        self.service._cache = Cache()
+        self.service._restored = False
+        self.files.lease = lambda: None  # the raw lease is unavailable
+        self.files.request_file = lambda: requested.append("file")
+        submitted = []
+        original_submit = self.service._submit
+        self.service._submit = (lambda kind, fn, *args, **kwargs:
+                                (submitted.append(kind),
+                                 original_submit(kind, fn, *args, **kwargs))[1])
+        self._pump()
+        self.assertTrue(self.service._prepared_saved,
+                        "the restored complete store never took the fast path")
+        self.assertTrue(self.service._prepared_complete)
+        self.assertEqual(self.service._full_next, 5)
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
+        self.assertEqual(requested, [], "the restore demanded the raw file")
+        self.assertNotIn("fullprep", submitted,
+                         "the restore started a full prepared rebuild")
+        # The window's payloads decode from the prepared store — the
+        # presentation source reports the decoded hot state.
+        window = self.service.plate_layers(2)
+        self.assertIsNotNone(window)
+        self.assertIn("current", window)
+        # The live window's hydration follows the adoption (the fast
+        # path's pump exits before the demand submits): drive it and
+        # confirm the prepared store served the payload — no decode
+        # from the raw file.
+        from PyQt6.QtCore import QCoreApplication
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            self.service.request_hydration(2)  # the live seek's demand
+            self.service._advance()
+            if self.service._presentation_source(2) == "decoded":
+                break
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+        self.assertEqual(self.service._presentation_source(2), "decoded",
+                         "the restored current layer never became presentation-ready")
+
     def test_a_holey_reopen_repairs_without_losing_valid_entries(self):
         # The sparse-repair regression: 0,1,3,4 valid and
         # 2 missing — the repair regenerates 2 and COPIES the valid
