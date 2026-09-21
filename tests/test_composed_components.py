@@ -1665,6 +1665,30 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                          "old serial committed pixels into the reopened layer")
         self.assertEqual(surface.stats["discarded"], discarded + 1)
 
+        # Terminal results from the retired serial are stale too. In
+        # particular, a stale failure arriving when the new job already
+        # has four failures must not trip its persistent-failure latch.
+        surface.desired = {"current": 5, "ghosts": {}, "split": None}
+        surface.job_failures = 4
+        failed = surface.stats["failed"]
+        cancelled = surface.stats["cancelled"]
+        discarded = surface.stats["discarded"]
+        model._raster_committed(("failed", "old worker"), old_ticket)
+        self.assertIsNotNone(surface.job)
+        self.assertEqual(surface.job["serial"], 11)
+        self.assertEqual(surface.job_failures, 4)
+        self.assertIsNotNone(surface.desired,
+                             "stale failure retired the reopened demand")
+        self.assertEqual(surface.stats["failed"], failed)
+        self.assertEqual(surface.stats["discarded"], discarded + 1)
+
+        discarded = surface.stats["discarded"]
+        model._raster_committed(("cancelled",), old_ticket)
+        self.assertIsNotNone(surface.job)
+        self.assertEqual(surface.job["serial"], 11)
+        self.assertEqual(surface.stats["cancelled"], cancelled)
+        self.assertEqual(surface.stats["discarded"], discarded + 1)
+
     def test_a_worker_exception_never_wedges_the_scheduler(self):
         # A throwing render ends as a terminal failure: the job slot
         # clears, the failure counts, and the next demand renders.
