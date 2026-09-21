@@ -86,11 +86,6 @@ critic and the architecture review (see the 4.1.0 section).
     architecture persona adjudicates the boundary (base plus two
     faces versus a mode flag). Snapshot 0 mocks both faces with
     synthetic data before any wiring.
-  - Preview name tags (billboarded object names over the Preview
-    view) are a probe-gated stretch: a 2D overlay projecting object
-    positions through the preview camera; the open question is
-    camera-matrix exposure. Deferred with evidence if unreachable;
-    the findings feed 5.0.0's physical-head work.
   - No list reordering, ever — the stable readout plus the map's
     polygons carry the identity; rows that move under the pointer are
     the jog-reflow hazard class.
@@ -2213,6 +2208,13 @@ refactor finishes.
   head" — drop it. Klipper reports the ACTIVE nozzle, but on
   single-nozzle machines that changes nothing — the real multi-extruder
   feature is an active-tool label and per-tool path colouring.
+- Preview name tags (billboarded object names over the Preview
+  view), moved from 4.6.0's probe-gated stretch (the 2026-09-21
+  ruling): they ship ALONGSIDE the live toolhead marker — the two
+  overlays share the preview-camera projection (a 2D overlay
+  projecting object positions through the preview camera; the open
+  question is camera-matrix exposure), and one camera-matrix
+  answer serves both. Deferred with evidence if unreachable.
 - A floating jog pad in the Preview panel, so the head can be moved while
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
