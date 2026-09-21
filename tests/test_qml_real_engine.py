@@ -1693,6 +1693,11 @@ if QT_AVAILABLE:
                      "current": False, "excluded": False, "restoreAllowed": True},
                 ]
             }
+        @pyqtSlot()
+        def seekAnchorTicked(self):
+            # The debounce's raw tick (the model stamps it for the
+            # trace); the double records nothing.
+            pass
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineWidth(self):
@@ -2257,6 +2262,60 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(self._band_changed(image, baseline, face, window, plot,
                                            60.0, 200.0),
                         "the post-boundary travel vanished")
+
+    def test_a_raster_seek_commits_to_ready_under_the_target(self):
+        # The final target's composition leg: the publish (the
+        # commit's handoff) to the picture's arrival — the red ink
+        # IS the composed picture, so the wait for it measures
+        # commit-to-picture end to end. The grab-wait's 50 ms
+        # sampling bounds the assertion, the printed number is the
+        # reading.
+        monitor, window, face = self._follower_popover()
+        payload = {
+            "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                        [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                        [0.0, 0.0, 20.0]]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer = self._native_layer(payload, face)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(21)
+        start = time.monotonic()
+        _image, count = self._wait_red(window, face, want=True)
+        elapsed = (time.monotonic() - start) * 1000.0
+        self.assertGreater(count, 0, "the picture never arrived")
+        print("publish -> picture: %.1f ms" % elapsed)
+        self.assertLess(elapsed, 300.0,
+                        "the picture took too long past the commit")
+        # The grab forces the scene's sync (the harness's window
+        # doctrine): the texture drains before the next mount.
+        window.grabWindow()
+        self.pump(30)
+
+    def test_hidpi_sizing_keeps_the_raster_covering_the_logical_face(self):
+        # HiDPI's contract, pinned at the seam the upscale depends
+        # on: the worker's raster is the face's LOGICAL size (the
+        # scene-graph scales it by the device ratio), so a DPR-2
+        # screen's picture is exactly this image upscaled — the
+        # ink must reach the logical frame's edges. The offscreen
+        # harness reports DPR 1, so the physical grab is not
+        # reproducible here; the sizing contract is.
+        monitor, window, face, baseline = self._mount_empty()
+        payload = {
+            "classes": {"WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                        [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                        [0.0, 0.0, 20.0]]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer = self._native_layer(payload, face)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(21)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the full raster never drew")
+        self.assertEqual(layer.rasterWidth, int(face.width()),
+                         "the raster is not the face's logical width")
+        self.assertEqual(layer.rasterHeight, int(face.height()),
+                         "the raster is not the face's logical height")
 
     def test_full_progress_travels_render_without_the_vector(self):
         # : showTravels at 100% — the travel

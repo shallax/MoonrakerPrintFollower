@@ -608,6 +608,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # depth per event.
         self._seek_trace_enabled = os.environ.get("MOONRAKER_FOLLOWER_SEEK_TRACE") == "1"
         self._seek_trace = []
+        self._seek_tick_mono = None
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
@@ -1249,6 +1250,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # OUTSIDE the popover's gates — the bar is always visible.
         fraction = getattr(snapshot, "plate_pass_fraction", None)
         values["platePassFraction"] = fraction if fraction is not None else -1.0
+        decode_ms = getattr(snapshot, "plate_decode_ms", None)
         progress = getattr(snapshot, "plate_progress", None)
         follower = getattr(snapshot, "plate_manual_progress", None)
         popover = follower if follower is not None else progress
@@ -1260,7 +1262,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._follower_popover_open:
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
                                                      popover["layers"], popover.get("anchor"),
-                                                     popover.get("method"), popover.get("split"))
+                                                     popover.get("method"), popover.get("split"),
+                                                     decode_ms)
                                      if popover is not None else {})
             values["plateScrubVector"] = self._scrub_vector_for(popover)
             values["plateSplit"] = popover["split"] if popover is not None else None
@@ -1300,7 +1303,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._sections.get("plateprogress", True) is not False:
             values["plateLiveLayers"] = (self._qt_window(self._plate_surfaces["mini"],
                                                          progress["layers"], progress.get("anchor"),
-                                                         progress.get("method"), progress.get("split"))
+                                                         progress.get("method"), progress.get("split"),
+                                                         decode_ms)
                                          if progress is not None else {})
             values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
@@ -2904,7 +2908,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return None
         return current
 
-    def _qt_window(self, surface, layers, anchor, method=None, split=None):
+    def _qt_window(self, surface, layers, anchor, method=None, split=None,
+                   decode_ms=None):
         """The prev/current/next window for ONE SURFACE: the
         wrappers are created lazily and
         the desired state — current first, then the ghosts — feeds
@@ -2912,7 +2917,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the mini validates against its live anchor, the popover
         against whichever layer it displays (frozen included). The
         SPLIT rides the desired state too: a partial layer's
-        printed prefix is its own demand."""
+        printed prefix is its own demand. `decode_ms` rides the
+        coordinator's own measurement into the trace."""
         surface = self._surface_for(surface)
         if surface is None or not layers:
             return {}
@@ -2924,7 +2930,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         current = self._qt_layer(surface, layers.get("current"), anchor)
         self._trace("T6 payload obtained", {
             "surface": surface.name, "layer": anchor,
-            "method": method or (layers.get("method") if isinstance(layers, dict) else None)})
+            "method": method or (layers.get("method") if isinstance(layers, dict) else None),
+            "decode_ms": round(decode_ms, 1) if decode_ms is not None else None})
         self._trace("T7/T8 layer obtained", {
             "surface": surface.name, "layer": anchor,
             "raster": "hot" if self._raster_hot(surface, anchor) else "miss"})
@@ -3254,18 +3261,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         records each stage with its wall-clock offset from the
         seek's entry.
 
-        The measurable stages: T1 the debounced slider commit (the
-        raw slider tick lives in QML), T6 the payload's arrival
-        (its method says which index path served it), T7/T8 the
+        The measurable stages: T1 the debounced slider commit,
+        carrying the debounce measured from the raw slider tick
+        (the slider reports it), T6 the payload's arrival (its
+        method says which index path served it, the coordinator's
+        decode duration rides beside it), T7/T8 the
         PlateLayer obtained with the raster hot/miss verdict, T9
         the job's demand with the queue depth, generation and
         token, T10 the worker's first line, T11 the owner-thread
         commit with the scheduler's counters, T12 a context
-        commit. The coordinator's decode (its prepared-store
-        lookup through the hot cache) happens between T1 and T6
-        and is bracketed by them; Qt exposes no trustworthy
-        signal for the QML's own composition after T12, so the
-        timeline ends at the last measurable event."""
+        commit, T13 the publish that hands the committed picture
+        to the scene — the composition beyond is the engine's own
+        and is not measurable from the model's side."""
         if not self._seek_trace_enabled and not (self._config() is not None and self._config().seek_trace):
             return
         if stage == "T1 seek entry":
@@ -3351,6 +3358,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._prune_raster_cache()
             self._schedule_surface(surface)
             self._publish()
+            self._trace("T13 raster published", {
+                "surface": name, "kind": "prefix"})
             return
         _kind, coloured, coloured_data, base, base_data, travels, travel_data = images
         wrapped.set_raster(coloured, key, coloured_data)
@@ -3374,6 +3383,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._prune_raster_cache()
         self._schedule_surface(surface)
         self._publish()
+        self._trace("T13 raster published", {
+            "surface": name, "kind": "full"})
 
     def _arm_context_flush(self, surface):
         """One zero-tick flush per burst of staged context changes
@@ -3537,9 +3548,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 return
         self._publish()
 
+    @pyqtSlot()
+    def seekAnchorTicked(self):
+        """The slider's RAW tick (the debounce's start): the seek's
+        perceived latency includes the 80 ms wait before the commit,
+        so the trace records it and T1 carries the debounce."""
+        self._seek_tick_mono = time.monotonic()
+
     @pyqtSlot(int)
     def setFollowerLayerAnchor(self, layer):
-        self._trace("T1 seek entry", {"layer": layer})
+        extra = {"layer": layer}
+        tick = self._seek_tick_mono
+        self._seek_tick_mono = None
+        if tick is not None:
+            # Only a recent tick is this commit's debounce (a stray
+            # programmatic seek carries no tick).
+            elapsed = (time.monotonic() - tick) * 1000.0
+            if elapsed <= 5000.0:
+                extra["debounce_ms"] = round(elapsed, 1)
+        self._trace("T1 seek entry", extra)
         """The layer slider's committed value (the debounced request):
         a manual layer IS a detach — the face cannot follow the print
         and hold another layer at once. A seek lands the layer at

@@ -3457,7 +3457,17 @@ Component {
                         to: Math.max(0, (root.printer != null ? root.printer.plateLayerCount : 0) - 1)
                         stepSize: 1
                         enabled: root.printer != null && root.printer.plateLayerCount > 0
-                        onValueTuning: layerSeekTimer.restart()
+                        onValueTuning: {
+                            // The raw tick rides to the model: the
+                            // seek's perceived latency includes the
+                            // debounce, so the trace records it. The
+                            // signal is the slider's own — it never
+                            // fires during teardown.
+                            if (root.printer != null) {
+                                root.printer.seekAnchorTicked();
+                            }
+                            layerSeekTimer.restart();
+                        }
                         onValueCommitted: {
                             layerSeekTimer.stop();
                             commitLayerSeek();

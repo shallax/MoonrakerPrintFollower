@@ -104,6 +104,8 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerKeepCentred": "b11",
     "MoonrakerMonitorModel.setFollowerAttached": "b11",
     "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
+    # The slider's raw tick (the debounce's start for the seek trace).
+    "MoonrakerMonitorModel.seekAnchorTicked": "b11",
     # The progress slider's within-layer scrub (the 4.6.0 request).
     "MoonrakerMonitorModel.setFollowerLayerProgress": "b11",
     # The native renderer's inputs (4.6.0 round 3): the view and the
