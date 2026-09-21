@@ -358,6 +358,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
+        # The follower view's state precedes the plate payloads: a
+        # detaching seek flips followerAttached in the SAME emission
+        # cycle BEFORE the new layer's payload arrives, so QML never
+        # paints the new current layer as a pending base while it
+        # still reads the previous attached state and then clears it
+        # (the review's signal-ordering finding — plateProgressChanged
+        # used to emit first and the pending canvas paid a full walk
+        # per seek for a picture it immediately discarded).
+        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
+                                 "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable")),
@@ -384,8 +394,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
-        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
-                                 "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),

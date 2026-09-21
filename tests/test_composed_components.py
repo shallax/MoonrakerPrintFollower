@@ -258,6 +258,133 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(hydrate2.call_count, 2)
         self.assertEqual(service._failed_hydrate, set())
 
+    def test_the_background_pass_caches_layers_outside_both_windows(self):
+        # The review's repro: a 10-layer compact index with the live
+        # and manual anchors fixed — the pass used to reach the end
+        # while the cache held only the two windows (each background
+        # hydrate was evicted by the retention before its prepare).
+        # Every layer must land in the cache and stay available after
+        # the arrays' eviction.
+        service, files = self.parts.index, self.parts.files
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity(
+            "part.gcode", 100, modified=1)
+        service.bind(("part.gcode", 100, 1))
+        service._restored = True
+        service._wanted = True
+        layers = b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
+            for layer in range(10))
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        self.addCleanup(os.remove, target)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(target, compact=True)
+        module = self.qt.load("GCodeIndexService")
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        files._path = target
+        files._want_file = True
+        # The live print stands on layer 1; the follower is frozen on 9.
+        index.followed_layer = 1
+        index.manual_anchor = 9
+        service._manual_anchor = 9
+        service._advance()  # the poll that starts the pass chain
+
+        def wait_pass():
+            for _ in range(800):
+                self.qt.events(5)
+                if service._full_next >= len(index.ranges) and not service._busy:
+                    break
+        wait_pass()
+        self.assertGreaterEqual(service._full_next, len(index.ranges),
+                                "the pass never reached the end")
+        for layer in range(10):
+            self.assertIn(layer, service._full_cache,
+                          "layer %d outside both windows never cached" % layer)
+            raw = service._full_cache[layer]
+            self.assertEqual(module._decode_layer(raw)["motions"], 3,
+                             "layer %d's cache entry lost its geometry" % layer)
+        # The retention still holds the arrays down to the two windows
+        # plus the last hydrated layer's own — the cache, not the
+        # hydration, serves the far layers.
+        self.assertEqual(index.hydrated_layers, {0, 1, 2, 8, 9})
+
+    def test_a_stale_workers_results_never_commit_after_a_rebind(self):
+        # The review's ownership finding: the worker returns LOCAL
+        # results and only the generation-checked _finish commits —
+        # a worker from the previous job must never touch the new
+        # job's stores.
+        service = self.parts.index
+        service.bind(("part.gcode", 100, 1))
+        service._restored = True
+        service._wanted = True
+        released = threading.Event()
+
+        def slow_worker():
+            released.wait(5)
+            return [], {5: (b"raw", {"motions": 1})}
+        service._hydrating = {5}
+        service._submit("hydrate", slow_worker, None)
+        service.bind(("other.gcode", 200, 1))  # the generation bumps
+        released.set()
+        for _ in range(200):
+            self.qt.events(5)
+            if not service._busy:
+                break
+        self.assertNotIn(5, service._full_cache,
+                         "a stale worker's encoding reached the new job's cache")
+        self.assertNotIn(5, service._decoded_lru,
+                         "a stale worker's payload reached the new job's hot cache")
+
+    def test_a_completed_seek_republishes_without_new_telemetry(self):
+        # The review's finding: a completed manual seek republishes
+        # off the worker's own completion — never waiting on the next
+        # printer heartbeat.
+        service, files = self.parts.index, self.parts.files
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity(
+            "part.gcode", 100, modified=1)
+        service.bind(("part.gcode", 100, 1))
+        service._restored = True
+        service._wanted = True
+        layers = b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
+            for layer in range(12))
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        self.addCleanup(os.remove, target)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(target, compact=True)
+        module = self.qt.load("GCodeIndexService")
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        files._path = target
+        files._want_file = True
+        model = self.monitor()
+        model.setFollowerPopoverOpen(True)
+        self.deliver(self.status(layer=2, filename="part.gcode"))
+        self.qt.events(30)
+        model.setFollowerLayerAnchor(8)
+        for _ in range(400):
+            self.qt.events(5)
+            if model.plateProgressAvailable:
+                break
+        self.assertTrue(model.plateProgressAvailable,
+                        "the seek's layer never published without new telemetry")
+
+    def test_the_follower_view_signal_precedes_the_plate_payloads(self):
+        # The review's signal-ordering finding: followerAttached must
+        # flip BEFORE the new layer's payload lands, or QML paints
+        # the new current layer as a pending base for one frame and
+        # then clears it.
+        model = self.monitor()
+        names = [name for name, _keys in model._SIGNAL_KEYS]
+        self.assertLess(names.index("followerViewChanged"),
+                        names.index("plateProgressChanged"))
+
     def test_a_manual_seek_lands_its_window_while_the_full_pass_runs(self):
         # The live report: the layer slider's seek stuck on "Loading
         # layer…" once the full prepared cache's pass existed — the

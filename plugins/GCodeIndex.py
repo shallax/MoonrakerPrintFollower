@@ -1188,9 +1188,16 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             # survives the live one's advance (the pop-over's detach
             # would otherwise evict the very layer it is showing).
             manual = index.manual_anchor
+            # The freshly hydrated layer's own window is a THIRD
+            # survivor: the background full-cache pass hydrates layers
+            # far outside both anchors and must hold the arrays valid
+            # until its prepare and encode complete — the next pass
+            # hydrate evicts this layer's window, so the union stays
+            # bounded at the live, manual and in-flight windows.
             for old in sorted(index.hydrated_layers):
                 if (old < anchor - 1 or old > anchor + 1) \
-                        and (manual is None or old < manual - 1 or old > manual + 1):
+                        and (manual is None or old < manual - 1 or old > manual + 1) \
+                        and (old < layer - 1 or old > layer + 1):
                     index.motion_offsets[old] = array("Q")
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")
