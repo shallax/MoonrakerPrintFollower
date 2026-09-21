@@ -535,6 +535,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._plate_pending = {}
         self._raster_bridge = RasterBridge(self)
         self._plate_ghost_queue = None
+        # The render-count instrument (the review's findings 15/16):
+        # per-layer raster requests, so the adjacent/revisit tests
+        # prove N and N+1 never re-render.
+        self._plate_render_count = {}
         self._raster_bridge.done.connect(self._raster_committed)
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
@@ -2832,6 +2836,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         model's owning thread (the review's finding 7). The commit
         validates the view generation, the layer's own request token
         and the retained PlateLayer identity."""
+        self._plate_render_count[layer] = self._plate_render_count.get(layer, 0) + 1
         plot = self._plate_plot
         view = dict(self._plate_view)
         if plot is None or not view.get("width"):

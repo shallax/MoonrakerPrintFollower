@@ -433,6 +433,32 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(model._plate_qt_layers, {})
         self.assertEqual(model._plate_qt_job, "new-job")
 
+    def test_adjacent_windows_render_only_the_new_layer(self):
+        # The review's findings 15/16: N -> N+1 renders ONLY N+2 —
+        # N and N+1 keep their retained rasters; and a full 100%
+        # seek publishes no scrub vector (finding 4's gate).
+        model = self.monitor()
+        payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0]]]},
+                   "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
+
+        def layers(anchor):
+            return {"prev": payload if anchor > 0 else None,
+                    "current": payload, "next": payload}
+        model._qt_window(layers(200), 200)
+        counts = dict(model._plate_render_count)
+        model._qt_window(layers(201), 201)
+        self.assertEqual(model._plate_render_count.get(200), counts.get(200),
+                         "the adjacent window re-rendered the retained layer")
+        self.assertEqual(model._plate_render_count.get(201), counts.get(201),
+                         "the adjacent window re-rendered the retained layer")
+        # The 100% seek carries no scrub vector; the partial split does.
+        full = {"layers": {"current": payload}, "split": 2, "motionTotal": 2}
+        self.assertIsNone(model._scrub_vector_for(full))
+        empty = {"layers": {"current": payload}, "split": 0, "motionTotal": 2}
+        self.assertIsNone(model._scrub_vector_for(empty))
+        partial = {"layers": {"current": payload}, "split": 1, "motionTotal": 2}
+        self.assertIsNotNone(model._scrub_vector_for(partial))
+
     def test_the_follower_view_signal_precedes_the_plate_payloads(self):
         # The review's signal-ordering finding: followerAttached must
         # flip BEFORE the new layer's payload lands, or QML paints
