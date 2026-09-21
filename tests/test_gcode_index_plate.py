@@ -573,13 +573,13 @@ class HydrationWindowTests(unittest.TestCase):
         self.service.request_hydration(0)
         self.assertEqual(self.service._hydrate, {0, 1})
 
-    def test_a_request_for_a_hydrated_layer_still_asks_for_its_neighbours(self):
+    def test_a_request_for_a_hydrated_layer_still_demands_its_presentation(self):
         self._bind(hydrated=(2,))
         self.service.request_hydration(2)
-        # The request-standing-down repro: the current layer was already
-        # hydrated, so the
-        # request did nothing and the ghost never filled.
-        self.assertEqual(self.service._hydrate, {1, 3})
+        # Hydration is a SOURCE state, not presentation readiness. The
+        # current layer remains demanded until the decoded cache holds it,
+        # alongside the two ghosts.
+        self.assertEqual(self.service._hydrate, {1, 2, 3})
 
     def test_a_request_outside_the_index_is_ignored(self):
         self._bind()
@@ -603,7 +603,7 @@ class HydrationWindowTests(unittest.TestCase):
         # The anchor is pruned to its own window, then topped back up:
         # the layer the print has just left is exactly the ghost the face
         # wants, and it is not in the request any more.
-        self.assertEqual(self.service._hydrate, {2, 3})
+        self.assertEqual(self.service._hydrate, {2, 3, 4})
 
     def test_a_manual_anchor_demands_its_window_beside_the_live_one(self):
         index = self._bind(layers=8)
@@ -1323,6 +1323,42 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(self.service._busy, "",
                          "the reopen re-walked the uncacheable layer")
 
+    def test_noncompact_hydrated_current_is_presented_first_without_a_file_lease(self):
+        # The live regression: non-compact indexes report every layer as
+        # hydrated immediately, while the decoded presentation cache is
+        # initially empty. CURRENT must still be prepared, and it must
+        # land before either ghost without reacquiring the G-code.
+        index = self._view(5)
+        index.followed_layer = 2
+        self.service._last_save_at = time.monotonic()  # keep index-save out of this ordering test
+        self.service._prepared_open(self.files.identity)
+        requests = []
+        self.files.lease = lambda: None
+        self.files.request_file = lambda: requests.append(set(self.service._decoded_lru))
+
+        module = self.qt.load("GCodeIndexService")
+        real_prepare = module._prepare_layer
+        prepared = []
+
+        def recording_prepare(index_arg, layer):
+            prepared.append(layer)
+            return real_prepare(index_arg, layer)
+
+        with patch.object(module, "_prepare_layer", recording_prepare):
+            self.service.request_hydration(2)
+            for _ in range(200):
+                self.qt.events(5)
+                if 2 in self.service._decoded_lru:
+                    break
+
+        self.assertIn(2, self.service._decoded_lru,
+                      "the hydrated live current never became presentation-ready")
+        self.assertEqual(prepared[0], 2,
+                         "a ghost was prepared before the visible current")
+        self.assertEqual(requests, [],
+                         "hydrated index arrays incorrectly requested the raw G-code")
+        self.assertEqual(self.service._presentation_source(2), "decoded")
+
     def test_a_prepared_window_seeks_without_the_file_lease(self):
         # The prepared store serves the demanded window: the seek
         # must never wait on the raw G-code lease — the lease exists
@@ -1359,35 +1395,39 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             self.assertIn(layer, self.service._decoded_lru,
                           "layer %d never decoded from the store" % layer)
 
-    def test_the_saved_latch_waits_for_the_publish(self):
-        # A failed publish must NOT read as saved: the latch closes
-        # only on the commit's success, and a later demand's persist
-        # opens a fresh writer for the retry.
+    def test_the_saved_latch_autonomously_recovers_after_one_failed_publish(self):
+        # A failed publish must NOT read as saved, and recovery must not
+        # depend on a later user demand or _prepared_persist call.
         self._view(3)
         self.service._prepared_open(self.files.identity)
         self.service._prepared_persist(0, self._payload(0))
         self.service._full_next = len(self.service._view.ranges)
         self.service._prepared_saved = False
         from plugins.PreparedStore import PreparedCache
-        with patch.object(PreparedCache, "finish_write", return_value=None):
-            self.service._advance()
-            for _ in range(100):
+        real_finish = PreparedCache.finish_write
+        attempts = []
+
+        def fail_once(store, writer):
+            attempts.append(writer["identity"])
+            if len(attempts) == 1:
+                store.abort_write(writer)
+                return None
+            return real_finish(store, writer)
+
+        with patch.object(PreparedCache, "finish_write", fail_once):
+            for _ in range(400):
                 self.service._advance()
                 self.qt.events(5)
-                if not self.service._busy:
+                if self.service._prepared_saved and not self.service._busy:
                     break
-        self.assertFalse(self.service._prepared_saved,
-                         "the failed publish latched as saved")
-        # The self-heal: a new writer opens on the next persist and
-        # the branch retries the finish — the latch then closes.
-        self.service._prepared_persist(1, self._payload(1))
-        for _ in range(200):
-            self.service._advance()
-            self.qt.events(5)
-            if self.service._prepared_saved:
-                break
+
+        self.assertGreaterEqual(len(attempts), 2,
+                                "the failed publish never retried autonomously")
         self.assertTrue(self.service._prepared_saved,
-                        "the retried publish never latched")
+                        "the autonomous retry never latched")
+        loaded = self.store.load_table("print-key")
+        self.assertIsNotNone(loaded)
+        self.assertTrue(loaded["complete"])
 
     def test_the_pass_batch_yields_to_a_demand(self):
         # A seek mid-pass cuts in: the single worker releases the
