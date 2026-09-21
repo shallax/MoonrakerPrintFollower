@@ -137,6 +137,34 @@ Item {
         return root.progress != null && root.progress.available === true;
     }
 
+    // The bed plot, exposed for the model's native renderer (the
+    // review's round 3): the same mapping the painters used, so the
+    // worker-painted raster lands the identical picture.
+    property var plot: mapping._plot
+
+    function _rasterOf(layer) {
+        return layer != null && layer.raster !== undefined && layer.raster != null && layer.raster.width > 0;
+    }
+
+    // The scrub's vector: the current layer's prepared payload,
+    // published as its own key — the ONLY geometry QML still walks,
+    // and only for the within-layer delta (the review's step 16).
+    function _scrubVector() {
+        if (root.progress == null) {
+            return null;
+        }
+        if (root.progress.scrubVector !== undefined && root.progress.scrubVector != null) {
+            return root.progress.scrubVector;
+        }
+        // The direct-publish fallback (the real-engine fixtures feed
+        // plain dict payloads): the layer's own geometry.
+        var layers = root.progress.layers;
+        if (layers != null && layers.current != null && layers.current.classes !== undefined) {
+            return layers.current;
+        }
+        return null;
+    }
+
     // The toolhead's own availability: a live dot on a plotted bed. The
     // mini is a thumbnail with no view state, so it never centres; a
     // detached face has no live position to centre on.
@@ -264,7 +292,7 @@ Item {
     function _ghostKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, layers != null && _rasterOf(layers.prev) ? 1 : 0, layers != null && _rasterOf(layers.next) ? 1 : 0, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _pendingKeyOf() {
@@ -276,7 +304,7 @@ Item {
     function _progressKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
@@ -462,17 +490,20 @@ Item {
                 return;
             }
             var layers = root.progress.layers;
-            // The ghost layers: full paths at low alpha — the stack
-            // reads through (the walked transparency ruling). Full
-            // fidelity, every vertex: a strided walk has no geometric
-            // error bound and low opacity does not buy one (the
-            // review's ruling); the walk cost is paid by the raster
-            // reuse, never by dropping geometry.
-            if (root.showPrevious && layers.prev != null) {
-                _drawLayer(ctx, layers.prev, 0.30, -1, false, -1);
+            // The ghost layers: the worker's rasters blitted at ghost
+            // opacity (the review's step 13: role-free assets, the
+            // opacity applied at composition). Until a ghost's raster
+            // lands it draws nothing — the context layer appears a
+            // beat after the seek, never blocks it.
+            if (root.showPrevious && layers.prev != null && _rasterOf(layers.prev)) {
+                ctx.globalAlpha = 0.30;
+                ctx.drawImage(layers.prev.raster, 0, 0);
+                ctx.globalAlpha = 1.0;
             }
-            if (root.showNext && layers.next != null) {
-                _drawLayer(ctx, layers.next, 0.30, -1, false, -1);
+            if (root.showNext && layers.next != null && _rasterOf(layers.next)) {
+                ctx.globalAlpha = 0.30;
+                ctx.drawImage(layers.next.raster, 0, 0);
+                ctx.globalAlpha = 1.0;
             }
         }
     }
@@ -489,7 +520,7 @@ Item {
             if (!root.available() || mapping._plot == null) {
                 return;
             }
-            var current = root.progress.layers.current;
+            var current = _scrubVector();
             if (current == null) {
                 return;
             }
@@ -517,7 +548,8 @@ Item {
                 root._paintsSinceReset = 0;
                 return;
             }
-            var current = root.progress.layers.current;
+            var layer = root.progress.layers.current;
+            var current = _scrubVector();
             if (current == null) {
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
@@ -548,6 +580,20 @@ Item {
                 root._lastSplit = -1;
                 root._progressDirty = false;
                 root._paintsSinceReset = 0;
+            }
+            // The whole-layer case blits the worker's raster (the
+            // review's step 14: the static geometry never regenerates
+            // for a progress count). The partial scrub keeps the
+            // vector delta path.
+            if (split >= current.motions && layer != null && _rasterOf(layer)) {
+                ctx.globalAlpha = 1.0;
+                ctx.drawImage(layer.raster, 0, 0);
+                if (root.showTravels) {
+                    _drawTravels(ctx, current.travels, split, root._lastSplit);
+                }
+                root._lastSplit = split;
+                root._paintsSinceReset += 1;
+                return;
             }
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3

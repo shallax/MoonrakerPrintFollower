@@ -46,6 +46,7 @@ ColumnLayout {
                         "available": root.printerModel.plateLiveAvailable,
                         "reason": "",
                         "layers": root.printerModel.plateLiveLayers,
+                        "scrubVector": root.printerModel.plateLiveScrubVector,
                         "split": root.printerModel.plateLiveSplit,
                         "anchor": root.printerModel.plateLiveAnchor,
                         "method": "motion index"

@@ -393,6 +393,46 @@ class ComposedComponentTests(unittest.TestCase):
         service._full_cache.update({0: b"x", 1: b"x", 2: b"x", 3: b"x"})
         self.assertAlmostEqual(service.plate_pass_fraction(), 0.4)
 
+    def test_the_native_render_window_reuses_layer_objects(self):
+        # The review's step 13: role-free rasters — a seek changes
+        # three references, never the render assets; adjacent anchors
+        # share the exact same PlateLayer objects, and a raster that
+        # lands commits only while its layer still lives in the cache.
+        model = self.monitor()
+        payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0]]]},
+                   "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
+
+        def layers(anchor):
+            return {"prev": payload if anchor > 0 else None,
+                    "current": payload, "next": payload}
+        w1 = model._qt_window(layers(200), 200)
+        w2 = model._qt_window(layers(201), 201)
+        self.assertIs(w1["current"], w2["prev"],
+                      "adjacent windows rebuilt the shared render object")
+        self.assertIs(w1["next"], w2["current"],
+                      "adjacent windows rebuilt the shared render object")
+        # The layer object carries its motion count across roles.
+        self.assertEqual(w1["current"].motions, 2)
+        # A -> B -> A: the same retained object (capacity 6).
+        w3 = model._qt_window(layers(200), 200)
+        self.assertIs(w3["current"], w1["current"],
+                      "the revisit rebuilt the retained render object")
+
+    def test_the_render_cache_is_bounded_and_generation_isolated(self):
+        model = self.monitor()
+        payload = {"classes": {}, "travels": [], "travelStarts": [],
+                   "travelEnds": [], "motions": 1}
+        for layer in range(10):
+            model._qt_layer(payload, layer)
+        self.assertLessEqual(len(model._plate_qt_layers), 6)
+        self.assertNotIn(0, model._plate_qt_layers,
+                         "the oldest render object never evicted")
+        # A new job clears the cache: the old geometry can never
+        # answer the new print's window.
+        model._observe_follower_job("new-job")
+        self.assertEqual(model._plate_qt_layers, {})
+        self.assertEqual(model._plate_qt_job, "new-job")
+
     def test_the_follower_view_signal_precedes_the_plate_payloads(self):
         # The review's signal-ordering finding: followerAttached must
         # flip BEFORE the new layer's payload lands, or QML paints

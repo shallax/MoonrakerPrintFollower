@@ -3105,6 +3105,32 @@ Component {
                 // on open, so the arrows drive it immediately (the
                 // live request).
                 Component.onCompleted: layerSlider.forceActiveFocus()
+                Connections {
+                    target: progressFace
+                    function onViewScaleChanged() {
+                        _feedRenderView();
+                    }
+                    function onLineScaleChanged() {
+                        _feedRenderView();
+                    }
+                    function onWidthChanged() {
+                        _feedRenderView();
+                    }
+                    function onHeightChanged() {
+                        _feedRenderView();
+                    }
+                    function onPlotChanged() {
+                        var plot = progressFace.plot;
+                        if (root.printer != null && plot != null) {
+                            root.printer.setFollowerPlot(plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
+                        }
+                    }
+                }
+                function _feedRenderView() {
+                    if (root.printer != null) {
+                        root.printer.setFollowerView(progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact);
+                    }
+                }
 
                 PlateProgressFace {
                     id: progressFace
@@ -3114,6 +3140,7 @@ Component {
                     printerModel: root.printer
                     progress: root.printer != null ? ({
                             "available": root.printer.plateProgressAvailable,
+                            "scrubVector": root.printer.plateScrubVector,
                             "reason": root.printer.plateProgressReason,
                             "layers": root.printer.plateLayers,
                             "split": root.printer.plateSplit,

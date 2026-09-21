@@ -106,6 +106,10 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
     # The progress slider's within-layer scrub (the 4.6.0 request).
     "MoonrakerMonitorModel.setFollowerLayerProgress": "b11",
+    # The native renderer's inputs (4.6.0 round 3): the view and the
+    # bed plot the raster bakes in.
+    "MoonrakerMonitorModel.setFollowerView": "b11",
+    "MoonrakerMonitorModel.setFollowerPlot": "b11",
     # The plate popovers' open states (the closed-surface freeze).
     "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
@@ -321,6 +325,8 @@ PREFIX_RULES = [
     ("key", "nextPauseLayer", "h8"),
     ("key", "nextPauseBaked", "h8"),
     ("key", "platePassFraction", "h8"),
+    ("key", "plateScrubVector", "h8"),
+    ("key", "plateLiveScrubVector", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),
