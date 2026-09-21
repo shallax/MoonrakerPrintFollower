@@ -5035,13 +5035,16 @@ Item {
             "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",
             "visible: _partialBase() && _baseOf(root.progress.layers.current)",
             "visible: _partialPrefixReady()",
-            # The invalidation hold: the old prefix stays one beat
-            # while the canvas repaints the interval (the atomic
-            # ownership swap).
+            # The invalidation hold (and the shown prefix's standing
+            # through repaints and stale deliveries): the old picture
+            # stays until the replacement's is committed — the atomic
+            # ownership swap. The continuation lines ride the same
+            # pin (the regex reads the visible line's first clause).
             "visible: _partialPrefixReady() || root._prefixHold",
             # The full raster's standing: the full state OR the
-            # 100% -> partial entry's hold (the reverse-scrub
-            # handoff).
+            # 100% -> partial entry's transaction — the predicate
+            # itself holds the previous composition until the
+            # replacement is presentation-ready (zero blank frames).
             "visible: _fullPictureStanding()",
             # The interaction raster: the warm full-bed composite
             # owns the heavy scene during a camera gesture.

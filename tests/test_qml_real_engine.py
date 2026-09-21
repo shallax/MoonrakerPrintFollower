@@ -2816,11 +2816,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(20)
 
     def test_reverse_scrub_frames_never_show_a_hybrid_composition(self):
-        # The review's reverse-scrub finding: every frame displayed
-        # while the split moves must be a COMPLETE composition — the
-        # previous split's picture or the new one's (the atomic
-        # handoff), never a hybrid missing the printed history, never
-        # stale geometry beyond the requested split, never a blank.
+        # The compositor contract: every frame displayed while the
+        # split moves presents ONE COMPLETE composition — the
+        # standing committed picture or the replacement's — judged by
+        # a whole-path probe signature (the early printed history,
+        # both sides of the prefix/tail seam, the Canvas tail's
+        # middle, the final printed edge, and clean space beyond it),
+        # never a rightmost-column guess. Zero blank frames, zero
+        # hybrid frames, zero exemptions. An intermediate split that
+        # never presented may not appear once the demand moved on:
+        # the allowed set is the LAST PRESENTED composition plus the
+        # current demand, derived from actual presentation.
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
         self.pump(10)
@@ -2838,98 +2844,129 @@ class PlateFaceRenderTests(RealEngineTestCase):
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()
         bed = plot_value["bed"]
+        row = int(round(float(bed["offsetY"])
+                        + (float(bed["bedYMax"]) - 125.0)
+                        * float(plot_value["sy"])))
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
 
-        def boundary_column(split):
-            # The printed edge: the last printed motion's screen
-            # column (the run is straight, one motion per 10 mm).
-            bed_x = 20.0 + (split - 1) * 10.0
-            return int(float(bed["offsetX"]) + (bed_x - float(bed["bedXMin"]))
-                       * float(plot_value["sx"]))
+        def column_for(bed_x):
+            return int(round(float(bed["offsetX"])
+                             + (bed_x - float(bed["bedXMin"]))
+                             * float(plot_value["sx"])))
 
-        def ink_boundary():
-            # The printed edge is the RIGHTMOST red column (the run
-            # grows rightward with the split).
-            image = window.grabWindow()
-            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
-            for col in range(int(face.width()) - 1, -1, -1):
-                for row in range(0, int(face.height()), 2):
-                    if self._matches(image.pixel(int(origin.x()) + col,
-                                                 int(origin.y()) + row),
-                                     (0xD3, 0x2F, 0x2F)):
-                        return col
+        def ink_at(image, bed_x, slack=3):
+            # Any red ink in the path's row band within `slack`
+            # columns of the bed-x position.
+            col = column_for(bed_x)
+            return any(
+                self._matches(image.pixel(int(origin.x()) + c,
+                                          int(origin.y()) + r),
+                              (0xD3, 0x2F, 0x2F))
+                for c in range(col - slack, col + slack + 1)
+                for r in range(row - 2, row + 3))
+
+        def clean_beyond(image, split):
+            # No printed ink past the final edge: the stroke's round
+            # cap ends within a few pixels of the last point, and the
+            # next motion (10 mm further) must never bleed through —
+            # stale geometry beyond the requested split reads here.
+            edge = column_for(20.0 + 10.0 * (split - 1))
+            return not any(
+                self._matches(image.pixel(int(origin.x()) + c,
+                                          int(origin.y()) + r),
+                              (0xD3, 0x2F, 0x2F))
+                for c in range(edge + 6, edge + 18)
+                for r in range(row - 2, row + 3))
+
+        def complete_signature(image, split):
+            # The WHOLE composition's probe signature for `split`: the
+            # early printed history, both sides of the prefix/tail
+            # seam (a hole at the handoff is a hybrid), the Canvas
+            # tail's middle, the final printed edge — and clean space
+            # beyond it.
+            probes = [25.0]  # the early printed history
+            if split > 10:
+                probes += [105.0, 115.0]  # both sides of the seam
+                probes.append((110.0 + 20.0 + 10.0 * (split - 1)) / 2.0)
+            probes.append(20.0 + 10.0 * (split - 1))  # the final edge
+            return (all(ink_at(image, bx) for bx in probes)
+                    and clean_beyond(image, split))
+
+        def classify(image, candidates):
+            # The frame's complete composition, by whole-signature
+            # match — the candidate whose signature holds, else None
+            # (an invalid frame).
+            for split in candidates:
+                if complete_signature(image, split):
+                    return split
             return None
 
-        def drive_step(prev_split, new_split, beats, invalidate=False):
-            old_boundary = boundary_column(prev_split)
-            new_boundary = boundary_column(new_split)
-            self._printer.setSplit(new_split)
-            if invalidate:
-                layer.set_expected_key("invalidated")
-            hybrids = []
-            blanks = 0
-            for _beat in range(beats):
-                self._pump_ms(20)
-                boundary = ink_boundary()
-                if boundary is None:
-                    blanks += 1
-                    continue
+        failures = []
 
-                if not (abs(boundary - old_boundary) <= 3
-                        or abs(boundary - new_boundary) <= 3):
-                    hybrids.append(boundary)
-                if prev_split == 21 and _beat < 8:
-                    print("BEATPROBE", _beat, boundary)
-            print("SCRUBPROBE", prev_split, "->", new_split,
-                  "old", old_boundary, "new", new_boundary,
-                  "hybrids", hybrids, "blanks", blanks)
-            return hybrids, blanks
-
-        failures = {}
-        # The 100% -> partial entry carries ONE documented exemption:
-        # the threaded canvas's painted signal has no QML-side
-        # texture-sync signal, so the full picture's release frame
-        # precedes the replacement texture's consumption by one beat
-        # — a single blank frame at the entry's very first beat. The
-        # hybrid ownership seams (the review's core finding) are
-        # gone everywhere.
-        for name, prev_split, new_split, invalidate, allow_blank in [
-                ("100% -> partial", 21, 18, False, 1),
-                ("80% -> 60%", 18, 15, False, 0),
-                ("80% -> 40%", 18, 8, False, 0),
-                ("60% -> 70%", 15, 16, False, 0),
-                ("delayed prefix", 18, 15, True, 0)]:
+        def leg(name, prev_split, new_split, invalidate=False, beats=25):
+            # One transition: every frame must present the standing
+            # committed composition or the requested one. Zero blanks
+            # and zero invalid frames — no exemptions.
             layer.set_expected_key("fixture-key")
             self._printer.setLayers({"prev": None, "current": layer, "next": None})
             self._printer.setSplit(prev_split)
-            self._pump_ms(300)  # the leg's own starting composition
-            hybrids, blanks = drive_step(prev_split, new_split, 25, invalidate)
-            if hybrids or blanks > allow_blank:
-                failures[name] = (hybrids, blanks)
-        # The rapid alternation (the split never rests long enough to
-        # settle between the steps).
+            self._pump_ms(300)  # the leg's own standing composition
+            self._printer.setSplit(new_split)
+            if invalidate:
+                layer.set_expected_key("invalidated")
+            allowed = [prev_split, new_split]
+            presented = prev_split
+            for beat in range(beats):
+                self._pump_ms(20)
+                image = window.grabWindow()
+                shown = classify(image, allowed)
+                if shown is None:
+                    failures.append("%s: beat %d presented no complete composition"
+                                    % (name, beat))
+                    continue
+                if shown not in allowed:
+                    failures.append("%s: beat %d presented split %d (allowed %s)"
+                                    % (name, beat, shown, allowed))
+                else:
+                    presented = shown
+            return presented
+
+        for name, prev_split, new_split, invalidate in [
+                ("100% -> partial", 21, 18, False),
+                ("80% -> 60%", 18, 15, False),
+                ("80% -> 40%", 18, 8, False),
+                ("60% -> 70%", 15, 16, False),
+                ("delayed prefix", 18, 15, True)]:
+            leg(name, prev_split, new_split, invalidate)
+        # The rapid alternation: the demand never rests, and the
+        # standing-composition policy applies — the allowed set is the
+        # LAST PRESENTED complete composition plus the current demand.
+        # An intermediate split that never presented may not appear
+        # later; one that did becomes the standing picture.
         layer.set_expected_key("fixture-key")
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(18)
         self._pump_ms(300)
-        sequence = [15, 8, 12, 6, 16, 10, 14, 9]
-        # The atomic handoff permits ONE complete composition to lag
-        # the rapid cadence: every frame must be SOME complete
-        # picture from the sequence, never an in-between hybrid.
-        boundaries = {boundary_column(s) for s in sequence + [18]}
-        previous = 18
-        for split in sequence:
+        standing = 18
+        for split in [15, 8, 12, 6, 16, 10, 14, 9]:
             self._printer.setSplit(split)
-            for _beat in range(3):
+            allowed = [standing, split]
+            for beat in range(3):
                 self._pump_ms(20)
-                boundary = ink_boundary()
-                if boundary is None:
-                    failures["rapid %d -> %d blank" % (previous, split)] = (None, 1)
+                image = window.grabWindow()
+                shown = classify(image, allowed)
+                if shown is None:
+                    failures.append("rapid %d -> %d: beat %d presented no "
+                                    "complete composition" % (standing, split, beat))
                     continue
-                if not any(abs(boundary - known) <= 3 for known in boundaries):
-                    failures["rapid %d -> %d" % (previous, split)] = ([boundary], 0)
-            previous = split
-        self.assertEqual(failures, {},
-                         "hybrid or blank frames during the scrub: %s" % failures)
+                if shown not in allowed:
+                    failures.append("rapid %d -> %d: beat %d presented split %d "
+                                    "(allowed %s)" % (standing, split, beat, shown, allowed))
+                else:
+                    standing = shown
+        self.assertEqual(failures, [],
+                         "hybrid, blank or stale-composition frames "
+                         "during the scrub: %s" % failures)
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
