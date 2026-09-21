@@ -405,6 +405,19 @@ Item {
         return true;
     }
 
+    function _fullPictureStanding() {
+        // The full picture stands while the full state holds OR the
+        // canvas's record still names the full extent — the previous
+        // composition holds through the 100% -> partial entry, and
+        // the detection is BINDING-side: the handler's arm order can
+        // never leave a blank frame (the review's reverse-scrub
+        // finding — the hide-then-arm order blanked beat zero).
+        if (root.progress == null || root.progress.layers == null || root.progress.layers.current == null) {
+            return false;
+        }
+        return _fullRaster() || root._fullRasterHold;
+    }
+
     function _partialPrefixReady() {
         // The compositor's side: the prefix may claim the printed
         // history only once its scene-graph Image has actually
@@ -421,7 +434,13 @@ Item {
             return false;
         }
         var layer = root.progress.layers.current;
-        return root._prefixWasShown || (root._textureReady && root._vectorCoversFrom === 0) || (root._textureReady && root._vectorCoversFrom === layer.prefixSplit) || (root._vectorCoversFrom === -1 && _vectorInkless());
+        // The shown shortcut now also requires the canvas's DELIVERED
+        // coverage AND its one-beat texture-sync lag — the prefix may
+        // never appear over a canvas whose replacement bitmap has not
+        // reached the scene (the review's hybrid frame: the prefix
+        // showed over the not-yet-synced tail).
+        var delivered = root._textureReady && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
+        return (root._prefixWasShown && delivered && !root._prefixShowHold) || (root._textureReady && root._vectorCoversFrom === 0) || (root._textureReady && root._vectorCoversFrom === layer.prefixSplit) || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
     function _prefixFrom() {
@@ -623,6 +642,17 @@ Item {
     property int _vectorCoversFrom: -1
     property bool _prefixHold: false
     property bool _prefixWasShown: false
+    // The 100% -> partial entry's hold: the full raster's picture
+    // stands until the partial composition is complete (the
+    // review's reverse-scrub hybrid frame). The seen flag arms the
+    // hold ONCE per genuine full->partial entry — the hold's own
+    // release-hide must never re-arm it.
+    property bool _fullRasterHold: false
+    property bool _fullRasterSeen: false
+    // The prefix's one-beat show lag after a canvas delivery: the
+    // scene consumes the painted texture one frame later (the
+    // review's hybrid frame).
+    property bool _prefixShowHold: false
     // The threaded canvas's scene texture trails its paint by one
     // frame: a paint's coverage record alone must never admit the
     // prefix — the painted delivery confirms the bitmap the scene
@@ -638,6 +668,10 @@ Item {
         onTriggered: {
             root._prefixHold = false;
             root._prefixWasShown = false;
+            root._prefixShowHold = false;
+            // The full raster's hold releases on the same beat — the
+            // painted signal's frame has now consumed the texture.
+            root._fullRasterHold = false;
         }
     }
     // The scrub vector's SOURCE identity: a same-anchor payload swap
@@ -920,8 +954,18 @@ Item {
         Image {
             id: progressRasterImage
             anchors.fill: parent
-            visible: _fullRaster()
-            source: _fullRaster() ? root.progress.layers.current.rasterData : ""
+            visible: _fullPictureStanding()
+            source: _fullPictureStanding() ? root.progress.layers.current.rasterData : ""
+            onVisibleChanged: {
+                if (visible) {
+                    root._fullRasterSeen = root._fullRaster();
+                } else if (root._fullRasterSeen && !root._fullRaster() && !root._fullRasterHold && root.progress != null && root.progress.split != null && root.progress.layers.current != null && root.progress.split > 0 && root.progress.split < _motionsOf(root.progress.layers.current)) {
+                    // The 100% -> partial entry: the full picture holds
+                    // until the partial composition is committed.
+                    root._fullRasterSeen = false;
+                    root._fullRasterHold = true;
+                }
+            }
         }
         Image {
             id: progressTravelImage
@@ -1040,6 +1084,15 @@ Item {
                 // relinquesh — one frame later, after the scene pulls
                 // the texture (the expiry timer's beat).
                 root._textureReady = true;
+                if (root._fullRasterHold && root._vectorCoversFrom >= 0) {
+                    // The 100% -> partial entry's hold releases ONE FRAME
+                    // after the canvas's replacement bitmap is delivered —
+                    // the painted signal precedes the scene's texture sync
+                    // (the review's reverse-scrub hybrid frame). The
+                    // prefix's show waits the same beat.
+                    root._prefixShowHold = true;
+                    holdExpiryTimer.restart();
+                }
                 if (root._prefixHold && root._vectorCoversFrom === 0) {
                     holdExpiryTimer.restart();
                 }
@@ -1121,6 +1174,19 @@ Item {
                 var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
                 root._vectorSourceMotions = vectorMotions;
                 root._vectorSourceClasses = vectorClasses;
+                var prefixFrom = _prefixFrom();
+                if (!root._fullRasterHold && prefixFrom <= 0 && root._prefixWasShown && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions) {
+                    // The stale prefix is being REPLACED (a fresh URL is
+                    // in flight): hold the complete old composition —
+                    // the held prefix plus this bitmap's old tail — until
+                    // the replacement's Image lands and re-triggers the
+                    // paint (the atomic previous -> next handoff — the
+                    // review's reverse-scrub hybrid frame). A repaint
+                    // here would clear the old tail and expose the stale
+                    // prefix alone. The skip precedes the reset below.
+                    root._progressDirty = true;
+                    return;
+                }
                 var resetPainted = false;
                 if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20 || vectorSourceChanged) {
                     ctx.reset();
@@ -1134,7 +1200,6 @@ Item {
                 // the last painted split up to the live one (the H3
                 // floor). The partial scrub keeps the vector delta path;
                 // a native prefix below shortens the walk to its tail.
-                var prefixFrom = _prefixFrom();
                 var coversBefore = root._vectorCoversFrom;
                 if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
                     // The prefix no longer owns the history (loading,

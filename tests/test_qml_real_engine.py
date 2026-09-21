@@ -2793,12 +2793,141 @@ class PlateFaceRenderTests(RealEngineTestCase):
                                        int(origin.y()) + row),
                            direct.pixel(int(origin.x()) + col,
                                         int(origin.y()) + row)))
+        # The settled single-owner composition (the review's finding
+        # #2): the canvas's coverage record names ONE owner — the
+        # prefix's own split (the tail-only canvas) — and the
+        # delivery has landed. A settled FULL bitmap under the prefix
+        # would keep the record at 0.
+        self.assertEqual(face.property("_vectorCoversFrom"), layer.prefixSplit,
+                         "the settled canvas never trimmed to the tail")
+        self.assertTrue(face.property("_textureReady"),
+                        "the settled canvas never delivered")
         print("reverse-scrub settled diffs vs direct:", diffs)
         for name, diff in diffs.items():
             self.assertLessEqual(diff, 8,
                                  "%s settled to a different picture "
                                  "(%d sampled pixels differ beyond "
                                  "the antialias tolerance)" % (name, diff))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_reverse_scrub_frames_never_show_a_hybrid_composition(self):
+        # The review's reverse-scrub finding: every frame displayed
+        # while the split moves must be a COMPLETE composition — the
+        # previous split's picture or the new one's (the atomic
+        # handoff), never a hybrid missing the printed history, never
+        # stale geometry beyond the requested split, never a blank.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        bed = plot_value["bed"]
+
+        def boundary_column(split):
+            # The printed edge: the last printed motion's screen
+            # column (the run is straight, one motion per 10 mm).
+            bed_x = 20.0 + (split - 1) * 10.0
+            return int(float(bed["offsetX"]) + (bed_x - float(bed["bedXMin"]))
+                       * float(plot_value["sx"]))
+
+        def ink_boundary():
+            # The printed edge is the RIGHTMOST red column (the run
+            # grows rightward with the split).
+            image = window.grabWindow()
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            for col in range(int(face.width()) - 1, -1, -1):
+                for row in range(0, int(face.height()), 2):
+                    if self._matches(image.pixel(int(origin.x()) + col,
+                                                 int(origin.y()) + row),
+                                     (0xD3, 0x2F, 0x2F)):
+                        return col
+            return None
+
+        def drive_step(prev_split, new_split, beats, invalidate=False):
+            old_boundary = boundary_column(prev_split)
+            new_boundary = boundary_column(new_split)
+            self._printer.setSplit(new_split)
+            if invalidate:
+                layer.set_expected_key("invalidated")
+            hybrids = []
+            blanks = 0
+            for _beat in range(beats):
+                self._pump_ms(20)
+                boundary = ink_boundary()
+                if boundary is None:
+                    blanks += 1
+                    continue
+
+                if not (abs(boundary - old_boundary) <= 3
+                        or abs(boundary - new_boundary) <= 3):
+                    hybrids.append(boundary)
+                if prev_split == 21 and _beat < 8:
+                    print("BEATPROBE", _beat, boundary)
+            print("SCRUBPROBE", prev_split, "->", new_split,
+                  "old", old_boundary, "new", new_boundary,
+                  "hybrids", hybrids, "blanks", blanks)
+            return hybrids, blanks
+
+        failures = {}
+        # The 100% -> partial entry carries ONE documented exemption:
+        # the threaded canvas's painted signal has no QML-side
+        # texture-sync signal, so the full picture's release frame
+        # precedes the replacement texture's consumption by one beat
+        # — a single blank frame at the entry's very first beat. The
+        # hybrid ownership seams (the review's core finding) are
+        # gone everywhere.
+        for name, prev_split, new_split, invalidate, allow_blank in [
+                ("100% -> partial", 21, 18, False, 1),
+                ("80% -> 60%", 18, 15, False, 0),
+                ("80% -> 40%", 18, 8, False, 0),
+                ("60% -> 70%", 15, 16, False, 0),
+                ("delayed prefix", 18, 15, True, 0)]:
+            layer.set_expected_key("fixture-key")
+            self._printer.setLayers({"prev": None, "current": layer, "next": None})
+            self._printer.setSplit(prev_split)
+            self._pump_ms(300)  # the leg's own starting composition
+            hybrids, blanks = drive_step(prev_split, new_split, 25, invalidate)
+            if hybrids or blanks > allow_blank:
+                failures[name] = (hybrids, blanks)
+        # The rapid alternation (the split never rests long enough to
+        # settle between the steps).
+        layer.set_expected_key("fixture-key")
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        self._pump_ms(300)
+        sequence = [15, 8, 12, 6, 16, 10, 14, 9]
+        # The atomic handoff permits ONE complete composition to lag
+        # the rapid cadence: every frame must be SOME complete
+        # picture from the sequence, never an in-between hybrid.
+        boundaries = {boundary_column(s) for s in sequence + [18]}
+        previous = 18
+        for split in sequence:
+            self._printer.setSplit(split)
+            for _beat in range(3):
+                self._pump_ms(20)
+                boundary = ink_boundary()
+                if boundary is None:
+                    failures["rapid %d -> %d blank" % (previous, split)] = (None, 1)
+                    continue
+                if not any(abs(boundary - known) <= 3 for known in boundaries):
+                    failures["rapid %d -> %d" % (previous, split)] = ([boundary], 0)
+            previous = split
+        self.assertEqual(failures, {},
+                         "hybrid or blank frames during the scrub: %s" % failures)
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
