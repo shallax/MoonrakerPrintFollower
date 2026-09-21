@@ -1536,6 +1536,30 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertTrue(wrapped.rasterValid, "the full layer never followed")
         self.assertGreater(wrapped.baseWidth, 0, "the base never followed")
 
+    def test_an_invalidated_prefix_is_requested_again_at_the_same_split(self):
+        # Zoom/pan/resize changes the render key without changing the
+        # printed boundary. The old prefix must be treated as absent:
+        # QML falls back to the vector from motion zero while Python
+        # immediately schedules a replacement.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        self.assertTrue(wrapped.prefixValid)
+        before = surface.render_count.get(5, 0)
+
+        model.setFollowerView("popover", 1.25, 0.7, 400, 300, False, 0.0, 0.0)
+        self.qt.events(5)
+        self.assertGreater(surface.render_count.get(5, 0), before,
+                           "same-split invalidation never requested a new prefix")
+        self._pump_rasters(model, "popover")
+        self.assertTrue(wrapped.prefixValid)
+        self.assertEqual(wrapped.prefixSplit, 50)
+
     def test_the_prefix_refreshes_past_the_quarter_and_backward(self):
         # A small live advance keeps the prefix; a quarter-layer
         # advance or a backward move demands a fresh one.
@@ -1602,6 +1626,44 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                          "the submitted job's token changed")
         self.assertEqual(surface.job["layer"], submitted["layer"])
         self._pump_rasters(model, "popover")
+
+    def test_retire_reopen_same_layer_cannot_collide_on_a_reused_token(self):
+        # Exact reproduction of the serial collision: retire clears the
+        # token map, so a reopened same-layer request can be token 1 in
+        # the same generation/epoch. Only serial distinguishes it.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload()
+        wrapped = model._qt_layer(surface, payload, 5)
+        generation = surface.generation
+        epoch = surface.job_epoch
+        key = surface.render_key()
+
+        surface.tokens[5] = 1
+        surface.job = {"layer": 5, "token": 1, "generation": generation,
+                       "state": "running", "cancel": threading.Event(),
+                       "epoch": epoch, "serial": 10}
+        old_ticket = ("popover", 5, 1, generation, key, "full", None, epoch, 10)
+        model._retire_surface(surface)
+
+        surface.tokens[5] = 1
+        surface.job = {"layer": 5, "token": 1, "generation": generation,
+                       "state": "submitted", "cancel": threading.Event(),
+                       "epoch": epoch, "serial": 11}
+        from PyQt6.QtGui import QImage
+        blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
+        discarded = surface.stats["discarded"]
+        model._raster_committed(("full", blank, "", blank, "", blank, ""), old_ticket)
+
+        self.assertIsNotNone(surface.job,
+                             "old serial cleared the reopened job")
+        self.assertEqual(surface.job["serial"], 11)
+        self.assertEqual(surface.tokens.get(5), 1,
+                         "old serial consumed the reopened token")
+        self.assertFalse(wrapped.rasterValid,
+                         "old serial committed pixels into the reopened layer")
+        self.assertEqual(surface.stats["discarded"], discarded + 1)
 
     def test_a_worker_exception_never_wedges_the_scheduler(self):
         # A throwing render ends as a terminal failure: the job slot
