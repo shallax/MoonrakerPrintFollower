@@ -2076,6 +2076,35 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self._pump_rasters(model, "popover")
         self.assertTrue(surface.layers[5].rasterValid)
 
+    def test_a_layer_payload_is_immutable_within_a_print_epoch(self):
+        # H's audit: within one print epoch a layer's payload is
+        # content-addressed and immutable — the decoded LRU reuses
+        # ONE object per layer, and the repair/hydration paths
+        # regenerate layers only when the print itself changed. The
+        # wrapper's identity is therefore (surface, layer, epoch),
+        # never the payload's object: a content-equivalent
+        # replacement (a re-decode) reuses the wrapper without
+        # re-rendering, and the epoch boundary retires the wrappers
+        # wholesale — no payload can ever be swapped under a live
+        # wrapper.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload()
+        wrapped = model._qt_layer(surface, payload, 5)
+        # A content-equivalent replacement keeps the wrapper — the
+        # layer's geometry is immutable per print, and the quiet
+        # republish never re-renders (the quiet-publish and revisit
+        # pins beside this one).
+        refreshed = self._payload()
+        self.assertIs(model._qt_layer(surface, refreshed, 5), wrapped,
+                      "a content-equivalent payload re-wrapped the layer")
+        # The print boundary retires the wrappers wholesale — the
+        # epoch, not the payload, owns the identity.
+        model._observe_follower_job("other-job")
+        self.assertNotIn(5, surface.layers,
+                         "the print change left the old epoch's wrapper")
+
     def test_wrapper_payloads_pin_the_decoded_budget(self):
         # The wrappers charge their payloads against the decoded
         # tier: pin on wrap (the second surface's wrapper adds its
