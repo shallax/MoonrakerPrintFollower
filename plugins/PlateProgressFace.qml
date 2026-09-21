@@ -213,26 +213,53 @@ Item {
         return split != null && layer != null && split >= layer.motions && _rasterOf(layer);
     }
 
-    function _partialPrefixReady() {
-        // The native prefix shows while it covers the printed
-        // portion: rendered for a split not beyond the live one (a
-        // backward move hides it until the fresh prefix lands).
+    function _prefixModelReady() {
+        // The model's side of the prefix's usability: rendered for
+        // a split not beyond the live one (a backward move hides it
+        // until the fresh prefix lands) and keyed for the current
+        // context (a zoom/pan/resize invalidates the old prefix
+        // until the fresh one lands).
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        // The prefix's own render key must match the current
-        // context: a zoom/pan/resize invalidates the old prefix
-        // until the fresh one lands.
         return layer != null && split != null && layer.prefixValid !== undefined && layer.prefixValid === true && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
+    }
+
+    function _vectorInkless() {
+        // No vector geometry exists to own the history: the scrub
+        // vector is absent (a detached PlateLayer has no .classes)
+        // or its classes are empty — the canvas will never paint.
+        var current = _scrubVector();
+        return current == null || current.classes === undefined || Object.keys(current.classes).length === 0;
+    }
+
+    function _partialPrefixReady() {
+        // The compositor's side: the prefix may claim the printed
+        // history only once its scene-graph Image has actually
+        // uploaded the exact source — a model-side valid URL whose
+        // image is still loading (or failed) owns nothing. A prefix
+        // that has never been shown may appear only over a canvas
+        // bitmap whose PAINTED delivery is confirmed to cover the
+        // full history (or over a vector with no geometry at all —
+        // there the canvas never paints). Once shown, the prefix
+        // keeps its ownership: the paints below it extend or
+        // re-derive from its boundary, never leave a gap.
+        if (!_prefixModelReady() || progressPrefixImage.status !== Image.Ready) {
+            return false;
+        }
+        return root._prefixWasShown || (root._textureReady && root._vectorCoversFrom === 0) || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
     function _prefixFrom() {
         // The canvas tail starts where the prefix ended: the
-        // accumulation draws only the motions beyond it.
+        // accumulation draws only the motions beyond it. The Image
+        // must be Ready: a prefix the scene does not contain yet
+        // (loading, failed, or replaced) leaves the whole interval
+        // to the vector path.
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        if (layer == null || split == null || layer.prefixValid !== true || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split) {
+        if (layer == null || split == null || layer.prefixValid !== true || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split || progressPrefixImage.status !== Image.Ready) {
             return -1;
         }
         return layer.prefixSplit;
@@ -371,6 +398,25 @@ Item {
     property int _anchor: -1
     property int _paintsSinceReset: 0
     property bool _progressDirty: false
+    // The prefix/vector ownership handoff: the canvas bitmap's own
+    // coverage (the motion index below which it does NOT draw — 0
+    // means the full history), and the one-frame hold that keeps
+    // the old prefix on screen until the canvas has repainted the
+    // interval the prefix used to own (the swap must be atomic:
+    // never a frame with neither renderer owning the history).
+    property int _vectorCoversFrom: -1
+    property bool _prefixHold: false
+    property bool _prefixWasShown: false
+    // The threaded canvas's scene texture trails its paint by one
+    // frame: a paint's coverage record alone must never admit the
+    // prefix — the painted delivery confirms the bitmap the scene
+    // is about to show.
+    property bool _textureReady: false
+    // The scrub vector's SOURCE identity: a same-anchor payload swap
+    // (an empty fixture replaced by the real layer) must reset the
+    // accumulated bitmap — the delta path assumes ink it never drew.
+    property int _vectorSourceMotions: -1
+    property string _vectorSourceClasses: ""
     // The travels' SOURCE identity: when the travel payload arrives
     // (or the layer changes), the canvas redraws them from the
     // layer's start — the delta path alone would assume ink the
@@ -419,6 +465,17 @@ Item {
         return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
+    function _holdPrefixThroughRepaint() {
+        // The prefix's model-side validity flips with the publish,
+        // but the canvas repaints a frame later: hold the old
+        // picture on screen until the vector has repainted the
+        // interval — the swap is atomic, never a frame with
+        // neither renderer owning the printed history.
+        if (!_prefixModelReady() && root._prefixWasShown) {
+            root._prefixHold = true;
+        }
+    }
+
     function _resetStack() {
         // The canvas repaints on a toggle flip, a resize or an
         // anchor change; the ghost Images bind themselves and need
@@ -436,6 +493,7 @@ Item {
             root._paintsSinceReset = 0;
             root._progressDirty = true;
             progressCanvas.requestPaint();
+            _holdPrefixThroughRepaint();
         }
     }
 
@@ -443,6 +501,8 @@ Item {
         if (root.progress == null || root.progress.layers == null) {
             root._lastSplit = -1;
             root._anchor = -1;
+            root._prefixHold = false;
+            root._prefixWasShown = false;
             return;
         }
         if (root.progress.anchor !== root._anchor) {
@@ -467,6 +527,7 @@ Item {
         if (progressKey !== root._progressKey) {
             root._progressKey = progressKey;
             progressCanvas.requestPaint();
+            _holdPrefixThroughRepaint();
         }
     }
     onShowBaseChanged: {
@@ -486,6 +547,7 @@ Item {
             root._paintsSinceReset = 0;
             root._progressDirty = true;
             progressCanvas.requestPaint();
+            _holdPrefixThroughRepaint();
         }
     }
     onLineScaleChanged: {
@@ -563,9 +625,10 @@ Item {
         viewPanY: root.viewPanY
     }
 
-    // The raster stack, bottom to top (the live design): the ghost
-    // layers, the pending base, the full-layer rasters and the
-    // accumulated progress. The rasters are SCENE-GRAPH Images — the
+    // The raster stack, bottom to top (the live order — ghosts,
+    // base, prefix, tail, travels): the ghost layers, the grey
+    // base, the printed native prefix, then the vector tail canvas
+    // with its travels. The rasters are SCENE-GRAPH Images — the
     // engine's Canvas cannot hold a raster image reliably (its
     // internal image cache re-blits a drawn URL on every later
     // paint, and a QImage variant segfaults — engine-proven), so
@@ -588,18 +651,6 @@ Item {
         visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
         source: visible ? root.progress.layers.current.travelData : ""
     }
-    // The printed PREFIX (the measured verdict: the partial states'
-    // QML walk costs ~900 ms at 500k motions): the worker paints
-    // the motions below the split and the canvas below draws only
-    // the live delta's tail. Hidden while stale (a backward move
-    // renders a fresh prefix first).
-    Image {
-        id: progressPrefixImage
-        anchors.fill: parent
-        visible: _partialPrefixReady()
-        source: _partialPrefixReady() ? root.progress.layers.current.prefixData : ""
-    }
-
     // The ghost layers: the worker's rasters at ghost opacity —
     // role-free assets, the opacity applied at composition.
     // Until a ghost's raster lands it draws nothing —
@@ -660,13 +711,55 @@ Item {
         }
     }
 
+    // The printed PREFIX (the measured verdict: the partial states'
+    // QML walk costs ~900 ms at 500k motions): the worker paints
+    // the motions below the split and the canvas below draws only
+    // the live delta's tail. Declared ABOVE the progress canvas and
+    // BELOW the grey base (the live stack order: ghosts, base,
+    // prefix, tail) — the base must never wash over printed
+    // geometry. Hidden while stale (a backward move renders a fresh
+    // prefix first), while its image has not uploaded, and — for
+    // one frame — held on screen while the canvas repaints the
+    // interval the prefix just relinquished.
+    Image {
+        id: progressPrefixImage
+        anchors.fill: parent
+        visible: _partialPrefixReady() || root._prefixHold
+        source: (_prefixModelReady() || root._prefixHold) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
+        onVisibleChanged: {
+            // Track what was actually on screen: the hold's
+            // visibility keeps the last picture up while the
+            // canvas repaints the interval.
+            if (visible) {
+                root._prefixWasShown = true;
+            } else if (!root._prefixHold) {
+                root._prefixWasShown = false;
+            }
+        }
+        onStatusChanged: progressCanvas.requestPaint()
+    }
+
     Canvas {
         id: progressCanvas
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
+        onPainted: {
+            // The paint's bitmap is delivered: its coverage record
+            // now describes the scene's committed texture.
+            root._textureReady = true;
+        }
         onPaint: {
             var ctx = getContext("2d");
+            // The hold ends with THIS paint (the canvas node updates
+            // after the prefix Image's own, so the held picture
+            // stays on screen through the repaint): whatever the
+            // vector has now drawn, the ownership swap is complete.
+            root._prefixHold = false;
+            // The committed texture is now one paint behind — the
+            // painted signal re-arms the confirmation when the
+            // bitmap is delivered.
+            root._textureReady = false;
             if (!root.available() || mapping._plot == null) {
                 // The unavailable surface clears its own ink — the
                 // old raster must never read through the loading text
@@ -675,6 +768,7 @@ Item {
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
                 root._paintsSinceReset = 0;
+                root._vectorCoversFrom = -1;
                 return;
             }
             var layer = root.progress.layers.current;
@@ -683,6 +777,7 @@ Item {
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
                 root._paintsSinceReset = 0;
+                root._vectorCoversFrom = -1;
                 return;
             }
             var split = root.progress.split;
@@ -698,6 +793,7 @@ Item {
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = split;
                 root._paintsSinceReset += 1;
+                root._vectorCoversFrom = -1;
                 return;
             }
             var current = _scrubVector();
@@ -708,6 +804,7 @@ Item {
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
                 root._paintsSinceReset = 0;
+                root._vectorCoversFrom = -1;
                 return;
             }
             if (split == null) {
@@ -719,15 +816,23 @@ Item {
                 root._lastSplit = -1;
                 root._paintsSinceReset = 0;
                 root._progressDirty = false;
+                root._vectorCoversFrom = -1;
                 return;
             }
-            // A backward split (a restart), a toggle flip or an
-            // anchor change clears the image; the accumulation also
-            // re-rasters fully on its own cadence so it cannot
-            // drift. Otherwise the canvas keeps its image and only
-            // the new delta is stroked on top.
+            // A backward split (a restart), a toggle flip, an anchor
+            // change or a SAME-ANCHOR payload swap clears the image
+            // (the delta path assumes the bitmap holds the previous
+            // vector's ink — a swapped source never drew it); the
+            // accumulation also re-rasters fully on its own cadence
+            // so it cannot drift. Otherwise the canvas keeps its
+            // image and only the new delta is stroked on top.
+            var vectorMotions = _motionsOf(current);
+            var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
+            var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
+            root._vectorSourceMotions = vectorMotions;
+            root._vectorSourceClasses = vectorClasses;
             var resetPainted = false;
-            if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20) {
+            if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20 || vectorSourceChanged) {
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
                 root._lastSplit = -1;
@@ -739,8 +844,50 @@ Item {
             // the last painted split up to the live one (the H3
             // floor). The partial scrub keeps the vector delta path;
             // a native prefix below shortens the walk to its tail.
-            var from = Math.max(root._lastSplit, _prefixFrom());
+            var prefixFrom = _prefixFrom();
+            if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
+                // The prefix no longer owns the history (loading,
+                // stale, or invalidated) but the canvas does not hold
+                // the full picture (nothing painted yet, or only a
+                // tail): repaint the FULL interval — a partial bitmap
+                // under a vanished prefix is the live scrub's missing
+                // history.
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
+                root._progressDirty = false;
+                resetPainted = true;
+            } else if (!resetPainted && prefixFrom > 0 && root._prefixWasShown && root._vectorCoversFrom !== prefixFrom) {
+                // The prefix was on screen and its boundary moved (a
+                // fresh prefix at another split): repaint so the
+                // bitmap starts at the prefix's own boundary — the
+                // prefix covers the rest, never a gap. A prefix that
+                // was NOT shown yet leaves the canvas's full bitmap
+                // alone: it is the current owner and the prefix
+                // overlays it.
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
+                root._progressDirty = false;
+                resetPainted = true;
+            }
+            // A prefix that has never shown leaves the WHOLE interval
+            // to the canvas — its first paint must cover from the
+            // layer's start, not merely from the prefix's boundary.
+            var from = Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
+            var fresh = resetPainted || root._lastSplit < 0;
             _drawLayer(ctx, current, 1.0, split, false, from);
+            // The bitmap's coverage below this paint's start: a full
+            // paint covers from the layer's start, a tail paint
+            // relies on the prefix for the rest, a delta paint
+            // extends the existing coverage. A vector with no
+            // geometry records nothing: an empty bitmap must never
+            // read as a full one (the prefix would trust a hole).
+            if (fresh) {
+                root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
+            }
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live
             // rulings). The prefix carries NO travels, so a cleared
