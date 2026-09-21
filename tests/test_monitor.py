@@ -5039,6 +5039,10 @@ Item {
             # while the canvas repaints the interval (the atomic
             # ownership swap).
             "visible: _partialPrefixReady() || root._prefixHold",
+            # The full raster's standing: the full state OR the
+            # 100% -> partial entry's hold (the reverse-scrub
+            # handoff).
+            "visible: _fullPictureStanding()",
             # The interaction raster: the warm full-bed composite
             # owns the heavy scene during a camera gesture.
             "visible: root._interactionActive && navigationData() !== \"\"",
