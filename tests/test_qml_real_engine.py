@@ -2838,6 +2838,27 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
                 Qt.ScrollPhase.NoScrollPhase, False)
             QGuiApplication.sendEvent(window, event)
+        # The toolhead dot rides the camera the scene actually shows:
+        # during the eased zoom it must track the DISPLAY transform
+        # (the warm raster's picture), never the target (the live
+        # report — the dot snapped against the raster).
+        face.setProperty("attached", True)
+        face.setProperty("dot", {"x": 60.0, "y": 100.0, "valid": True})
+        self.pump(10)
+        from PyQt6.QtQuick import QQuickItem
+        dot_item = face.findChild(QQuickItem, "moonrakerPlateToolheadDot")
+        self.assertIsNotNone(dot_item, "the toolhead dot never mounted")
+        plot_bed = plot_value["bed"]
+
+        def dot_screen_x(scale, pan_x):
+            return (pan_x + (float(plot_bed["offsetX"])
+                             + (60.0 - float(plot_bed["bedXMin"])) * float(plot_value["sx"])) * scale
+                    - dot_item.width() / 2)
+
+        def dot_screen_y(scale, pan_y):
+            return (pan_y + (float(plot_bed["offsetY"])
+                             + (float(plot_bed["bedYMax"]) - 100.0) * float(plot_value["sy"])) * scale
+                    - dot_item.height() / 2)
         # Wheel-zoom in at the centre: the interaction owns the scene
         # immediately and the display eases toward the 125% target.
         wheel(cx, cy, 120)
@@ -2865,6 +2886,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
             bed_x = (cx - face.property("displayPanX")) / now
             self.assertAlmostEqual(bed_x, float(cx), delta=2.0,
                                    msg="the focal point wandered")
+            self.assertAlmostEqual(
+                dot_item.x(),
+                dot_screen_x(now, face.property("displayPanX")),
+                delta=1.5, msg="the toolhead dot snapped off the display")
+            self.assertAlmostEqual(
+                dot_item.y(),
+                dot_screen_y(now, face.property("displayPanY")),
+                delta=1.5, msg="the toolhead dot snapped off the display")
             before_swap = window.grabWindow()  # the last interaction frame
         self.assertEqual(face.property("displayScale"), 1.25,
                          "the display never converged exactly")
@@ -2924,27 +2953,36 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._pump_ms(30)
         self.assertFalse(face.property("_interactionActive"),
                          "the retargeted zoom never swapped back")
-        # A drag DURING the eased zoom: the grab takes the camera —
-        # the ease stops at the grabbed scale (the wheel's target is
-        # dropped), the drag pans both transforms directly, and
-        # nothing snaps at the press or the release.
+        # A drag DURING the eased zoom: the grab pans directly while
+        # the zoom keeps easing, and the eased pan carries the drag's
+        # delta — the ease lands exactly on the dragged target, no
+        # pause, no snap, no permanent offset.
         wheel(cx, cy, 120)
         self._pump_ms(10)
+        pressed_scale = face.property("displayScale")
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx + 30, cy + 15, Qt.MouseButton.LeftButton)
+        self._pump_ms(40)  # ticks fire while the button stays down
+        held = face.property("displayScale")
+        self.assertGreater(held, pressed_scale,
+                           "the zoom paused while the pointer held the scene")
         mouse(QEvent.Type.MouseButtonRelease, cx + 30, cy + 15,
               Qt.MouseButton.NoButton)
+        released = face.property("displayScale")
+        self._pump_ms(50)  # a few animator ticks past the release
+        self.assertGreater(face.property("displayScale"), released,
+                           "the zoom stopped gliding after the release")
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline and face.property("_interactionActive"):
             self._pump_ms(30)
         self.assertFalse(face.property("_interactionActive"),
                          "the drag-interrupted zoom never swapped back")
-        self.assertEqual(face.property("viewScale"), 1.5625,
-                         "the grab never dropped the wheel's zoom target")
+        self.assertEqual(face.property("viewScale"), 1.953125,
+                         "the zoom never reached its wheel target")
         self.assertAlmostEqual(face.property("displayPanX"),
                                face.property("viewPanX"), delta=1.5,
-                               msg="the dragged pan never converged to the "
-                                   "target")
+                               msg="the eased pan never converged to the "
+                                   "dragged target")
         # A pan-only gesture: the release's re-check drives the
         # barrier — the interaction ends without any zoom.
         pan_before = face.property("viewPanX")
@@ -2960,16 +2998,25 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertFalse(face.property("_interactionActive"),
                          "the pan-only gesture never settled back to the "
                          "exact scene")
-        # A wheel DURING a held drag is inert: the grab owns the
-        # camera until the pointer releases (the live ruling — no
-        # zoom while panning).
+        # A wheel DURING a held drag zooms properly: the target
+        # updates and the display eases about the wheel's cursor —
+        # the focal bed point stays pinned even with the button down
+        # (the live report's held origin-zoom).
         before_wheel = face.property("viewScale")
+        held_cx = cx - 60
+        held_cy = cy - 40
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
-        wheel(cx, cy, 120)
-        self.assertEqual(face.property("viewScale"), before_wheel,
-                         "the wheel zoomed while the drag was held")
-        self.assertEqual(face.property("displayScale"), before_wheel,
-                         "the display zoomed while the drag was held")
+        wheel(held_cx, held_cy, 120)
+        self.assertGreater(face.property("viewScale"), before_wheel,
+                           "the wheel was inert while the drag was held")
+        bed_x0 = ((held_cx - face.property("displayPanX"))
+                  / face.property("displayScale"))
+        for _beat in range(20):  # the ease runs while the button stays down
+            self._pump_ms(20)
+            bed_x = ((held_cx - face.property("displayPanX"))
+                     / face.property("displayScale"))
+            self.assertAlmostEqual(bed_x, bed_x0, delta=2.0,
+                                   msg="the held wheel zoomed from the origin")
         mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline and face.property("_interactionActive"):
@@ -3020,6 +3067,109 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._pump_ms(30)
         self.assertFalse(face.property("_interactionActive"),
                          "the completed exact scene never swapped back")
+        # A corner-panned camera must NOT snap on the next wheel: the
+        # pan follows the focal computation exactly — the bed's edge
+        # may leave the viewport; only the 100% fit recentres (the
+        # live ruling). The harness's synthetic moves dispatch by
+        # POSITION (no grab routing), and the docked scope covers
+        # the face's right edge — so each gesture moves +200, three
+        # times: +600 lands the pan decisively past the bed's
+        # coverage.
+        for _drag in range(3):
+            mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseMove, cx + 200, cy, Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseButtonRelease, cx + 200, cy,
+                  Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the corner pan never settled")
+        self.assertGreater(face.property("viewPanX"), 0.0,
+                           "the corner pan never left the clamp range")
+        pan_before = face.property("viewPanX")
+        scale_before = face.property("viewScale")
+        wheel(cx, cy, 120)
+        expected_pan = (cx - (cx - pan_before) / scale_before
+                        * face.property("viewScale"))
+        self.assertAlmostEqual(face.property("viewPanX"), expected_pan,
+                               delta=1e-3,
+                               msg="the wheel clamped the corner-panned camera")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the corner zoom never settled")
+        # The soft clamp: once the bed would leave the viewport
+        # wholly, the pan stops with 100 px of it visible on every
+        # side — dragging and zooming alike (the live ruling). Two
+        # inside-face drags overshoot the boundary.
+        scale = face.property("viewScale")
+        hard_x = face.width() - 100.0 - float(plot_bed["offsetX"]) * scale
+        for _drag in range(2):
+            mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseMove, cx + 200, cy, Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseButtonRelease, cx + 200, cy,
+                  Qt.MouseButton.NoButton)
+        self.assertAlmostEqual(face.property("viewPanX"), hard_x, delta=1e-3,
+                               msg="the drag never stopped at the soft clamp")
+        self.assertAlmostEqual(face.property("displayPanX"),
+                               face.property("viewPanX"), delta=1.0,
+                               msg="the clamp broke the drag's lockstep")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the clamped drag never settled")
+        # The wheel's side: a programmatic far camera (the harness
+        # cannot drag the pointer that far), then a wheel — the
+        # focal pan stops at the same soft boundary on both axes.
+        hard_y = face.height() - 100.0 - float(plot_bed["offsetY"]) * scale
+        face.setProperty("viewPanX", hard_x + 2000.0)
+        face.setProperty("viewPanY", hard_y + 2000.0)
+        face.setProperty("displayPanX", hard_x + 2000.0)
+        face.setProperty("displayPanY", hard_y + 2000.0)
+        self.pump(20)
+        wheel(cx, cy, 120)
+        # The clamp's boundary rides the NEW target's scale.
+        new_scale = face.property("viewScale")
+        hard_x2 = face.width() - 100.0 - float(plot_bed["offsetX"]) * new_scale
+        hard_y2 = face.height() - 100.0 - float(plot_bed["offsetY"]) * new_scale
+        self.assertAlmostEqual(face.property("viewPanX"), hard_x2, delta=1e-3,
+                               msg="the wheel broke the soft clamp")
+        self.assertAlmostEqual(face.property("viewPanY"), hard_y2, delta=1e-3,
+                               msg="the wheel broke the soft clamp")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the clamped wheel never settled")
+        # A release OUTSIDE the face (the pointer left the area
+        # mid-drag) cancels the grab: the exit drive must fire all
+        # the same (the live wedge — the scene once stayed on the
+        # warm raster forever).
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx - 200, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx + 400, cy,
+              Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "an outside-face release never left the warm raster")
+        # Zooming back out to 100% is the ONE snap the camera
+        # allows: the fit fills the viewport, centred.
+        for _down in range(8):
+            wheel(cx, cy, -120)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertEqual(face.property("viewScale"), 1.0,
+                         "the zoom-out never landed on the fit")
+        self.assertEqual(face.property("viewPanX"), 0.0,
+                         "the fit never recentred")
+        self.assertEqual(face.property("viewPanY"), 0.0,
+                         "the fit never recentred")
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])

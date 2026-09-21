@@ -84,6 +84,19 @@ Item {
     property real _zoomAnchorY: 0.0
     property real _zoomBedX: 0.0
     property real _zoomBedY: 0.0
+    // The drags applied since the last wheel: the eased pan carries
+    // them on top of the focal derivation, so a held drag and a
+    // live zoom coexist — the glide pans the scene, the deltas ride
+    // along, and the ease lands exactly on the dragged target.
+    property real _panDragDeltaX: 0.0
+    property real _panDragDeltaY: 0.0
+    // The toolhead dot's camera: the DISPLAY transform during a
+    // gesture (the warm raster's picture — the whole scene rides
+    // ONE camera), the target otherwise. The two coincide at every
+    // interaction boundary, so the flip never jumps.
+    readonly property real _dotScale: root._interactionActive ? root.displayScale : root.viewScale
+    readonly property real _dotPanX: root._interactionActive ? root.displayPanX : root.viewPanX
+    readonly property real _dotPanY: root._interactionActive ? root.displayPanY : root.viewPanY
     // The camera interaction state: while a gesture is live (or the
     // exact scene is still reassembling toward the final target),
     // the warm navigation raster owns the heavy-scene presentation.
@@ -189,12 +202,13 @@ Item {
                 newScale = root.viewScale;  // the exact snap at the end
             }
             root.displayScale = newScale;
-            // A live drag owns the pan: the scale eases underneath,
-            // the pointer's pan stands.
-            if (!viewGesture.pressed) {
-                root.displayPanX = root._zoomAnchorX - root._zoomBedX * root.displayScale;
-                root.displayPanY = root._zoomAnchorY - root._zoomBedY * root.displayScale;
-            }
+            // The derived pan runs EVERY tick — held or not: the
+            // focal glide pans the scene while a drag's accumulated
+            // deltas ride on top, so the cursor's bed point stays
+            // put even with the button down (the live origin-zoom
+            // report — the raster once scaled in place while held).
+            root.displayPanX = root._zoomAnchorX - root._zoomBedX * root.displayScale + root._panDragDeltaX;
+            root.displayPanY = root._zoomAnchorY - root._zoomBedY * root.displayScale + root._panDragDeltaY;
             if (newScale === root.viewScale) {
                 zoomAnimator.stop();
                 if (root._exactReady() && !viewGesture.pressed) {
@@ -320,6 +334,20 @@ Item {
         // gesture's switch is a visibility flip, never a first-use
         // decode/upload hitch.
         return root.progress != null && root.progress.navigationData !== undefined ? root.progress.navigationData : "";
+    }
+
+    function _finishGesture() {
+        // The gesture's end — a release OR a cancel (the grab died
+        // outside the face, the live wedge: the scene never left the
+        // warm raster). Nothing re-syncs here: the accumulated delta
+        // already carries the dragged pan through the ease's
+        // remaining glide (a re-anchor would jump the display — the
+        // live report's release snap). The exit's re-check drives
+        // the barrier until the complete exact scene is
+        // presentation-ready.
+        if (root._interactionActive) {
+            panExitCheck.restart();
+        }
     }
 
     function _enterInteraction() {
@@ -456,6 +484,11 @@ Item {
     // the plot's rectangle covering the face; an axis where the bed is
     // smaller than the face (the full-bed fit) centres there instead —
     // the standing "no pan at full zoom" ruling.
+    // The zoom/pan soft clamp's margin: at least this many pixels of
+    // the bed stay visible on every side, however far the camera
+    // pans (the live ruling).
+    property real _panSoftMargin: 100.0
+
     function _clampPan(x, y) {
         var plot = mapping._plot;
         if (plot == null) {
@@ -477,6 +510,36 @@ Item {
         return {
             "x": lowX > highX ? 0.0 : Math.min(highX, Math.max(lowX, x)),
             "y": lowY > highY ? 0.0 : Math.min(highY, Math.max(lowY, y))
+        };
+    }
+
+    function _softClampPan(x, y) {
+        // The zoom/pan soft clamp: the camera moves freely while
+        // any of the bed shows, but the bed may never leave the
+        // viewport wholly — _panSoftMargin pixels stay visible on
+        // every side (the live ruling: a fully off-bed view is
+        // never useful, and the corner camera must not snap the bed
+        // to the viewport's edge).
+        var plot = mapping._plot;
+        if (plot == null) {
+            return {
+                "x": x,
+                "y": y
+            };
+        }
+        var scale = root.viewScale;
+        var bed = plot.bed;
+        var left = bed.offsetX * scale;
+        var right = left + bed.plotWidth * scale;
+        var top = bed.offsetY * scale;
+        var bottom = top + bed.plotHeight * scale;
+        var lowX = root._panSoftMargin - right;
+        var highX = width - root._panSoftMargin - left;
+        var lowY = root._panSoftMargin - bottom;
+        var highY = height - root._panSoftMargin - top;
+        return {
+            "x": lowX > highX ? x : Math.min(highX, Math.max(lowX, x)),
+            "y": lowY > highY ? y : Math.min(highY, Math.max(lowY, y))
         };
     }
 
@@ -1299,8 +1362,8 @@ Item {
         // stale geometry until the next pan (the live report — the
         // jump landed off the centre). The whole-var read is tracked
         // and the binding re-runs on every re-fit.
-        x: root.dot != null && mapping._plot != null ? root.viewPanX + (mapping._plot.bed.offsetX + (root.dot.x - mapping._plot.bed.bedXMin) * mapping._plot.sx) * root.viewScale - width / 2 : 0
-        y: root.dot != null && mapping._plot != null ? root.viewPanY + (mapping._plot.bed.offsetY + (mapping._plot.bed.bedYMax - root.dot.y) * mapping._plot.sy) * root.viewScale - height / 2 : 0
+        x: root.dot != null && mapping._plot != null ? root._dotPanX + (mapping._plot.bed.offsetX + (root.dot.x - mapping._plot.bed.bedXMin) * mapping._plot.sx) * root._dotScale - width / 2 : 0
+        y: root.dot != null && mapping._plot != null ? root._dotPanY + (mapping._plot.bed.offsetY + (mapping._plot.bed.bedYMax - root.dot.y) * mapping._plot.sy) * root._dotScale - height / 2 : 0
     }
 
     // The zoom/pan gestures (the live request): the wheel zooms about
@@ -1314,12 +1377,6 @@ Item {
         acceptedButtons: Qt.LeftButton
         onWheel: function (wheel) {
             if (mapping._plot == null) {
-                return;
-            }
-            // A held drag owns the camera: the wheel is inert until
-            // the pointer releases (the live ruling — no zoom while
-            // panning).
-            if (viewGesture.pressed) {
                 return;
             }
             var factor = wheel.angleDelta.y > 0 ? 1.25 : 0.8;
@@ -1341,11 +1398,17 @@ Item {
             } else {
                 // The point under the cursor stays put, computed
                 // from the CURRENT DISPLAY transform (the retarget
-                // always starts where the camera actually is).
+                // always starts where the camera actually is). The
+                // pan is only SOFT-clamped: the bed may never leave
+                // the viewport wholly — _panSoftMargin pixels stay
+                // visible on every side (the live ruling). Beyond
+                // that the camera stays exactly where the focal
+                // point puts it; only the 100% fit (above)
+                // recentres.
                 root.viewScale = target;
                 root.viewPanX = wheel.x - (wheel.x - root.displayPanX) / root.displayScale * target;
                 root.viewPanY = wheel.y - (wheel.y - root.displayPanY) / root.displayScale * target;
-                var clamped = root._clampPan(root.viewPanX, root.viewPanY);
+                var clamped = root._softClampPan(root.viewPanX, root.viewPanY);
                 root.viewPanX = clamped.x;
                 root.viewPanY = clamped.y;
             }
@@ -1353,21 +1416,19 @@ Item {
             root._zoomAnchorY = wheel.y;
             root._zoomBedX = (wheel.x - root.viewPanX) / root.viewScale;
             root._zoomBedY = (wheel.y - root.viewPanY) / root.viewScale;
+            // The wheel re-owns the camera promise: the ease runs
+            // from the CURRENT display (held-drag pan included) and
+            // the deltas from here on ride the glide.
+            root._panDragDeltaX = 0.0;
+            root._panDragDeltaY = 0.0;
             zoomAnimator.restart();
         }
         onPressed: function (mouse) {
+            // The press moves nothing: the camera stays exactly where
+            // it is (no start snap) — a running ease keeps gliding
+            // underneath and the first move's delta applies from this
+            // grab point.
             root._enterInteraction();
-            // The grab takes the camera wholesale: a running ease
-            // stops at the camera the user sees and the invisible
-            // target follows the display — the drag then moves both
-            // together, so no snap at the press and none at the
-            // release.
-            if (zoomAnimator.running) {
-                zoomAnimator.stop();
-                root.viewScale = root.displayScale;
-            }
-            root.viewPanX = root.displayPanX;
-            root.viewPanY = root.displayPanY;
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
@@ -1377,25 +1438,28 @@ Item {
             }
             // The pan tracks the pointer directly: the display AND
             // the target move together (no pan easing — the nav
-            // raster makes the direct pan cheap).
-            root.displayPanX += mouse.x - root._dragX;
-            root.displayPanY += mouse.y - root._dragY;
-            root.viewPanX += mouse.x - root._dragX;
-            root.viewPanY += mouse.y - root._dragY;
+            // raster makes the direct pan cheap). The delta also
+            // accumulates into the eased pan, so a drag during a
+            // zoom converges exactly onto the dragged target. The
+            // soft clamp applies the APPLIED delta: once the bed's
+            // margin touches the viewport's edge, the camera stops
+            // there while the pointer keeps moving.
+            var dx = mouse.x - root._dragX;
+            var dy = mouse.y - root._dragY;
+            var clamped = root._softClampPan(root.viewPanX + dx, root.viewPanY + dy);
+            var appliedX = clamped.x - root.viewPanX;
+            var appliedY = clamped.y - root.viewPanY;
+            root.viewPanX = clamped.x;
+            root.viewPanY = clamped.y;
+            root.displayPanX += appliedX;
+            root.displayPanY += appliedY;
+            root._panDragDeltaX += appliedX;
+            root._panDragDeltaY += appliedY;
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
-        onReleased: {
-            // Nothing re-syncs here — the press already claimed the
-            // camera for the drag (the target follows the display,
-            // the ease stopped), and a re-anchor would jump the
-            // display (the live report's release snap). The exit's
-            // re-check drives the barrier until the complete exact
-            // scene is presentation-ready.
-            if (root._interactionActive) {
-                panExitCheck.restart();
-            }
-        }
+        onReleased: root._finishGesture()
+        onCanceled: root._finishGesture()
         onDoubleClicked: {
             // The reset is a programmatic camera change: the target
             // and the display land together, and the exact scene

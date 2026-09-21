@@ -114,6 +114,19 @@ class RasterBridge(QObject):
         super().__init__(parent)
 
 
+def _bridge_emit(bridge, signal, *args):
+    """The worker -> owner handoff with a teardown guard: a late
+    worker's emit after the bridge's C++ side died (the owner's
+    deleteLater) would raise and abort the pool thread — the job is
+    dropped instead; no owner remains to commit it. True when the
+    emit landed."""
+    try:
+        getattr(bridge, signal).emit(*args)
+        return True
+    except RuntimeError:
+        return False
+
+
 class PlateLayer(QObject):
     """One prepared layer's rendered images plus its motion count.
 
