@@ -412,9 +412,12 @@ G1 X5 Y0 Z0.2
             # A stray hydration of an old layer cannot evict the window
             # around the followed layer.
             self.assertTrue(hydrate_layer_from_file(index, path, 0, keep_anchor=2))
-            self.assertEqual(index.hydrated_layers, {1, 2, 3})
-            # The stray hydration was evicted with its arrays, but the
-            # count it recorded persists.
+            # The live window survives the stray hydration, and the
+            # freshly hydrated layer keeps its own ±1 window until the
+            # next hydrate (the background pass's prepare window —
+            # bounded at the three windows' union).
+            self.assertEqual(index.hydrated_layers, {0, 1, 2, 3})
+            # The stray hydration's count persists.
             self.assertEqual(index.motion_count(0), 2)
         finally:
             os.remove(path)

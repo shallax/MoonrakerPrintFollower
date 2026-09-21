@@ -237,12 +237,18 @@ Item {
     property int _anchor: -1
     property int _paintsSinceReset: 0
     property bool _progressDirty: false
-    // The raster-reuse keys (the live request): a canvas that already
-    // holds exactly this picture skips the walk. The seek's 3 s was
-    // four full dense re-walks, and a return to an already-drawn
-    // layer must not pay them again. One key per canvas, covering
-    // only that canvas' own inputs, so a toggle repaints only what
-    // it touches.
+    // The raster state keys: each canvas records the key of the LAST
+    // picture it painted, and a repaint request whose key matches is
+    // skipped. That covers the unchanged state (a quiet poll, a
+    // payload re-publish of the same content) — it is NOT a cache of
+    // previously visited layers: an A → B → A flip re-walks A, since
+    // each canvas holds one image (the review's ruling — the claim
+    // stood without an implementation). The measured walk cost is
+    // ~150 ms for a 150k-point stack at 150% zoom; whether revisit
+    // caching is worth a bounded raster pool is decided on the
+    // end-to-end measurement, not assumed here. One key per canvas,
+    // covering only that canvas' own inputs, so a toggle repaints
+    // only what it touches.
     property string _ghostKey: ""
     property string _pendingKey: ""
     property string _progressKey: ""
@@ -457,15 +463,16 @@ Item {
             }
             var layers = root.progress.layers;
             // The ghost layers: full paths at low alpha — the stack
-            // reads through (the walked transparency ruling). The
-            // context walk is strided: a coarse chord trace reads
-            // identically at 30% alpha for a fraction of the points
-            // (the live request — the seek's full dense walks).
+            // reads through (the walked transparency ruling). Full
+            // fidelity, every vertex: a strided walk has no geometric
+            // error bound and low opacity does not buy one (the
+            // review's ruling); the walk cost is paid by the raster
+            // reuse, never by dropping geometry.
             if (root.showPrevious && layers.prev != null) {
-                _drawLayer(ctx, layers.prev, 0.30, -1, false, -1, _ghostStride(layers.prev));
+                _drawLayer(ctx, layers.prev, 0.30, -1, false, -1);
             }
             if (root.showNext && layers.next != null) {
-                _drawLayer(ctx, layers.next, 0.30, -1, false, -1, _ghostStride(layers.next));
+                _drawLayer(ctx, layers.next, 0.30, -1, false, -1);
             }
         }
     }
@@ -488,7 +495,7 @@ Item {
             }
             // The grey base: the whole layer, one honest colour.
             if (root.showBase) {
-                _drawLayer(ctx, current, 0.55, -1, true, -1, 1);
+                _drawLayer(ctx, current, 0.55, -1, true, -1);
             }
         }
     }
@@ -545,7 +552,7 @@ Item {
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3
             // floor).
-            _drawLayer(ctx, current, 1.0, split, false, root._lastSplit, 1);
+            _drawLayer(ctx, current, 1.0, split, false, root._lastSplit);
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live
             // rulings).
@@ -577,18 +584,7 @@ Item {
         return i < points.length && (split < 0 || points[i][2] < split);
     }
 
-    function _ghostStride(layer) {
-        // The context ghosts' vertex stride: every stride-th vertex is
-        // stroked, so the chord trace stays within the travel channel's
-        // own budget whatever the layer's density (the live request).
-        var motions = layer != null && layer.motions !== undefined ? layer.motions : 0;
-        if (motions <= 12000) {
-            return 1;
-        }
-        return Math.min(8, Math.max(1, Math.ceil(motions / 12000)));
-    }
-
-    function _drawLayer(ctx, layer, alpha, split, base, from, stride) {
+    function _drawLayer(ctx, layer, alpha, split, base, from) {
         // The transform inlined: hundreds of thousands of
         // plateToScene calls per paint were the follower's cost.
         var plot = mapping._plot;
@@ -631,25 +627,9 @@ Item {
                 // feature change, or the boundary the last poll painted.
                 // No pan term: the item's translation carries the view.
                 ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
-                if (stride <= 1) {
-                    while (_edgePrinted(points, i, split)) {
-                        ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
-                        ++i;
-                    }
-                } else {
-                    // The strided walk: every stride-th vertex, and the
-                    // segment's last printed vertex always lands so the
-                    // chord reaches the boundary it belongs to.
-                    var first = i;
-                    while (_edgePrinted(points, i, split)) {
-                        if ((i - first) % stride === 0) {
-                            ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
-                        }
-                        ++i;
-                    }
-                    if ((i - 1 - first) % stride !== 0) {
-                        ctx.lineTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
-                    }
+                while (_edgePrinted(points, i, split)) {
+                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
+                    ++i;
                 }
                 ctx.stroke();
             }

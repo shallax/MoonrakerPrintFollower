@@ -514,17 +514,21 @@ class FeatureRetentionTests(unittest.TestCase):
         index.manual_anchor = 5
         for layer in (5, 4, 3, 2):
             self.assertTrue(hydrate_layer_from_file(index, path, layer, keep_anchor=0))
-        # The frozen layer and the neighbour below it hold; the layer
-        # just hydrated sits in NEITHER window and goes straight out.
-        self.assertEqual(index.hydrated_layers, {4, 5})
+        # The frozen layer and the neighbour below it hold, and each
+        # freshly hydrated layer keeps its own ±1 window until the
+        # NEXT hydrate evicts it (the background pass's guarantee:
+        # the arrays stay valid through the prepare and encode). The
+        # walk's newest layer is always the survivor — memory stays
+        # bounded at the three windows.
+        self.assertEqual(index.hydrated_layers, {2, 3, 4, 5})
         self.assertEqual(index.motion_count(5), 1)
-        # The control: with no frozen anchor the same walk throws
-        # everything away as it goes — the detached face's layer would
-        # be evicted by the print's own advance.
+        # The control: with no frozen anchor the same walk keeps the
+        # LAST freshly hydrated layer's window alone — still bounded,
+        # and the pass's prepare window is always the most recent.
         control = build_index_from_file(path, compact=True)
         for layer in (5, 4, 3, 2):
             self.assertTrue(hydrate_layer_from_file(control, path, layer, keep_anchor=0))
-        self.assertEqual(control.hydrated_layers, set())
+        self.assertEqual(control.hydrated_layers, {2, 3})
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
@@ -676,8 +680,12 @@ class HydrationWindowTests(unittest.TestCase):
 
     def test_the_full_cache_answers_after_the_window_evicts(self):
         # The full prepared cache's promise: a layer the window's
-        # store no longer holds decodes from the compact form instead
-        # of re-walking its motions.
+        # store no longer holds is served from the compact form —
+        # decoded by the WORKER into the hot cache (never on the UI
+        # thread, the review's ruling), and the bundle's first display
+        # reuses the worker's own payload instead of decoding a second
+        # object (the review's regression: the worker-prepared layer
+        # must not be decoded again).
         index = self._bind(layers=8, hydrated=(5,))
         from plugins.PlateProgress import encode_layer, prepare_layer
         payload = prepare_layer(index, 5)
@@ -685,8 +693,12 @@ class HydrationWindowTests(unittest.TestCase):
         self.service._full_cache[5] = encode_layer(payload)
         from plugins.PlateProgress import _prepared_layers
         _prepared_layers.pop((id(index), 5), None)
+        # The worker's commit lands the decoded payload in the hot
+        # presentation cache.
+        self.service._decoded_lru[5] = payload
         bundle = self.service.plate_layers(5)
-        self.assertIsNotNone(bundle["current"])
+        self.assertIs(bundle["current"], payload,
+                      "the worker's payload was decoded again for the first display")
         self.assertEqual(bundle["current"]["motions"], payload["motions"])
 
     def test_alternating_anchors_keep_both_bundles(self):
@@ -706,12 +718,16 @@ class HydrationWindowTests(unittest.TestCase):
     def test_the_layers_memo_rebuilds_when_the_hydration_fill_lands(self):
         # The live report: a far seek's current stayed blank forever —
         # the bundle was memoised while the anchor's layer was still
-        # hydrating, and the hydration state never entered the key.
+        # loading, and the fill state never entered the key. The fill
+        # is the worker's decoded store now: hydration alone serves
+        # nothing (the UI thread never prepares or decodes).
         index = self._bind(layers=8, hydrated=(4, 6))
         self.service.set_manual_anchor(5)
         first = self.service.plate_layers(5)
         self.assertIsNone(first["current"])
+        from plugins.PlateProgress import prepare_layer
         index.hydrated_layers.add(5)
+        self.service._decoded_lru[5] = prepare_layer(index, 5)
         second = self.service.plate_layers(5)
         self.assertIsNotNone(second["current"])
 
@@ -757,6 +773,12 @@ class PlateSplitRefinementTests(unittest.TestCase):
         index = make_index(layers=layers, motions=motions)
         view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
         self.service._view = view
+        # The worker's commit: the decoded payloads land in the hot
+        # presentation cache — the bundle reads no other store (the
+        # UI thread never prepares or decodes).
+        from plugins.PlateProgress import prepare_layer
+        for layer in range(layers):
+            self.service._decoded_lru[layer] = prepare_layer(index, layer)
         return list(index.motion_offsets[0])
 
     def test_a_machine_without_live_telemetry_keeps_the_coarse_boundary(self):

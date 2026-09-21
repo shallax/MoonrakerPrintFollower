@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
 from dataclasses import dataclass
 import threading
 import time
@@ -100,6 +101,17 @@ class GCodeIndexService(QObject):
         # lands here too.
         self._full_cache = {}
         self._full_next = 0
+        # The hot presentation cache (the review's design): DECODED
+        # payloads, keyed by layer, access-order bounded. The bundle
+        # reads it first and reuses the same Python object, so an
+        # adjacent seek shares two of its three layers verbatim (no
+        # re-decode, no QVariant re-conversion) and the worker hands
+        # the first display its own payload instead of a second
+        # object decoded from the compact store. Six layers = the
+        # live and frozen windows side by side; a dense decoded layer
+        # is tens of MB, so the bound is the memory budget.
+        self._decoded_lru = OrderedDict()
+        self._decoded_lru_capacity = 6
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
@@ -148,6 +160,8 @@ class GCodeIndexService(QObject):
         # The full cache belongs to the file that was printing too.
         self._full_cache = {}
         self._full_next = 0
+        # The hot presentation cache belongs to that file as well.
+        self._decoded_lru = OrderedDict()
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
         # The painted boundary belongs to that file's layer too: a new
@@ -239,55 +253,74 @@ class GCodeIndexService(QObject):
         if view is None or self._manual_anchor is None:
             return
         for candidate in (self._manual_anchor - 1, self._manual_anchor, self._manual_anchor + 1):
-            if 0 <= candidate < len(view.ranges) and not view.hydrated(candidate) \
+            # Demanded until the hot cache holds it — the bundle reads
+            # the decoded store and the worker hands it over, so a
+            # cached-and-decoded layer needs NO rehydration merely to
+            # display (the review's finding): the worker's hydrate is
+            # the compact store's own no-op when the arrays are still
+            # present, and the manual scrub's split is used as-given.
+            # The criterion covers the non-compact case too, where
+            # nothing is ever unhydrated but the decoded store can
+            # still miss — a cold seek must land via the worker,
+            # never through a UI-thread prepare.
+            if 0 <= candidate < len(view.ranges) \
+                    and candidate not in self._decoded_lru \
                     and candidate not in self._failed_hydrate:
                 self._hydrate.add(candidate)
 
     def plate_layers(self, anchor):
         """The follower's STATIC half: the prev/current/next bundle,
-        memoised per anchor and hydration fill — the model republishes
-        it with a stable identity so QML never re-wraps the polylines
-        on a quiet poll (the perf panel's split). TWO slots: the live
-        payload and the frozen one alternate every poll while
-        detached, and one slot thrashed — each ask evicted the
-        other's bundle, both rebuilt every poll, and the whole plugin
-        re-churned (the live report). The hydration flags are part of
-        the key: a bundle built while the anchor's layer was still
-        hydrating must rebuild when it lands (the live report — a far
-        seek's current stayed blank forever)."""
+        memoised per anchor — the model republishes it with a stable
+        identity so QML never re-wraps the polylines on a quiet poll
+        (the perf panel's split). TWO slots: the live payload and the
+        frozen one alternate every poll while detached, and one slot
+        thrashed — each ask evicted the other's bundle, both rebuilt
+        every poll, and the whole plugin re-churned (the live report).
+
+        The bundle reads the HOT presentation cache first: an adjacent
+        seek shares two of its three layers as the SAME Python objects
+        (no re-decode, no QVariant re-conversion — the review's warm-
+        seek finding), and the worker hands the first display its own
+        payload instead of a second object decoded from the compact
+        store. A miss reads as not loaded — the UI thread NEVER walks
+        geometry (the review's cold-seek finding); the demand owns it.
+        The counts/hydration/decoded states are all part of the memo
+        key: a bundle built while a layer was still landing rebuilds
+        when it does."""
         if self._view is None:
             return {}
         index = self._view._index
+        window = (anchor - 1, anchor, anchor + 1)
         with index.cache_lock:
-            window = (anchor - 1, anchor, anchor + 1)
             counts = tuple(index.motion_count(layer) for layer in window)
             hydrated = tuple(self._view.hydrated(layer) for layer in window)
-            key = (counts, hydrated)
-            memo = self._plate_layers_memos.get(anchor)
-            if memo is not None and memo[0] == key:
-                return memo[1]
+        decoded = tuple(1 if layer in self._decoded_lru else 0 for layer in window)
+        key = (counts, hydrated, decoded)
+        memo = self._plate_layers_memos.get(anchor)
+        if memo is not None and memo[0] == key:
+            return memo[1]
 
-            def layer_or_full(layer):
-                # The full prepared cache answers first (a decode,
-                # never a re-walk); the window's store covers what the
-                # pass has not reached, and an unprepared layer reads
-                # as not loaded.
-                if 0 <= layer < len(index.ranges):
-                    raw = self._full_cache.get(layer)
-                    if raw is not None:
-                        return _decode_layer(raw)
-                return _prepare_layer(index, layer)
+        # The decode-heavy work runs OUTSIDE the critical section
+        # (the review's lock finding): the hot cache's reads are the
+        # only per-layer cost here.
+        def layer_or_full(layer):
+            if 0 <= layer < len(index.ranges):
+                payload = self._decoded_lru.get(layer)
+                if payload is not None:
+                    self._decoded_lru.move_to_end(layer)
+                    return payload
+            return None
 
-            bundle = {"prev": layer_or_full(anchor - 1),
-                      "current": layer_or_full(anchor),
-                      "next": layer_or_full(anchor + 1)}
-            if len(self._plate_layers_memos) >= 2:
-                # The demand alternates two anchors at most; a third
-                # (a layer change, a new seek) resets the pair.
-                self._plate_layers_memos = {anchor: (key, bundle)}
-            else:
-                self._plate_layers_memos[anchor] = (key, bundle)
-            return bundle
+        bundle = {"prev": layer_or_full(anchor - 1),
+                  "current": layer_or_full(anchor),
+                  "next": layer_or_full(anchor + 1)}
+        if len(self._plate_layers_memos) >= 2:
+            # The demand alternates two anchors at most; a third
+            # (a layer change, a new seek) resets the pair.
+            self._plate_layers_memos = {anchor: (key, bundle)}
+        else:
+            self._plate_layers_memos[anchor] = (key, bundle)
+        return bundle
 
     def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -523,50 +556,83 @@ class GCodeIndexService(QObject):
         self._apply_manual_anchor()
         # Two windows stand: the live print's own and the frozen
         # follower's (the pop-over's detach) — neither may drop the
-        # other's demand.
+        # other's demand. Each keeps what it needs: the LIVE window
+        # hydrates for the physical refinement's arrays, the MANUAL
+        # window fills the hot presentation cache (a decoded layer is
+        # served — no rehydrate merely to display prepared geometry,
+        # the review's finding).
         manual = index.manual_anchor
-        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)
+        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges)
                          and n not in self._failed_hydrate
-                         and ((index.followed_layer is None
-                               or index.followed_layer - 1 <= n <= index.followed_layer + 1)
-                              or (manual is not None and manual - 1 <= n <= manual + 1))}
+                         and (((index.followed_layer is None
+                                or index.followed_layer - 1 <= n <= index.followed_layer + 1)
+                               and not self._view.hydrated(n))
+                              or (manual is not None
+                                  and manual - 1 <= n <= manual + 1
+                                  and n not in self._decoded_lru))}
         if self._hydrate:
             lease = self._files.lease()
             if lease is None:
                 self._files.request_file()
                 return
             window = sorted(self._hydrate)
-            self._hydrate.clear()
-            self._hydrating = set(window)
+            priority = [n for n in window if n == self._manual_anchor]
+            if len(priority) == 1:
+                # A manual seek's anchor rides its own task: the
+                # bundle's CURRENT lands as soon as the anchor is
+                # decoded and the label clears, while the window's
+                # edges follow in the NEXT task (the live report:
+                # the label waited for the whole three-layer window).
+                self._hydrate.difference_update(priority)
+                submitted = priority
+            else:
+                self._hydrate.clear()
+                submitted = window
+            self._hydrating = set(submitted)
+            cache = self._full_cache
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
             # The WHOLE demanded window rides ONE task: a seek's three
             # layers arrive together instead of through three chained
-            # round-trips (the live report's ~3s per slide). The
-            # preparation rides the same worker task (the service's
-            # state machine owns ONE busy task at a time): the dense
-            # polyline build never runs on the UI thread, and the
-            # poll-time read hits the prepared store's memo.
+            # round-trips. The worker OWNS NOTHING (the review's
+            # ownership finding): it returns (failed, stash) and the
+            # generation-checked _finish commits — a stale old-job
+            # worker can never touch the new job's stores. A cached
+            # layer decodes straight off the compact store instead of
+            # re-reading the file and re-walking the geometry.
             def hydrate_and_prepare():
                 failed = []
-                for layer in window:
+                stash = {}
+                for layer in submitted:
+                    raw = cache.get(layer)
+                    if raw is not None:
+                        try:
+                            stash[layer] = (raw, _decode_layer(raw))
+                        except Exception:
+                            failed.append(layer)
+                        continue
                     result = hydrate_layer_from_file(index, lease.path, layer)
                     if not result:
                         failed.append(layer)
                         continue
                     payload = _prepare_layer(index, layer)
-                    if payload is not None:
-                        # The demanded layer lands in the full cache too:
-                        # its prepared form survives the window's eviction.
-                        # An encode failure must never cost the hydration
-                        # itself (the latch would read the layer as failed
-                        # and the seek would wait for the pass's frontier).
-                        try:
-                            self._full_cache.setdefault(layer, _encode_layer(payload))
-                        except Exception:
-                            pass
-                return failed
+                    if payload is None:
+                        # A hydrate that succeeded but prepared nothing
+                        # is not a hydrate failure: it must not latch
+                        # (the latch exists to stop whole-file re-reads,
+                        # and a re-ask here costs neither).
+                        continue
+                    encoded = None
+                    # An encode failure must never cost the layer its
+                    # display — the decoded payload still lands in the
+                    # hot cache (the compact store just misses it).
+                    try:
+                        encoded = _encode_layer(payload)
+                    except Exception:
+                        pass
+                    stash[layer] = (encoded, payload)
+                return failed, stash
             self._submit("hydrate", hydrate_and_prepare, lease)
         elif self._save and strong:
             # The index cache save is a one-shot and must not wait for
@@ -578,27 +644,33 @@ class GCodeIndexService(QObject):
             # The full prepared cache's background pass (the live
             # request): one bounded batch per worker task, so the
             # demanded hydrates above always cut in. Every layer ends
-            # up in the compact store, and a seek only waits for the
-            # one layer it asked for.
+            # up in the compact store. The frontier is the worker's
+            # LOCAL state and its return value — never a live
+            # mutation of the service (the review's ownership
+            # finding) — and the freshly hydrated layer's own window
+            # survives the retention until its prepare and encode
+            # complete (the review's incomplete-pass finding).
             lease = self._files.lease()
             if lease is None:
                 self._files.request_file()
                 return
             index = self._view._index
             cache = self._full_cache
+            start = self._full_next
             deadline = time.monotonic() + 0.25
 
             def full_prep_batch():
                 encoded = {}
+                frontier = start
                 while time.monotonic() < deadline:
-                    layer = self._full_next
+                    layer = frontier
                     if layer >= len(index.ranges):
                         break
                     if layer in self._failed_hydrate:
                         # The latch applies to the pass too: a refused
                         # layer must not retry every poll (the same
                         # whole-file re-read the demand path avoids).
-                        self._full_next = layer + 1
+                        frontier = layer + 1
                         continue
                     if layer not in cache:
                         if index.compact and layer not in index.hydrated_layers:
@@ -613,8 +685,8 @@ class GCodeIndexService(QObject):
                                 # stays out of the cache; the pass
                                 # must walk on, never stall.
                                 pass
-                    self._full_next = layer + 1
-                return encoded
+                    frontier = layer + 1
+                return frontier, encoded
 
             self._submit("fullprep", full_prep_batch, lease)
 
@@ -646,11 +718,16 @@ class GCodeIndexService(QObject):
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)
             elif kind == "hydrate":
-                # The batch returns the layers it could not hydrate (a
-                # task exception returns None: latch the whole window).
-                # A failed hydration must not be re-attempted on every
-                # poll — each attempt re-reads the whole file. The latch
-                # clears when a new file arrives or the index is rebuilt.
+                # The batch returns (failed, stash): the layers it could
+                # not hydrate and the (encoded, decoded) payloads the
+                # worker prepared. A task exception returns None: latch
+                # the whole window. The commit runs HERE, under the
+                # generation the worker was submitted for — a stale
+                # worker's results never touch the new job's stores
+                # (the review's ownership finding). A failed hydration
+                # must not be re-attempted on every poll — each attempt
+                # re-reads the whole file. The latch clears when a new
+                # file arrives or the index is rebuilt.
                 window = self._hydrating
                 self._hydrating = None
                 if isinstance(window, (set, list, tuple)):
@@ -659,13 +736,34 @@ class GCodeIndexService(QObject):
                     window_layers = [window]
                 else:
                     window_layers = []
-                failed = value if isinstance(value, list) else ([] if value else window_layers)
+                if isinstance(value, tuple) and len(value) == 2:
+                    failed, stash = value
+                else:
+                    failed = [] if value else window_layers
+                    stash = {}
+                for layer, (encoded, decoded) in stash.items():
+                    if encoded is not None:
+                        self._full_cache.setdefault(layer, encoded)
+                    self._decoded_lru[layer] = decoded
+                    self._decoded_lru.move_to_end(layer)
+                while len(self._decoded_lru) > self._decoded_lru_capacity:
+                    self._decoded_lru.popitem(last=False)
                 if len(failed) < len(window_layers) or (bool(value) and not window_layers):
                     self._save = True
                 self._failed_hydrate.update(failed)
             elif kind == "fullprep":
-                if isinstance(value, dict):
-                    self._full_cache.update(value)
+                # (frontier, encoded): the worker's LOCAL results —
+                # committed here, never mutated across the thread
+                # boundary (the review's ownership finding). The
+                # frontier never regresses; a mid-flight seek rewind
+                # is superseded by the demand, which owns the sought
+                # window now.
+                if isinstance(value, tuple) and len(value) == 2:
+                    frontier, encoded = value
+                    if isinstance(encoded, dict):
+                        self._full_cache.update(encoded)
+                    if isinstance(frontier, int):
+                        self._full_next = max(self._full_next, frontier)
             self.changed.emit()
         self._advance()
 

@@ -498,7 +498,10 @@ class HydrationTests(unittest.TestCase):
         hydrate_layer_from_file(index, path, 3)
         # The live print's layer wins over the worker's pick: the window
         # is [3, 5] around layer 4, not around the hydrated layer 3.
-        self.assertEqual(index.hydrated_layers, {3})
+        # The freshly hydrated layer keeps its own ±1 window too (the
+        # background pass's prepare window), so the walk's survivor 2
+        # stays until the next hydrate evicts it.
+        self.assertEqual(index.hydrated_layers, {2, 3})
         hydrate_layer_from_file(index, path, 5)
         self.assertEqual(index.hydrated_layers, {3, 5})
         hydrate_layer_from_file(index, path, 0, keep_anchor=0)
