@@ -197,6 +197,9 @@ if QT_AVAILABLE:
             self.plate_lives.append(live_position)
             return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
 
+        def plate_pass_fraction(self):
+            return None
+
         def reset_tracking(self):
             self.tracking_resets += 1
 

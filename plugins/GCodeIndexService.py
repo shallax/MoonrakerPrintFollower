@@ -101,6 +101,10 @@ class GCodeIndexService(QObject):
         # lands here too.
         self._full_cache = {}
         self._full_next = 0
+        # The index-cache save's throttle: a save every hydrate starved
+        # the background pass during a live print (the save branch runs
+        # before the pass branch — the "no quicker" live report).
+        self._last_save_at = None
         # The hot presentation cache (the review's design): DECODED
         # payloads, keyed by layer, access-order bounded. The bundle
         # reads it first and reuses the same Python object, so an
@@ -321,6 +325,20 @@ class GCodeIndexService(QObject):
         else:
             self._plate_layers_memos[anchor] = (key, bundle)
         return bundle
+
+    def plate_pass_fraction(self):
+        """The background optimisation's honest progress: the share of
+        layers the prepared store holds. The cache IS the evidence —
+        the frontier alone would count layers the latch refused, and
+        the job bar's band must never read 100% while a layer is
+        missing (the review's completion-reporting finding). None
+        without a view; 1.0 only when every layer is prepared."""
+        if self._view is None:
+            return None
+        total = len(self._view.ranges)
+        if not total:
+            return None
+        return len(self._full_cache) / total
 
     def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -634,10 +652,16 @@ class GCodeIndexService(QObject):
                     stash[layer] = (encoded, payload)
                 return failed, stash
             self._submit("hydrate", hydrate_and_prepare, lease)
-        elif self._save and strong:
+        elif self._save and strong \
+                and (self._last_save_at is None or time.monotonic() - self._last_save_at >= 30.0):
             # The index cache save is a one-shot and must not wait for
-            # the pass to walk the whole file.
+            # the pass to walk the whole file. It is ALSO throttled:
+            # a save per successful hydrate (every live layer change)
+            # interleaved a serialise between the pass's batches and
+            # starved the whole walk during a print (the live report —
+            # far layers never sped up).
             self._save = False
+            self._last_save_at = time.monotonic()
             index = self._view._index
             self._submit("save", lambda: self._cache.save(identity, index))
         elif self._view is not None and self._full_next < len(self._view.ranges):

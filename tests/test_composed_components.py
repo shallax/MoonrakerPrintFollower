@@ -375,6 +375,24 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(model.plateProgressAvailable,
                         "the seek's layer never published without new telemetry")
 
+    def test_the_job_bar_band_tracks_the_prepared_share(self):
+        # The optimisation band's value: the share of layers the
+        # prepared store holds — the cache is the evidence, so a
+        # latched failure keeps the band below 100% (the review's
+        # completion-reporting finding). None without a view.
+        service = self.parts.index
+        service.bind(("part.gcode", 100, 1))
+        self.assertIsNone(service.plate_pass_fraction())
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_bytes(b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\n" % layer
+            for layer in range(10)))
+        module = self.qt.load("GCodeIndexService")
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.assertEqual(service.plate_pass_fraction(), 0.0)
+        service._full_cache.update({0: b"x", 1: b"x", 2: b"x", 3: b"x"})
+        self.assertAlmostEqual(service.plate_pass_fraction(), 0.4)
+
     def test_the_follower_view_signal_precedes_the_plate_payloads(self):
         # The review's signal-ordering finding: followerAttached must
         # flip BEFORE the new layer's payload lands, or QML paints

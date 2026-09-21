@@ -320,6 +320,7 @@ PREFIX_RULES = [
     ("key", "nextPauseFraction", "h8"),
     ("key", "nextPauseLayer", "h8"),
     ("key", "nextPauseBaked", "h8"),
+    ("key", "platePassFraction", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),
@@ -548,6 +549,15 @@ EXCLUSIONS = {
         "evidence": "capture_monitor.py samples the track's print fill through it on every make all",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the job section's stacked track directly",
+    },
+    # The background optimisation's sweep: a passive scanline on the
+    # same stacked track, asserted through the model value rather than
+    # rendered pixels (it vanishes at completion).
+    "optimisationBand": {
+        "reason": "the job section's optimisation scanline is styling, not a scenario surface",
+        "evidence": "test_composed_components.test_the_job_bar_band_tracks_the_prepared_share pins the value; the census pins the visibility",
+        "date": "2026-09-21",
+        "recheck": "a scenario asserts the optimisation band's rendered state",
     },
     # The drag GESTURE stays excluded: the synthetic drag cannot drive
     # a QML MouseArea grab under Xvfb (the console-resize precedent).

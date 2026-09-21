@@ -17,6 +17,10 @@ QtObject {
     // The neon orange: the probed-mesh bounds outline and clamped
     // crosshair, and the next scheduled pause's fill.
     readonly property color neonOrange: "#FF5A00"
+    // The job bar's background-optimisation band: a quiet teal
+    // distinct from the progress fills, so the pass reads as its own
+    // sweep and never as print progress.
+    readonly property color jobOptimisation: "#2ba6a6"
     // The warning amber: not-homed states and detected-filament
     // highlights.
     readonly property color warningOrange: "#fb8c00"
