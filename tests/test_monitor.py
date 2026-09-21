@@ -4878,6 +4878,10 @@ Item {
             # Its labels read empty while no pause lies ahead.
             "visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0",
             "visible: root.printer != null && root.printer.nextPauseFraction >= 0",
+            # The job bar's optimisation band (the live request): a
+            # state-gated sweep that vanishes at completion — it never
+            # flips per poll once the pass settles.
+            "visible: root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1",
             # The preview strip's own derived validity (computed in
             # updateStrip, not a model value).
             "visible: stripValid",

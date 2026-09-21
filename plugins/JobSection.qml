@@ -123,6 +123,8 @@ ColumnLayout {
                 // always present, so a lone bar names it plainly.
                 text: {
                     var shown = [];
+                    if (root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1)
+                        shown.push("the background optimisation's sweep (teal, top edge)");
                     if (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0)
                         shown.push("the current layer's progress (top)");
                     if (root.printerModel != null && root.printerModel.nextPauseFraction >= 0)
@@ -175,6 +177,21 @@ ColumnLayout {
                     height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
                     color: UM.Theme.getColor("primary")
+                }
+                Rectangle {
+                    // The background optimisation's sweep (the live
+                    // request): a slim band across the bar's top edge
+                    // that crawls with the prepared share — visible
+                    // only while the pass is walking, and gone at 1.0,
+                    // so a completed pass adds nothing to the bar.
+                    // Only THIS bar shows it (the live ruling).
+                    objectName: "optimisationBand"
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    height: 3 * screenScaleFactor
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.platePassFraction : -1.0))
+                    color: MoonrakerTheme.jobOptimisation
+                    visible: root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1
                 }
             }
         }

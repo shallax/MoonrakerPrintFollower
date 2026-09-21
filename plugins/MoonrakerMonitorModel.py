@@ -335,6 +335,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     _SIGNAL_KEYS = (
         ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
+                            "platePassFraction",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
                             "monitorPosition", "monitorPositionCompact", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
@@ -1148,6 +1149,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # MINI reads only the live one — the mini never detaches with
         # the popover, and neither does the picker (its map is the
         # plate_objects value, always the live layer's).
+        # The job bar's background-optimisation band publishes here,
+        # OUTSIDE the popover's gates — the bar is always visible.
+        fraction = getattr(snapshot, "plate_pass_fraction", None)
+        values["platePassFraction"] = fraction if fraction is not None else -1.0
         progress = getattr(snapshot, "plate_progress", None)
         follower = getattr(snapshot, "plate_manual_progress", None)
         popover = follower if follower is not None else progress
@@ -1469,6 +1474,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
     monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
+    platePassFraction = value_property(float, "platePassFraction", monitorChanged, -1.0)
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")

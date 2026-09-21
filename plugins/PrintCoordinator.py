@@ -356,6 +356,7 @@ class PrintCoordinator(QObject):
                 plate_progress=plate_progress_payload,
                 plate_manual_progress=manual_payload,
                 plate_layer_count=layer_count,
+                plate_pass_fraction=self._index.plate_pass_fraction() if view is not None else None,
                 plate_visited=plate_visited)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)

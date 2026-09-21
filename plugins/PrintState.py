@@ -70,6 +70,9 @@ class PrintSnapshot:
     # that refuses a stale manual anchor from an earlier file. 0 without
     # a view.
     plate_layer_count: int = 0
+    # The background optimisation's progress (the job bar's band): the
+    # share of layers the prepared store holds, None without a view.
+    plate_pass_fraction: Optional[float] = None
     # The current layer's printed objects: the executed motions'
     # polygon visits, read back from the layer's start (the live
     # ruling: the DEFINE order is not the print order everywhere).
