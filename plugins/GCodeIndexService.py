@@ -13,6 +13,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
 from .MonitorFormatting import _segment_in_polygon, polygon_bounds
 from .PlateProgress import (
+    PreparationYield,
     decode_layer as _decode_layer,
     encode_layer as _encode_layer,
     motion_edges as _motion_edges,
@@ -262,6 +263,10 @@ class GCodeIndexService(QObject):
         self._job = None
         self._view = None
         self._cancel = threading.Event()
+        # Worker-safe foreground signal. Background preparation reads
+        # only this Event, never Qt/model state, and yields at coarse
+        # preparation boundaries when a visible layer is demanded.
+        self._foreground_pending = threading.Event()
         self._busy = ""
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
@@ -490,6 +495,7 @@ class GCodeIndexService(QObject):
             # not readiness signals.
             if self._presentation_source(candidate) not in {"invalid", "decoded", "failed"}:
                 self._hydrate.add(candidate)
+                self._foreground_pending.set()
 
     def plate_layers(self, anchor):
         """The follower's STATIC half: the prev/current/next bundle,
@@ -908,6 +914,7 @@ class GCodeIndexService(QObject):
                 continue
             if self._presentation_source(candidate) not in {"decoded", "failed"}:
                 self._hydrate.add(candidate)
+                self._foreground_pending.set()
 
     def _on_files_changed(self):
         # A new file (or a re-downloaded one) invalidates failed hydration
@@ -1118,6 +1125,12 @@ class GCodeIndexService(QObject):
                     self._prepared_identity, len(self._view.ranges))
             prepared_writer = self._prepared_writer
 
+            # No demand exists on the owner thread at this instant.
+            # Any later request flips the event and cooperatively
+            # interrupts the in-progress dense layer too, not merely
+            # the gap between layers.
+            self._foreground_pending.clear()
+
             def full_prep_batch():
                 encoded = {}
                 uncacheable = set()
@@ -1169,7 +1182,15 @@ class GCodeIndexService(QObject):
                     if index.compact and layer not in index.hydrated_layers:
                         if lease is None or not hydrate_layer_from_file(index, lease.path, layer):
                             break
-                    payload = _prepare_layer(index, layer)
+                    try:
+                        payload = _prepare_layer(
+                            index, layer, self._foreground_pending.is_set)
+                    except PreparationYield:
+                        # Do not advance the frontier: this layer was
+                        # deliberately abandoned before memo/publication.
+                        # _finish() will immediately run the foreground
+                        # demand, then resume this layer later.
+                        break
                     if payload is not None:
                         try:
                             packed = _encode_layer(payload)
