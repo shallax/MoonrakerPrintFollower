@@ -202,6 +202,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().trace_layer
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsSeekTrace(self) -> bool:
+        return self._config().seek_trace
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsMemoryDiagnosticsLog(self) -> bool:
         return self._config().memory_diagnostics_log
 
@@ -465,6 +469,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "eta_learn": bool(raw.get("eta_learn", False)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
+                "seek_trace": bool(raw.get("seek_trace", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
                 "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
                 "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),

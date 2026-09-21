@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from copy import deepcopy
@@ -78,7 +79,6 @@ from .MonitorTemperatureHistory import (
     mini_names,
     series_metadata,
 )
-import time
 from .MonitorTuning import MonitorTuning
 from .ToolheadController import ToolheadController
 from .ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
@@ -539,6 +539,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # per-layer raster requests, so the adjacent/revisit tests
         # prove N and N+1 never re-render.
         self._plate_render_count = {}
+        # The seek trace (the review's finding 18): disabled by
+        # default; MOONRAKER_FOLLOWER_SEEK_TRACE=1 records the stage
+        # timeline with the queue depth per event.
+        self._seek_trace_enabled = os.environ.get("MOONRAKER_FOLLOWER_SEEK_TRACE") == "1"
+        self._seek_trace = []
         self._raster_bridge.done.connect(self._raster_committed)
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
@@ -2813,6 +2818,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # the current's completion, so a cold seek's user-visible
         # layer never queues behind its context.
         current = self._qt_layer(layers.get("current"), anchor)
+        self._trace("T7/T8 layer obtained", {
+            "layer": anchor,
+            "raster": "hot" if current is not None and current.raster is not None and current.raster.width() > 0 else "miss"})
         self._queue_ghost_raster(anchor, layers.get("prev"), anchor - 1)
         self._queue_ghost_raster(anchor, layers.get("next"), anchor + 1)
         return {"prev": self._qt_layer(layers.get("prev"), anchor - 1, request_raster=False),
@@ -2837,6 +2845,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         validates the view generation, the layer's own request token
         and the retained PlateLayer identity."""
         self._plate_render_count[layer] = self._plate_render_count.get(layer, 0) + 1
+        self._trace("T9 raster start", {"layer": layer, "queue": len(self._plate_pending)})
         plot = self._plate_plot
         view = dict(self._plate_view)
         if plot is None or not view.get("width"):
@@ -2851,6 +2860,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         QThreadPool.globalInstance().start(_RasterJob(build))
 
     @pyqtSlot(object, object)
+    def _trace(self, stage, extra=None):
+        """The seek timeline (the review's finding 18), disabled by
+        default: MOONRAKER_FOLLOWER_SEEK_TRACE=1 records each stage
+        with its wall-clock offset from the seek's entry."""
+        if not self._seek_trace_enabled and not (self._config() is not None and self._config().seek_trace):
+            return
+        if stage == "T1 seek entry":
+            self._seek_trace = []
+            self._seek_start = time.monotonic()
+        if not self._seek_trace and stage != "T1 seek entry":
+            return
+        entry = {"stage": stage, "ms": (time.monotonic() - self._seek_start) * 1000}
+        if extra:
+            entry.update(extra)
+        self._seek_trace.append(entry)
+
     def _raster_committed(self, image, ticket):
         """The owner-thread commit (the review's finding 7): validate
         the generation, the layer's token and the retained identity,
@@ -2864,6 +2889,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         wrapped.set_raster(image)
         self._plate_pending.pop(layer, None)
+        self._trace("T11 raster committed", {"layer": layer})
         # The ghosts' renders ride the current's completion, and
         # only while the anchor still matches (the review's
         # coalescing: an obsolete neighbour never burns).
@@ -2970,6 +2996,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(int)
     def setFollowerLayerAnchor(self, layer):
+        self._trace("T1 seek entry", {"layer": layer})
         """The layer slider's committed value (the debounced request):
         a manual layer IS a detach — the face cannot follow the print
         and hold another layer at once. A seek lands the layer at

@@ -106,6 +106,7 @@ class PrinterConfig:
     z_fallback: bool = True
     z_tolerance: float = 0.04
     trace_layer: bool = False
+    seek_trace: bool = False
     trace_http: bool = False
     # The leak-hunt instrument: the 10-second sampler to
     # moonraker_leak.log. OFF by default; the Python allocation
@@ -281,7 +282,7 @@ class PrinterConfig:
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
             "eta_learn",
-            "trace_layer", "trace_http", "memory_diagnostics_log", "memory_diagnostics_trace",
+            "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace",
             "camera_disabled",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
@@ -343,6 +344,7 @@ class PrinterConfigStore:
         "z_fallback": "moonrakerprintfollower/z_fallback",
         "z_tolerance": "moonrakerprintfollower/z_tolerance",
         "trace_layer": "moonrakerprintfollower/trace_layer",
+        "seek_trace": "moonrakerprintfollower/seek_trace",
         "trace_http": "moonrakerprintfollower/trace_http",
         "memory_diagnostics_log": "moonrakerprintfollower/memory_diagnostics_log",
         "memory_diagnostics_trace": "moonrakerprintfollower/memory_diagnostics_trace",
@@ -362,6 +364,7 @@ class PrinterConfigStore:
         "z_tolerance": 0.04,
         "trace_layer": False,
         "trace_http": False,
+        "seek_trace": False,
         "memory_diagnostics_log": False,
         "memory_diagnostics_trace": False,
         "path_follow": True,
