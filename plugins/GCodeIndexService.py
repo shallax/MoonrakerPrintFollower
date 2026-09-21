@@ -177,6 +177,10 @@ class GCodeIndexService(QObject):
         self._prepared_table = None
         self._prepared_identity = None
         self._prepared_saved = False
+        # The incremental writer (the review's finding 9): the pass
+        # appends the encodings layer by layer, so the first session
+        # never retains the whole cold store in RAM.
+        self._prepared_writer = None
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
         # The painted boundary belongs to that file's layer too: a new
@@ -699,17 +703,17 @@ class GCodeIndexService(QObject):
             index = self._view._index
             self._submit("save", lambda: self._cache.save(identity, index))
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
-                and self._prepared is not None and not self._prepared_saved \
-                and self._prepared_identity is not None:
-            # The pass's completion persists the store: the whole
-            # session's encodings finalise atomically on the worker.
+                and self._prepared is not None and not self._prepared_saved:
+            # The pass's completion finishes the incremental writer
+            # (the review's finding 9: the header and the table are
+            # back-filled, then the atomic rename publishes).
             self._prepared_saved = True
-            count = len(self._view.ranges)
-            cache = self._full_cache
-            def prepared_save():
-                payloads = [cache.get(layer) or b"" for layer in range(count)]
-                return self._prepared.finalise(self._prepared_identity, payloads)
-            self._submit("prepared_save", prepared_save)
+            writer = self._prepared_writer
+            self._prepared_writer = None
+            if writer is not None:
+                def prepared_save():
+                    return self._prepared.finish_write(writer)
+                self._submit("prepared_save", prepared_save)
         elif self._view is not None and self._full_next < len(self._view.ranges):
             # The full prepared cache's background pass (the live
             # request): one bounded batch per worker task, so the
@@ -730,6 +734,16 @@ class GCodeIndexService(QObject):
             deadline = time.monotonic() + 0.25
             prepared_read = self._prepared_read
             prepared_table = self._prepared_table
+            # The incremental writer opens for a fresh (non-reopen)
+            # pass: the encodings land on disk as the pass walks, so
+            # the first session never retains the whole store in RAM.
+            if self._prepared is not None and self._prepared_identity is not None \
+                    and self._prepared_writer is None \
+                    and not (prepared_table and len(prepared_table) == len(self._view.ranges)
+                             and all(entry[1] > 0 for entry in prepared_table)):
+                self._prepared_writer = self._prepared.open_for_write(
+                    self._prepared_identity, len(self._view.ranges))
+            prepared_writer = self._prepared_writer
 
             def full_prep_batch():
                 encoded = {}
@@ -761,7 +775,10 @@ class GCodeIndexService(QObject):
                         payload = _prepare_layer(index, layer)
                         if payload is not None:
                             try:
-                                encoded[layer] = _encode_layer(payload)
+                                packed = _encode_layer(payload)
+                                encoded[layer] = packed
+                                if prepared_writer is not None:
+                                    self._prepared.append(prepared_writer, layer, packed)
                             except Exception:
                                 # A layer the codec cannot hold simply
                                 # stays out of the cache; the pass
@@ -844,6 +861,11 @@ class GCodeIndexService(QObject):
                     frontier, encoded = value
                     if isinstance(encoded, dict):
                         self._full_cache.update(encoded)
+                        # The RAM tier's bound (the review's finding
+                        # 10): the file is the source of truth; the
+                        # dict holds the recent working set only.
+                        while len(self._full_cache) > 64:
+                            self._full_cache.pop(next(iter(self._full_cache)))
                     if isinstance(frontier, int):
                         self._full_next = max(self._full_next, frontier)
             self.changed.emit()
