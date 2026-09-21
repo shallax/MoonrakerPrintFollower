@@ -39,6 +39,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -1425,6 +1426,53 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         loaded = self.store.load_table("print-key")
         self.assertIsNotNone(loaded)
         self.assertTrue(loaded["complete"])
+
+    def test_a_foreground_seek_interrupts_the_dense_layer_already_in_progress(self):
+        # Between-layer checks are insufficient: the request deliberately
+        # arrives AFTER one speculative layer has entered preparation.
+        # The worker-visible callback must interrupt that same layer and
+        # let CURRENT commit before background work resumes.
+        index = make_index(layers=40, motions=20000)
+        index.followed_layer = 0
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        module = self.qt.load("GCodeIndexService")
+        entered = threading.Event()
+        interrupted = threading.Event()
+        real_prepare = module._prepare_layer
+
+        def controlled_prepare(index_arg, layer, should_yield=None):
+            if should_yield is not None and not interrupted.is_set():
+                entered.set()
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    if should_yield():
+                        interrupted.set()
+                        raise module.PreparationYield()
+                    time.sleep(0.001)
+            return real_prepare(index_arg, layer)
+
+        with patch.object(module, "_prepare_layer", controlled_prepare):
+            self.service._advance()
+            self.assertEqual(self.service._busy, "fullprep")
+            self.assertTrue(entered.wait(1.0),
+                            "the speculative layer never entered preparation")
+
+            started = time.monotonic()
+            self.service.set_manual_anchor(30)
+            for _ in range(400):
+                self.qt.events(2)
+                if 30 in self.service._decoded_lru:
+                    break
+            elapsed = (time.monotonic() - started) * 1000.0
+
+        self.assertTrue(interrupted.is_set(),
+                        "the in-progress speculative layer never yielded")
+        self.assertIn(30, self.service._decoded_lru,
+                      "foreground CURRENT did not commit after the yield")
+        self.assertLess(elapsed, 500.0,
+                        "foreground CURRENT waited behind the speculative layer")
 
     def test_the_pass_batch_yields_to_a_demand(self):
         # A seek mid-pass cuts in: the single worker releases the
