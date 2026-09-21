@@ -2918,14 +2918,14 @@ class MonitorQtTests(unittest.TestCase):
         second.setSectionExpanded("toolhead", True)
         self.assertEqual(second._sections["toolhead"], True)
 
-    def _with_layers(self, model, anchor, count):
+    def _with_layers(self, model, anchor, count, split=0):
         """Install a live plate payload at the coordinator's own seam:
         the model's keys publish from the snapshot the face reads."""
         coordinator = self.follower._runtime.coordinator
         coordinator._snapshot = replace(
             coordinator._snapshot,
             plate_progress={"layers": {"prev": None, "current": {"classes": {}}, "next": None},
-                            "split": 0, "anchor": anchor, "method": "motion index",
+                            "split": split, "anchor": anchor, "method": "motion index",
                             "motionTotal": 100},
             plate_layer_count=count)
         model._publish()
@@ -2988,6 +2988,61 @@ class MonitorQtTests(unittest.TestCase):
         self._with_layers(model, anchor=7, count=12)
         model.setFollowerLayerProgress(9999)
         self.assertEqual(coordinator._plate_split, 100)
+
+    def test_detaching_from_layer_zero_freezes_zero_not_missing(self):
+        # The P0 zero-index bug: `0 or -1` read the first layer as
+        # missing, so the detach was refused on layer 0 — a valid
+        # zero must freeze like any other layer.
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12, split=37)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached,
+                         "the detach on layer zero was refused")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0,
+                         "the frozen layer's window was never asked for")
+        self.assertEqual(coordinator._plate_split, 37,
+                         "the detach did not seed the scrub with the live split")
+        # A fresh publish must not undo the freeze (the refusal path
+        # used to flip the follower back to attached).
+        self._with_layers(model, anchor=0, count=12, split=40)
+        self.assertFalse(model.followerAttached,
+                         "the republish re-attached the layer-zero detach")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0)
+
+    def test_the_progress_scrub_from_attached_layer_zero_detaches(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerLayerProgress(41)
+        self.assertFalse(model.followerAttached,
+                         "the scrub on layer zero never detached")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0)
+        self.assertEqual(coordinator._plate_split, 41)
+        # The detached state survives the refresh.
+        self._with_layers(model, anchor=0, count=12)
+        self.assertFalse(model.followerAttached,
+                         "the refresh re-attached the layer-zero scrub")
+        self.assertEqual(model.followerLayerAnchor, 0)
+
+    def test_reattaching_from_layer_zero_abandons_the_freeze(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12, split=9)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        model.setFollowerAttached(True)
+        self.assertTrue(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertIsNone(coordinator._plate_anchor,
+                          "re-attaching never rejoined the print")
+        self.assertIsNone(coordinator._plate_split,
+                          "re-attaching kept the scrub")
 
     def test_a_detach_with_no_layer_to_hold_is_refused(self):
         model = self.monitor()

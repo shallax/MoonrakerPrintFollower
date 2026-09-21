@@ -1715,6 +1715,7 @@ if QT_AVAILABLE:
             self._scrub = None
             self._navigation = ""
             self._layer_count = 40
+            self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
             self._keep_centred = False
@@ -1800,6 +1801,10 @@ if QT_AVAILABLE:
         def plateLayerCount(self):
             return self._layer_count
 
+        @pyqtProperty(int, constant=True)
+        def plateLayerMotionCount(self):
+            return self._motion_count
+
         @pyqtProperty(bool, constant=True)
         def plateProgressAvailable(self):
             return True
@@ -1873,6 +1878,13 @@ if QT_AVAILABLE:
         @pyqtSlot(int)
         def setFollowerLayerProgress(self, motions):
             self.calls.append(("progress", int(motions)))
+            if self._attached:
+                # Production semantics: the scrub from the live layer
+                # is itself the detach — the anchor freezes where the
+                # print stood (the P0 zero-index contract).
+                self._attached = False
+                self._layer_anchor = self._anchor
+                self.followerViewChanged.emit()
             self._split = int(motions)
             self.plateProgressChanged.emit()
 
@@ -4031,6 +4043,52 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
         self.assertTrue(slider.property("enabled"))
         self.assertTrue(centred.property("enabled"), "re-attaching kept the centred follow dead")
+
+    def test_detach_and_scrub_work_from_layer_zero(self):
+        # The P0 zero-index bug: the production model read anchor 0
+        # as missing through `0 or -1`, so the detach was refused and
+        # the progress scrub never detached on the first layer. The
+        # popover must detach on layer 0 and keep the anchor at 0 —
+        # never -1.
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(0)
+        self.pump(20)
+        attach = self.find(monitor, "moonrakerFollowerAttach")
+        layer_slider = self.find(monitor, "moonrakerFollowerLayerSlider")
+        self.assertEqual(layer_slider.property("value"), 0.0,
+                         "the live layer zero never reached the slider")
+        self.assertEqual(attach.property("text"), "Detach")
+        self._click(window, attach)
+        self.assertIn(("attached", False), self._printer.calls)
+        self.assertEqual(attach.property("text"), "Attach")
+        self.assertFalse(face.property("attached"))
+        self.assertEqual(self._printer.followerLayerAnchor, 0,
+                         "the layer-zero detach did not hold the layer it showed")
+        self.assertEqual(layer_slider.property("value"), 0.0,
+                         "the detach turned the anchor into -1")
+        # Reattach, then scrub the ACTUAL progress control: the scrub
+        # is itself the detach on the current layer.
+        self._click(window, attach)
+        self.assertIn(("attached", True), self._printer.calls)
+        self._printer.calls = []
+        progress = self.find(monitor, "moonrakerFollowerLayerProgress")
+        self.assertTrue(progress.property("enabled"),
+                        "the progress control sits dead in the harness")
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import QPointF, Qt
+        seek = progress.mapToScene(
+            QPointF(progress.width() * 0.5, progress.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=seek)
+        self.pump(30)
+        self.assertIn(("progress", round(progress.property("value"))),
+                      self._printer.calls)
+        self.assertFalse(self._printer.followerAttached,
+                         "the layer-zero scrub never detached")
+        self.assertEqual(self._printer.followerLayerAnchor, 0,
+                         "the scrub froze the wrong anchor")
+        self.assertEqual(attach.property("text"), "Attach")
+        self.assertEqual(layer_slider.property("value"), 0.0,
+                         "the scrub turned the anchor into -1")
 
     def test_the_layer_slider_commits_only_after_the_seek_settles(self):
         from PyQt6.QtTest import QTest

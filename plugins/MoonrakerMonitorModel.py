@@ -17,6 +17,19 @@ from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
 
 
+def _coerce_anchor(value):
+    """A valid integer ZERO is a layer (the P0 zero-index bug: the
+    old `value or -1` read the first layer as missing and refused the
+    detach/scrub on it). Only None and unparseable values mean
+    missing."""
+    if value is None:
+        return -1
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 def _british_spelling() -> bool:
     """British spellings for Commonwealth-English locales: the
     ruling is that the plugin is British, but the handful of variant
@@ -3805,7 +3818,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             if frozen < 0:
                 # Nothing frozen yet: the LIVE layer is where the face
                 # stands, so that is what the detach holds on to.
-                frozen = int(self._values.get("plateProgressAnchor", -1) or -1)
+                frozen = _coerce_anchor(
+                    self._values.get("plateProgressAnchor", -1))
             if frozen >= 0:
                 self._follower_layer_anchor = frozen
                 seed = self._values.get("plateSplit")
@@ -3880,7 +3894,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         total = int(self._values.get("plateLayerMotionCount", 0) or 0)
         motions = max(0, min(motions, total))
         if self._follower_attached:
-            frozen = int(self._values.get("plateProgressAnchor", -1) or -1)
+            frozen = _coerce_anchor(
+                self._values.get("plateProgressAnchor", -1))
             if frozen < 0:
                 return
             self._follower_attached = False
