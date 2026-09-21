@@ -3294,6 +3294,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 or painted_key != key:
             self._unlink_asset_files(images)
             return
+        # The demand gate (the review's stale-promotion finding): an
+        # obsolete-but-internally-consistent job must not promote —
+        # the content it painted is no longer what the surface needs,
+        # even though its own ticket and key still match themselves.
+        demand = self._navigation_key(surface)
+        if demand is None or demand != key:
+            self._unlink_asset_files(images)
+            surface.nav["job"] = None
+            self._schedule_navigation(surface)
+            return
         surface.nav["job"] = None
         old = surface.nav["url"]
         surface.nav["url"] = url

@@ -2058,6 +2058,55 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertEqual(surface.nav["url"], ready,
                          "a stale key's navigation raster promoted")
 
+    def test_an_obsolete_navigation_job_never_promotes_after_the_demand_moved(self):
+        # The review's stale-promotion finding: a job whose content
+        # matches its OWN ticket but not the surface's CURRENT demand
+        # must not promote — the demand gate discards it, clears the
+        # slot and schedules the current content.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        key_a = model._navigation_key(surface)
+        self.assertIsNotNone(key_a, "the first demand never keyed")
+        # The demand moves BEFORE A completes: the slot is busy, so B
+        # is deferred and A stays pending.
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 80)
+        key_b = model._navigation_key(surface)
+        self.assertNotEqual(key_b, key_a, "the demand never changed")
+        self.assertIsNotNone(surface.nav["job"],
+                             "the deferred demand lost its pending job")
+        # A completes: its key matches its ticket, but the demand is
+        # now B — the promotion is refused and B is scheduled.
+        self._pump_rasters(model, "popover")
+        self.assertNotEqual(surface.nav["key"], key_a,
+                            "the obsolete job promoted over the moved demand")
+        # B's own completion promotes normally.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and surface.nav["key"] != key_b:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertEqual(surface.nav["key"], key_b,
+                         "the current demand never promoted")
+        # A→B→A: the demand returns to A before the stale job lands —
+        # identity, not sequence: A's completion promotes because the
+        # demand IS A again.
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 90)
+        self._pump_rasters(model, "popover")
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and surface.nav["key"] != key_a:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertEqual(surface.nav["key"], key_a,
+                         "the re-demanded content never promoted")
+
     def test_a_stale_completion_cannot_touch_the_new_job(self):
         # : an old generation's worker result
         # arriving after a job switch is discarded, never committed.
