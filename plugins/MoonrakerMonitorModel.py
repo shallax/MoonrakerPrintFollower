@@ -1253,7 +1253,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # OUTSIDE the popover's gates — the bar is always visible.
         fraction = getattr(snapshot, "plate_pass_fraction", None)
         values["platePassFraction"] = fraction if fraction is not None else -1.0
-        decode_ms = getattr(snapshot, "plate_decode_ms", None)
+        lookup_ms = getattr(snapshot, "plate_lookup_ms", None)
+        if lookup_ms is None:
+            lookup_ms = getattr(snapshot, "plate_decode_ms", None)  # legacy test/snapshot
         progress = getattr(snapshot, "plate_progress", None)
         follower = getattr(snapshot, "plate_manual_progress", None)
         popover = follower if follower is not None else progress
@@ -1266,7 +1268,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
                                                      popover["layers"], popover.get("anchor"),
                                                      popover.get("method"), popover.get("split"),
-                                                     decode_ms)
+                                                     lookup_ms)
                                      if popover is not None else {})
             values["plateScrubVector"] = self._scrub_vector_for(popover)
             values["plateSplit"] = popover["split"] if popover is not None else None
@@ -1307,7 +1309,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateLiveLayers"] = (self._qt_window(self._plate_surfaces["mini"],
                                                          progress["layers"], progress.get("anchor"),
                                                          progress.get("method"), progress.get("split"),
-                                                         decode_ms)
+                                                         lookup_ms)
                                          if progress is not None else {})
             values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
@@ -2915,7 +2917,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         return current
 
     def _qt_window(self, surface, layers, anchor, method=None, split=None,
-                   decode_ms=None):
+                   lookup_ms=None):
         """The prev/current/next window for ONE SURFACE: the
         wrappers are created lazily and
         the desired state — current first, then the ghosts — feeds
@@ -2923,8 +2925,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the mini validates against its live anchor, the popover
         against whichever layer it displays (frozen included). The
         SPLIT rides the desired state too: a partial layer's
-        printed prefix is its own demand. `decode_ms` rides the
-        coordinator's own measurement into the trace."""
+        printed prefix is its own demand. `lookup_ms` is only the
+        coordinator's cheap plate_progress() lookup; service worker time
+        is measured separately and must never be inferred from it."""
         surface = self._surface_for(surface)
         if surface is None or not layers:
             return {}
@@ -2937,7 +2940,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._trace("T6 payload obtained", {
             "surface": surface.name, "layer": anchor,
             "method": method or (layers.get("method") if isinstance(layers, dict) else None),
-            "decode_ms": round(decode_ms, 1) if decode_ms is not None else None})
+            "lookup_ms": round(lookup_ms, 1) if lookup_ms is not None else None})
         self._trace("T7/T8 layer obtained", {
             "surface": surface.name, "layer": anchor,
             "raster": "hot" if self._raster_hot(surface, anchor) else "miss"})
