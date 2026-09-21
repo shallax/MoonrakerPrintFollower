@@ -1922,6 +1922,33 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertEqual(surface.layers[5].prefixSplit, 55,
                          "the revisited layer never re-rendered its prefix")
 
+    def test_a_dpr_view_backs_the_rasters_at_device_resolution(self):
+        # D: a DPR-2 surface's rasters are painted at the DEVICE
+        # resolution — the scene-graph samples them down to the
+        # logical face; a DPR-2 screen must never enlarge a 1x
+        # logical toolpath raster. The backing rides the view, the
+        # render key, and the full/prefix dimensions alike.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0, 2.0)
+        self.qt.events(5)
+        self.assertEqual(surface.view["dpr"], 2.0,
+                         "the backing scale never reached the surface's view")
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        wrapped = surface.layers[5]
+        self.assertEqual(wrapped.rasterWidth, 800,
+                         "the DPR-2 raster is not the device width")
+        self.assertEqual(wrapped.rasterHeight, 600,
+                         "the DPR-2 raster is not the device height")
+        self.assertEqual(wrapped.prefixWidth, 800,
+                         "the DPR-2 prefix is not the device width")
+        self.assertEqual(model.memory_accounting()["backingScale"], 2.0,
+                         "the accounting never reported the backing scale")
+
     def test_a_stale_completion_cannot_touch_the_new_job(self):
         # : an old generation's worker result
         # arriving after a job switch is discarded, never committed.

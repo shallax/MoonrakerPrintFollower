@@ -54,6 +54,32 @@ def _stroke_row(image: QImage) -> int:
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class NativeStrokeParityTests(unittest.TestCase):
+    def test_the_device_backing_scales_everything_equally(self):
+        # D: the bounded device-pixel backing multiplies the canvas
+        # AND the stroke together — a DPR-2 render is exactly 2x the
+        # logical size at 2x the stroke thickness, so the displayed
+        # logical picture (the scene-graph's downsampled result)
+        # keeps the one-stroke contract. A logical-resolution
+        # implementation renders 400x300 and fails the dimensions.
+        payload = _payload()
+        plot = _plot()
+        view = _view(lineScale=8.0, dpr=2.0)
+        coloured, _grey, _travels = render_layer_raster(payload, plot, view)
+        prefix = render_layer_prefix(payload, plot, view, 20)
+        self.assertEqual((coloured.width(), coloured.height()), (800, 600),
+                         "the DPR-2 raster is not the device size")
+        self.assertEqual((prefix.width(), prefix.height()), (800, 600),
+                         "the DPR-2 prefix is not the device size")
+        full_width = _stroke_height(coloured, 200)
+        prefix_width = _stroke_height(prefix, 200)
+        self.assertEqual(full_width, prefix_width,
+                         "the DPR-2 full and prefix strokes disagree")
+        # The stroke thickens WITH the backing: the downsampled
+        # logical stroke keeps its physical width.
+        onex, _grey_1x, _travels_1x = render_layer_raster(payload, plot, _view(lineScale=8.0))
+        self.assertGreater(full_width, _stroke_height(onex, 100),
+                           "the DPR-2 stroke never widened with the backing")
+
     def test_the_full_raster_and_the_prefix_share_one_stroke(self):
         # The full layer and the prefix rendered at the same view
         # must stroke the SAME screen thickness — the prefix used
