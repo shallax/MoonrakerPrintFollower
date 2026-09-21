@@ -1,6 +1,9 @@
-"""The file-backed prepared store's contract: random access, identity
-gating, atomic completion, the size policy, the abort path and the
-startup temp cleanup ."""
+"""The file-backed prepared store's ONE format contract (v3): the
+layout, the per-layer states (EMPTY / CACHED / UNCACHEABLE), random
+access, identity gating, atomic completion, the size policy, the
+abort path and the startup temp cleanup. Every reader of the store's
+files — the reopen, the repair and the fraction — consumes the
+semantics pinned here, nowhere else."""
 from __future__ import annotations
 
 import os
@@ -75,19 +78,37 @@ class PreparedStoreTests(unittest.TestCase):
         self.assertIsNone(self.cache.load_table("print-2"))
 
     def test_a_finished_file_carries_the_completion_flag(self):
-        # : the flag is what distinguishes a
-        # genuinely uncacheable (0, 0) entry from a not-prepared-yet
-        # hole — a finished pass stamps it, a published file always
-        # carries it.
+        # The per-layer truth rides the STATE: a finished pass stamps
+        # the completion flag, a CACHED layer carries bytes, and a
+        # slot the pass never resolved stays EMPTY — never confused
+        # with an uncacheable refusal.
         writer = self.cache.open_for_write("print-1", 2)
         self.cache.append(writer, 0, encode_layer(_payload(0)))
-        # Layer 1's encode "fails" — the pass walks on; the finish
-        # still publishes complete (the attempt is recorded).
+        # Layer 1's hydrate failed mid-pass — the finish publishes
+        # it EMPTY (retried next session), not uncacheable.
         self.cache.finish_write(writer)
         loaded = self.cache.load_table("print-1")
         self.assertTrue(loaded["complete"])
-        self.assertEqual(loaded["table"][0][1] > 0, True)
-        self.assertEqual(loaded["table"][1], (0, 0))
+        self.assertEqual(loaded["table"][0][0], 1)  # CACHED
+        self.assertGreater(loaded["table"][0][2], 0)
+        self.assertEqual(loaded["table"][1], (0, 0, 0))  # EMPTY
+        self.assertIsNone(self.cache.read("print-1", loaded["table"], 1))
+
+    def test_an_uncacheable_layer_round_trips_its_state(self):
+        # The codec's refusal is an EXPLICIT state: it publishes with
+        # no bytes and reads back as never-retry — the reopen must
+        # not re-walk it, and it counts toward the coverage.
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.append_uncacheable(writer, 1)
+        path = self.cache.finish_write(writer)
+        self.assertIsNotNone(path)
+        loaded = self.cache.load_table("print-1")
+        self.assertEqual(loaded["table"][1], (2, 0, 0))  # UNCACHEABLE
+        self.assertIsNone(self.cache.read("print-1", loaded["table"], 1))
+        # The round trip survives a reload from disk.
+        reloaded = self.cache.load_table("print-1")
+        self.assertEqual(reloaded["table"][1][0], 2)
 
     def test_an_aborted_writer_leaves_no_temp_file(self):
         # : the abort closes the handle and

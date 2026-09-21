@@ -1147,8 +1147,9 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.context = runtime()
         self.qt = self.context.__enter__()
         self.addCleanup(self.context.__exit__, None, None, None)
-        from plugins.PreparedStore import PreparedCache
+        from plugins.PreparedStore import PreparedCache, STATE_CACHED
         self.store = PreparedCache(self._dir.name)
+        self.state_cached = STATE_CACHED
         module = self.qt.load("GCodeIndexService")
         self.service = module.GCodeIndexService(self.files, object(), prepared=self.store)
         self.addCleanup(self.service.close)
@@ -1220,7 +1221,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self._pump()
         loaded = self.store.load_table("print-key")
         self.assertIsNotNone(loaded)
-        self.assertTrue(all(entry[1] > 0 for entry in loaded["table"]),
+        self.assertTrue(all(entry[0] == self.state_cached for entry in loaded["table"]),
                         "the repair published a complementary hole")
         for layer in (0, 1, 3, 4):
             # The COPIED entries keep their exact payloads.
@@ -1243,7 +1244,9 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.service._prepared_persist(2, encoded)
         self.assertIsNotNone(self.service._prepared_writer,
                              "the persist opened no writer")
-        self.assertGreater(self.service._prepared_writer["table"][2][1], 0)
+        self.assertEqual(self.service._prepared_writer["table"][2][0],
+                         self.state_cached)
+        self.assertGreater(self.service._prepared_writer["table"][2][2], 0)
         self.assertIn(2, self.service._prepared_coverage)
         # The pass reaching the same layer copies the cached bytes
         # instead of skipping it (the worker's branch).
@@ -1251,7 +1254,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self._pump()
         loaded = self.store.load_table("print-key")
         self.assertIsNotNone(loaded)
-        self.assertTrue(all(entry[1] > 0 for entry in loaded["table"]),
+        self.assertTrue(all(entry[0] == self.state_cached for entry in loaded["table"]),
                         "a prepared layer published as a hole")
 
     def test_the_pass_fraction_counts_stores_not_residency(self):
@@ -1267,6 +1270,149 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             self.service._full_cache.set(layer, b"x" * 1000, 1000)
         self.assertEqual(self.service.plate_pass_fraction(), 0.9,
                          "the fraction followed the RAM tier's residency")
+
+    def test_the_fraction_reaches_100_with_uncacheable_layers(self):
+        # The coverage truth: a layer the codec refused is as
+        # RESOLVED as one it held — the fraction must reach 100%
+        # once the pass has given every layer its attempt.
+        self._view(3)
+        module = self.qt.load("GCodeIndexService")
+        real_encode = module._encode_layer
+        calls = []
+
+        def refusing(payload):
+            # The synthetic index's geometry carries no layer marker:
+            # the pass walks 0, 1, 2 in order, so the SECOND encode
+            # is layer 1's.
+            calls.append(payload)
+            if len(calls) == 2:
+                raise ValueError("refused")
+            return real_encode(payload)
+        with patch.object(module, "_encode_layer", refusing):
+            self.service._prepared_open(self.files.identity)
+            self._pump()
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0,
+                         "the refused layer capped the fraction")
+        loaded = self.store.load_table("print-key")
+        self.assertEqual(loaded["table"][1][0], 2,
+                         "the refusal did not publish as UNCACHEABLE")
+        self.assertTrue(loaded["complete"])
+
+    def test_the_reopen_never_retries_an_uncacheable_layer(self):
+        # An UNCACHEABLE layer rides the reopen AS-IS: the fast path
+        # stands the pass down, the coverage counts it, and no
+        # writer opens to re-walk the refusal.
+        writer = self.store.open_for_write("print-key", 3)
+        for layer in (0, 2):
+            self.store.append(writer, layer, self._payload(layer))
+        self.store.append_uncacheable(writer, 1)
+        self.store.finish_write(writer)
+        self._view(3)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        self.assertTrue(self.service._prepared_saved,
+                        "the complete table (refusal included) took the repair path")
+        self.assertTrue(self.service._prepared_complete)
+        self.assertIsNone(self.service._prepared_writer)
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
+        self.assertIn(1, self.service._prepared_coverage,
+                      "the uncacheable layer left the coverage")
+        self.assertFalse(self.service._prepared_served(1),
+                         "an uncacheable layer read as served")
+        self.service._advance()
+        self.assertEqual(self.service._busy, "",
+                         "the reopen re-walked the uncacheable layer")
+
+    def test_a_prepared_window_seeks_without_the_file_lease(self):
+        # The prepared store serves the demanded window: the seek
+        # must never wait on the raw G-code lease — the lease exists
+        # only for the hydrate-from-file fallback.
+        self._view(3)
+        writer = self.store.open_for_write("print-key", 3)
+        for layer in range(3):
+            self.store.append(writer, layer, self._payload(layer))
+        self.store.finish_write(writer)
+        self.service._prepared_open(self.files.identity)
+        requests = []
+
+        def request():
+            # Record the LRU state at request time: the seek itself
+            # must be DONE before any file request (the pass's later
+            # request is the file's legitimate user).
+            requests.append(set(self.service._decoded_lru))
+        self.files.request_file = request
+        self.files.lease = lambda: None  # the G-code file is ABSENT
+        # The manual seek demands its window (the live demand path
+        # fires for the manual window regardless of hydration).
+        self.service.set_manual_anchor(1)
+        for _ in range(200):
+            if all(layer in self.service._decoded_lru for layer in (0, 1, 2)):
+                break
+            self.service._advance()
+            self.qt.events(5)
+        self.assertEqual(len(requests), 1,
+                         "the pass's single post-seek request shape changed")
+        for state in requests:
+            self.assertLessEqual({0, 1, 2}, state,
+                                 "the seek waited on the file lease")
+        for layer in range(3):
+            self.assertIn(layer, self.service._decoded_lru,
+                          "layer %d never decoded from the store" % layer)
+
+    def test_the_saved_latch_waits_for_the_publish(self):
+        # A failed publish must NOT read as saved: the latch closes
+        # only on the commit's success, and a later demand's persist
+        # opens a fresh writer for the retry.
+        self._view(3)
+        self.service._prepared_open(self.files.identity)
+        self.service._prepared_persist(0, self._payload(0))
+        self.service._full_next = len(self.service._view.ranges)
+        self.service._prepared_saved = False
+        from plugins.PreparedStore import PreparedCache
+        with patch.object(PreparedCache, "finish_write", return_value=None):
+            self.service._advance()
+            for _ in range(100):
+                self.service._advance()
+                self.qt.events(5)
+                if not self.service._busy:
+                    break
+        self.assertFalse(self.service._prepared_saved,
+                         "the failed publish latched as saved")
+        # The self-heal: a new writer opens on the next persist and
+        # the branch retries the finish — the latch then closes.
+        self.service._prepared_persist(1, self._payload(1))
+        for _ in range(200):
+            self.service._advance()
+            self.qt.events(5)
+            if self.service._prepared_saved:
+                break
+        self.assertTrue(self.service._prepared_saved,
+                        "the retried publish never latched")
+
+    def test_the_pass_batch_yields_to_a_demand(self):
+        # A seek mid-pass cuts in: the single worker releases the
+        # batch (the yield check between layers), the demand's task
+        # runs next, and the pass resumes behind it — the manual
+        # window's decoded layers prove the demand committed while
+        # the pass was still walking. The dense index stretches the
+        # pass across several batches so the seek lands mid-walk.
+        index = make_index(layers=60, motions=20000)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        self.service._advance()
+        self.assertEqual(self.service._busy, "fullprep",
+                         "the pass never submitted")
+        self.service.set_manual_anchor(30)
+        full_at_demand = 60
+        for _ in range(400):
+            self.service._advance()
+            self.qt.events(5)
+            if {29, 30, 31} <= set(self.service._decoded_lru):
+                full_at_demand = self.service._full_next
+                break
+        self.assertLess(full_at_demand, 60,
+                        "the pass finished before the demand cut in")
 
     def test_a_rebind_aborts_the_old_print_writer(self):
         # : bind() must close and delete the
