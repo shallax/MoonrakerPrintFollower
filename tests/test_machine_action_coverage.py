@@ -884,10 +884,35 @@ class MachineActionCase(unittest.TestCase):
 
         # The refusal is REPORTED on the status row (the review's
         # finding — a silently-ignored deletion failure read as a
-        # full clear), never raised.
+        # full clear), never raised, and never misdescribed as a
+        # file-in-use problem.
         self.assertEqual(action.cacheStatus,
-                         "Cache partially cleared — some files are still in use. "
+                         "Cache partially cleared — some files could not be removed. "
                          "Restart Cura to also drop the session's downloaded file.")
+
+    def test_an_absent_cache_generation_is_a_successful_clear(self):
+        # The legacy directory does not exist on a fresh install:
+        # its absence is the clear's goal already met, never a
+        # partial failure.
+        action = self._action()
+        storage = self.module.Resources.getCacheStoragePath()
+        legacy = os.path.join(storage, "MoonrakerPrintFollower")
+        if os.path.isdir(legacy):
+            self.module.shutil.rmtree(legacy)
+        action.clearCache()
+        self.assertEqual(action.cacheStatus,
+                         "Cache cleared. Restart Cura to also drop the "
+                         "session's downloaded file.")
+
+    def test_an_absent_current_directory_is_a_successful_clear(self):
+        action = self._action()
+        current = action._cache_root()
+        if os.path.isdir(current):
+            self.module.shutil.rmtree(current)
+        action.clearCache()
+        self.assertEqual(action.cacheStatus,
+                         "Cache cleared. Restart Cura to also drop the "
+                         "session's downloaded file.")
 
     def test_the_migration_surfaces_read_the_persistence_record(self):
         record = {"status": "failed", "backupWritten": True, "backupName": "cura.cfg.20260919"}

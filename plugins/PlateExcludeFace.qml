@@ -6,7 +6,11 @@ import "theme"
 // The plate map's exclude face (4.6.0): the shared canvas plus the
 // triple-click gesture. The gesture is the confirmation — there are
 // no dialogs (the walked ruling); the click-progress cue and the
-// host's counter line make it legible before the third click.
+// host's counter line make it legible before the third click. The
+// action is armed by the first click and only ever cancelled
+// afterwards, never flipped: the plate moves under a gesture that
+// takes three clicks, and another client's command is enough to
+// move it.
 Item {
     id: root
     objectName: "moonrakerPlateExcludeFace"
@@ -16,7 +20,7 @@ Item {
     property bool compact: false
     property string hoveredName: ""
     property int clickProgress: 0  // 1..3, the host's counter line
-    property string pendingAction: ""  // "exclude" | "restore" while arming
+    property string pendingAction: ""  // the action the gesture armed
     signal progressChanged(int clicks)
     signal excludeRequested(string name)
     signal restoreRequested(string name)
@@ -71,23 +75,42 @@ Item {
             root._pendingClicks = 1;
             root._pendingSince = now;
         }
+        if (root._pendingClicks === 1) {
+            // The arming click fixes the action from the plate it saw.
+            // Reading the row again at the third click would run the
+            // opposite of what the user pointed at, whenever the
+            // status moved in between.
+            var row = root._rowFor(name);
+            root.pendingAction = row != null && row.excluded === true ? "restore" : "exclude";
+        }
         var verdict = root.resolveGesture(root._pendingClicks, root._pendingName, name, root.tripleClickWindowMs);
-        var row = root._rowFor(name);
-        root.pendingAction = row != null && row.excluded === true ? "restore" : "exclude";
         root.clickProgress = verdict.progress;
         root.progressChanged(verdict.progress);
         if (verdict.fire) {
-            root._pendingName = "";
-            root._pendingClicks = 0;
-            root.clickProgress = 0;
-            root.progressChanged(0);
-            root.pendingAction = "";
-            var row = root._rowFor(verdict.name);
-            if (row != null && row.excluded === true) {
-                root.restoreRequested(verdict.name);
-            } else if (row != null) {
-                root.excludeRequested(verdict.name);
-            }
+            root._fireGesture(verdict.name);
+        }
+    }
+
+    function _fireGesture(name) {
+        var armed = root.pendingAction;
+        root._pendingName = "";
+        root._pendingClicks = 0;
+        root.clickProgress = 0;
+        root.progressChanged(0);
+        root.pendingAction = "";
+        var row = root._rowFor(name);
+        // The completed gesture runs only where the plate still
+        // permits the action it armed. Anything else — the object
+        // left the plate, another client excluded it, another client
+        // restored it — cancels the gesture: the user begins a new
+        // one rather than the other direction firing.
+        if (row == null) {
+            return;
+        }
+        if (armed === "exclude" && row.excluded !== true) {
+            root.excludeRequested(name);
+        } else if (armed === "restore" && row.excluded === true) {
+            root.restoreRequested(name);
         }
     }
 

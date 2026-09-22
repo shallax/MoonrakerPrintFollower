@@ -255,6 +255,19 @@ class GCodeIndexService(QObject):
     failed = pyqtSignal(str)
     _completed = pyqtSignal(int, str, object, object, object)
 
+    # The printed-object walk's owner-thread budget. A dense layer's
+    # mandatory replay (an attach part-way through, a late polygon)
+    # spans hundreds of thousands of motion edges, so one poll walks
+    # at most this much wall time and the tail is the next poll's
+    # work. The check's granularity is what a single poll may overshoot
+    # by, and it is also the floor below which a range is walked
+    # outright rather than cut: below it the walk is unmeasurable.
+    _VISITED_WALK_BUDGET_S = 0.008
+    _VISITED_WALK_STEP = 64
+    # The replay's guaranteed share of the budget: a late polygon may
+    # never starve the live delta, whose verdict is the poll's own.
+    _VISITED_REPLAY_SHARE = 0.5
+
     def __init__(self, files, cache, parent=None, prepared=None):
         super().__init__(parent)
         self._files, self._cache = files, cache
@@ -292,6 +305,9 @@ class GCodeIndexService(QObject):
         # an old completion must never misrepresent a newer task
         # (the review's cache-clear finding).
         self._busy_generation = -1
+        # The store a cache clear just swept: an old generation's
+        # queued save must never recreate that directory.
+        self._swept_store = None
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
         self._hydrating = None
@@ -353,6 +369,11 @@ class GCodeIndexService(QObject):
         self._visited = set()
         self._visited_upto = -1
         self._visited_settled = frozenset()
+        # The replay frontier: the motion index up to which every
+        # polygon in `_visited_pending` has been judged, and the
+        # geometry waiting on it (the bounded replay's resume point).
+        self._visited_replay_upto = -1
+        self._visited_pending = frozenset()
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -415,6 +436,9 @@ class GCodeIndexService(QObject):
         # layers through its own store — no worker can ever write
         # to it again.
         self._retire_prepared_writer()
+        # The sweep's marker: a queued save from an older generation
+        # must never recreate this store's directory (see _save_index).
+        self._swept_store = self._cache
         self._view = None
         self._job = None
         self._wanted = self._restored = self._save = False
@@ -450,6 +474,8 @@ class GCodeIndexService(QObject):
         self._visited = set()
         self._visited_upto = -1
         self._visited_settled = frozenset()
+        self._visited_replay_upto = -1
+        self._visited_pending = frozenset()
         self.changed.emit()
 
     def request_hydration(self, layer):
@@ -492,8 +518,13 @@ class GCodeIndexService(QObject):
             # A seek focuses the pass: the sought window prepares
             # before the pass resumes wherever it stood (the live
             # report — a far seek waited for the pass to walk the
-            # whole file).
-            self._full_next = min(self._full_next, max(0, self._manual_anchor - 1))
+            # whole file). A fully restored prepared store has no
+            # pass to focus — the fast path's saved latch stands the
+            # walk down, and rewinding the frontier would only start
+            # a pointless re-read of the whole store (the review's
+            # finding).
+            if not self._prepared_saved:
+                self._full_next = min(self._full_next, max(0, self._manual_anchor - 1))
         self._apply_manual_anchor()
         self._request_manual_window()
         self._advance()
@@ -740,8 +771,19 @@ class GCodeIndexService(QObject):
         (name, content) geometry the consumed range has been judged
         against. A poll whose geometry still matches it walks only its
         new edges; a poll carrying a new or changed polygon replays the
-        consumed range ONCE, for those polygons alone. The visited set
-        only ever grows, so a backwards split keeps its verdicts."""
+        consumed range, for those polygons alone. The visited set
+        only ever grows, so a backwards split keeps its verdicts.
+
+        That replay is BOUNDED: one poll spends at most
+        `_VISITED_WALK_BUDGET_S` on the walk and keeps its water mark,
+        so a dense layer fills in over consecutive polls instead of
+        stalling the Qt thread. Nothing is provisional — every poll's
+        verdict is the truth about the edges walked so far, and the
+        cursor advances by exactly the work done, so repeated polls
+        never duplicate a scan. A cut replay resumes from its own
+        frontier: the geometry it is judging is remembered, and the
+        whole consumed range is still replayed once for it (the
+        late-DEFINE ruling), merely spread over polls."""
         if self._view is None or split is None or anchor is None:
             return frozenset()
         index = self._view._index
@@ -758,33 +800,102 @@ class GCodeIndexService(QObject):
                 self._visited = set()
                 self._visited_upto = 0
                 self._visited_settled = frozenset()
+                self._visited_replay_upto = 0
+                self._visited_pending = frozenset()
+            if not entries:
+                # No usable polygon: nothing can be marked, so the
+                # consumed range is never walked. The cursor still
+                # advances — a polygon arriving later replays from the
+                # layer's start regardless of it.
+                if split > self._visited_upto:
+                    self._visited_upto = split
+                    self._visited_replay_upto = split
+                self._visited_settled = frozenset()
+                self._visited_pending = frozenset()
+                return frozenset(self._visited)
             settled = self._visited_settled
-            current, pending = [], []
-            for name, key, polygon, bounds in entries:
-                current.append((name, polygon, bounds))
+            current = []
+            pending = []
+            for entry in entries:
+                name, key = entry[0], entry[1]
+                current.append((name, entry[2], entry[3]))
                 if (name, key) not in settled:
-                    pending.append((name, polygon, bounds))
-            if pending and self._visited_upto > 0:
+                    pending.append(entry)
+            # An object already marked printed cannot change its
+            # verdict, so only the unmarked geometry is worth judging.
+            outstanding = [entry for entry in pending if entry[0] not in self._visited]
+            geometry = frozenset((name, key) for name, key, _p, _b in outstanding)
+            if not geometry <= self._visited_pending:
+                # Geometry this frontier has never judged: the replay
+                # restarts at the layer's start.
+                self._visited_replay_upto = 0
+            self._visited_pending = geometry
+            now = time.monotonic()
+            deadline = now + self._VISITED_WALK_BUDGET_S
+            if geometry and self._visited_upto > self._visited_replay_upto:
                 # The late/changed geometry, against everything already
                 # consumed. Replaying only these polygons is enough: the
                 # settled ones have already seen every consumed edge.
-                self._visit_edges(index, anchor, 0, self._visited_upto, pending)
+                # The replay yields to the live delta after its own
+                # share, so a long replay never starves the poll's own
+                # verdict.
+                self._visited_replay_upto = self._visit_edges(
+                    index, anchor, self._visited_replay_upto, self._visited_upto,
+                    [(name, polygon, bounds) for name, _k, polygon, bounds in outstanding],
+                    min(deadline,
+                        now + self._VISITED_WALK_BUDGET_S * self._VISITED_REPLAY_SHARE))
             if split > self._visited_upto:
-                self._visit_edges(index, anchor, self._visited_upto, split, current)
-                self._visited_upto = split
-            self._visited_settled = frozenset((name, key) for name, key, _p, _b in entries)
+                reached = self._visit_edges(index, anchor, self._visited_upto, split,
+                                            current, deadline)
+                if self._visited_replay_upto >= self._visited_upto:
+                    # The delta walked its range with EVERY polygon, so
+                    # a caught-up frontier rides it.
+                    self._visited_replay_upto = reached
+                self._visited_upto = reached
+            if not geometry or self._visited_replay_upto >= self._visited_upto:
+                # Every unmarked polygon has been judged against the
+                # whole consumed range (or there is none): nothing is
+                # left on the frontier.
+                self._visited_replay_upto = self._visited_upto
+                self._visited_pending = frozenset()
+            self._visited_settled = frozenset(
+                (name, key) for name, key, _p, _b in entries
+                if (name, key) not in self._visited_pending)
             return frozenset(self._visited)
 
-    def _visit_edges(self, index, anchor, first, stop, polygons):
-        """Mark every polygon an extruding edge in [first, stop) meets."""
+    def _visit_edges(self, index, anchor, first, stop, polygons, deadline=None):
+        """Mark every polygon an extruding edge in [first, stop) meets.
+
+        Returns the water mark the walk reached: *stop* when the whole
+        range was covered, a lower motion when the deadline cut it
+        short. The caller keeps its cursor there — the seek reconstructs
+        the state, so a cut walk resumes exactly where it stopped.
+
+        A polygon already in the visited set is dropped up front, and
+        the list is re-dropped whenever a hit marks another: an object's
+        verdict only ever grows, so retesting it buys nothing but
+        vertices. An empty list walks no edge at all — the rest of the
+        range has nothing left to decide.
+        """
+        remaining = [entry for entry in polygons if entry[0] not in self._visited]
+        if not remaining:
+            return stop
+        check = None if deadline is None else first + self._VISITED_WALK_STEP
         for motion, x0, y0, x1, y1, _feature, extruding in _motion_edges(index, anchor, first):
             if motion >= stop:
-                break
+                return stop
+            if check is not None and motion >= check:
+                # The deadline may cut the walk, never before the first
+                # step: every poll advances the cursor.
+                if time.monotonic() >= deadline:
+                    return motion
+                check = motion + self._VISITED_WALK_STEP
             if not extruding:
                 continue
             left, right = (x0, x1) if x0 <= x1 else (x1, x0)
             bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
-            for name, polygon, bounds in polygons:
+            marked = False
+            for name, polygon, bounds in remaining:
                 # The bounds reject most pairs for the price of four
                 # comparisons, before any vertex is touched. Every
                 # hull the edge meets records the visit — overlapping
@@ -794,6 +905,11 @@ class GCodeIndexService(QObject):
                     continue
                 if _segment_in_polygon(x0, y0, x1, y1, polygon):
                     self._visited.add(name)
+                    marked = True
+            if marked:
+                remaining = [entry for entry in remaining
+                             if entry[0] not in self._visited]
+        return stop
 
     def plate_progress(self, anchor, file_position=None, live_position=None):
         """The composed payload (the tests and the one-shot consumers):
@@ -1107,6 +1223,8 @@ class GCodeIndexService(QObject):
         self._visited = set()
         self._visited_upto = -1
         self._visited_settled = frozenset()
+        self._visited_replay_upto = -1
+        self._visited_pending = frozenset()
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
@@ -1289,7 +1407,10 @@ class GCodeIndexService(QObject):
             # rebind swaps self._cache before the worker runs, and
             # this save belongs to the machine it was built for.
             cache_store = self._cache
-            self._submit("save", lambda: cache_store.save(identity, index))
+            generation = self._generation
+            self._submit("save",
+                         lambda: self._save_index(cache_store, generation,
+                                                  identity, index))
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
                 and self._prepared is not None and not self._prepared_saved:
             # The pass's completion finishes the incremental writer.
@@ -1451,6 +1572,16 @@ class GCodeIndexService(QObject):
                 return frontier, encoded, uncacheable
 
             self._submit("fullprep", full_prep_batch, lease)
+
+    def _save_index(self, cache_store, generation, identity, index):
+        """The index save's own gate (the clear's lifecycle): a save
+        from a swept store's OLDER generation must never recreate the
+        directory the clear just removed. A machine rebind's store is
+        a different directory — that save still belongs to the
+        machine it was built for."""
+        if generation != self._generation and cache_store is self._swept_store:
+            return None
+        return cache_store.save(identity, index)
 
     def _submit(self, kind, work, lease=None):
         generation = self._generation

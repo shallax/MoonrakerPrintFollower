@@ -4647,6 +4647,283 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_a_gesture_latches_its_navigation_source_against_mid_gesture_retirement(self):
+        # The review's lifecycle: the model retires the published URL
+        # the moment the demand moves. The face must keep presenting
+        # the raster the gesture ENTERED with (a mid-gesture
+        # retirement never unloads the scene in hand), and the idle
+        # binding must not admit the stale URL for the NEXT gesture.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        from plugins.PlateQt import render_navigation_layer, png_file
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload}, plot,
+            {"width": int(face.width()), "height": int(face.height()),
+             "scale": 1.0, "lineScale": 8.0, "compact": False,
+             "panX": 0.0, "panY": 0.0, "backing": 4.0,
+             "bedWidth": 250.0, "bedDepth": 250.0}, split=18)
+        nav_url = png_file(nav, "/tmp/mpf/raster-probe",
+                           "nav-latch-%d" % time.monotonic_ns())
+        self._printer.setNavigation(nav_url)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the idle exact scene never drew")
+        window.grabWindow()
+
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+
+        def wheel(delta):
+            scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+            event = QWheelEvent(
+                QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+
+        def settle():
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and face.property("_interactionActive"):
+                self._pump_ms(30)
+            self.assertFalse(face.property("_interactionActive"),
+                             "the gesture never settled")
+
+        wheel(120)
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the ready raster never entered the interaction")
+        self.assertEqual(face.property("_gestureNavSource"), nav_url,
+                         "the entry never latched its source")
+        # The model retires the URL mid-gesture (a demand change):
+        self._printer.setNavigation("")
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the mid-gesture retirement ended the interaction")
+        self.assertEqual(face.property("_gestureNavSource"), nav_url,
+                         "the mid-gesture retirement unlatched the scene")
+        settle()
+        # The idle binding now reads the retired URL: the next
+        # gesture must NOT enter the warm raster.
+        wheel(120)
+        self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "a retired URL admitted the stale warm raster")
+
+    def _stroke_payload(self, motions=320, dx=0.6):
+        # A dense horizontal stroke: motion m's edge ends at
+        # 20 + m*dx, so the printed boundary at split S sits at
+        # 20 + S*dx on the bed's own coordinates.
+        return {"classes": {"WALL-OUTER": [
+                    [[20.0 + m * dx, 125.0, float(m)] for m in range(motions + 1)]]},
+                "travels": [], "travelStarts": [], "travelEnds": [],
+                "motions": motions}
+
+    def _bed_plot(self, face):
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        return {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+
+    def _prefix_for(self, payload, face, split, stem):
+        from plugins.PlateQt import render_layer_prefix, png_file
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0, "dpr": 1.0}
+        prefix = render_layer_prefix(payload, self._bed_plot(face), view, split)
+        return prefix, png_file(prefix, "/tmp/mpf/raster-probe",
+                                "%s-%d" % (stem, time.monotonic_ns()))
+
+    def test_a_forward_scrub_through_prefix_refreshes_never_drops_the_history(self):
+        # The critical's core: a refresh renders AT the requested
+        # split (the equality edge) while the previous prefix is
+        # visible. Every frame through the handover must keep the
+        # printed history's interior ink — the extrusion paths never
+        # disappear while the replacement's image lands and the
+        # canvas repaints the tail.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face, prefix_split=100)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(120)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the initial prefix never drew")
+        # The refresh: the new prefix AT the demand arrives while the
+        # old one is visible.
+        prefix, url = self._prefix_for(payload, face, 160, "dense-handover")
+        layer.set_prefix(prefix, url, 160, "key-2")
+        self._printer.setSplit(160)
+        deadline = time.monotonic() + 3.0
+        frames = 0
+        interior = 20.0 + 90 * 0.6
+        tail = 20.0 + 150 * 0.6
+        while time.monotonic() < deadline:
+            grab = window.grabWindow()
+            self.assertTrue(self._red_in_band(grab, face, window, plot,
+                                              interior, 125.0),
+                            "the printed history dropped mid-handover")
+            frames += 1
+            if self._red_in_band(grab, face, window, plot, tail, 125.0):
+                break
+            self._pump_ms(20)
+        self.assertGreater(frames, 0, "the handover never delivered")
+        self.assertTrue(self._red_in_band(grab, face, window, plot,
+                                          tail, 125.0),
+                        "the new prefix's own interior never arrived")
+
+    def test_repeated_forward_refreshes_keep_every_frame_complete(self):
+        # Three successive refreshes (100 -> 160 -> 240): each
+        # replacement lands while the previous picture stands, and
+        # no frame ever loses the committed history.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face, prefix_split=100)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(120)
+        self._wait_red(window, face, want=True)
+        for target in (160, 240):
+            prefix, url = self._prefix_for(payload, face, target, "dense-multi")
+            layer.set_prefix(prefix, url, target, "key-%d" % target)
+            self._printer.setSplit(target)
+            deadline = time.monotonic() + 3.0
+            interior = 20.0 + (target - 40) * 0.6
+            while time.monotonic() < deadline:
+                grab = window.grabWindow()
+                # The PREVIOUS committed history (well inside the old
+                # boundary) must stand on every frame.
+                self.assertTrue(self._red_in_band(grab, face, window, plot,
+                                                  20.0 + (target - 80) * 0.6,
+                                                  125.0),
+                                "a frame lost the committed history at %d" % target)
+                if self._red_in_band(grab, face, window, plot,
+                                     interior, 125.0):
+                    break
+                self._pump_ms(20)
+            self._pump_ms(60)
+
+    def test_a_backward_scrub_to_zero_clears_all_printed_geometry(self):
+        # The 0% state owns NOTHING printed: the prefix hides, the
+        # canvas clears, and no held picture persists — then a
+        # forward scrub repaints the history.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        layer = self._native_layer(payload, face, prefix_split=100)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(120)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the initial prefix never drew")
+        self._printer.setSplit(0)
+        image, count = self._wait_red(window, face, want=False)
+        self.assertEqual(count, 0,
+                         "printed geometry persisted at 0%")
+        # Forward again: the history repaints from the empty state.
+        self._printer.setSplit(60)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0,
+                           "the 0% state never recovered its history")
+
+    def test_a_cached_zoom_bake_never_stands_over_the_full_layer(self):
+        # The stale-zoom report: a prefix baked at another zoom is
+        # invalid for the current view key, and at a FULL layer the
+        # model demands no replacement — the hold that kept the old
+        # picture during a partial repaint could arm there and never
+        # release, leaving the oversized bake standing over the
+        # valid full raster. The hold is partial-only now: the full
+        # layer must show exactly the full raster's own band.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload(21, 10.0)
+        plot = self._bed_plot(face)
+        # A 2x bake: the prefix rendered at scale 2 (a previous
+        # zoom's cached asset).
+        from plugins.PlateQt import PlateLayer, render_layer_prefix, png_file
+        view2x = {"width": int(face.width()), "height": int(face.height()),
+                  "scale": 2.0, "lineScale": 8.0, "compact": False,
+                  "panX": 0.0, "panY": 0.0, "dpr": 1.0}
+        layer = PlateLayer(payload)
+        prefix2x = render_layer_prefix(payload, plot, view2x, 10)
+        layer.set_prefix(prefix2x, png_file(
+            prefix2x, "/tmp/mpf/raster-probe", "zoom-bake-%d" % time.monotonic_ns()),
+            10, "zoom-key")
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the partial prefix never drew")
+        # The view key changes (the zoom back to 100%): the bake is
+        # invalid, and the split reaches the FULL layer — no hold may
+        # stand the stale bake over the full picture.
+        layer.setProperty("prefixValid", False)
+        self._printer.setSplit(21)
+        self._pump_ms(300)
+        for _ in range(20):
+            self._pump_ms(30)
+            window.grabWindow()
+            # The full raster owns the whole picture; the 2x bake's
+            # doubled-height band must never appear above it. The
+            # frame is judged complete when the prefix is gone and
+            # the full raster's own band stands.
+            if face.property("_prefixHold") is False and not face.property("_prefixWasShown"):
+                break
+        grab = window.grabWindow()
+        self.assertFalse(face.property("_prefixHold"),
+                         "the full layer armed the stale bake's hold")
+        self.assertFalse(face.property("_prefixWasShown"),
+                         "the stale bake's shown record survived the full layer")
+        # The 2x bake draws its stroke at DOUBLE the vertical offset:
+        # the full picture must carry exactly ONE red band, never the
+        # bake's second band below it.
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        col = int(origin.x() + plot["offsetX"]
+                  + (20.0 + 5 * 10.0 - plot["bedXMin"]) * plot["sx"])
+        bands = 0
+        in_band = False
+        for r in range(int(origin.y()), int(origin.y() + face.height())):
+            red = self._matches(grab.pixel(col, r), (0xD3, 0x2F, 0x2F))
+            if red and not in_band:
+                bands += 1
+            in_band = red
+        self.assertEqual(bands, 1,
+                         "the picture carries %d bands — the 2x bake "
+                         "stands over the full layer" % bands)
+
     def test_inert_gestures_never_flip_the_warm_raster(self):
         # The inertness ruling: the warm raster enters ONLY when a
         # movement actually pans. A click at any zoom, a drag attempt
@@ -6026,6 +6303,204 @@ class PlateCanvasHitTests(RealEngineTestCase):
         self.pump(20)
         self.assertEqual([call for call in self._printer.calls if call[0] == "restore"],
                          [("restore", "Left_Block")])
+
+    def _acts(self):
+        """Every object command the gesture dispatched, in order."""
+        return [call for call in self._printer.calls if call[0] in ("exclude", "restore")]
+
+    def _status_moves(self, name, excluded):
+        """The plate's status changing under the gesture, as a second
+        client's command reaches this face: the payload republishes
+        with the row's verdict already rewritten."""
+        self._printer._set_excluded(name, excluded)
+        self.pump(20)
+
+    def _park_pointer(self, window, canvas, face):
+        """Leave the pointer in the open, off every object. The
+        pointer outlives the test's window and the offscreen platform
+        drops a move onto the position it already holds, so a test
+        that ended on a point a later test hovers first would starve
+        that hover instead of failing on its own subject."""
+        self._hover(window, canvas, face, 5.0, 5.0)
+
+    def test_the_gesture_fixes_its_action_on_the_first_click(self):
+        """The action is the plate the user saw when the gesture
+        armed: the first click publishes it (the host's counter line
+        reads it), and clicks one and two never act."""
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("clickProgress"), 1)
+        self.assertEqual(face.property("pendingAction"), "exclude",
+                         "the arming click did not fix its action")
+        self.assertEqual(self._acts(), [], "one click acted")
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("clickProgress"), 2)
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        self.assertEqual(self._acts(), [], "two clicks acted")
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("exclude", "Left_Block")])
+        self.assertEqual(face.property("clickProgress"), 0,
+                         "the completed gesture stayed armed")
+        self.assertEqual(face.property("pendingAction"), "")
+        # The exclusion reached the payload, so the object's own next
+        # gesture arms the other way and fires once.
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "restore")
+        self._click_bed(window, canvas, face, *point)
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("exclude", "Left_Block"),
+                                        ("restore", "Left_Block")])
+        self._park_pointer(window, canvas, face)
+
+    def test_another_clients_exclusion_mid_gesture_cancels_the_gesture(self):
+        """The finding: an exclude armed against an included object
+        must never land as a restore because a second client got
+        there first. The state that invalidates the armed action
+        cancels the gesture instead."""
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        self._status_moves("Left_Block", True)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "exclude",
+                         "the mid-gesture status re-decided the action")
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [],
+                         "the gesture ran the opposite of the action it armed")
+        self.assertEqual(face.property("clickProgress"), 0,
+                         "the cancelled gesture stayed armed")
+        self.assertEqual(face.property("pendingAction"), "")
+        self._park_pointer(window, canvas, face)
+
+    def test_another_clients_restore_mid_gesture_cancels_the_gesture(self):
+        """The mirror: a restore armed against an excluded object must
+        not land as an exclusion once a second client restored it."""
+        rows = self._polygon_bed()
+        rows[1]["excluded"] = True  # Left_Block
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "restore")
+        self._status_moves("Left_Block", False)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "restore",
+                         "the mid-gesture status re-decided the action")
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [],
+                         "the gesture excluded the object it had armed to restore")
+        self.assertEqual(face.property("clickProgress"), 0)
+        self._park_pointer(window, canvas, face)
+
+    def test_a_state_that_changed_and_came_back_still_acts(self):
+        """Permission, not history: a plate that permits the armed
+        action again executes it, however it got there."""
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        self._status_moves("Left_Block", True)
+        self._status_moves("Left_Block", False)
+        self._click_bed(window, canvas, face, *point)
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("exclude", "Left_Block")])
+        self._park_pointer(window, canvas, face)
+
+    def test_the_object_leaving_the_plate_mid_gesture_cancels_the_gesture(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        # A re-index, a new print: the armed target is off the plate,
+        # and the ground it stood on hits nothing at all.
+        self._printer._plate["objects"] = [row for row in self._printer._plate["objects"]
+                                           if row["name"] != "Left_Block"]
+        self._printer.plateObjectsChanged.emit()
+        self.pump(20)
+        for _ in range(2):
+            self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [],
+                         "the gesture acted on an object that left the plate")
+        # The vanished gesture left nothing armed: a fresh one on
+        # another object arms and completes on its own.
+        for _ in range(3):
+            self._click_bed(window, canvas, face, 202.0, 232.0)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("exclude", "Right_Block")],
+                         "the vanished object's gesture leaked into the new one")
+        self._park_pointer(window, canvas, face)
+
+    def test_a_gesture_moved_to_another_object_arms_that_objects_action(self):
+        """The counter restarts on the object the pointer moved to,
+        and the action it arms is that object's own."""
+        rows = self._polygon_bed()
+        rows[2]["excluded"] = True  # Right_Block
+        window, face, canvas = self._picker(rows)
+        self._click_bed(window, canvas, face, 188.0, 226.0)  # Left_Block
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        self._click_bed(window, canvas, face, 202.0, 232.0)  # Right_Block
+        self.assertEqual(face.property("clickProgress"), 1,
+                         "the new object continued the old gesture")
+        self.assertEqual(face.property("pendingAction"), "restore",
+                         "the new object inherited the other object's action")
+        self._click_bed(window, canvas, face, 202.0, 232.0)
+        self._click_bed(window, canvas, face, 202.0, 232.0)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("restore", "Right_Block")],
+                         "the gesture acted on the object the pointer left")
+        self._park_pointer(window, canvas, face)
+
+    def test_an_expired_gesture_rearms_from_the_current_plate(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        window_ms = face.property("tripleClickWindowMs")
+        self.assertGreater(window_ms, 0, "the gesture carries no window")
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("pendingAction"), "exclude")
+        # Real wall clock: the gesture's own clock is Date.now().
+        time.sleep(window_ms / 1000.0 + 0.1)
+        self._status_moves("Left_Block", True)
+        self._click_bed(window, canvas, face, *point)
+        self.assertEqual(face.property("clickProgress"), 1,
+                         "a click past the window continued the old gesture")
+        self.assertEqual(face.property("pendingAction"), "restore",
+                         "the re-armed gesture kept the expired click's action")
+        self._click_bed(window, canvas, face, *point)
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("restore", "Left_Block")])
+        self._park_pointer(window, canvas, face)
+
+    def test_a_cancelled_gesture_is_followed_by_a_clean_one(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (188.0, 226.0)
+        self._click_bed(window, canvas, face, *point)
+        self._status_moves("Left_Block", True)
+        self._click_bed(window, canvas, face, *point)
+        self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [])
+        # The cancelled gesture leaves nothing armed: the next three
+        # clicks are a new gesture over the plate as it now stands.
+        for _ in range(3):
+            self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual(self._acts(), [("restore", "Left_Block")],
+                         "the cancelled gesture's clicks leaked into the new one")
+        self._park_pointer(window, canvas, face)
 
     def test_the_hover_label_wears_the_object_states_ink(self):
         """The live request: the picker's hover label wears the SAME

@@ -1329,12 +1329,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 values["plateProgressReason"] = "Loading layer…"
             else:
                 values["plateProgressReason"] = ""
-            # The warm interaction raster: the READY URL rides the
-            # payload, and a content change (the anchor, the split,
-            # the toggles, the line style — never the camera)
-            # schedules the background update.
+            # The warm interaction raster: a retained URL reaches the
+            # face ONLY while it is READY for the current demand (its
+            # key matches the demand key) — a scrub, a toggle or a
+            # failed replacement retires the stale raster from the
+            # face the moment the demand moves, and the exact scene
+            # serves the gesture instead (the review's lifecycle).
             surface = self._plate_surfaces["popover"]
-            values["plateNavigationData"] = surface.nav["url"]
+            values["plateNavigationData"] = self._navigation_data_value(surface)
             self._schedule_navigation(surface)
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
@@ -3199,6 +3201,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "%dx%d surface (memory safety)", backing, width, height)
         return max(1.0, backing)
 
+    def _navigation_data_value(self, surface):
+        """The face-eligible navigation URL: the retained raster
+        reaches QML ONLY while it is READY for the current demand —
+        its key matches the demand key. A stale raster (a demand that
+        moved, a replacement still rendering, a failed replacement)
+        reads "" and the exact scene serves the gesture."""
+        demand = self._navigation_key(surface)
+        if surface.nav["url"] and demand is not None \
+                and surface.nav["key"] == demand:
+            return surface.nav["url"]
+        return ""
+
     def _navigation_key(self, surface):
         """The interaction raster's content key: the job epoch, the
         window's payload identity, the split, the toggles, the line
@@ -3315,6 +3329,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     return
                 url = png_file(image, directory,
                                "n-%s-e%d-s%d" % (surface.name, epoch, serial))
+                if not url:
+                    # An unpublished PNG is a FAILED render, never a
+                    # successful one: the terminal's failure latch
+                    # holds the demand until it moves (no hot-retry),
+                    # and the stale ready raster stays ineligible for
+                    # the failed demand.
+                    logging.getLogger("MoonrakerPrintFollower").warning(
+                        "navigation raster publication failed (%s, epoch %d, "
+                        "serial %d)", surface.name, epoch, serial)
+                    emit(("failed", "the navigation PNG could not publish"))
+                    return
                 emit(("nav", image, url, key))
             except Exception as exc:
                 emit(("failed", str(exc)))
@@ -3451,10 +3476,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "backingScale": backing}
 
     def _referenced_raster_files(self):
-        """The asset files the live wrappers still display: the
-        prune must never unlink a URL a wrapper still reads."""
+        """The asset files the live wrappers still display, plus the
+        retained navigation raster: the prune must never unlink a URL
+        a wrapper or the warm-scene face still reads. A retired
+        navigation asset (the url cleared) drops out of the set and
+        the next prune collects it."""
         referenced = set()
         for surface in self._plate_surfaces.values():
+            nav_url = surface.nav.get("url") if surface.nav else None
+            if nav_url:
+                referenced.add(QUrl(nav_url).toLocalFile())
+            retained = getattr(surface, "retained_prefix", "")
+            if retained:
+                referenced.add(QUrl(retained).toLocalFile())
             for wrapped in surface.layers.values():
                 for url in (wrapped.rasterData, wrapped.baseData,
                             wrapped.travelData, wrapped.prefixData):
@@ -3546,17 +3580,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.desired = None
         surface.job = None
         surface.tokens.clear()
-        # The navigation raster retires with its surface: the
-        # in-flight update cancels, and a retired ready URL is
-        # never shown by another surface's face.
+        self._retire_navigation(surface)
+
+    def _retire_navigation(self, surface):
+        """The navigation raster's retirement (the review's coherent
+        lifecycle): the in-flight update cancels, the job slot frees,
+        the content key and the ready URL invalidate, the failure
+        latch resets, and the retained asset drops into the prune's
+        reach. Every lifecycle that ends a surface's or a print's
+        ownership — the popover close, the print switch, the model's
+        destruction — runs exactly this, so no path can leave a
+        stale slot the new print cannot schedule through."""
         if surface.nav["job"] is not None:
             surface.nav["cancel"].set()
             surface.nav["job"] = None
         surface.nav["key"] = None
         surface.nav["url"] = ""
-        # The close resets the failure latch too: a reopened popover
-        # retries a demand whose earlier failure may have been
-        # transient (a payload since rebuilt).
+        # The failure latch resets with the lifecycle: a reopened
+        # popover (or a new print) retries a demand whose earlier
+        # failure may have been transient (a payload since rebuilt).
         surface.nav["failed"] = None
 
     def _cancel_obsolete_job(self, surface):
@@ -3576,9 +3618,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if job.get("split") is not None:
             # A prefix render only ever serves the desired current:
             # it becomes obsolete when the current moves on (a ghost
-            # wants a full, never a prefix) or when the requested
-            # split changes under it.
-            if layer != desired["current"] or desired.get("split") != job["split"]:
+            # wants a full, never a prefix) or when the split moves
+            # BACKWARD under it — the painted interval would exceed
+            # the demand. A forward advance keeps the render: the
+            # prefix at P still owns [0..P] of the newer demand, and
+            # the tail covers [P..Q] (the review's scrub policy —
+            # cancelling useful work fed the disappearance).
+            if layer != desired["current"] \
+                    or desired.get("split") is None \
+                    or desired.get("split") < job["split"]:
                 job["cancel"].set()
         elif layer != desired["current"] and layer not in desired["ghosts"].values():
             # Submitted or running: the flag stops a queued job at
@@ -3694,18 +3742,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             _kind, prefix, prefix_data, prefix_split = images
             desired = surface.desired
             if desired is None or layer != desired["current"] \
-                    or desired.get("split") != prefix_split:
+                    or desired.get("split") is None \
+                    or prefix_split > desired.get("split"):
                 # The demand moved under this render: the painted
-                # interval is no longer the requested one (the split
-                # changed, or the layer left the current slot). The
+                # interval is beyond the requested one (a backward
+                # move) or the layer left the current slot — the
                 # prefix must never supersede the newer demand's
-                # picture — discard it and re-schedule from the
-                # demand that actually stands.
+                # picture. A FORWARD advance keeps the render: the
+                # prefix at P still owns [0..P] of the newer demand,
+                # and the tail covers [P..Q] (the review's scrub
+                # policy — discarding useful work fed the
+                # disappearance).
                 surface.stats["discarded"] += 1
                 self._unlink_asset_files(images)
                 self._schedule_surface(surface)
                 return
             wrapped.set_prefix(prefix, prefix_data, prefix_split, key)
+            # The face's atomic handover retains the PREVIOUS prefix's
+            # pixels until the new composition is jointly present — the
+            # prune must protect that file too (one URL, replaced each
+            # commit, cleared on the surface's retirement).
+            if wrapped.prefixData:
+                surface.retained_prefix = wrapped.prefixData
             if surface.tokens.get(layer) == token:
                 surface.tokens.pop(layer, None)
             surface.stats["committed"] += 1
@@ -3858,6 +3916,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 surface.job = None
                 surface.desired = None
                 surface.render_count.clear()
+                # The navigation state belongs to the print too: the
+                # epoch gate would reject the old job's terminal but
+                # nothing else freed its slot — the new print must be
+                # able to schedule its own warm raster immediately.
+                self._retire_navigation(surface)
+                # The face's retained previous prefix belongs to the
+                # old print as well: drop the prune protection so the
+                # file can be collected.
+                surface.retained_prefix = ""
         if job == self._follower_job:
             return
         self._follower_job = job
