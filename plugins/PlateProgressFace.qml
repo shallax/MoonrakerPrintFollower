@@ -1111,6 +1111,13 @@ Item {
         Image {
             id: progressRasterImage
             anchors.fill: parent
+            // No smoothing (the stack's rule): the canvas rasterizes
+            // crisp at the painted scale, and a bilinear-filtered
+            // raster against it reads as a soft ghost — every raster
+            // presents nearest-neighbour (only the zoom-navigation
+            // image smooths, and only because smooth zooming IS its
+            // presentation).
+            smooth: false
             visible: _fullPictureStanding()
             // The entry's hold keeps the PICTURE: while the full state
             // stands the source is the fresh raster; through the
@@ -1135,6 +1142,7 @@ Item {
         Image {
             id: progressTravelImage
             anchors.fill: parent
+            smooth: false
             opacity: 0.8
             visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
             source: visible ? root.progress.layers.current.travelData : ""
@@ -1147,6 +1155,7 @@ Item {
         Image {
             id: prevGhostImage
             anchors.fill: parent
+            smooth: false
             opacity: 0.30
             visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
             source: visible ? _ghost("prev").rasterData : ""
@@ -1154,6 +1163,7 @@ Item {
         Image {
             id: nextGhostImage
             anchors.fill: parent
+            smooth: false
             opacity: 0.30
             visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
             source: visible ? _ghost("next").rasterData : ""
@@ -1165,6 +1175,7 @@ Item {
         Image {
             id: pendingBaseImage
             anchors.fill: parent
+            smooth: false
             opacity: 0.55
             visible: _partialBase() && _baseOf(root.progress.layers.current)
             source: visible ? root.progress.layers.current.baseData : ""
@@ -1212,6 +1223,11 @@ Item {
         Image {
             id: progressPrefixImage
             anchors.fill: parent
+            // Nearest, like the retained frame it swaps with: any
+            // filter difference across the handover is a whole-raster
+            // shimmer, and the canvas's crisp rasterization is the
+            // reference both must match.
+            smooth: false
             // The shown prefix STAYS while the split arithmetic still
             // names it as the history owner — a repaint in flight, a
             // delivery from an earlier split, or a transient
@@ -1291,7 +1307,7 @@ Item {
             anchors.fill: parent
             visible: root._retainedPrefixSource !== "" && !root._partialPrefixReady() && root._retainedPrefixApplies()
             source: root._retainedPrefixSource
-            smooth: true
+            smooth: false
         }
 
         Canvas {
@@ -1982,6 +1998,15 @@ Item {
         root.viewScale = 1.0;
         root.viewPanX = 0.0;
         root.viewPanY = 0.0;
+    }
+
+    // The scrub input ends any camera interaction outright: the
+    // split change is its own commit, and a latched warm raster
+    // standing over the hidden exact scene during scrub repaints is
+    // the wrong picture between frames.
+    function endInteraction() {
+        zoomAnimator.stop();
+        root._interactionActive = false;
     }
 
     // The retained handover's frozen pixels bake the view transform

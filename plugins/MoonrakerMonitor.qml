@@ -3499,6 +3499,7 @@ Component {
                         }
                         onValueCommitted: {
                             layerSeekTimer.stop();
+                            progressFace.endInteraction();
                             commitLayerSeek();
                         }
                     }
@@ -3545,9 +3546,19 @@ Component {
                         // The scrub commits on every drag tick — the
                         // fill tracks the thumb at frame rate (the
                         // live request), and the release commits once
-                        // more for the final position.
-                        onValueTuning: commitProgressSeek()
-                        onValueCommitted: commitProgressSeek()
+                        // more for the final position. A scrub input
+                        // also ends any camera interaction outright:
+                        // a latched warm raster standing over the
+                        // hidden exact scene during scrub repaints is
+                        // the wrong picture between frames.
+                        onValueTuning: {
+                            progressFace.endInteraction();
+                            commitProgressSeek();
+                        }
+                        onValueCommitted: {
+                            progressFace.endInteraction();
+                            commitProgressSeek();
+                        }
                     }
                     UM.Label {
                         objectName: "moonrakerFollowerLayerProgressReadout"
