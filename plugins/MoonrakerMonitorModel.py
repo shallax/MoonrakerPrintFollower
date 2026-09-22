@@ -122,6 +122,10 @@ SECTIONS_FILE_NAME = "moonrakerprintfollower_sections.json"
 # hand-edited file, or a stray drag value. The PANE bounds are the QML's
 # clamp: they depend on the live stage layout, which the model cannot see.
 CONSOLE_HEIGHT_MAX = 2000
+# The warm-raster follow throttle: while attached, the poll advances
+# the split constantly — the 4x navigation bake runs at most once per
+# window (the demand's latest split still supersedes in the key).
+_NAV_FOLLOW_BAKE_S = 3.0
 
 
 def _sections_path() -> str:
@@ -3273,6 +3277,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if key is None or key == surface.nav["key"] \
                 or key == surface.nav.get("failed"):
             return
+        # The live-follow throttle: while attached, the poll advances
+        # the split constantly — re-baking the 4x warm raster per poll
+        # was the dire-follow cost (the live report). The demand's
+        # latest split still rides the key (the obsolete-job machinery
+        # reads it); the bake itself runs at most once per window and
+        # the next poll after it ends fires the LATEST demand.
+        if self._follower_attached:
+            at = surface.nav.get("at")
+            if at is not None and time.monotonic() - at < _NAV_FOLLOW_BAKE_S:
+                return
         desired = surface.desired
         window = {}
         for role, layer in (("current", desired["current"]),
@@ -3401,6 +3415,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
+        surface.nav["at"] = time.monotonic()
         if old and old != url:
             try:
                 os.unlink(QUrl(old).toLocalFile())
