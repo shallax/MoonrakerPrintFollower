@@ -156,7 +156,12 @@ class ClassificationRatchetTests(unittest.TestCase):
         # before the re-arm contract holds, and the only real-input
         # path to a transport mode is the same exec_mode a2/a3/a10
         # use (there is no clickable transport-mode control).
-        self.assertLessEqual(direct, 151)
+        # Two more (4.6.0, the cleanup pass): i3's validCacheMax
+        # execs — the cache-size validator's accepted and refused
+        # bounds ride the same direct path as its sibling validators
+        # (typing into the pane's text field has no real-input op,
+        # the i3 precedent).
+        self.assertLessEqual(direct, 153)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

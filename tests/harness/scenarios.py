@@ -1840,6 +1840,8 @@ SCENARIOS = [
          {"op": "exec_validator", "validator": "validPollInterval", "args": [100], "expect": False},
          {"op": "exec_validator", "validator": "validPollInterval", "args": [1000], "expect": True},
          {"op": "exec_validator", "validator": "validRetryInterval", "args": [0.05], "expect": False},
+         {"op": "exec_validator", "validator": "validCacheMax", "args": [15], "expect": False},
+         {"op": "exec_validator", "validator": "validCacheMax", "args": [512], "expect": True},
      ]},
     {"id": "i4", "group": "settings", "name": "the camera config persists",
      "steps": [

@@ -14,9 +14,9 @@ from __future__ import annotations
 from array import array
 import gc
 from math import hypot
-import os
 import time
 import unittest
+from unittest.mock import patch
 
 from plugins.GCodeIndex import LayerMotionIndex, build_index_from_bytes
 from plugins.PlateProgress import (
@@ -1134,27 +1134,44 @@ class SimplificationWorkBoundTests(unittest.TestCase):
                          [[0.0, 0.0, 0.0], [8.0, 0.0, 8.0]])
 
     def test_a_budgeted_channel_spends_one_counter_across_its_passes(self):
-        # Geometry dense enough that the tolerance starts far below the
-        # arc ceiling, so the pass escalates instead of stopping at the
-        # first miss — and each pass weighs a chain whose exact walk is
-        # quadratic. One charge per CHANNEL is what keeps the call
-        # bounded; one per pass would pay the quadratic cost up to six
-        # times over.
+        # A dense sawtooth whose exact walk is quadratic: the
+        # alternation keeps every vertex the tolerance cannot prove
+        # a chord for, so the chain neither fits nor collapses — the
+        # simplification's walk is the pathology's full cost. One
+        # charge per CHANNEL is what keeps the call bounded; one per
+        # pass would pay the quadratic cost up to six times over.
         #
-        # The wall-clock bound is strict on any fast machine — a
-        # per-pass counter would pay the quadratic ~6x, ≈9 s there —
-        # and relaxed ONLY on the GitHub CI agent, whose 2-vCPU
-        # serial full-suite coverage job measured 5.9 s for this same
-        # call (≈0.9-1.5 s everywhere else, plain and under
-        # coverage): the slow agent needs the tolerance, the strict
-        # bound everywhere else keeps the discriminator honest.
+        # The primary discriminator is STRUCTURAL, not a benchmark:
+        # the charged work is measured by instrumenting _simplify
+        # (each call reports the counter's drop). The correct
+        # implementation spends ONE work budget across every pass —
+        # the counter is shared and its exhaustion ends the search —
+        # so the total charge is the limit plus one interval scan's
+        # overshoot; an unbounded (or per-pass re-charged) counter
+        # would pay the full quadratic, orders past it. The wall
+        # clock stays as a loose secondary guard only.
         points = [[index * 0.0005, 0.05 if index % 2 else 0.0, float(index)]
                   for index in range(20000)]
+        import plugins.PlateProgress as plate_progress
+        real_simplify = plate_progress._simplify
+        charges = []
+        def counted_simplify(points_arg, tolerance, spent, should_yield=None):
+            before = spent[0]
+            result = real_simplify(points_arg, tolerance, spent, should_yield)
+            charges.append(before - spent[0])
+            return result
         started = time.perf_counter()
-        kept = _budgeted([points], MAX_TRAVEL_POINTS)[0]
+        with patch.object(plate_progress, "_simplify", counted_simplify):
+            kept = _budgeted([points], MAX_TRAVEL_POINTS)[0]
         elapsed = time.perf_counter() - started
-        work_bound = 10.0 if os.environ.get("GITHUB_ACTIONS") == "true" else 5.0
-        self.assertLess(elapsed, work_bound)
+        limit = plate_progress._SIMPLIFY_WORK_LIMIT
+        # The single shared budget was genuinely spent...
+        self.assertGreaterEqual(sum(charges), limit,
+                                "the dense chain never exhausted the budget")
+        # ...and NOTHING re-charged it: one budget total, never six.
+        self.assertLess(sum(charges), 2 * limit,
+                        "the passes re-charged the work budget")
+        self.assertLess(elapsed, 10.0)
         self.assertGreater(len(kept), 2)
         self.assertEqual([point[2] for point in kept],
                          sorted({point[2] for point in kept}))

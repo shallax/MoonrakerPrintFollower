@@ -634,21 +634,20 @@ G1 X5 Y0 Z0.2
             self.assertTrue(os.path.exists(first),
                             "the keep lost to a newer rival")
 
-    def test_prune_evicts_exactly_until_the_retained_set_fits(self):
-        # The review's prune-over-eviction finding: the running total
-        # must track RETAINED bytes. Once the eviction removes the
-        # entry that crossed the budget, the older entries count on
-        # their own merits — a small old print survives the crossing
-        # instead of every older folder going with it.
+    def test_prune_evicts_oldest_first_until_the_retained_set_fits(self):
+        # The review's true-LRU semantics: the walk goes OLDEST first
+        # — the small old print goes BEFORE the crossing-sized middle
+        # one, and the eviction stops once the retained set (the
+        # newest) fits the budget. Never the packing that keeps an
+        # older item merely because it fits better.
         big = b";LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 30000
         small = b";LAYER:0\nG1 X1\n"
         index_big = build_index_from_bytes(big)
         index_small = build_index_from_bytes(small)
         with tempfile.TemporaryDirectory() as directory:
             cache = PersistentIndexCache(directory, max_entries=100)
-            # Written oldest -> newest (the walk runs newest first):
-            # the small print is the oldest, two equally big prints
-            # are the recent ones.
+            # Written oldest -> newest (the write order stamps the
+            # recency): the small print is the oldest.
             old_identity = RemoteFileIdentity("old-small.gcode", len(small), 1.0, "u1")
             mid_identity = RemoteFileIdentity("mid.gcode", len(big), 2.0, "u2")
             new_identity = RemoteFileIdentity("new.gcode", len(big), 3.0, "u3")
@@ -663,21 +662,67 @@ G1 X5 Y0 Z0.2
                               for root, _dirs, names in os.walk(folder)
                               for name in names if name.endswith(".mpfi.gz"))
                      for key, folder in folders.items()}
-            # The budget fits the newest big print AND the old small
-            # one — but not both big prints. Exactly the middle print
-            # must go: the old small print survives on its own merits.
+            # The budget fits the newest big print alone: the oldest
+            # goes first, then the crossing-sized middle — exactly
+            # the two non-newest entries.
             cache.max_bytes = sizes["new"] + sizes["old"]
             cache.prune()
             self.assertTrue(os.path.exists(folders["new"]),
                             "the newest print was evicted")
             self.assertFalse(os.path.exists(folders["mid"]),
-                             "the crossing print survived")
-            self.assertTrue(os.path.exists(folders["old"]),
-                            "a small old print went with the crossing")
+                             "the middle print survived")
+            self.assertFalse(os.path.exists(folders["old"]),
+                             "the oldest print survived the LRU walk")
             self.assertIsNotNone(cache.load(new_identity))
             self.assertIsNone(cache.load(mid_identity),
                               "the evicted print still reads")
-            self.assertIsNotNone(cache.load(old_identity))
+            self.assertIsNone(cache.load(old_identity),
+                              "the evicted print still reads")
+
+    def test_prune_honours_both_budgets_with_a_protected_entry(self):
+        # The review's interaction case: the entry-count and the
+        # byte budget apply SIMULTANEOUSLY around a protected entry —
+        # the survivors are the protected item plus the most recent
+        # unprotected entries the count permits, and the oldest
+        # unprotected folders go first.
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=2)
+            # Written oldest -> newest: d (oldest), c, b, a (newest,
+            # the protected just-written entry).
+            d_identity = RemoteFileIdentity("d.gcode", len(data), 1.0, "u1")
+            c_identity = RemoteFileIdentity("c.gcode", len(data), 2.0, "u2")
+            b_identity = RemoteFileIdentity("b.gcode", len(data), 3.0, "u3")
+            a_identity = RemoteFileIdentity("a.gcode", len(data), 4.0, "u4")
+            for identity in (d_identity, c_identity, b_identity):
+                cache.save(identity, index)
+            # The paths are captured BEFORE the final save's own
+            # prune runs (_path would re-create a folder after its
+            # eviction).
+            folders = {key: os.path.dirname(cache._path(identity))
+                       for key, identity in (("a", a_identity),
+                                             ("b", b_identity),
+                                             ("c", c_identity),
+                                             ("d", d_identity))}
+            cache.save(a_identity, index)  # the protected newest entry
+            # The count bound alone forces the two OLDEST unprotected
+            # folders out; the protected newest entry survives.
+            cache.prune(keep=folders["a"])
+            # The surviving measure is the FOLDER'S FILE: `_path`
+            # re-creates an evicted folder as an empty shell, and the
+            # walk (correctly) skips empty shells — a folder with no
+            # file holds no entry.
+            def entry_exists(key):
+                return os.path.exists(os.path.join(folders[key], "index.mpfi.gz"))
+            self.assertTrue(entry_exists("a"),
+                            "the protected entry was evicted")
+            self.assertTrue(entry_exists("b"),
+                            "the most recent unprotected entry was evicted")
+            self.assertFalse(entry_exists("c"),
+                             "an over-count older entry survived")
+            self.assertFalse(entry_exists("d"),
+                             "the oldest entry survived the count bound")
 
     def test_cache_prunes_entry_count(self):
         data = b";LAYER:0\nG1 X1\n"

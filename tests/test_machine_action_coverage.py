@@ -243,6 +243,7 @@ class MachineActionCase(unittest.TestCase):
             "aux_interval_ms": 1000.0,
             "console_interval_ms": "750",
             "z_tolerance": "0.050",
+            "cache_max_mb": "1024",
             "ready_retry_interval_s": 1.0,
             "follow_mode": "lookahead",
             "feed_mode": "http",
@@ -511,6 +512,13 @@ class MachineActionCase(unittest.TestCase):
             with self.subTest(refused=value):
                 self.assertFalse(action.validRetryInterval(value))
 
+        for value in ("16", 512, "4096"):
+            with self.subTest(accepted=value):
+                self.assertTrue(action.validCacheMax(value))
+        for value in ("15", "4097", "soon", None):
+            with self.subTest(refused=value):
+                self.assertFalse(action.validCacheMax(value))
+
     def test_translation_validation_pairs_the_two_sides(self):
         action = self._action()
         self.assertTrue(action.validTranslation("ab", "cd"))
@@ -539,6 +547,7 @@ class MachineActionCase(unittest.TestCase):
         self.assertEqual(saved.aux_interval_ms, 1000)
         self.assertEqual(saved.console_interval_ms, 750)
         self.assertAlmostEqual(saved.z_tolerance, 0.05)
+        self.assertEqual(saved.cache_max_mb, 1024)
         self.assertAlmostEqual(saved.ready_retry_interval_s, 1.0)
         self.assertEqual(saved.follow_mode, "lookahead")
         self.assertEqual(saved.feed_mode.value, "http")

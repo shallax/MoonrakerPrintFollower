@@ -252,6 +252,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsZTolerance(self) -> str:
         return f"{self._config().z_tolerance:.3f}"
 
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsCacheMaxMb(self) -> str:
+        return str(self._config().cache_max_mb)
+
     # ------------------------------------------------------------------
     # Integrated Moonraker output settings
     # ------------------------------------------------------------------
@@ -386,6 +390,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return 0.005 <= number <= 0.250
 
     @pyqtSlot(str, result=bool)
+    def validCacheMax(self, value: str) -> bool:
+        try:
+            size = int(str(value).strip())
+        except (TypeError, ValueError):
+            return False
+        return 16 <= size <= 4096
+
+    @pyqtSlot(str, result=bool)
     def validRetryInterval(self, value: str) -> bool:
         try:
             number = float(str(value).strip())
@@ -415,6 +427,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
                 tolerance = float(str(raw.get("z_tolerance", "")).strip())
                 retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
+                cache_max = int(str(raw.get("cache_max_mb", "")).strip())
             except ValueError as exc:
                 Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
                 return False
@@ -431,6 +444,9 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 return False
             if not (0.1 <= retry_interval <= 60.0):
                 Logger.log("w", "Moonraker settings save refused: retry interval out of range")
+                return False
+            if not (16 <= cache_max <= 4096):
+                Logger.log("w", "Moonraker settings save refused: cache size out of range")
                 return False
             if enabled and not self._url_is_usable(url):
                 Logger.log("w", "Moonraker settings save refused: the URL is not usable")
@@ -460,6 +476,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "poll_interval_ms": interval,
                 "aux_interval_ms": aux_interval,
                 "console_interval_ms": console_interval,
+                "cache_max_mb": cache_max,
                 "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),

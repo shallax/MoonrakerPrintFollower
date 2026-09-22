@@ -916,6 +916,32 @@ class MachineNamespaceTests(unittest.TestCase):
         self.assertIsNone(unknown_store.load_table("print-key"),
                           "data stranded in the unknown namespace")
 
+    def test_the_cache_budget_follows_the_machine_config(self):
+        # The author's per-machine cache setting: the prepared store's
+        # byte bound rides the ACTIVE machine's configured value, read
+        # fresh at every bind — each machine's own cache-v2 directory
+        # obeys its own saved size, and the default is 512 MiB.
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        store_a = owner.index._prepared
+        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
+                         "the default bound is not 512 MiB")
+        owner.persistence.set_machine("A", {"cache_max_mb": 256})
+        owner.persistence.set_machine("B", {"cache_max_mb": 128})
+        self._switch(app, "B")
+        store_b = owner.index._prepared
+        self.assertEqual(store_b.max_bytes, 128 * 1024 * 1024,
+                         "B never bound its own configured size")
+        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
+                         "the switch rewrote A's store object")
+        self._switch(app, "A")
+        self.assertEqual(owner.index._prepared.max_bytes, 256 * 1024 * 1024,
+                         "the return to A never bound A's configured size")
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class WriterOwnershipTests(unittest.TestCase):

@@ -26,11 +26,12 @@ with print-level recency eviction.
 from __future__ import annotations
 
 import os
-import shutil
 import struct
 import threading
 import time
 from typing import Optional
+
+from plugins.CachePolicy import evict_to_budget
 
 try:
     from UM.Logger import Logger as _Logger
@@ -128,17 +129,35 @@ class PreparedCache:
             return
 
     def _tmp_liveness(self, name: str) -> bool:
-        """True when the tmp's owning process is still alive (the
-        pid rides the name)."""
+        """The owner-liveness probe (the review's Windows-portability
+        finding): True when the tmp's owning process may still be
+        alive, False when the owner is provably gone or never
+        existed. The probe is deliberately CONSERVATIVE — an owner
+        that cannot be disproved keeps its tmp; only a provably dead
+        or impossible owner releases it for adoption. Windows reads
+        OpenProcess's own verdict (ERROR_INVALID_PARAMETER names no
+        live process), never POSIX signal-0 semantics."""
         try:
             pid = int(name.split(".tmp-", 1)[1].split("-", 1)[0])
         except (IndexError, ValueError):
-            return False
+            return False  # no live writer ever stamped this name
+        if pid <= 0:
+            return False  # impossible: writers stamp their real pid
         try:
             os.kill(pid, 0)
             return True
-        except (ProcessLookupError, PermissionError, OSError):
-            return False
+        except ProcessLookupError:
+            return False  # POSIX: no such process
+        except PermissionError:
+            return True  # cannot disprove the owner — keep the tmp
+        except OverflowError:
+            return False  # beyond any platform's pid space
+        except OSError as error:
+            if os.name == "nt" and getattr(error, "winerror", None) == 87:
+                # ERROR_INVALID_PARAMETER: the pid names no live
+                # process (Windows has no ESRCH mapping for it).
+                return False
+            return True  # any other failure keeps the tmp
 
     def _tmp_sound(self, path: str) -> bool:
         """The checkpointed tmp's own validity: the header parses and
@@ -483,9 +502,13 @@ class PreparedCache:
         """The print-level size policy (the review's unified-lifecycle
         finding): one print folder's total cost is the index AND the
         prepared representation together, and an evicted print loses
-        the WHOLE folder — never an orphaned half. The protected path
-        (the current/just-written entry) is skipped, never a stopper —
-        the eviction continues with the next candidate."""
+        the WHOLE folder — never an orphaned half. The walk is the
+        SHARED eviction policy (CachePolicy.evict_to_budget): true
+        LRU — the least recently read unprotected folders go first,
+        and the eviction never finishes over budget while an
+        unprotected folder remains. The protected path (the
+        current/just-written entry) always survives; if it alone
+        exceeds the budget, that is the only acceptable overage."""
         try:
             totals = {}
             for root, _dirs, names in os.walk(self.directory):
@@ -502,27 +525,12 @@ class PreparedCache:
                 except OSError:
                     continue
             keep_dir = os.path.dirname(keep) if keep else None
-            total = 0
-            # The recency walk (the review's LRU finding): the
-            # eviction runs NEWEST first by access time — the
-            # retained set is the most recently used prefix that fits
-            # the budget, and the evicted tail is the least recently
-            # read. The folder's hash order never decides an
-            # eviction.
-            for root, (_atime, size) in sorted(totals.items(),
-                                               key=lambda item: item[1][0],
-                                               reverse=True):
-                if total + size <= self.max_bytes:
-                    total += size
-                    continue
-                total += size
-                if root == keep_dir:
-                    continue
-                try:
-                    shutil.rmtree(root, ignore_errors=True)
-                    total -= size
-                    _log("cache print evicted: %s (%d bytes)", root, size)
-                except OSError:
-                    pass
+            retained, _entries = evict_to_budget(
+                totals, self.max_bytes, None, keep_dir)
+            if retained > self.max_bytes:
+                # The only survivor is the protected entry (or an
+                # unremovable folder) — the one acceptable overage.
+                _log("cache print budget unreachable: %d bytes retained "
+                     "with the protected entry", retained)
         except OSError:
             pass
