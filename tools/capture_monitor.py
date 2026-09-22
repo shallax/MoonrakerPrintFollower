@@ -486,7 +486,13 @@ def main():
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
                    for y in range(5, int(chart.height()), 4)}
-        if len(colours) < 12:
+        # The mini is a SPARKLINE (2 grid lines, flat series, no
+        # labels): its correct signature is the background, the grid
+        # and at least ONE series colour — the old 12-colour floor
+        # dated from the full chart's gradient era and flagged the
+        # correctly-rendered mini as blank (the 2026-09-22 capture
+        # failure: 4 colours, two of them the drawn series).
+        if len(colours) < 3:
             raise RuntimeError("mini chart region looks blank (%d colours)" % len(colours))
         print("mini chart region colours:", len(colours))
         for _ in range(3):
