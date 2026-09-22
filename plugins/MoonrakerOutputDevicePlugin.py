@@ -171,6 +171,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 request_plate_anchor=self._follower.setPlateAnchor,
                 request_plate_split=self._follower.setPlateSplit,
+                request_follower_popover_open=getattr(self._follower, "setFollowerPopoverOpen", None),
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
                 index_service=self._follower.index(),

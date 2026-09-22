@@ -19,6 +19,7 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
+from .CacheNamespaces import CACHE_DIRECTORY_NAME
 from .FollowController import FollowMode
 from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
@@ -617,19 +618,36 @@ class MoonrakerFollowerMachineAction(MachineAction):
             self._set_test_state(f"Invalid printer-object response: {exc}", busy=False)
 
     def _cache_root(self) -> str:
-        # Same composition as FollowerRuntime's cache directory: the
-        # persistent index cache and the diagnostics traces live under
-        # it. The session's downloaded FILE is a temp directory and
-        # disappears when Cura exits.
-        return os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        # Same composition as FollowerRuntime's cache directory (the
+        # shared constant): the persistent index cache and the
+        # diagnostics traces live under it. The session's downloaded
+        # FILE is a temp directory and disappears when Cura exits.
+        return os.path.join(Resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
 
     @pyqtSlot()
     def clearCache(self) -> None:
         """The Diagnostics tab's cache-clear: drop the persistent index
         cache so the next Improve-ETA re-downloads and re-indexes (a
-        request for a re-testable download flow)."""
+        request for a re-testable download flow). The sweep covers
+        EVERY generation the plugin ever used — the legacy
+        package-ID-named directory included — never only the current
+        cache-v2 subtree (the live ruling)."""
         try:
-            shutil.rmtree(self._cache_root(), ignore_errors=True)
+            # The sweep covers EVERY generation the plugin ever
+            # used: the legacy package-ID-named directory AND the
+            # current renamed one — never only the cache-v2 subtree
+            # (the live ruling).
+            for path in (os.path.join(Resources.getCacheStoragePath(),
+                                      "MoonrakerPrintFollower"),
+                         self._cache_root()):
+                shutil.rmtree(path, ignore_errors=True)
+            # The backing files are gone: every index listener
+            # (the improved ETA, the follower, the EOP) must drop
+            # to the no-index state, not keep serving the in-memory
+            # index whose store just vanished (the live ruling).
+            invalidate = getattr(self._follower, "invalidateIndex", None)
+            if invalidate is not None:
+                invalidate()
             self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
         except Exception as error:
             Logger.log("w", "Moonraker Print Follower: cache clear failed: %s", error)

@@ -1795,6 +1795,15 @@ Component {
                                                         // the caret's phase made the
                                                         // captures nondeterministic.
                                                         cursorVisible: false
+                                                        // No Esc handling here on
+                                                        // purpose: this read-only
+                                                        // pane declines the key
+                                                        // (as any text item
+                                                        // does), and the host
+                                                        // page's ladder answers
+                                                        // it — see
+                                                        // answerEscape() in
+                                                        // MoonrakerMonitorDashboard.
                                                     }
                                                 }
                                             }
@@ -2995,7 +3004,7 @@ Component {
                     wrapMode: Text.NoWrap
                     text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoverDetail() : "Triple-click to exclude, or restore an excluded object")
                     elide: Text.ElideRight
-                    color: plateFace.hoveredName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                    color: plateFace.hoveredName !== "" ? plateFace.hoverInk() : UM.Theme.getColor("text_inactive")
                     horizontalAlignment: Text.AlignHCenter
                 }
 

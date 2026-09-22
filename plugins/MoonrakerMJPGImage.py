@@ -22,13 +22,10 @@ from PyQt6.QtQuick import QQuickPaintedItem
 
 from UM.Logger import Logger
 
-# The render ceiling: decode and repaint at most this often. The
-# source is NEVER throttled — the drain parses everything promptly
-# and the superseded frames count as intentionally dropped. This is
-# the internal tuning knob: 30 FPS is the starting ceiling (the
-# smoothness goal); only a measured GUI-thread decode cost in the
-# live run justifies lowering it. The Precise timer type keeps the
-# presentation cadence even.
+# The render ceiling: decode and repaint at most this often while no
+# target rate is set. The source is NEVER throttled — the drain parses
+# everything promptly and the superseded frames count as intentionally
+# dropped. The Precise timer type keeps the presentation cadence even.
 RENDER_INTERVAL_MS = 33
 
 # The safety bounds — two SEPARATE concepts, each documented here:
@@ -67,6 +64,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     statsChanged = pyqtSignal()
     traceEnabledChanged = pyqtSignal()
+    targetFpsChanged = pyqtSignal()
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -86,6 +84,10 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._mirror = False
         self._multipart_boundary: Optional[bytes] = None
         self._trace_enabled = False
+        # The decode throttle (0 = the ceiling above): the pane's FPS
+        # control writes it, and only the render timer's cadence — the
+        # spot that decodes and repaints — follows it.
+        self._target_fps = 0.0
 
         # The render scheduler: decode-and-paint only while the stream
         # runs, always from the newest pending frame.
@@ -179,6 +181,46 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     traceEnabled = pyqtProperty(bool, fget=getTraceEnabled, fset=setTraceEnabled,
                                 notify=traceEnabledChanged)
+
+    def setTargetFps(self, fps: float) -> None:
+        """The decode throttle's target, in frames per second.
+
+        The saving is the DECODE, not the display: the drain still
+        parses promptly and only the newest frame survives, while the
+        render timer — the one place a JPEG becomes a QImage and the
+        item repaints — follows this rate. The target may sit either
+        side of the idle ceiling above: below it is the throttle the
+        idle-load request asks for, above it is a camera configured to
+        run faster, which is the user's call. 0 leaves the ceiling.
+        """
+        try:
+            value = float(fps)
+        except (TypeError, ValueError):
+            value = 0.0
+        if not (value > 0.0):
+            # Also catches NaN: a non-positive target is the ceiling.
+            value = 0.0
+        if value == self._target_fps:
+            return
+        self._target_fps = value
+        self._render_timer.setInterval(self.getRenderIntervalMs())
+        self.targetFpsChanged.emit()
+
+    def getTargetFps(self) -> float:
+        return self._target_fps
+
+    def getRenderIntervalMs(self) -> int:
+        """The cadence the target implies: the interval IS the effective
+        decode rate, because the render tick is what decodes. The 1 ms
+        floor only keeps a corrupt value from spinning the timer."""
+        if self._target_fps <= 0.0:
+            return RENDER_INTERVAL_MS
+        return max(1, int(round(1000.0 / self._target_fps)))
+
+    targetFps = pyqtProperty(float, fget=getTargetFps, fset=setTargetFps,
+                             notify=targetFpsChanged)
+    renderIntervalMs = pyqtProperty(int, fget=getRenderIntervalMs,
+                                    notify=targetFpsChanged)
 
     imageSizeChanged = pyqtSignal()
 
@@ -310,7 +352,17 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         """Blank the painted frame (the live request): a disabled
         stream must not keep the last frame on the item — the resume
         would flash whatever was there when the stream stopped."""
+        if self._image.isNull() and self._image_rect is None:
+            # Already blank: nothing changed, so nothing is announced.
+            return
         self._image = QImage()
+        # Blanking IS a size change (NxM -> 0x0) and the remembered
+        # rect must go with it, or the resumed stream's first frame
+        # (the same resolution) re-announces nothing and a consumer
+        # that gates on imageWidth keeps whatever it latched before
+        # the blank — the dead zoom/FPS after a stream off/on.
+        self._image_rect = None
+        self.imageSizeChanged.emit()
         self.update()
 
     def _stop_request(self) -> None:

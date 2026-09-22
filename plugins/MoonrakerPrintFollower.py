@@ -57,6 +57,8 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
     def setPlateSplit(self, motions): self._runtime.coordinator.set_plate_split(motions)
+    def setFollowerPopoverOpen(self, popover_open): self._runtime.coordinator.set_popover_open(popover_open)
+    def invalidateIndex(self): self._runtime.index.invalidate()
 
     def deinitialize(self):
         self._whats_new.close()

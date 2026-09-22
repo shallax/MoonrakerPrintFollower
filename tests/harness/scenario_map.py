@@ -159,6 +159,22 @@ SCENARIO_MAP = {
     "moonrakerFollowerLayerProgress": "b11",
     "moonrakerFollowerLayerProgressReadout": "b11",
     "followerShowPrevious": "b11",
+    # The webcam pane's FPS/zoom controls (4.6.0): the bar, its chip
+    # readouts, the gesture area and the badges — the camera scenario.
+    "cameraBar": "e2",
+    "cameraBarChip": "e2",
+    "cameraBarChipText": "e2",
+    "cameraFpsBar": "e2",
+    "cameraFpsMarker": "e2",
+    "cameraFpsReadout": "e2",
+    "cameraFpsScale": "e2",
+    "cameraFrame": "e2",
+    "cameraGestureArea": "e2",
+    "cameraLiveBadge": "e2",
+    "cameraZoomBar": "e2",
+    "cameraZoomMarker": "e2",
+    "cameraZoomReadout": "e2",
+    "cameraZoomScale": "e2",
     "followerShowNext": "b11",
     "followerShowBase": "b11",
     "followerShowTravels": "b11",
@@ -251,6 +267,7 @@ PREFIX_RULES = [
     ("slot", "MoonrakerMonitorModel.setFile", "f1"),
     # The camera slots ride the camera-group scenario.
     ("slot", "MoonrakerMonitorModel.cameraRenderStalled", "e2"),
+    ("slot", "MoonrakerMonitorModel.setCameraFps", "e2"),
     # The published keys by family.
     ("key", "console", "d1"),
     ("key", "camera", "e2"),

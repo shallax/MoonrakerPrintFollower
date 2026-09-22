@@ -81,6 +81,11 @@ class PrintCoordinator(QObject):
         # while the face is detached and the user has scrubbed, None to
         # draw the frozen layer as its whole base.
         self._plate_split = None
+        # The follower popover's open state (the explicit demand gate):
+        # closed, the manual anchor stays as lightweight state but the
+        # frozen ±1 presentation window is never served per poll —
+        # nothing shows it (the reviewer's C).
+        self._popover_open = False
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -334,7 +339,7 @@ class PrintCoordinator(QObject):
                 lookup_start = time.monotonic()
                 plate_progress_payload = self._index.plate_progress(
                     physical.index, position, live_position)
-                if self._plate_anchor is not None:
+                if self._manual_serving_active():
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)
                 # This is ONLY the coordinator-side service lookup.
@@ -708,6 +713,25 @@ class PrintCoordinator(QObject):
             and anchor >= 0 else None
         self._index.set_manual_anchor(self._plate_anchor)
         self.refresh()
+
+    def _manual_serving_active(self) -> bool:
+        """The frozen window's serving gate: an anchor exists AND the
+        follower popover is open. Closed, the anchor and the split
+        stay as lightweight state but the frozen ±1 presentation is
+        never served per poll — nothing shows it (the reviewer's C)."""
+        return self._plate_anchor is not None and self._popover_open
+
+    def set_popover_open(self, popover_open):
+        """The follower popover's explicit demand gate: closed, the
+        manual payload stops being served per poll (the anchor and
+        the split stay as lightweight state); reopened, the next
+        poll's refresh resumes it — no immediate refresh here, a
+        recompute would throw away the standing snapshot the
+        published payloads already agree with."""
+        popover_open = bool(popover_open)
+        if popover_open == self._popover_open:
+            return
+        self._popover_open = popover_open
 
     def set_plate_split(self, motions):
         """The follower face's within-layer scrub (the pop-over's

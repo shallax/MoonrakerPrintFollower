@@ -834,18 +834,35 @@ class MachineActionCase(unittest.TestCase):
     # ---- the cache and the migration mirror -------------------------
 
     def test_clear_cache_removes_the_persistent_index(self):
-        root = os.path.join(self.module.Resources.getCacheStoragePath(),
-                            "MoonrakerPrintFollower")
-        os.makedirs(os.path.join(root, "index"))
-        with open(os.path.join(root, "index", "part.json"), "w", encoding="utf-8") as handle:
-            handle.write("{}")
-        action = self._action()
+        # The sweep covers EVERY generation the plugin ever used —
+        # the legacy package-ID-named directory AND the current
+        # renamed one (the live ruling: never only the cache-v2
+        # subtree) — and leaves foreign directories alone.
+        storage = self.module.Resources.getCacheStoragePath()
+        for name in ("MoonrakerPrintFollower", self.module.CACHE_DIRECTORY_NAME):
+            root = os.path.join(storage, name)
+            os.makedirs(os.path.join(root, "index"))
+            with open(os.path.join(root, "index", "part.json"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+        foreign = os.path.join(storage, "SomeOtherPlugin")
+        os.makedirs(os.path.join(foreign, "index"))
+        # The backing files are gone: the index listeners must reset
+        # to the no-index state (the live ruling).
+        follower = self._follower()
+        invalidated = []
+        follower.invalidateIndex = lambda: invalidated.append(1)
+        action = self._action(follower)
         statuses = []
         action.cacheStatusChanged.connect(lambda: statuses.append(action.cacheStatus))
 
         action.clearCache()
 
-        self.assertFalse(os.path.exists(root))
+        for name in ("MoonrakerPrintFollower", self.module.CACHE_DIRECTORY_NAME):
+            self.assertFalse(os.path.exists(os.path.join(storage, name)),
+                             "%s survived the clear" % name)
+        self.assertTrue(os.path.isdir(foreign), "the sweep reached a foreign plugin")
+        self.assertEqual(invalidated, [1],
+                         "the clear never reset the index listeners")
         self.assertEqual(action.cacheStatus,
                          "Cache cleared. Restart Cura to also drop the session's downloaded file.")
         self.assertEqual(statuses, [action.cacheStatus])
