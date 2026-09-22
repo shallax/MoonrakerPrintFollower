@@ -1223,7 +1223,11 @@ Item {
             // the printed history. The normal readiness gate governs
             // only once the delivered canvas IS the current demand's
             // picture.
-            visible: _partialPrefixReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))
+            // The standing clauses below yield to the RETAINED frame:
+            // both images standing at once would composite the same
+            // semi-transparent pixels twice (the additive-AA flicker
+            // — the edges thickened then thinned on every refresh).
+            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))) && (root._retainedPrefixSource === "" || !root._retainedPrefixApplies())
             source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by
