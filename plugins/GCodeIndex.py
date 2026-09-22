@@ -442,6 +442,52 @@ def _parse_axes(code: bytes) -> Dict[str, float]:
     return values
 
 
+# The fast motion front's grammar: exactly what the three per-line
+# regexes accept for the shape slicers emit for ~every motion line —
+# b'G0'-b'G3' at column 0, uppercase, then space-separated axis words
+# whose letter sits against its number. Any other shape returns None
+# and the caller keeps the regex path (the parity contract: the fast
+# path never reinterprets a line, it only claims the safe subset).
+_AXIS_LETTERS = (88, 89, 90, 69)   # X Y Z E
+_AXIS_LOWER = (120, 121, 122, 101)  # x y z e
+_FAST_MOTIONS = (b"G0", b"G1", b"G2", b"G3")
+
+
+def _fast_motion_line(stripped: bytes) -> Optional[Tuple[bytes, Dict[str, float]]]:
+    """The cheap front for the dominant motion line shape (the seek
+    profile: the three regexes cost most of the raw hydrate's second).
+    ``stripped`` is the line's code part (the ``;`` comment already
+    cut). Returns (command, axes) only when the line is exactly the
+    safe shape; None always means the caller's regex path decides."""
+    if len(stripped) < 3 or stripped[0] != 71:  # b'G'
+        return None
+    digit = stripped[1]
+    if not 48 <= digit <= 51:  # b'0'..b'3' — G4/G10+ and everything else fall back
+        return None
+    third = stripped[2:3]
+    if third not in (b"", b" ", b"\t"):
+        return None  # G1X5-style crowding is the regex path's business
+    tokens = stripped.split()
+    axes: Dict[str, float] = {}
+    for tok in tokens[1:]:
+        if len(tok) < 2:
+            if tok and tok[0] in _AXIS_LETTERS + _AXIS_LOWER:
+                return None  # a spaced axis word — the regex reads it
+            continue  # lone I/J/F/R words carry no axis value
+        letter = tok[0]
+        if letter in _AXIS_LOWER:
+            return None  # lowercase words are the regex path's
+        if letter not in _AXIS_LETTERS:
+            continue
+        if tok[1] not in b"+-.0123456789" or b"_" in tok:
+            return None  # float() accepts shapes the regex grammar refuses
+        try:
+            axes[chr(letter)] = float(tok[1:])
+        except ValueError:
+            return None
+    return b"G" + bytes((digit,)), axes
+
+
 def _parse_arc_words(code: bytes) -> Dict[str, float]:
     """An arc line's I/J/K offsets (and its R, if it carries one).
 
@@ -820,9 +866,13 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             # travel/macro motion between ;TIME_ELAPSED and the
             # following ;LAYER marker.
             code = stripped.split(b";", 1)[0]
-            command_match = _COMMAND.search(code)
-            command = command_match.group(1).upper() if command_match else b""
-            axes = _parse_axes(code)
+            fast = _fast_motion_line(code)
+            if fast is not None:
+                command, axes = fast
+            else:
+                command_match = _COMMAND.search(code)
+                command = command_match.group(1).upper() if command_match else b""
+                axes = _parse_axes(code)
             if units_scale != 1.0 and axes:
                 axes = {axis: value * units_scale for axis, value in axes.items()}
             if command == b"G20":
@@ -855,7 +905,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 # a retraction.
                 if "E" in axes:
                     features.e = axes["E"]
-            elif _MOTION.search(stripped):
+            elif command in _FAST_MOTIONS or _MOTION.search(stripped):
                 # A G2/G3 is ONE motion like any other: it takes the next
                 # index, its E decides extrusion, its ;TYPE: names its
                 # feature. What its line adds is where the head actually
@@ -1122,9 +1172,13 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             type_lookup[name] = code
                         features.set_type(code)
                 code = stripped.split(b";", 1)[0]
-                command_match = _COMMAND.search(code)
-                command = command_match.group(1).upper() if command_match else b""
-                axes = _parse_axes(code)
+                fast = _fast_motion_line(code)
+                if fast is not None:
+                    command, axes = fast
+                else:
+                    command_match = _COMMAND.search(code)
+                    command = command_match.group(1).upper() if command_match else b""
+                    axes = _parse_axes(code)
                 if units_scale != 1.0 and axes:
                     axes = {axis: value * units_scale for axis, value in axes.items()}
                 if command == b"G20":
@@ -1148,7 +1202,7 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 elif command == b"G92":
                     x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
                     if "E" in axes: features.e = axes["E"]
-                elif _MOTION.search(stripped):
+                elif command in _FAST_MOTIONS or _MOTION.search(stripped):
                     arc = None
                     if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
                         arc_words = _parse_arc_words(code)
