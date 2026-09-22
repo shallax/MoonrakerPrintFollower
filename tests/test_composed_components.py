@@ -2062,11 +2062,13 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         release = threading.Event()
         calls = []
 
-        def blocked_prefix(payload, plot, view, split, cancel=None):
+        def blocked_prefix(payload, plot, view, split, cancel=None,
+                          previous=None, previous_split=0):
             calls.append(split)
             entered.set()
             release.wait(10)
-            return real_prefix(payload, plot, view, split, cancel=cancel)
+            return real_prefix(payload, plot, view, split, cancel=cancel,
+                               previous=previous, previous_split=previous_split)
 
         with patch.object(module, "render_layer_prefix", blocked_prefix):
             model._qt_window(surface, {"prev": None, "current": payload, "next": None},
@@ -2156,10 +2158,12 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def blocked_prefix(payload, plot, view, split, cancel=None):
+        def blocked_prefix(payload, plot, view, split, cancel=None,
+                          previous=None, previous_split=0):
             entered.set()
             release.wait(10)
-            return real_prefix(payload, plot, view, split, cancel=cancel)
+            return real_prefix(payload, plot, view, split, cancel=cancel,
+                               previous=previous, previous_split=previous_split)
 
         with patch.object(module, "render_layer_prefix", blocked_prefix):
             model._qt_window(surface, {"prev": None, "current": payload, "next": None},

@@ -5044,6 +5044,9 @@ Item {
             # option that only the live view carries (the 4.6.0 live
             # requests).
             "visible: progressFace.viewScale > 1.0 && progressFace.attached",
+            # The Reset view control: the host's checkbox-row label,
+            # hidden in place while at 100% — its row is permanent.
+            "visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0",
             "visible: progressFace.attached",
             # The plate face's native raster stack (the 4.6.0 render
             # architecture): the images own their state gates — a
@@ -5075,7 +5078,7 @@ Item {
             # The retained previous prefix (the atomic handover): the
             # last uploaded prefix's pixels stand while the live
             # replacement loads — never torn down early.
-            "visible: root._retainedPrefixSource !== \"\"",
+            "visible: root._retainedPrefixSource !== \"\" && progressPrefixImage.status !== Image.Ready && root._retainedPrefixApplies()",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

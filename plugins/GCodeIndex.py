@@ -106,7 +106,11 @@ _MAX_CACHE_ARC_ENTRIES = 200_000
 # 9: the sparse per-motion arc descriptors and the layer-start arc plane.
 # 8 restored feature columns but indexed G2/G3 by endpoint, so a 8 blob
 # would draw every arc as its chord — the version refuses it outright.
-_CACHE_VERSION = 10
+# 11: the per-layer motion counts changed semantics (born from the
+# build walk, not the hydrated arrays) — every older cache's
+# counts may read zero for never-hydrated layers, which is exactly
+# the resumed-session dead-slider report; refusing them rebuilds.
+_CACHE_VERSION = 11
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -782,6 +786,15 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             if boundary:
                 if current is not None and current["end"] is None:
                     current["end"] = offset
+                    # The motion total rides the close — the count is
+                    # the walk's only every-motion record, and the
+                    # layer's true total must survive the compact
+                    # scan's empty arrays (the dead-scrub resume
+                    # report). Captured only when the block actually
+                    # closes here: an elapsed-closed block keeps its
+                    # own total (its trailing travel belongs to no
+                    # layer).
+                    current["motion_total"] = features.count
                 # The marker opens a layer: hand the closing one its
                 # feature arrays and seed this one's opening state.
                 finished = features.payload()
@@ -834,6 +847,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                     # the tracker had not yet been handed, and a layer
                     # closed at EOF would never be given any.
                     current["features"] = features.payload()
+                    current["motion_total"] = features.count
                     try:
                         current["elapsed"] = float(elapsed_match.group(1))
                     except (TypeError, ValueError):
@@ -956,6 +970,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         if current is not None and current["end"] is None:
             current["end"] = file_end
             current["features"] = features.payload()
+            current["motion_total"] = features.count
 
     ranges: List[Tuple[int, int]] = []
     motions: List[array] = []
@@ -976,10 +991,17 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     start_arc_plane: List[int] = []
     elapsed_times: List[Optional[float]] = []
     block_stats: List[Optional[int]] = []
+    layer_counts: List[int] = []
     for block in blocks:
         start = int(block["start"])
         end = int(block["end"] if block["end"] is not None else file_end)
         ranges.append((start, max(start + 1, end)))
+        # The walk's per-layer motion counter, captured at the close:
+        # the layer's true total — the collected arrays undercount (the
+        # compact scan collects nothing; the per-layer cap truncates)
+        # and a resumed session's prepared layers never hydrate, so a
+        # zero count would leave the scrub slider dead forever.
+        layer_counts.append(int(block.get("motion_total", 0)))
         motions.append(block["motions"])
         xs.append(block["x"])
         ys.append(block["y"])
@@ -1094,7 +1116,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         pauses=pause_layers,
         compact=bool(compact),
         hydrated_layers=hydrated,
-        layer_motion_counts=[len(m) for m in motions],
+        layer_motion_counts=layer_counts,
     )
 
 

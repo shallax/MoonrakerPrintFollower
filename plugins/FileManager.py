@@ -104,7 +104,7 @@ class FileManager(QObject):
         self._walk_error: Optional[str] = None
         self._print_attempt: Optional[tuple] = None
         self._thumbs: Dict[str, Dict[str, str]] = {}
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         # In-flight thumbnail replies ride this registry until their
         # handlers run — the transport's own lifetime pattern (see
         # _fetch_thumb: a bare closure connected to a network signal
@@ -161,7 +161,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -192,7 +192,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -941,7 +941,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self.thumbsChanged.emit()
 
     def _rejoin_history(self) -> None:

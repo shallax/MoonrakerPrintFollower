@@ -428,33 +428,61 @@ def _geometry_pen(plot: dict, view: dict) -> QPen:
 
 
 def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
-                        cancel=None) -> QImage:
+                        cancel=None, previous=None, previous_split=0) -> QImage:
     """The printed PREFIX as its own asset (the measured verdict:
     the QML vertex walk for a partial layer costs ~900 ms at 500k
     motions on the UI thread — the initial paint, jumps and
     backward scrubs all pay it). The worker walks the same
     QPainterPath but strokes only the motions below the split, so
     the partial layer's printed portion arrives as a blit and QML
-    draws only the live delta's tail. The walk is O(motions) —
-    the split merely gates the stroke, the boundary cost stays in
-    the worker. A cooperative cancel between segments lets a
-    superseded job stop at the next large unit."""
-    image = _new_canvas(view)
+    draws only the live delta's tail. A previous raster turns the
+    render INCREMENTAL: the walk starts at previous_split (the
+    segments' motion indices are monotone, so the below-delta
+    motions bisect away) and strokes only [previous_split, split)
+    over a copy of the previous image — the forward scrub's refresh
+    costs O(delta), not O(split), and the gap between refreshes
+    shrinks to the delta itself. The previous picture MUST belong to
+    the same render context (the caller passes the committed
+    wrapper's own image). A cooperative cancel between segments lets
+    a superseded job stop at the next large unit."""
+    if previous is not None and previous_split > 0 \
+            and previous.width() > 0 and previous.height() > 0:
+        image = QImage(previous)
+        start = previous_split
+    else:
+        image = _new_canvas(view)
+        start = 0
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     pen = _geometry_pen(plot, view)
     painter.setPen(pen)
-    _paint_below_split(painter, pen, payload, plot, view, split, cancel=cancel)
+    _paint_below_split(painter, pen, payload, plot, view, split,
+                       cancel=cancel, first=start)
     painter.end()
     return image
 
 
+def _segment_first(points, first: int) -> int:
+    """The first point whose motion index is at or after `first`
+    (motion indices within a segment never decrease)."""
+    low, high = 0, len(points) - 1
+    while low < high:
+        middle = (low + high) // 2
+        if points[middle][2] < first:
+            low = middle + 1
+        else:
+            high = middle
+    return low
+
+
 def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
-                       view: dict, split, cancel=None) -> None:
-    """Stroke only the edges whose owning motion is below the split
-    (the prefix's own rule — an edge draws when its motion index is
-    under the boundary, and the motions within a segment never
-    decrease, so the first boundary ends the walk)."""
+                       view: dict, split, cancel=None, first=0) -> None:
+    """Stroke only the edges whose owning motion is in
+    [first, split) (the prefix's own rule — an edge draws when its
+    motion index is under the boundary, and the motions within a
+    segment never decrease, so the first boundary ends the walk).
+    `first` is the incremental render's start: the bisect skips the
+    already-painted motions without walking them."""
     sx, sy, offset_x, offset_y, bed_x_min, bed_y_max = _transform(plot, view)
     for name, segments in (payload.get("classes") or {}).items():
         if cancel is not None and cancel.is_set():
@@ -466,9 +494,12 @@ def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
                 return
             if len(points) < 2:
                 continue
+            begin = _segment_first(points, first) if first > 0 else 0
+            if begin > 0:
+                begin -= 1  # the edge INTO the first motion draws too
             path = QPainterPath()
             drew = False
-            for i in range(1, len(points)):
+            for i in range(begin + 1, len(points)):
                 if split >= 0 and points[i][2] >= split:
                     break
                 if not drew:

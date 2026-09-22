@@ -3191,43 +3191,61 @@ Component {
                 // The control's text is part of its clickable area and
                 // carries the theme's own snug indicator gap — so the
                 // rows read as pairs at the standard flow gap.
-                Flow {
+                RowLayout {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("narrow_margin").height
-                    UM.CheckBox {
-                        text: "Previous layer"
-                        checked: root.printer != null ? root.printer.followerShowPrevious : true
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerShowPrevious(checked);
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("narrow_margin").height
+                        UM.CheckBox {
+                            text: "Previous layer"
+                            checked: root.printer != null ? root.printer.followerShowPrevious : true
+                            onToggled: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerShowPrevious(checked);
+                                }
+                            }
+                        }
+                        UM.CheckBox {
+                            text: "Next layer"
+                            checked: root.printer != null ? root.printer.followerShowNext : true
+                            onToggled: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerShowNext(checked);
+                                }
+                            }
+                        }
+                        UM.CheckBox {
+                            text: "Layer ghost"
+                            checked: root.printer != null ? root.printer.followerShowBase : true
+                            onToggled: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerShowBase(checked);
+                                }
+                            }
+                        }
+                        UM.CheckBox {
+                            text: "Travels"
+                            checked: root.printer != null ? root.printer.followerShowTravels : false
+                            onToggled: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerShowTravels(checked);
+                                }
                             }
                         }
                     }
-                    UM.CheckBox {
-                        text: "Next layer"
-                        checked: root.printer != null ? root.printer.followerShowNext : true
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerShowNext(checked);
-                            }
-                        }
-                    }
-                    UM.CheckBox {
-                        text: "Layer ghost"
-                        checked: root.printer != null ? root.printer.followerShowBase : true
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerShowBase(checked);
-                            }
-                        }
-                    }
-                    UM.CheckBox {
-                        text: "Travels"
-                        checked: root.printer != null ? root.printer.followerShowTravels : false
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerShowTravels(checked);
-                            }
+                    // The view reset: right of the checkbox row's free
+                    // space, outside the canvas entirely — its
+                    // appearance never reflows the plate.
+                    UM.Label {
+                        visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0
+                        text: "Reset view"
+                        font: UM.Theme.getFont("small")
+                        color: UM.Theme.getColor("primary")
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: progressFace.resetView()
                         }
                     }
                 }

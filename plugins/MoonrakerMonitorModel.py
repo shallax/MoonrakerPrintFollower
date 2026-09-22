@@ -637,7 +637,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # every model gets its own directory, so two printers can
         # never collide on filenames or prune each other's assets;
         # the model's destruction removes it.
-        self._raster_cache_dir = tempfile.mkdtemp(prefix="mpf-raster-")
+        self._raster_cache_dir = tempfile.mkdtemp(prefix="mpf-raster-%d-" % os.getpid())
         self.destroyed.connect(self._cleanup_raster_dir)
         self.destroyed.connect(self._release_all_pins)
         # The seek trace: disabled by
@@ -3067,7 +3067,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return True
         if split < have:
             return True
-        return split - have > max(100, int(motions * 0.25))
+        # The refresh threshold rides the INCREMENTAL render: the
+        # worker strokes only [have, split) over the committed
+        # picture, so a refresh costs O(delta), not O(split) — the
+        # threshold tightens to keep the canvas's tail walk (the
+        # visible gap between refreshes) small.
+        return split - have > max(100, int(motions * 0.03))
 
     def _schedule_surface(self, surface):
         """The bounded demand scheduler :
@@ -3139,13 +3144,29 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             ticket = (surface.name, layer, token, generation, key, kind,
                       prefix_split, epoch, serial)
             payload = wrapped._payload
+            # The incremental render's base (the forward scrub's
+            # refresh cost): the wrapper's committed prefix picture
+            # and its boundary — the worker copies the image and
+            # strokes only [previous_split, prefix_split). A stale
+            # context falls back to the full walk: the picture bakes
+            # the view transform, so only the SAME render key may
+            # seed the copy — a zoom or pan between the commit and
+            # this render would stroke the new view over old-scale
+            # pixels (the out-of-scale ghost).
+            previous_image = getattr(wrapped, "_prefix", None)
+            previous_boundary = wrapped.prefixSplit
+            if getattr(wrapped, "_prefix_key", None) != key:
+                previous_image = None
+                previous_boundary = 0
 
             def build(ticket=ticket, payload=payload, plot=plot, view=view,
                       surface=surface, layer=layer, generation=generation,
                       kind=kind, prefix_split=prefix_split, epoch=epoch,
                       serial=serial, cancel=cancel,
                       directory=self._raster_cache_dir,
-                      bridge=self._raster_bridge):
+                      bridge=self._raster_bridge,
+                      previous_image=previous_image,
+                      previous_boundary=previous_boundary):
                 # Every job ends in exactly ONE terminal emit: the
                 # success payload, a cancelled marker, or a failure
                 # marker. A worker that throws can never wedge the
@@ -3163,8 +3184,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     stem = "r-%s-e%d-%d-g%d-s%d" % (
                         surface.name, epoch, layer, generation, serial)
                     if kind == "prefix":
-                        image = render_layer_prefix(payload, plot, view, prefix_split,
-                                                    cancel=cancel)
+                        image = render_layer_prefix(
+                            payload, plot, view, prefix_split, cancel=cancel,
+                            previous=previous_image,
+                            previous_split=previous_boundary
+                            if previous_boundary is not None else 0)
                         if cancel.is_set():
                             emit(("cancelled",))
                             return

@@ -20,6 +20,64 @@ from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_
 CANCELLED_BY_USER = "The download was cancelled"
 CANCELLED_BY_SESSION = "The printer connection changed; the download was cancelled"
 
+# A day, for the pid-less legacy names only: the pre-4.6
+# accumulation. A root that carries its creating pid is swept the
+# moment that pid is dead.
+_STALE_ROOT_AGE_S = 24 * 3600
+# The whole plugin temp family plus the legacy names — the download
+# root, the thumbnails, the raster cache and the upload staging all
+# leak on an unclean exit.
+_SWEPT_PREFIXES = ("mpf-", "cura-moonraker-files-", "cura-moonraker-upload-")
+
+
+def _owner_pid(entry):
+    """The creating pid embedded in the mpf-<kind>-<pid>-... shape
+    (the kind segment first, then the digits); None for a pid-less
+    legacy name."""
+    if not entry.startswith("mpf-"):
+        return None
+    parts = entry[len("mpf-"):].split("-")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
+    """Remove abandoned temp roots (sessions that died without the
+    shutdown hook): every file the session never cleaned lives
+    under these. A live pid's root stays — a concurrent Cura
+    session survives the sweep at any age; the age fallback covers
+    only the pid-less legacy names."""
+    try:
+        entries = os.listdir(temp_dir)
+    except OSError:
+        return
+    now = time.time()
+    current_name = os.path.basename(current_root)
+    for entry in entries:
+        if not entry.startswith(_SWEPT_PREFIXES) or entry == current_name:
+            continue
+        path = os.path.join(temp_dir, entry)
+        pid = _owner_pid(entry)
+        if pid is not None:
+            if _pid_alive(pid):
+                continue
+        else:
+            try:
+                if now - os.path.getmtime(path) < _STALE_ROOT_AGE_S:
+                    continue
+            except OSError:
+                continue
+        shutil.rmtree(path, ignore_errors=True)
+
 
 def _declared_length(reply) -> int:
     """The response's Content-Length, 0 when absent. Read through the
@@ -232,7 +290,13 @@ class RemoteFileService(QObject):
     def __init__(self, transport, parent=None, *, target_factory=DownloadTarget.open):
         super().__init__(parent)
         self._transport = transport
-        self._root = tempfile.mkdtemp(prefix="cura-moonraker-files-")
+        self._root = tempfile.mkdtemp(prefix="mpf-files-%d-" % os.getpid())
+        # Sessions that end without the shutdown hook (a kill, a
+        # crash, a lease still open at close) leave their root
+        # behind — every downloaded file inside. The boot sweep
+        # clears the abandoned siblings; the age gate spares a
+        # concurrent live session's root.
+        _sweep_stale_roots(tempfile.gettempdir(), self._root)
         # Injected so the gated-writer regressions need no private-field
         # patching.
         self._target_factory = target_factory
