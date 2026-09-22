@@ -2921,8 +2921,34 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 image = window.grabWindow()
                 shown = classify(image, allowed)
                 if shown is None:
-                    failures.append("%s: beat %d presented no complete composition"
-                                    % (name, beat))
+                    # The whole signature, per candidate, so a flake's
+                    # failing probes are visible in the report.
+                    details = []
+                    for cand in allowed:
+                        probes = [25.0]
+                        if cand > 10:
+                            probes += [105.0, 115.0,
+                                       (110.0 + 20.0 + 10.0 * (cand - 1)) / 2.0]
+                        probes.append(20.0 + 10.0 * (cand - 1))
+                        details.append("split %d probes %s clean=%s"
+                                       % (cand, [ink_at(image, bx) for bx in probes],
+                                          clean_beyond(image, cand)))
+                    progress_now = face.property("progress")
+                    if progress_now is not None and hasattr(progress_now, "toVariant"):
+                        progress_now = progress_now.toVariant()
+                    details.append(
+                        "face: wasShown=%s hold=%s texture=%s last=%s covers=%s "
+                        "prefixValid=%s prefixSplit=%s split=%s"
+                        % (face.property("_prefixWasShown"),
+                           face.property("_prefixHold"),
+                           face.property("_textureReady"),
+                           face.property("_lastSplit"),
+                           face.property("_vectorCoversFrom"),
+                           layer.prefixValid, layer.prefixSplit,
+                           progress_now.get("split") if progress_now else "?"))
+                    failures.append("%s: beat %d presented no complete "
+                                    "composition (%s)"
+                                    % (name, beat, " | ".join(details)))
                     continue
                 if shown not in allowed:
                     failures.append("%s: beat %d presented split %d (allowed %s)"
@@ -2972,14 +2998,42 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
-    def _parity_leg(self, dpr):
+    _PARITY_ORIENTATIONS = {
+        # The prefix boundary sits at motion 9 (bed position 110 or
+        # its orientation's equivalent): the seam probes bracket it.
+        "horizontal": {
+            "points": [[20.0 + m * 10.0, 125.0, float(m)] for m in range(21)],
+            "prefix": (60.0, 125.0), "tail": (160.0, 125.0),
+            "seam_before": (105.0, 125.0), "seam_after": (115.0, 125.0),
+            "across_columns": False,
+        },
+        "vertical": {
+            "points": [[125.0, 20.0 + m * 10.0, float(m)] for m in range(21)],
+            "prefix": (125.0, 60.0), "tail": (125.0, 160.0),
+            "seam_before": (125.0, 105.0), "seam_after": (125.0, 115.0),
+            "across_columns": True,
+        },
+        "diagonal": {
+            "points": [[20.0 + m * 7.0, 20.0 + m * 7.0, float(m)]
+                       for m in range(21)],
+            "prefix": (55.0, 55.0), "tail": (118.0, 118.0),
+            "seam_before": (78.0, 78.0), "seam_after": (90.0, 90.0),
+            "across_columns": False,
+        },
+    }
+
+    def _parity_leg(self, dpr, orientation):
+        spec = self._PARITY_ORIENTATIONS[orientation]
+        # Each leg mounts fresh, and _open replaces the _printer
+        # factory with the instance — restore it so the next mount
+        # can build one (the old expectedFailure swallowed exactly
+        # this TypeError, so its second leg never ran).
+        self._printer = PlateFaceRenderTests._printer
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 0.7)
         self.pump(10)
-        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
-                  for motion in range(21)]
         payload = {
-            "classes": {"WALL-OUTER": [points]},
+            "classes": {"WALL-OUTER": [spec["points"]]},
             "travels": [], "travelStarts": [], "travelEnds": [],
             "motions": 21,
         }
@@ -2994,79 +3048,113 @@ class PlateFaceRenderTests(RealEngineTestCase):
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()
         bed = plot_value["bed"]
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
 
         def column_for(bed_x):
             return int(round(float(bed["offsetX"])
                              + (bed_x - float(bed["bedXMin"]))
                              * float(plot_value["sx"])))
 
-        row = int(round(float(bed["offsetY"])
-                        + (float(bed["bedYMax"]) - 125.0)
-                        * float(plot_value["sy"])))
-        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        def row_for(bed_y):
+            return int(round(float(bed["offsetY"])
+                             + (float(bed["bedYMax"]) - bed_y)
+                             * float(plot_value["sy"])))
 
-        def band_profile(col):
-            # The red excess over the underlying background down the
-            # perpendicular column (the stroke's thickness spans a few
-            # antialiased rows).
+        def band_at(bed_x, bed_y):
+            # The red excess over the underlying background across
+            # the stroke's PERPENDICULAR (rows for a horizontal run,
+            # columns for a vertical one; a diagonal crosses the
+            # sampled band either way).
+            col = column_for(bed_x)
+            row = row_for(bed_y)
             values = []
-            for r in range(row - 6, row + 7):
-                pixel = image.pixel(int(origin.x()) + col,
-                                    int(origin.y()) + r)
-                values.append(max(0, ((pixel >> 16) & 0xFF)
-                                 - ((pixel >> 8) & 0xFF)))
+            if spec["across_columns"]:
+                for c in range(col - 8, col + 9):
+                    pixel = image.pixel(int(origin.x()) + c,
+                                        int(origin.y()) + row)
+                    values.append(max(0, ((pixel >> 16) & 0xFF)
+                                     - ((pixel >> 8) & 0xFF)))
+            else:
+                for r in range(row - 8, row + 9):
+                    pixel = image.pixel(int(origin.x()) + col,
+                                        int(origin.y()) + r)
+                    values.append(max(0, ((pixel >> 16) & 0xFF)
+                                     - ((pixel >> 8) & 0xFF)))
             return values
-        prefix_col = column_for(60.0)   # motion 4 — the native prefix
-        tail_col = column_for(160.0)    # motion 14 — the canvas tail
-        prefix_band = band_profile(prefix_col)
-        tail_band = band_profile(tail_col)
-        prefix_peak = max(prefix_band)
-        tail_peak = max(tail_band)
-        prefix_energy = sum(prefix_band)
-        tail_energy = sum(tail_band)
+
+        def metrics(band):
+            return max(band), sum(band), sum(1 for v in band if v > 4)
+
+        label = "dpr %s %s" % (dpr, orientation)
+        prefix_band = band_at(*spec["prefix"])
+        tail_band = band_at(*spec["tail"])
+        prefix_peak, prefix_energy, prefix_extent = metrics(prefix_band)
+        tail_peak, tail_energy, tail_extent = metrics(tail_band)
         self.assertGreater(prefix_peak, 10,
-                           "dpr %s: the native prefix drew nothing measurable" % dpr)
+                           "%s: the native prefix drew nothing measurable" % label)
         self.assertGreater(tail_peak, 10,
-                           "dpr %s: the canvas tail drew nothing measurable" % dpr)
-        self.assertGreater(prefix_peak, tail_peak * 0.6,
-                           "dpr %s: the native prefix is ghostly against the "
+                           "%s: the canvas tail drew nothing measurable" % label)
+        # The parity contract: the SAME subpixel stroke must carry
+        # the same perceived intensity on both sides of the ownership
+        # seam — the measured ratio is 22 vs 21 (peak) and 44 vs 42
+        # (energy); the 0.7 slack catches only a real second-owner
+        # stack or a wash-out, not the harness's AA jitter.
+        self.assertGreater(prefix_peak, tail_peak * 0.7,
+                           "%s: the native prefix is ghostly against the "
                            "canvas tail (peak %s vs %s)"
-                           % (dpr, prefix_peak, tail_peak))
-        self.assertGreater(tail_peak, prefix_peak * 0.6,
-                           "dpr %s: the canvas tail is ghostly against the "
+                           % (label, prefix_peak, tail_peak))
+        self.assertGreater(tail_peak, prefix_peak * 0.7,
+                           "%s: the canvas tail is ghostly against the "
                            "native prefix (peak %s vs %s)"
-                           % (dpr, tail_peak, prefix_peak))
-        self.assertGreater(prefix_energy, tail_energy * 0.6,
-                           "dpr %s: the native prefix's band energy washes "
-                           "out (%s vs %s)" % (dpr, prefix_energy, tail_energy))
-        self.assertGreater(tail_energy, prefix_energy * 0.6,
-                           "dpr %s: the canvas tail's band energy washes "
-                           "out (%s vs %s)" % (dpr, tail_energy, prefix_energy))
+                           % (label, tail_peak, prefix_peak))
+        self.assertGreater(prefix_energy, tail_energy * 0.7,
+                           "%s: the native prefix's band energy washes "
+                           "out (%s vs %s)" % (label, prefix_energy, tail_energy))
+        self.assertGreater(tail_energy, prefix_energy * 0.7,
+                           "%s: the canvas tail's band energy washes "
+                           "out (%s vs %s)" % (label, tail_energy, prefix_energy))
+        # The effective stroke extent (the thickness in rows/columns
+        # above the noise floor) must not step at the seam.
+        self.assertLessEqual(abs(prefix_extent - tail_extent), 1,
+                             "%s: the stroke's effective extent steps at "
+                             "the seam (%s vs %s rows)"
+                             % (label, prefix_extent, tail_extent))
+        # The seam itself: both sides of the ownership handoff stay
+        # inked and comparable — a hole or a doubled seam reads here.
+        seam_before = band_at(*spec["seam_before"])
+        seam_after = band_at(*spec["seam_after"])
+        self.assertGreater(max(seam_before), 8,
+                           "%s: the seam's prefix side lost its ink" % label)
+        self.assertGreater(max(seam_after), 8,
+                           "%s: the seam's tail side lost its ink" % label)
+        self.assertGreater(max(seam_before), max(seam_after) * 0.6,
+                           "%s: the seam's prefix side washes out at the "
+                           "handoff (%s vs %s)"
+                           % (label, max(seam_before), max(seam_after)))
+        self.assertGreater(max(seam_after), max(seam_before) * 0.6,
+                           "%s: the seam's tail side washes out at the "
+                           "handoff (%s vs %s)"
+                           % (label, max(seam_after), max(seam_before)))
         self.pump(20)
 
-    @unittest.expectedFailure
     def test_the_native_prefix_and_the_qml_tail_match_intensity_at_production_width(self):
-        # The review's finding #3: at the production lineScale (0.7 —
-        # subpixel strokes) the native prefix and the QML canvas tail
-        # must carry the same perceived intensity over equivalent
-        # pieces of the same straight path: the peak feature colour,
-        # the mean delta from the background and the integrated band
-        # energy — not a stroke-height census at lineScale 8. The
-        # raster may be fractionally softer (it is an image), but it
-        # must not read ghostly, translucent or washed out against
-        # the canvas continuation.
-        #
-        # MEASURED (the finding's evidence, recorded): at lineScale
-        # 0.7 the canvas tail renders the same subpixel stroke at
-        # HALF the native prefix's per-pixel coverage (peak 21 vs
-        # 42, energy 42 vs 84, identical band shape); the ratio
-        # converges as the stroke thickens (0.57 at 1.4, 0.69 at
-        # 2.8) — the canvas rasteriser's subpixel AA deficit, worst
-        # at the production default. The renderer is untouched (the
-        # review forbids blind alpha or width factors); the fix must
-        # reproduce the native painter's coverage.
-        self._parity_leg(1.0)
-        self._parity_leg(2.0)
+        # The review's finding #3, closed: at the production
+        # lineScale (0.7 — subpixel strokes) the native prefix and
+        # the QML canvas tail carry the SAME perceived intensity
+        # over equivalent pieces of the same path, in every
+        # orientation, at both backing factors. The mechanism (the
+        # measured evidence): the two painters' subpixel coverage is
+        # IDENTICAL — the apparent 2x deficit (peak 42 vs 21) was
+        # the canvas's un-trimmed FULL bitmap stacked UNDER the
+        # prefix, doubling the prefix region's ink. The prefix's
+        # show now forces the settled single-owner trim, so the
+        # canvas repaints to the tail alone (the settled ownership
+        # record proves it: _vectorCoversFrom == prefixSplit). The
+        # fix touches no alpha, no colour and no width — only the
+        # composition's ownership.
+        for dpr in (1.0, 2.0):
+            for orientation in ("horizontal", "vertical", "diagonal"):
+                self._parity_leg(dpr, orientation)
 
     def test_the_interaction_raster_owns_the_camera_and_swaps_atomically(self):
         # The camera interaction: a warm navigation raster owns the

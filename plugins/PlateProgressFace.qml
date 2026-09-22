@@ -427,6 +427,18 @@ Item {
         return false;
     }
 
+    function _prefixApplies() {
+        // The split arithmetic still names the prefix as the history
+        // owner — PURE structural terms, no transient inputs (the
+        // model's validity and the Image's status flicker through a
+        // re-publish; a hide fired on a flicker drops the standing
+        // composition's memory). A full layer or a split below the
+        // prefix boundary hides it legitimately.
+        var progress = root.progress;
+        var layer = progress != null && progress.layers != null ? progress.layers.current : null;
+        return progress != null && progress.split != null && layer != null && layer.prefixSplit !== undefined && layer.prefixSplit >= 0 && progress.split > layer.prefixSplit && progress.split < _motionsOf(layer);
+    }
+
     function _leavingFull() {
         // The split has moved out of the full state into a partial
         // one — the entry the hold transaction covers.
@@ -710,13 +722,33 @@ Item {
     // the threaded canvas's scene texture commits in the sync AFTER
     // the painted signal, and a hide in the same sync would leave
     // one frame with neither owner.
+    property bool _beatPending: false
     Timer {
         id: holdExpiryTimer
         interval: 16
         onTriggered: {
+            // Only a beat an arming actually scheduled may clear the
+            // standing flags — a stale armed trigger (a choreography
+            // that ended by another path) firing mid-steady-state
+            // would wipe the shown record and drop the composition's
+            // memory (the scrub flake: the next paint lost the
+            // prefix's ownership and the frame showed the tail
+            // alone).
+            if (!root._beatPending) {
+                return;
+            }
+            root._beatPending = false;
             root._prefixHold = false;
-            root._prefixWasShown = false;
             root._prefixShowHold = false;
+            // The shown record follows the VISIBLE state: clear it
+            // only when the beat actually left the prefix hidden. A
+            // standing prefix (the entry's handover keeps it visible
+            // through the readiness gate) must keep its memory — the
+            // scrub flake: the beat wiped the record while the
+            // prefix stood, and the next paint lost the ownership.
+            if (!progressPrefixImage.visible) {
+                root._prefixWasShown = false;
+            }
         }
     }
     // The scrub vector's SOURCE identity: a same-anchor payload swap
@@ -1100,15 +1132,17 @@ Item {
         Image {
             id: progressPrefixImage
             anchors.fill: parent
-            // The shown prefix STAYS while its model is valid — a
-            // repaint in flight (or a delivery from an earlier split)
-            // must never hide it: the standing picture is the
-            // complete OLD composition, and a prefix-less frame
-            // would drop the printed history. The normal readiness
-            // gate governs only once the delivered canvas IS the
-            // current demand's picture.
-            visible: _partialPrefixReady() || root._prefixHold || (root._prefixWasShown && _prefixModelReady() && !(root._textureReady && root._lastSplit === root.progress.split))
-            source: (_prefixModelReady() || root._prefixHold) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
+            // The shown prefix STAYS while the split arithmetic still
+            // names it as the history owner — a repaint in flight, a
+            // delivery from an earlier split, or a transient
+            // validity/status flicker through a re-publish must
+            // never hide it: the standing picture is the complete
+            // OLD composition, and a prefix-less frame would drop
+            // the printed history. The normal readiness gate governs
+            // only once the delivered canvas IS the current demand's
+            // picture.
+            visible: _partialPrefixReady() || root._prefixHold || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))
+            source: (_prefixModelReady() || root._prefixHold || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by
                 // the model's invalidation (prefixValid flipped false —
@@ -1120,11 +1154,24 @@ Item {
                 // canvas owns the interval by then.
                 if (visible) {
                     root._prefixWasShown = true;
+                    // The settled single-owner trim: a canvas that
+                    // painted the FULL history before this prefix
+                    // showed must repaint to the tail alone — its
+                    // full bitmap stacked under the prefix doubles
+                    // the prefix region's ink (the parity seam: 42
+                    // vs 21 at lineScale 0.7). The repaint is FORCED
+                    // here: the show can land after the key's paint
+                    // already consumed itself.
+                    progressCanvas.requestPaint();
                 } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false) {
                     holdExpiryTimer.stop();
                     root._prefixHold = true;
                     progressCanvas.requestPaint();
-                } else {
+                } else if (!root._prefixApplies()) {
+                    // The hide is terminal (a full layer, a sub-prefix
+                    // split, a layer change): reset the shown record.
+                    // A transient hide keeps the memory — the standing
+                    // extension re-asserts the picture.
                     root._prefixHold = false;
                     root._prefixWasShown = false;
                 }
@@ -1150,18 +1197,28 @@ Item {
                     // past this painted signal (the atomic previous
                     // -> next swap, zero blank frames).
                     root._entryPaintArmedHold = false;
+                    root._beatPending = true;
                     holdExpiryTimer.restart();
                 }
                 if (root._prefixHold && root._vectorCoversFrom === 0) {
+                    root._beatPending = true;
                     holdExpiryTimer.restart();
                 }
             }
             onPaint: {
                 var ctx = getContext("2d");
+                // The settled single-owner trim is a REFINEMENT of an
+                // already presentation-complete picture (the full
+                // bitmap under the prefix is invisible overlap): its
+                // repaint must not withdraw the standing readiness —
+                // the seek's ready commit waits for no trim.
+                var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && root._vectorCoversFrom === 0 && _prefixFrom() > 0;
                 // The committed texture is now one paint behind — the
                 // painted signal re-arms the confirmation when the
                 // bitmap is delivered.
-                root._textureReady = false;
+                if (!trimOnly) {
+                    root._textureReady = false;
+                }
                 // A paint begun while the 100% -> partial hold stands
                 // arms the handover beat for its delivery (the
                 // release must wait one beat after the LAST delivery,
