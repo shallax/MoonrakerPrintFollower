@@ -725,6 +725,7 @@ class PrinterConfigCoverageTests(unittest.TestCase):
             "camera_rotation": "nonsense",
             "aux_interval_ms": "nonsense",
             "console_interval_ms": "nonsense",
+            "cache_max_mb": "nonsense",
         })
         self.assertEqual(config.poll_interval_ms, 750)
         self.assertEqual(config.z_tolerance, 0.04)
@@ -732,10 +733,12 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(config.camera_rotation, 0)
         self.assertEqual(config.aux_interval_ms, 2500)
         self.assertEqual(config.console_interval_ms, 1000)
+        self.assertEqual(config.cache_max_mb, 512)
 
         clamped = PrinterConfig.from_dict({
             "poll_interval_ms": 10 ** 9, "z_tolerance": 0.5, "ready_retry_interval_s": 120.0,
             "camera_rotation": 45, "aux_interval_ms": 10, "console_interval_ms": 10 ** 6,
+            "cache_max_mb": 10 ** 6,
         })
         self.assertEqual(clamped.poll_interval_ms, 3_600_000)
         self.assertEqual(clamped.z_tolerance, 0.04)          # above the 0.250 ceiling
@@ -743,6 +746,8 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(clamped.camera_rotation, 0)         # not a quarter turn
         self.assertEqual(clamped.aux_interval_ms, 250)
         self.assertEqual(clamped.console_interval_ms, 60_000)
+        self.assertEqual(clamped.cache_max_mb, 4096)         # above the 4096 ceiling
+        self.assertEqual(PrinterConfig.from_dict({"cache_max_mb": 1}).cache_max_mb, 16)
         self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("nan")}).z_tolerance, 0.04)
         self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 0}).poll_interval_ms, 1)
         self.assertEqual(PrinterConfig.from_dict({"ready_retry_interval_s": 0.0}).ready_retry_interval_s,

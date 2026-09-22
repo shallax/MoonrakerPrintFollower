@@ -19,10 +19,11 @@ Cura.MachineAction {
     property bool validAuxInterval: true
     property bool validConsoleInterval: true
     property bool validZTolerance: manager.validZTolerance(zToleranceField.text)
+    property bool validCacheMax: manager.validCacheMax(cacheMaxField.text)
     property bool validRetryInterval: manager.validRetryInterval(retryIntervalField.text)
     property bool validTranslation: manager.validTranslation(translateInputField.text, translateOutputField.text)
     property bool connectionRequested: enabledBox.checked || (urlField.text.trim() !== "" && urlField.text.trim() !== "http://" && urlField.text.trim() !== "https://")
-    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
     // Two refusal causes share the slot with distinct copy: the
@@ -55,6 +56,7 @@ Cura.MachineAction {
             "poll_interval_ms": base.pollIntervalMoved ? Math.round(250 * Math.pow(2, pollIntervalSlider.value)) : manager.settingsPollInterval,
             "aux_interval_ms": auxIntervalSlider.value,
             "console_interval_ms": consoleIntervalSlider.value,
+            "cache_max_mb": cacheMaxField.text,
             "follow_mode": followMode(),
             "moonraker_layer_is_one_based": oneBasedBox.checked,
             "path_follow": pathFollowBox.checked,
@@ -998,9 +1000,29 @@ Cura.MachineAction {
 
                         UM.Label {
                             width: parent.width
-                            text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again."
+                            text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again. The cache size limit is per printer; the clear button wipes the cache for ALL printers."
                             wrapMode: Text.WordWrap
                             color: UM.Theme.getColor("text_inactive")
+                        }
+                        RowLayout {
+                            width: parent.width
+                            spacing: UM.Theme.getSize("default_margin").width
+                            UM.Label {
+                                text: "Persistent cache size (MiB)"
+                            }
+                            Cura.TextField {
+                                id: cacheMaxField
+                                Layout.preferredWidth: 90
+                                text: manager.settingsCacheMaxMb
+                                maximumLength: 8
+                                onTextChanged: base.validCacheMax = manager.validCacheMax(text)
+                            }
+                            UM.Label {
+                                visible: !base.validCacheMax
+                                text: "Cache size must be between 16 and 4096 MiB."
+                                color: UM.Theme.getColor("error")
+                                font: UM.Theme.getFont("default_italic")
+                            }
                         }
                         RowLayout {
                             width: parent.width

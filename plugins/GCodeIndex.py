@@ -6,12 +6,13 @@ import json
 import math
 import os
 import re
-import shutil
 import struct
 import sys
 import tempfile
 import threading
 import time
+
+from plugins.CachePolicy import evict_to_budget
 from array import array
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -1745,10 +1746,14 @@ class PersistentIndexCache:
         """The print-level policy (the review's unified-lifecycle
         finding): one print folder's total cost is the index AND the
         prepared representation together, and an evicted print loses
-        the WHOLE folder — never an orphaned half. The protected path
-        (the just-written or currently used entry, passed explicitly
-        — the review's prune-protection finding, never an mtime
-        guess) survives even beyond the budgets."""
+        the WHOLE folder — never an orphaned half. The walk is the
+        SHARED eviction policy (CachePolicy.evict_to_budget): true
+        LRU — the least recently used unprotected folders go first,
+        and the eviction never finishes over budget while an
+        unprotected folder remains. The protected path (the
+        just-written or currently used entry, passed explicitly —
+        never an mtime guess) always survives; if it alone exceeds a
+        budget, that is the only acceptable overage."""
         try:
             # The print-level totals: one entry per print folder, its
             # size the sum of every representation inside it.
@@ -1758,37 +1763,18 @@ class PersistentIndexCache:
                 if not folder.startswith("p-"):
                     continue
                 try:
-                    size = sum(os.stat(os.path.join(root, name)).st_size
-                               for name in names
-                               if name.endswith((".mpfi.gz", ".mpfp")))
-                    mtime = max(os.stat(os.path.join(root, name)).st_mtime
-                                for name in names
-                                if name.endswith((".mpfi.gz", ".mpfp")))
+                    stats = [os.stat(os.path.join(root, name))
+                             for name in names
+                             if name.endswith((".mpfi.gz", ".mpfp"))]
+                    if not stats:
+                        continue  # an empty leftover folder counts nothing
+                    size = sum(stat.st_size for stat in stats)
+                    mtime = max(stat.st_mtime for stat in stats)
                 except OSError:
                     continue
                 totals[root] = (mtime, size)
             keep_dir = os.path.dirname(keep) if keep else None
-            # The running total tracks RETAINED bytes (the review's
-            # prune-over-eviction finding): a deleted folder's bytes
-            # leave the accounting, so an entry past the crossing
-            # still counts on its own merits — the eviction stops
-            # once the retained set fits the budget, never a
-            # wholesale clearing of every older folder.
-            retained = 0
-            for idx, (root, (_mtime, size)) in enumerate(
-                    sorted(totals.items(), key=lambda item: item[1][0],
-                           reverse=True)):
-                retained += size
-                if root == keep_dir:
-                    # The protected entry always survives, and its
-                    # bytes still count against the budget.
-                    continue
-                if idx >= self.max_entries or retained > self.max_bytes:
-                    try:
-                        shutil.rmtree(root, ignore_errors=True)
-                        retained -= size
-                        _log("cache print evicted: %s (%d bytes)", root, size)
-                    except OSError:
-                        pass
+            evict_to_budget(totals, self.max_bytes, self.max_entries,
+                            keep_dir)
         except OSError:
             pass

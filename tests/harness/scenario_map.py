@@ -17,6 +17,7 @@ SCENARIO_MAP = {
     "MoonrakerFollowerMachineAction.saveConfig": "i6",
     "MoonrakerFollowerMachineAction.testConnection": "i2",
     "MoonrakerFollowerMachineAction.validAuxInterval": "i3",
+    "MoonrakerFollowerMachineAction.validCacheMax": "i3",
     "MoonrakerFollowerMachineAction.validConsoleInterval": "i3",
     "MoonrakerFollowerMachineAction.validPollInterval": "i3",
     "MoonrakerFollowerMachineAction.validRetryInterval": "i3",

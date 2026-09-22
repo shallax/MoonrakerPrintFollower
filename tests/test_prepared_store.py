@@ -137,6 +137,63 @@ class PreparedStoreTests(unittest.TestCase):
                          "the startup cleanup left a crash temp file")
         self.assertIsNotNone(reloaded.load_table("print-1"))
 
+    def test_the_current_process_owns_its_tmp(self):
+        # The liveness policy's first anchor: a tmp stamped with THIS
+        # process's pid must read ALIVE — another PreparedCache
+        # instance in the same process never adopts or deletes it.
+        name = "print.mpfp.tmp-%d-1234" % os.getpid()
+        self.assertTrue(self.cache._tmp_liveness(name),
+                        "the live process's own tmp read dead")
+
+    def test_a_malformed_pid_reads_dead_without_raising(self):
+        # No live writer ever stamps a name it cannot parse — the
+        # probe reports dead and the startup never crashes.
+        self.assertFalse(self.cache._tmp_liveness("print.mpfp.tmp-garbage-1234"))
+        self.assertFalse(self.cache._tmp_liveness("print.mpfp.tmp--1234"))
+
+    def test_an_impossible_pid_reads_dead_without_raising(self):
+        # Zero and beyond-any-platform pids cannot own a writer: dead,
+        # no exception — the OverflowError (POSIX) and the
+        # ERROR_INVALID_PARAMETER (Windows) shapes both land here.
+        self.assertFalse(self.cache._tmp_liveness("print.mpfp.tmp-0-1234"))
+        self.assertFalse(self.cache._tmp_liveness(
+            "print.mpfp.tmp-%d-1234" % (2 ** 40)))
+
+    def test_an_unprovable_owner_keeps_its_tmp(self):
+        # The conservative half of the policy: a probe that cannot
+        # DISPROVE the owner keeps the tmp — access-denied and any
+        # unexplained failure read alive, so the adoption never
+        # destroys a file whose owner may still hold it.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        name = "print.mpfp.tmp-12345-1234"
+        with patch.object(store_module.os, "kill", side_effect=PermissionError()):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "an access-denied owner read dead")
+        with patch.object(store_module.os, "kill",
+                          side_effect=OSError("unexplained")):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "an unexplained probe failure read dead")
+
+    def test_the_windows_invalid_parameter_reads_dead(self):
+        # The Windows semantics: ERROR_INVALID_PARAMETER is
+        # OpenProcess's "no live process for this pid" verdict — it
+        # must read DEAD, never conservative, or a crashed session's
+        # tmp survives forever on Windows.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        name = "print.mpfp.tmp-12345-1234"
+        error = OSError("The parameter is incorrect")
+        error.winerror = 87
+        with patch.object(store_module.os, "name", "nt"), \
+                patch.object(store_module.os, "kill", side_effect=error):
+            self.assertFalse(self.cache._tmp_liveness(name),
+                             "a Windows invalid-parameter pid read alive")
+        # The same error shape on POSIX stays conservative: without
+        # the Windows semantics, the owner cannot be disproved.
+        with patch.object(store_module.os, "kill", side_effect=error):
+            self.assertTrue(self.cache._tmp_liveness(name))
+
     def test_an_interrupted_pass_adopts_its_encoded_layers(self):
         # The review's resumable-persistence finding: a pass that died
         # mid-encode leaves its successfully prepared layers in the
@@ -361,3 +418,80 @@ class PreparedStoreTests(unittest.TestCase):
                         "the most recently read print was evicted")
         self.assertIsNotNone(cache.load_table("aaa"))
         self.assertIsNotNone(cache.load_table("zzz"))
+
+
+class UnifiedEvictionPolicyTests(unittest.TestCase):
+    """The review's true-LRU semantics for the protected-entry
+    eviction (item 2): the walk goes OLDEST first, the protected
+    folder is never a candidate, and the eviction never finishes
+    over budget while an unprotected folder remains. Every case
+    deliberately arranges the hash order opposite the access
+    order."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+
+    def _folder(self, name, size, atime):
+        """One print folder with a `size`-byte prepared file stamped
+        with the given access time."""
+        folder = os.path.join(self.cache.directory, "p-" + name)
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "prepared.mpfp")
+        with open(path, "wb") as handle:
+            handle.write(b"\0" * size)
+        os.utime(path, (atime, atime))
+        return path
+
+    def _folder_exists(self, name):
+        return os.path.exists(os.path.join(self.cache.directory, "p-" + name))
+
+    def test_a_protected_entry_forces_reconsideration_of_the_newest(self):
+        # The review's case: budget 100; A newest 60, B protected 60,
+        # C oldest 20 — C goes first (oldest), and A must ALSO go
+        # because the cache is still over budget; B alone survives
+        # with 60 retained. The hash order (a, b, c) is the REVERSE
+        # of the access order (c oldest, a newest).
+        self._folder("aaa", 60, atime=3.0)   # newest
+        keep = self._folder("bbb", 60, atime=2.0)  # protected
+        self._folder("ccc", 20, atime=1.0)   # oldest
+        self.cache.max_bytes = 100
+        self.cache._evict(keep)
+        self.assertTrue(self._folder_exists("bbb"),
+                        "the protected entry was evicted")
+        self.assertFalse(self._folder_exists("ccc"),
+                         "the oldest unprotected entry survived")
+        self.assertFalse(self._folder_exists("aaa"),
+                         "the cache stayed over budget for the newest entry")
+
+    def test_the_walk_is_lru_not_recency_biased_packing(self):
+        # The review's case: newest 60, middle 50, oldest 40, budget
+        # 100 — true LRU evicts the oldest 40 first, then the middle
+        # 50; never the packing that keeps the oldest 40 because it
+        # "fits better" beside the newest.
+        self._folder("aaa", 60, atime=3.0)  # newest
+        self._folder("bbb", 50, atime=2.0)
+        self._folder("ccc", 40, atime=1.0)  # oldest
+        self.cache.max_bytes = 100
+        self.cache._evict(None)
+        self.assertTrue(self._folder_exists("aaa"),
+                        "the newest entry was evicted")
+        self.assertFalse(self._folder_exists("ccc"),
+                         "the oldest entry survived")
+        self.assertFalse(self._folder_exists("bbb"),
+                         "an older entry was kept over the middle one")
+
+    def test_a_protected_entry_alone_may_exceed_the_budget(self):
+        # The review's case: a 120-byte protected entry over a
+        # 100-byte budget — every unprotected entry is evicted, and
+        # the over-budget state is the only acceptable one (nothing
+        # legal remains to evict).
+        keep = self._folder("aaa", 120, atime=2.0)
+        self._folder("bbb", 30, atime=1.0)
+        self.cache.max_bytes = 100
+        self.cache._evict(keep)
+        self.assertTrue(self._folder_exists("aaa"),
+                        "the protected entry was evicted")
+        self.assertFalse(self._folder_exists("bbb"),
+                         "an unprotected entry survived the overage")

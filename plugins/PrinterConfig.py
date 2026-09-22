@@ -128,6 +128,9 @@ class PrinterConfig:
     # the printer a full serialization.
     aux_interval_ms: int = 2500
     console_interval_ms: int = 1000
+    # The per-machine persistent cache bound (MiB): THIS machine's
+    # own cache-v2 directory, never the other machines'.
+    cache_max_mb: int = 512
     path_follow: bool = True
     # Auto-improve-ETA opt-in: the follower learns the print's drift
     # from observed layer progress and rescales the remaining ETA.
@@ -228,6 +231,12 @@ class PrinterConfig:
                 data[key] = max(250, min(60_000, int(data[key])))
             except (TypeError, ValueError):
                 data[key] = getattr(defaults, key)
+
+        try:
+            cache_max = int(data["cache_max_mb"])
+            data["cache_max_mb"] = max(16, min(4096, cache_max))
+        except (TypeError, ValueError):
+            data["cache_max_mb"] = defaults.cache_max_mb
 
         data["url"] = normalise_url(data.get("url"))
 

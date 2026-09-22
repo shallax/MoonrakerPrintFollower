@@ -18,10 +18,15 @@ from .PreparedStore import PreparedCache
 
 
 class CacheNamespaces:
-    def __init__(self, cache_root: str, identity_source, service, parent=None):
+    def __init__(self, cache_root: str, identity_source, service, parent=None,
+                 cache_bytes_source=None):
         self._cache_root = cache_root
         self._identity_source = identity_source
         self._service = service
+        # The per-machine cache bound (the author's setting): the
+        # ACTIVE machine's configured MiB limit, read fresh at every
+        # bind so a machine switch binds its own budget.
+        self._cache_bytes_source = cache_bytes_source
         self._machine_hash = self._hash(self._identity_source())
         self._bind(initial=True)
         Logger.log("i", "Moonraker cache namespace %s", self._machine_hash)
@@ -40,8 +45,13 @@ class CacheNamespaces:
         BOTH stores root at the machine's prints folder — one print's
         index and prepared table are siblings under one directory."""
         print_root = os.path.join(self._cache_root, "cache-v2", self._machine_hash, "prints")
+        cache_bytes = None
+        if self._cache_bytes_source is not None:
+            cache_bytes = self._cache_bytes_source()
+        prepared = PreparedCache(print_root) if cache_bytes is None \
+            else PreparedCache(print_root, max_bytes=cache_bytes)
         self._service.rebind_stores(
-            PersistentIndexCache(print_root), PreparedCache(print_root),
+            PersistentIndexCache(print_root), prepared,
             initial=initial)
 
     def follow(self) -> None:

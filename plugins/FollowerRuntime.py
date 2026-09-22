@@ -154,7 +154,14 @@ class FollowerRuntime:
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,
             lambda: self.binding.identity[0] if self.binding.identity else "",
-            self.index)
+            self.index,
+            # The per-machine cache bound (the author's setting): the
+            # ACTIVE machine's configured MiB limit, read fresh at
+            # every bind — each machine's own cache-v2 directory
+            # obeys its own saved value.
+            cache_bytes_source=lambda: int(
+                getattr(self.binding.config, "cache_max_mb", 512) or 512
+            ) * 1024 * 1024)
         # The machine switch's OWN signal (the binding's changed also
         # fires on plain config applies — the stores follow the
         # DURABLE machine identity, never a settings save).
