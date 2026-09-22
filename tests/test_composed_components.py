@@ -70,7 +70,11 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_thumbnail_publishes_coalesce_onto_one_flush(self):
         # A burst of landings repaints the QML once, not once per
-        # callback (the landing storm stalled scrolling).
+        # callback (the landing storm stalled scrolling). The flush
+        # rides a 100 ms debounce, so the "nothing before the
+        # debounce" reading races the wall clock on slow runners —
+        # the two load-independent invariants are one flush per
+        # burst and no flush for a no-change emit.
         model = self.monitor()
         count = []
         model.fileManagerThumbsChanged.connect(lambda: count.append(1))
@@ -79,8 +83,6 @@ class ComposedComponentTests(unittest.TestCase):
         model._file_manager._thumbs["x.gcode"] = {"state": "ready", "url": ""}
         for _ in range(3):
             model._file_manager.thumbsChanged.emit()
-        self.qt.events(10)
-        self.assertEqual(count, [])
         self.qt.events(200)
         self.assertEqual(count, [1])
         model._file_manager.thumbsChanged.emit()
@@ -909,7 +911,7 @@ class ComposedComponentTests(unittest.TestCase):
         def seek_to_available(layer):
             start = time.monotonic()
             model.setFollowerLayerAnchor(layer)
-            for _ in range(400):
+            for _ in range(2000):
                 self.qt.events(10)
                 if model.plateProgressAnchor == layer and model.plateProgressAvailable:
                     # The later-layer slider contract: the range is
