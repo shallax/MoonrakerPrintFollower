@@ -445,11 +445,15 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
     the same render context (the caller passes the committed
     wrapper's own image). A cooperative cancel between segments lets
     a superseded job stop at the next large unit."""
-    if previous is not None and previous_split > 0 \
+    if previous is not None and 0 < previous_split <= split \
             and previous.width() > 0 and previous.height() > 0:
         image = QImage(previous)
         start = previous_split
     else:
+        # A backward demand (previous_split > split) must never copy
+        # the larger picture — painting new paths cannot erase the
+        # motions beyond the target, and the mislabelled prefix
+        # would resurrect them (the backward-scrub ghost).
         image = _new_canvas(view)
         start = 0
     painter = QPainter(image)
@@ -463,9 +467,13 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
 
 
 def _segment_first(points, first: int) -> int:
-    """The first point whose motion index is at or after `first`
-    (motion indices within a segment never decrease)."""
-    low, high = 0, len(points) - 1
+    """The index of the first point whose motion index is at or after
+    `first` — or len(points) (past the end) when no motion reaches
+    `first`. The past-the-end result makes the caller paint nothing:
+    a fallback to the last vertex would re-stroke the trailing edge,
+    re-compositing completed geometry (the alpha-accumulation
+    report)."""
+    low, high = 0, len(points)
     while low < high:
         middle = (low + high) // 2
         if points[middle][2] < first:
@@ -495,13 +503,29 @@ def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
             if len(points) < 2:
                 continue
             begin = _segment_first(points, first) if first > 0 else 0
+            if begin >= len(points):
+                # Every motion precedes the lower bound: the segment
+                # is complete in the copied picture — nothing to add,
+                # and nothing to re-stroke.
+                continue
             if begin > 0:
-                begin -= 1  # the edge INTO the first motion draws too
+                # The edge INTO the first qualifying motion: its own
+                # motion index is points[begin][2] >= first, so the
+                # lower bound holds. No further back-up — earlier
+                # edges carry motions below `first`.
+                begin -= 1
             path = QPainterPath()
             drew = False
             for i in range(begin + 1, len(points)):
                 if split >= 0 and points[i][2] >= split:
                     break
+                # The lower-bound guard per edge (the interval rule:
+                # first <= edge.motion < split) — the incremental walk
+                # must never touch a completed edge.
+                if first > 0 and points[i][2] < first:
+                    continue
+                if (i - begin) % 512 == 0 and cancel is not None and cancel.is_set():
+                    return
                 if not drew:
                     path.moveTo(offset_x + (points[i - 1][0] - bed_x_min) * sx,
                                 offset_y + (bed_y_max - points[i - 1][1]) * sy)

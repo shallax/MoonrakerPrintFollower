@@ -5078,7 +5078,7 @@ Item {
             # The retained previous prefix (the atomic handover): the
             # last uploaded prefix's pixels stand while the live
             # replacement loads — never torn down early.
-            "visible: root._retainedPrefixSource !== \"\" && progressPrefixImage.status !== Image.Ready && root._retainedPrefixApplies()",
+            "visible: root._retainedPrefixSource !== \"\" && !root._partialPrefixReady() && root._retainedPrefixApplies()",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

@@ -1264,28 +1264,32 @@ Item {
             }
             onStatusChanged: {
                 progressCanvas.requestPaint();
-                if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null) {
+                if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root._partialPrefixReady()) {
                     // The handover freeze: the pixels that JUST
-                    // uploaded become the retained previous — the
-                    // next source change (a replacement loading, a
-                    // backward invalidation) keeps THIS complete
-                    // picture presentable until the new composition
-                    // is jointly ready.
+                    // uploaded become the retained previous — but
+                    // only once the composition is JOINTLY ready.
+                    // A freeze during a transition (the canvas still
+                    // covers the old boundary) would overwrite the
+                    // standing picture with the hybrid half, so the
+                    // freeze waits; the delivery re-freezes below.
                     root._retainedPrefixSource = source;
                     root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
                 }
             }
         }
 
-        // The RETAINED previous prefix (the atomic handover): the
-        // pixels of the last successfully uploaded prefix stand
-        // while the live replacement loads and the canvas repaints
-        // the complementary tail — the old complete composition is
-        // never torn down before the new one is jointly present.
+        // The RETAINED previous prefix (the composition transaction):
+        // the pixels of the last JOINTLY-DISPLAYED prefix stand until
+        // the replacement composition is jointly ready — the prefix
+        // Image uploaded AND the canvas's delivered coverage matching
+        // its boundary. The old complete composition (retained prefix
+        // + the standing canvas bitmap, the threaded canvas's own
+        // double buffer) is never torn down before the new one swaps
+        // in on the same evaluation.
         Image {
             id: retainedPrefixImage
             anchors.fill: parent
-            visible: root._retainedPrefixSource !== "" && progressPrefixImage.status !== Image.Ready && root._retainedPrefixApplies()
+            visible: root._retainedPrefixSource !== "" && !root._partialPrefixReady() && root._retainedPrefixApplies()
             source: root._retainedPrefixSource
             smooth: true
         }
@@ -1314,6 +1318,16 @@ Item {
                 if (root._prefixHold && root._vectorCoversFrom === 0) {
                     root._beatPending = true;
                     holdExpiryTimer.restart();
+                }
+                // The transaction's freeze at the DELIVERY: a Ready
+                // that landed mid-transition (the canvas still held
+                // the old boundary) skipped its freeze above — the
+                // joint readiness that arrived with THIS bitmap is
+                // the moment the standing composition became the
+                // live prefix's, so the retained moves on.
+                if (root._partialPrefixReady() && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixData !== "") {
+                    root._retainedPrefixSource = root.progress.layers.current.prefixData;
+                    root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
                 }
             }
             onPaint: {
@@ -1475,6 +1489,20 @@ Item {
                     // stale texture is the full bitmap, complete either
                     // way, and every scrub path settles to the SAME
                     // composition.
+                    ctx.reset();
+                    ctx.clearRect(0, 0, width, height);
+                    root._lastSplit = -1;
+                    root._paintsSinceReset = 0;
+                    root._progressDirty = false;
+                    resetPainted = true;
+                } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom !== 0 && root._vectorCoversFrom !== prefixFrom) {
+                    // The boundary-advance transition: the canvas holds
+                    // the OLD tail under the NEW prefix's boundary (the
+                    // readiness gate rejects the hybrid, and the
+                    // Loading-phase full repaint is timing-dependent).
+                    // Repaint the tail from the new boundary — the
+                    // retained picture stands until this delivery
+                    // completes the joint swap.
                     ctx.reset();
                     ctx.clearRect(0, 0, width, height);
                     root._lastSplit = -1;
