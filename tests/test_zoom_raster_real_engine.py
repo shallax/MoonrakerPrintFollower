@@ -464,22 +464,24 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
     def _sx(self, plot):
         return float(plot["sx"])
 
-    def test_the_stroke_width_is_physical_and_subpixel_at_100_percent(self):
+    def test_the_stroke_width_is_physical_and_floored_at_100_percent(self):
         """Test 1: at 100% and the production lineScale the width is
         the physical value — nominal bed mm through the plot's
-        px-per-mm and the line scale — and it is legitimately
-        SUBPIXEL. A hidden max(1, w) floor (the old screen-constant
-        stroke) would read 1 px or more here."""
+        px-per-mm and the line scale — presented at the parity
+        floor's footprint: the device-coverage floor (min(2/dpr, 1)
+        logical px) presents sub-floor strokes at the same
+        full-intensity width both painters stroke (the native
+        raster's backed downscale faded thin strokes without it)."""
         monitor, window, face, plot = self._probe_rig(
             self._payload({"WALL-OUTER": self.LINE}))
         face.setProperty("lineScale", 0.7)
         self.pump(10)
         width = self._publish_width(face)
-        expected = 0.2 * self._sx(plot) * 0.7
-        self.assertAlmostEqual(width, expected, delta=expected * 0.1,
-                               msg=f"width {width:.3f}px vs {expected:.3f}px")
-        self.assertLess(width, 1.0,
-                        f"the 100% stroke is not subpixel ({width:.2f}px)")
+        nominal = 0.2 * self._sx(plot) * 0.7
+        self.assertLess(nominal, 1.0,
+                        "the fixture lost its subpixel nominal")
+        self.assertAlmostEqual(width, 1.0, delta=0.05,
+                               msg=f"width {width:.3f}px vs the 1.0px floor")
 
     def test_the_width_helper_scales_with_the_view_zoom(self):
         """Test 2: the width helper multiplies the physical width by
@@ -502,16 +504,17 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
                                        f"{widths[scale] / widths[1.0]:.2f}")
 
     def test_the_production_stroke_never_bridges_the_day_scale_gap(self):
-        """Test 3: at the production lineScale the physical stroke is
-        thinner than HALF the Day-scale gap at every zoom — the old
-        screen-constant 0.7 px stroke exceeded half the 100% gap
-        (0.7 > 0.56 px) and fused the Day strokes; the physical width
-        stays a fraction of the gap from 100% to 300%."""
+        """Test 3: once the stroke clears the parity floor, it stays
+        thinner than HALF the Day-scale gap — the old screen-constant
+        0.7 px stroke exceeded half the gap at every zoom and fused
+        the Day strokes. The 100% leg is the floor's accepted trade
+        (the sub-gap nominal presents at the floor's 1 px); the 300%
+        leg is where the physical width genuinely governs."""
         monitor, window, face, plot = self._probe_rig(
             self._payload({"WALL-OUTER": self.LINE}))
         face.setProperty("lineScale", 0.7)
         self.pump(10)
-        for scale in (1.0, 3.0):
+        for scale in (3.0, 5.0):
             face.setProperty("viewScale", scale)
             self.pump(10)
             width = self._publish_width(face)
@@ -544,7 +547,9 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
     def test_the_compact_boost_widens_the_stroke_deliberately(self):
         """Test 5: the compact thumbnail boost multiplies the physical
         width by the named constant — a deliberate, documented
-        visibility adjustment, never a screen-pixel baseline."""
+        visibility adjustment. The multiplier rides the NOMINAL; the
+        parity floor (1 px) masks the base at the production scale,
+        so the boosted value is the nominal times the boost, floored."""
         monitor, window, face, plot = self._probe_rig(
             self._payload({"WALL-OUTER": self.LINE}))
         face.setProperty("lineScale", 1.0)
@@ -556,5 +561,7 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
         self.pump(10)
         boosted = self._publish_width(face)
         self.assertGreater(normal, 0, "the helper never produced a width")
-        self.assertAlmostEqual(boosted / normal, 7.0, delta=0.7,
-                               msg=f"compact boost {boosted / normal:.2f}")
+        nominal = 0.2 * self._sx(plot) * 1.0
+        self.assertAlmostEqual(boosted, max(nominal * 7.0, 1.0), delta=0.3,
+                               msg=f"compact boost {boosted:.2f} vs "
+                                   f"{max(nominal * 7.0, 1.0):.2f}")

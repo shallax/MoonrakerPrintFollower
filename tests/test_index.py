@@ -342,8 +342,10 @@ G1 X5 Y0 Z0.2
                 loaded = cache.load(identity)
                 self.assertIsNotNone(loaded)
                 self.assertEqual(loaded.motion_count(0), 2)
-                # A layer hydration never recorded stays unknown.
-                self.assertEqual(loaded.motion_count(4), 0)
+                # The count is the walk's metadata: born correct at
+                # build and carried by the save. Only the GEOMETRY
+                # stays unknown until hydration.
+                self.assertEqual(loaded.motion_count(4), 1)
                 self.assertEqual(loaded.hydrated_layers, {2, 3})
         finally:
             os.remove(path)
@@ -357,13 +359,15 @@ G1 X5 Y0 Z0.2
             index = build_index_from_file(path, compact=True)
             self.assertTrue(index.compact)
             self.assertEqual(index.hydrated_layers, set())
-            self.assertEqual(index.motion_count(0), 0)
+            # The count is known at build; hydration delivers the
+            # geometry alone.
+            self.assertEqual(index.motion_count(0), 2)
             fraction, method = index.file_fraction(0, index.ranges[0][0] + 1)
             self.assertEqual(method, "byte position")
             self.assertTrue(hydrate_layer_from_file(index, path, 0))
             self.assertEqual(index.hydrated_layers, {0})
             self.assertEqual(index.motion_count(0), 2)
-            self.assertEqual(index.motion_count(1), 0)
+            self.assertEqual(index.motion_count(1), 1)
         finally:
             os.remove(path)
 
@@ -492,7 +496,7 @@ G1 X5 Y0 Z0.2
                 self.assertIsNotNone(loaded)
                 self.assertTrue(loaded.compact)
                 self.assertEqual(loaded.hydrated_layers, {1})
-                self.assertEqual(loaded.motion_count(0), 0)
+                self.assertEqual(loaded.motion_count(0), 1)
                 self.assertEqual(loaded.motion_count(1), 1)
         finally:
             os.remove(path)
@@ -826,7 +830,11 @@ G00 X2 Y2 Z0.2
         self.assertLessEqual(dense.layer_count(), _MAX_LAYER_BLOCKS)
         bomb = build_index_from_bytes(b";LAYER:0\n" + b"G1 X1\n" * (_MAX_MOTIONS_PER_LAYER + 5_000)
                                       + b";LAYER:1\nG1 X2\n")
-        self.assertLessEqual(bomb.motion_count(0), _MAX_MOTIONS_PER_LAYER)
+        # The STRUCTURE stays bounded: the motion arrays truncate at
+        # the cap. The count is one int and stays honest — it drives
+        # the scrub slider's real total.
+        self.assertEqual(len(bomb.motion_offsets[0]), _MAX_MOTIONS_PER_LAYER)
+        self.assertEqual(bomb.motion_count(0), _MAX_MOTIONS_PER_LAYER + 5_000)
 
     def test_cache_rejects_same_uuid_with_changed_size_or_modified(self):
         data = b";LAYER:0\nG1 X1\n"

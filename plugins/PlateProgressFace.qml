@@ -543,8 +543,8 @@ Item {
 
     function _partialBase() {
         // The base marks the unprinted suffix of a PARTIAL layer
-        // : a 0% layer draws nothing
-        // (nothing has printed — no boundary to frame), and a full
+        // — 0% included: the whole layer reads as the grey ghost
+        // from the first instant (the live request), and a full
         // layer's raster covers it entirely.
         if (!root.showBase || !root.available()) {
             return false;
@@ -552,7 +552,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return split != null && layer != null && split > 0 && split < layer.motions;
+        return split != null && layer != null && split >= 0 && split < layer.motions;
     }
 
     // The scrub's vector: the current layer's prepared payload,
@@ -977,6 +977,7 @@ Item {
     }
     onViewScaleChanged: {
         _publishView();
+        _retireRetainedView();
         root.settleTimer.restart();
         // The scope docks while the zoom is in use and slides away
         // once it has been idle (the live request): two seconds of
@@ -990,10 +991,12 @@ Item {
     // default path never pans.
     onViewPanXChanged: {
         _publishView();
+        _retireRetainedView();
         root.settleTimer.restart();
     }
     onViewPanYChanged: {
         _publishView();
+        _retireRetainedView();
         root.settleTimer.restart();
     }
     // The toolhead publish is the follow's clock: the model republishes
@@ -1007,6 +1010,7 @@ Item {
         // it; the repaint keeps the thumbnail honest wherever it is.
         _publishView();
         _resetStack();
+        _retireRetainedView();
     }
     Component.onCompleted: _publishView()
 
@@ -1017,9 +1021,11 @@ Item {
     Connections {
         target: mapping
         function onWidthChanged() {
+            _retireRetainedView();
             root.settleTimer.restart();
         }
         function onHeightChanged() {
+            _retireRetainedView();
             root.settleTimer.restart();
         }
     }
@@ -1420,7 +1426,23 @@ Item {
                     return;
                 }
                 var resetPainted = false;
-                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= 20 || vectorSourceChanged) {
+                // The anti-drift re-raster: the accumulated delta bitmap
+                // fully redraws on its own cadence so it cannot drift.
+                // With a prefix owning the history the cadence stretches
+                // wide — every prefix refresh re-establishes the picture
+                // (the 3% incremental refreshes), and a full re-raster
+                // mid-drag is the live hitch the forward scrub showed
+                // (a ~200 ms UI-thread walk every 20 paints on a dense
+                // layer).
+                // The anti-drift re-raster: the accumulated delta bitmap
+                // fully redraws on its own cadence so it cannot drift.
+                // With a prefix owning the history the cadence stretches
+                // wide — every prefix refresh re-establishes the picture
+                // (the 3% incremental refreshes), and a full re-raster
+                // mid-drag is the live hitch the forward scrub showed
+                // on a dense layer.
+                var resetCadence = (root._prefixWasShown || _prefixModelReady()) ? 200 : 20;
+                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged) {
                     ctx.reset();
                     ctx.clearRect(0, 0, width, height);
                     root._lastSplit = -1;
@@ -1796,10 +1818,10 @@ Item {
         // the right edge; parked it slides fully out of view (the
         // live request).
         width: 38 * screenScaleFactor
-        // The full canvas height minus the reserved bottom strip the
-        // Reset view label owns (the live request: the bar spans the
-        // canvas and the label keeps its own gap at the bottom).
-        height: Math.max(60 * screenScaleFactor, root.height - 30 * screenScaleFactor)
+        // The full canvas height (the live request: the bar spans
+        // the canvas edge to edge now the reset control lives in
+        // the host's checkbox row).
+        height: parent.height
         x: root._scopeDocked ? root.width - width - UM.Theme.getSize("narrow_margin").width : root.width + 6 * screenScaleFactor
         anchors.top: parent.top
         Behavior on x {
@@ -1924,31 +1946,27 @@ Item {
         }
     }
 
-    // The view reset (the live request): a text label under the
-    // scope, back to the 100% fit and centred — shown only while
-    // the view is away from it. A button rendered as an empty box
-    // in this overlay (the live report); the label reads as the
-    // scope's caption.
-    UM.Label {
-        id: resetViewLabel
-        // Not tied to the scope's park: the reset stays put while the
-        // overlay slides away (the live request).
-        visible: root.available() && !root.compact && root.viewScale > 1.0
-        anchors.right: parent.right
-        anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: UM.Theme.getSize("narrow_margin").height
-        text: "Reset view"
-        font: UM.Theme.getFont("small")
-        color: UM.Theme.getColor("primary")
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {
-                root.viewScale = 1.0;
-                root.viewPanX = 0.0;
-                root.viewPanY = 0.0;
-            }
+    // The view reset (the live request): back to the 100% fit and
+    // centred. The host owns the "Reset view" control — it sits in
+    // the checkbox row outside the canvas, so the plate never
+    // reflows when the control appears.
+    function resetView() {
+        root.viewScale = 1.0;
+        root.viewPanX = 0.0;
+        root.viewPanY = 0.0;
+    }
+
+    // The retained handover's frozen pixels bake the view transform
+    // (the rasters render through the plot): a view change retires
+    // them, or the next loading gap would draw the print displaced.
+    // The full-picture hold's frame is the same class and retires
+    // with it.
+    function _retireRetainedView() {
+        if (root._retainedPrefixSource !== "") {
+            root._retainedPrefixSource = "";
+            root._retainedPrefixSplit = -1;
         }
+        root._heldFullSource = "";
     }
 
     // The unavailable state (the live ruling): the shared download

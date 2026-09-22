@@ -3505,6 +3505,68 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_a_view_change_retires_the_retained_prefix_picture(self):
+        # The retained handover's frozen pixels bake the view
+        # transform: a zoom or pan after the freeze must retire the
+        # picture, or the next loading gap would draw the print
+        # displaced (the wrong-place ghost).
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        prefix_split = 10
+        from plugins.PlateQt import render_layer_prefix, png_file
+        layer = self._native_layer(payload, face)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0}
+        prefix = render_layer_prefix(payload, plot, view, prefix_split)
+        layer.set_prefix(prefix, png_file(
+            prefix, "/tmp/mpf/raster-probe",
+            "fixture-retire-%d" % time.monotonic_ns()), prefix_split, "fixture-key")
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the picture never drew")
+        # The freeze arms while the live picture stands.
+        deadline = time.monotonic() + 3.0
+        armed = False
+        while time.monotonic() < deadline:
+            self.pump(5)
+            if face.property("_retainedPrefixSource") != "":
+                armed = True
+                break
+        self.assertTrue(armed, "the retained freeze never armed")
+        # The view change retires the frozen picture.
+        face.setProperty("viewScale", 1.5)
+        self.pump(5)
+        self.assertEqual(face.property("_retainedPrefixSource"), "",
+                         "a zoom left the stale-view picture armed")
+        self.assertEqual(face.property("_retainedPrefixSplit"), -1,
+                         "the retired picture kept its split")
+        # The full-picture hold retires with it.
+        self.assertEqual(face.property("_heldFullSource"), "",
+                         "the held full frame survived the view change")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
     def test_the_grey_base_never_washes_the_printed_prefix(self):
         # The stack order contract: ghosts < base < prefix < tail.
         # With the base ON and the ghosts OFF, the native prefix and
@@ -3545,6 +3607,53 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertGreater(
             self._stroke_ink(image, face, window, census_plot, 155.0, 125.0),
             0, "the grey base washed the vector tail")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_the_layer_ghost_shows_at_zero_percent(self):
+        # The live request: the grey whole-layer base frames the
+        # print from the FIRST instant — at 0% the layer reads as
+        # the ghost alone, with no printed ink yet (the 0% rule
+        # holds: the base is the unprinted frame, never the
+        # feature colour).
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showBase", True)
+        face.setProperty("showPrevious", False)
+        face.setProperty("showNext", False)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=0)
+        census_plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(0)
+        # The ghost washes the whole unprinted layer (a band the
+        # empty baseline had none of) — at 0% there is no red ink
+        # by design, so the picture's arrival is the BAND.
+        deadline = time.monotonic() + 5.0
+        image = None
+        while time.monotonic() < deadline:
+            self.pump(5)
+            image = window.grabWindow()
+            if self._band_changed(image, baseline, face, window,
+                                  census_plot, 155.0, 125.0):
+                break
+        self.assertTrue(self._band_changed(image, baseline, face, window,
+                                           census_plot, 155.0, 125.0),
+                        "the grey ghost never rendered at 0%")
+        # The 0% rule holds: no FEATURE ink anywhere.
+        self.assertEqual(
+            self._stroke_ink(image, face, window, census_plot, 155.0, 125.0),
+            0, "feature ink appeared at 0%")
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
@@ -4923,6 +5032,117 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertEqual(bands, 1,
                          "the picture carries %d bands — the 2x bake "
                          "stands over the full layer" % bands)
+
+    def test_the_production_scheduler_never_drops_history_during_a_forward_scrub(self):
+        # The live-report test: the REAL model's scheduler renders the
+        # prefixes (no hand-fed replacement) while the split advances
+        # through a dense layer — every intermediate frame must keep
+        # the committed printed history's interior ink.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload(motions=120000, dx=0.0002)
+        plot = self._bed_plot(face)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": payload, "next": None})
+        self._printer.setSplit(30000)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the initial partial never drew")
+        # A fast forward scrub: ten steps of 9000 motions, one frame
+        # per step — the printed interior behind the boundary must
+        # never vanish (the gap report), and the picture must settle
+        # at the final boundary.
+        last_split = 30000
+        for step in range(1, 11):
+            last_split = 30000 + step * 9000
+            self._printer.setSplit(last_split)
+            for _ in range(4):
+                self._pump_ms(30)
+                grab = window.grabWindow()
+                self.assertTrue(
+                    self._red_in_band(grab, face, window, plot,
+                                      20.0 + 15000 * 0.0002, 125.0),
+                    "step %d dropped the committed printed history" % step)
+        # The final position converges without further input.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            self._pump_ms(50)
+            grab = window.grabWindow()
+            if self._red_in_band(grab, face, window, plot,
+                                 20.0 + (last_split - 5000) * 0.0002, 125.0):
+                break
+        else:
+            self.fail("the final requested position never converged")
+
+    def test_a_zoom_then_forward_scrub_never_resurrects_the_old_scale_history(self):
+        # The out-of-scale ghost: the incremental render seeds its
+        # copy from the previous picture only under the SAME render
+        # key. A zoom between the commit and the refresh must fall
+        # back to the full walk — the stale half would otherwise
+        # stay at the old scale while the new half strokes the new
+        # one, one print drawn twice, two sizes.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload(motions=2000, dx=0.05)
+        census_before = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": payload, "next": None})
+        self._printer.setSplit(1000)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the initial partial never drew")
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_before, 35.0, 125.0),
+            0, "the pre-zoom history never drew")
+        # Zoom in at the face's centre: the interaction settles and
+        # the view commits at a new render key.
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+        scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+        event = QWheelEvent(
+            QPointF(scene),
+            QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+            QPoint(0, 0), QPoint(0, 120),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase, False)
+        QGuiApplication.sendEvent(window, event)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the zoom gesture never settled")
+        self.assertGreater(face.property("viewScale"), 1.0,
+                           "the zoom never moved the view")
+        # The forward scrub past the refresh threshold forces the
+        # prefix job to re-run under the new view. Any frame that
+        # resurrects ink at the OLD scale's bed position is the
+        # ghost — the settled picture must keep the history only at
+        # the new view's mapping.
+        self._printer.setSplit(1150)
+        census_after = self._bed_point(face, 0.0, 0.0)
+        deadline = time.monotonic() + 10.0
+        old_ink = 0
+        moved = False
+        while time.monotonic() < deadline:
+            self._pump_ms(50)
+            grab = window.grabWindow()
+            if self._stroke_ink(grab, face, window, census_after, 35.0, 125.0) > 0:
+                moved = True
+            old_ink = max(old_ink, self._stroke_ink(grab, face, window,
+                                                    census_before, 35.0, 125.0))
+            if old_ink > 3:
+                break
+        self.assertTrue(moved, "the zoomed prefix never re-rendered")
+        self.assertLessEqual(
+            old_ink, 3,
+            "the old-scale history half survived the zoom "
+            "(the out-of-scale ghost)")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
 
     def test_inert_gestures_never_flip_the_warm_raster(self):
         # The inertness ruling: the warm raster enters ONLY when a

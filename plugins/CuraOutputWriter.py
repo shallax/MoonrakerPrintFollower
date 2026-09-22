@@ -30,7 +30,7 @@ class CuraOutputWriter:
             name = name.translate(str.maketrans(source, target, config.filename_translate_remove))
         name = (name.strip() or "print") + "." + output_format
         if any(c in name for c in ':*?"<>|\r\n'): raise ValueError("Invalid upload filename")
-        directory = tempfile.mkdtemp(prefix="cura-moonraker-upload-")
+        directory = tempfile.mkdtemp(prefix="mpf-upload-%d-" % os.getpid())
         path = os.path.join(directory, name)
         try:
             writer = self._application.getPluginRegistry().getPluginObject("UFPWriter" if output_format == "ufp" else "GCodeWriter")

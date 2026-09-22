@@ -307,7 +307,10 @@ class IndexScanTests(unittest.TestCase):
         data = b";LAYER:0\n" + b"".join(b"G1 X%d\n" % value for value in range(10))
         with patch.object(gcode_index, "_MAX_MOTIONS_PER_LAYER", 3):
             index = build_index_from_bytes(data)
-        self.assertEqual(index.motion_count(0), 3)
+        # The PATH DATA truncates at the cap; the count stays the
+        # walk's honest total.
+        self.assertEqual(len(index.motion_offsets[0]), 3)
+        self.assertEqual(index.motion_count(0), 10)
         # The byte range still spans the whole layer, so following degrades
         # to the coarse fraction rather than stalling.
         self.assertGreater(index.ranges[0][1] - index.ranges[0][0], 10)
@@ -392,8 +395,33 @@ G1 X3
         compact = build_index_from_file(path, compact=True)
         self.assertTrue(compact.compact)
         self.assertEqual(compact.hydrated_layers, set())
-        self.assertEqual(compact.motion_count(0), 0)
+        # The count is the walk's metadata, born correct: only the
+        # GEOMETRY defers to the reader.
+        self.assertEqual(compact.motion_count(0), 1)
         self.assertFalse(build_index_from_file(path, compact=False).compact)
+
+    def test_compact_builds_carry_the_true_per_layer_motion_counts(self):
+        # The resumed-session report: a compact scan collects no
+        # motion arrays, so the counts must come from the walk's
+        # every-motion counter — otherwise a prepared-store resume
+        # serves every layer without hydration and the scrub slider
+        # stays dead (zero counts) forever.
+        path = self._write(
+            b";LAYER:0\nG1 X1\nG1 X2\n;LAYER:1\nG1 X3\n;LAYER:2\n"
+            b"G1 X4\nG1 X5\nG1 X6\n")
+        compact = build_index_from_file(path, compact=True)
+        full = build_index_from_file(path, compact=False)
+        self.assertEqual([compact.motion_count(i) for i in range(3)],
+                         [2, 1, 3],
+                         "the compact build's counts are not the "
+                         "walk's true totals")
+        self.assertEqual([full.motion_count(i) for i in range(3)],
+                         [2, 1, 3],
+                         "the non-compact build disagrees")
+        # The counts stand alone: the geometry still waits for the
+        # reader.
+        self.assertEqual(compact.hydrated_layers, set())
+        self.assertEqual(len(compact.motion_offsets[0]), 0)
 
 
 class HydrationTests(unittest.TestCase):
