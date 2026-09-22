@@ -14,6 +14,7 @@ from __future__ import annotations
 from array import array
 import gc
 from math import hypot
+import os
 import time
 import unittest
 
@@ -1139,12 +1140,21 @@ class SimplificationWorkBoundTests(unittest.TestCase):
         # quadratic. One charge per CHANNEL is what keeps the call
         # bounded; one per pass would pay the quadratic cost up to six
         # times over.
+        #
+        # The wall-clock bound is strict on any fast machine — a
+        # per-pass counter would pay the quadratic ~6x, ≈9 s there —
+        # and relaxed ONLY on the GitHub CI agent, whose 2-vCPU
+        # serial full-suite coverage job measured 5.9 s for this same
+        # call (≈0.9-1.5 s everywhere else, plain and under
+        # coverage): the slow agent needs the tolerance, the strict
+        # bound everywhere else keeps the discriminator honest.
         points = [[index * 0.0005, 0.05 if index % 2 else 0.0, float(index)]
                   for index in range(20000)]
         started = time.perf_counter()
         kept = _budgeted([points], MAX_TRAVEL_POINTS)[0]
         elapsed = time.perf_counter() - started
-        self.assertLess(elapsed, 5.0)
+        work_bound = 10.0 if os.environ.get("GITHUB_ACTIONS") == "true" else 5.0
+        self.assertLess(elapsed, work_bound)
         self.assertGreater(len(kept), 2)
         self.assertEqual([point[2] for point in kept],
                          sorted({point[2] for point in kept}))

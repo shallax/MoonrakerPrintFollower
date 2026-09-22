@@ -2998,6 +2998,55 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_a_stale_canvas_delivery_never_readies_the_partial_prefix(self):
+        # F4's focused regression, the review's exact state:
+        # textureReady true, the coverage compatible, but the
+        # canvas's LAST PAINTED split behind the current demand —
+        # _partialPrefixReady must stay false until the CURRENT
+        # split's delivery lands. The predicate is read through the
+        # real engine's face (the front gates — the prefix model and
+        # the uploaded image — genuinely pass). The stale record is
+        # forced while the demand itself is never moved, so no paint
+        # races the probe.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        # Settle on a partial split so the prefix model publishes and
+        # the prefix Image uploads — the predicate's own front gates.
+        self._printer.setSplit(18)
+        self._pump_ms(300)
+        self.assertTrue(face.property("_prefixWasShown"),
+                        "the settled prefix never showed")
+
+        def predicate():
+            result = QMetaObject.invokeMethod(
+                face, "_partialPrefixReady", Q_RETURN_ARG(QVariant))
+            self.assertIsInstance(result, bool, "the predicate never invoked")
+            return result
+
+        # The stale exact state: a delivered canvas whose recorded
+        # painted split trails the standing demand (split 18).
+        face.setProperty("_textureReady", True)
+        face.setProperty("_vectorCoversFrom", 0)
+        face.setProperty("_lastSplit", 5)
+        self.assertFalse(predicate(),
+                         "an older split's delivery readied the prefix")
+        # The current split's delivery lands — readiness follows.
+        face.setProperty("_lastSplit", 18)
+        self.assertTrue(predicate(),
+                        "the current delivery never readied the prefix")
+
     _PARITY_ORIENTATIONS = {
         # The prefix boundary sits at motion 9 (bed position 110 or
         # its orientation's equivalent): the seam probes bracket it.

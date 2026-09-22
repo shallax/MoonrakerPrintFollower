@@ -480,17 +480,17 @@ Item {
             return false;
         }
         var layer = root.progress.layers.current;
-        // The shown shortcut now also requires the canvas's DELIVERED
-        // coverage AND its one-beat texture-sync lag — the prefix may
-        // never appear over a canvas whose replacement bitmap has not
-        // reached the scene (the review's hybrid frame: the prefix
-        // showed over the not-yet-synced tail). The delivery must
-        // also BE the current demand's picture: a canvas painted for
-        // an earlier split is the standing old composition, never the
-        // new one (the review's rapid-scrub policy — an intermediate
-        // split must not present once the demand moved on).
+        // EVERY vector-backed path rides the delivered record: the
+        // painted coverage, the one-beat texture-sync, and the
+        // split gate together — a canvas painted for an earlier
+        // split is the standing OLD composition, never the current
+        // demand's picture (the review's rapid-scrub policy — an
+        // intermediate split must not present once the demand moved
+        // on). No escape branch admits an older delivery: the
+        // shown, the fresh-entry and the compatible-canvas cases
+        // are all this one gate.
         var delivered = root._textureReady && root._lastSplit === root.progress.split && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
-        return (root._prefixWasShown && delivered && !root._prefixShowHold) || (root._textureReady && root._vectorCoversFrom === 0) || (root._textureReady && root._vectorCoversFrom === layer.prefixSplit) || (root._vectorCoversFrom === -1 && _vectorInkless());
+        return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
     function _prefixFrom() {

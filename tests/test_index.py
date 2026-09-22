@@ -634,6 +634,51 @@ G1 X5 Y0 Z0.2
             self.assertTrue(os.path.exists(first),
                             "the keep lost to a newer rival")
 
+    def test_prune_evicts_exactly_until_the_retained_set_fits(self):
+        # The review's prune-over-eviction finding: the running total
+        # must track RETAINED bytes. Once the eviction removes the
+        # entry that crossed the budget, the older entries count on
+        # their own merits — a small old print survives the crossing
+        # instead of every older folder going with it.
+        big = b";LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 30000
+        small = b";LAYER:0\nG1 X1\n"
+        index_big = build_index_from_bytes(big)
+        index_small = build_index_from_bytes(small)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=100)
+            # Written oldest -> newest (the walk runs newest first):
+            # the small print is the oldest, two equally big prints
+            # are the recent ones.
+            old_identity = RemoteFileIdentity("old-small.gcode", len(small), 1.0, "u1")
+            mid_identity = RemoteFileIdentity("mid.gcode", len(big), 2.0, "u2")
+            new_identity = RemoteFileIdentity("new.gcode", len(big), 3.0, "u3")
+            cache.save(old_identity, index_small)
+            cache.save(mid_identity, index_big)
+            cache.save(new_identity, index_big)
+            folders = {key: os.path.dirname(cache._path(identity))
+                       for key, identity in (("old", old_identity),
+                                             ("mid", mid_identity),
+                                             ("new", new_identity))}
+            sizes = {key: sum(os.path.getsize(os.path.join(root, name))
+                              for root, _dirs, names in os.walk(folder)
+                              for name in names if name.endswith(".mpfi.gz"))
+                     for key, folder in folders.items()}
+            # The budget fits the newest big print AND the old small
+            # one — but not both big prints. Exactly the middle print
+            # must go: the old small print survives on its own merits.
+            cache.max_bytes = sizes["new"] + sizes["old"]
+            cache.prune()
+            self.assertTrue(os.path.exists(folders["new"]),
+                            "the newest print was evicted")
+            self.assertFalse(os.path.exists(folders["mid"]),
+                             "the crossing print survived")
+            self.assertTrue(os.path.exists(folders["old"]),
+                            "a small old print went with the crossing")
+            self.assertIsNotNone(cache.load(new_identity))
+            self.assertIsNone(cache.load(mid_identity),
+                              "the evicted print still reads")
+            self.assertIsNotNone(cache.load(old_identity))
+
     def test_cache_prunes_entry_count(self):
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)
