@@ -24,10 +24,14 @@ class CacheNamespaces:
         self._identity_source = identity_source
         self._service = service
         # The per-machine cache bound (the author's setting): the
-        # ACTIVE machine's configured MiB limit, read fresh at every
-        # bind so a machine switch binds its own budget.
+        # ACTIVE machine's configured MiB limit — one half of the
+        # binding KEY, read fresh at every bind so a machine switch
+        # binds its own budget.
         self._cache_bytes_source = cache_bytes_source
         self._machine_hash = self._hash(self._identity_source())
+        self._cache_bytes = None
+        if self._cache_bytes_source is not None:
+            self._cache_bytes = self._cache_bytes_source()
         self._bind(initial=True)
         Logger.log("i", "Moonraker cache namespace %s", self._machine_hash)
 
@@ -51,9 +55,7 @@ class CacheNamespaces:
         disabled here — the byte budget is the user-facing limit,
         and a hidden 16-print cap would silently override it."""
         print_root = os.path.join(self._cache_root, "cache-v2", self._machine_hash, "prints")
-        cache_bytes = None
-        if self._cache_bytes_source is not None:
-            cache_bytes = self._cache_bytes_source()
+        cache_bytes = self._cache_bytes
         prepared = PreparedCache(print_root) if cache_bytes is None \
             else PreparedCache(print_root, max_bytes=cache_bytes)
         index = PersistentIndexCache(print_root) if cache_bytes is None \
@@ -62,16 +64,27 @@ class CacheNamespaces:
         self._service.rebind_stores(index, prepared, initial=initial)
 
     def follow(self) -> None:
-        """The binding's changed signal: rebind only when the durable
-        machine identity actually changed. The first resolution moves
-        the stores off the unknown hash, so a printer that appeared
-        after construction never strands data there."""
+        """The effective binding KEY (the review's finding): the
+        machine identity AND the configured byte budget together —
+        either change rebinds the stores through the ordinary
+        writer-retirement lifecycle, and anything else is a no-op,
+        so the broad binding.changed signal costs nothing on an
+        unrelated settings save. Idempotent by construction."""
         machine_hash = self._hash(self._identity_source())
-        if machine_hash == self._machine_hash:
+        cache_bytes = None
+        if self._cache_bytes_source is not None:
+            cache_bytes = self._cache_bytes_source()
+        if machine_hash == self._machine_hash and cache_bytes == self._cache_bytes:
             return
+        previous_hash = self._machine_hash
         self._machine_hash = machine_hash
+        self._cache_bytes = cache_bytes
         self._bind()
-        Logger.log("i", "Moonraker cache namespace switched to machine %s", machine_hash)
+        if previous_hash != machine_hash:
+            Logger.log("i", "Moonraker cache namespace switched to machine %s", machine_hash)
+        else:
+            Logger.log("i", "Moonraker cache budget switched to %d bytes",
+                       cache_bytes or 0)
 
     @property
     def machine_hash(self) -> str:

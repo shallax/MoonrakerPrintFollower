@@ -956,6 +956,49 @@ class MachineNamespaceTests(unittest.TestCase):
         self.assertEqual(owner.index._cache.max_bytes, 256 * 1024 * 1024,
                          "the return to A never bound A's index size")
 
+    def test_a_budget_change_rebinds_the_active_machine_stores(self):
+        # Test A (the reviewer's same-machine case): changing the
+        # ACTIVE machine's budget through the real binding/apply
+        # signal path rebinds BOTH stores — no machine switch, no
+        # restart — and Test B: an unrelated settings save leaves
+        # the store instances untouched (a frequent binding.changed
+        # must never retire an active prepared writer needlessly).
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        index_a = owner.index._cache
+        prepared_a = owner.index._prepared
+        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024)
+        self.assertEqual(prepared_a.max_bytes, 512 * 1024 * 1024)
+        machine_hash = owner.cache_namespaces.machine_hash
+
+        config = owner.binding.config
+        config.cache_max_mb = 256
+        self.assertTrue(owner.binding.apply(config))
+        index_new = owner.index._cache
+        prepared_new = owner.index._prepared
+        self.assertIsNot(index_new, index_a,
+                         "the index store never rebound on the budget change")
+        self.assertIsNot(prepared_new, prepared_a,
+                         "the prepared store never rebound on the budget change")
+        self.assertEqual(index_new.max_bytes, 256 * 1024 * 1024)
+        self.assertEqual(prepared_new.max_bytes, 256 * 1024 * 1024)
+        self.assertIsNone(index_new.max_entries,
+                          "the rebound index kept a hidden count cap")
+        self.assertEqual(owner.cache_namespaces.machine_hash, machine_hash,
+                         "the budget change moved the machine namespace")
+
+        config = owner.binding.config
+        config.poll_interval_ms = 3000
+        self.assertTrue(owner.binding.apply(config))
+        self.assertIs(owner.index._cache, index_new,
+                      "an unrelated save rebound the index store")
+        self.assertIs(owner.index._prepared, prepared_new,
+                      "an unrelated save rebound the prepared store")
+
     def test_the_index_side_cannot_evict_before_the_machine_budget(self):
         # The review's premature-eviction finding: with both stores
         # on the SAME machine budget, the index's prune can never
@@ -1171,6 +1214,45 @@ class WriterOwnershipTests(unittest.TestCase):
         self.assertEqual(recovered["table"][0][0], STATE_CACHED)
         self.assertIsNotNone(
             service._prepared.read("print-key", recovered["table"], 0))
+
+    def test_a_budget_change_retires_the_in_flight_writer(self):
+        # The reviewer's Test D: a same-machine budget change rides
+        # the ORDINARY rebind lifecycle — the in-flight prepared
+        # writer retires and checkpoints through the OLD store in
+        # the SAME machine namespace, the new stores carry the new
+        # budget, the released worker cannot append through the
+        # retired writer, and the committed partial stays
+        # recoverable.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_old = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        config = owner.binding.config
+        config.cache_max_mb = 256
+        self.assertTrue(owner.binding.apply(config))
+
+        table = store_old.load_table("print-key")
+        self.assertIsNotNone(table, "the budget rebind never checkpointed A")
+        self.assertEqual(table["table"][0][0], STATE_CACHED)
+        self.assertTrue(handle.closed,
+                        "the budget rebind never closed the writer's handle")
+        self.assertIsNot(service._prepared, store_old,
+                         "the budget rebind kept the old prepared store")
+        self.assertEqual(service._prepared.max_bytes, 256 * 1024 * 1024,
+                         "the rebound prepared store kept the old budget")
+        self.assertEqual(service._cache.max_bytes, 256 * 1024 * 1024,
+                         "the rebound index store kept the old budget")
+        self.assertIsNone(service._cache.max_entries)
+
+        release.set()
+        self.assertTrue(self._drain(service))
+        self.assertEqual(failed, [])
+        self.assertTrue(self._empty_slots_after(
+            store_old.load_table("print-key"), 1),
+            "the released worker appended after the budget rebind")
 
     def test_a_blocked_preparation_survives_a_normal_close(self):
         # F2's second required regression: the normal shutdown retires

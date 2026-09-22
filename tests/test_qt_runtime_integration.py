@@ -125,6 +125,30 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
 
+    def test_the_stored_cache_budget_reaches_the_running_stores(self):
+        # The boot e2e: the v1 record's stored budget binds the
+        # stores through the REAL construction + migration boot, and
+        # the migrated connection keeps its identity. (The migration
+        # cannot itself change the budget: cache_max_mb post-dates
+        # every legacy source and the v1 record is the early read's
+        # own input — the change-without-restart case is the apply
+        # path, pinned in the namespace tests.)
+        prefs = Preferences({
+            "moonraker/instances": json.dumps({"A": {
+                "url": "http://imported", "api_key": "import-key"}}),
+            "moonrakerprintfollower/printer_configs_v1": json.dumps(
+                {"A": {"feed_mode": "http", "cache_max_mb": 384}}),
+        })
+        app, follower, transport = self.follower(preferences=prefs)
+        parts = follower._runtime
+        self.assertEqual(transport.identity, ("http://imported", "import-key"))
+        self.assertEqual(parts.index._prepared.max_bytes, 384 * 1024 * 1024,
+                         "the stored budget never reached the prepared store")
+        self.assertEqual(parts.index._cache.max_bytes, 384 * 1024 * 1024,
+                         "the stored budget never reached the index store")
+        self.assertIsNone(parts.index._cache.max_entries,
+                          "the runtime cache kept a hidden count cap")
+
     def test_session_invalidation_cancels_in_flight_downloads(self):
         from PyQt6.QtCore import QObject, pyqtSignal
         app, follower, transport = self.follower()
