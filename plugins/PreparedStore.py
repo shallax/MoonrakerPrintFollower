@@ -26,6 +26,7 @@ with print-level recency eviction.
 from __future__ import annotations
 
 import os
+import shutil
 import struct
 import time
 from typing import Optional
@@ -57,12 +58,14 @@ class PreparedCache:
     def _path(self, identity: str) -> str:
         import hashlib
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        # The per-print subdirectory (the review's persistence
-        # finding): the index and the prepared table live as siblings
-        # under one print's own directory.
+        # The per-print folder (the review's unified-persistence
+        # finding): the index AND the prepared table live as siblings
+        # under one print's own directory — an entire print's cache
+        # is one folder to delete, and the eviction drops the whole
+        # folder (never an orphaned half).
         print_dir = os.path.join(self.directory, f"p-{digest[:24]}")
         os.makedirs(print_dir, exist_ok=True)
-        return os.path.join(print_dir, f"{digest}.mpfp")
+        return os.path.join(print_dir, "prepared.mpfp")
 
     def _adopt_interrupted(self) -> None:
         """The interrupted-pass adoption: a tmp whose header was
@@ -84,7 +87,15 @@ class PreparedCache:
                         continue  # another process's active writer
                     try:
                         if os.path.exists(final_path):
-                            os.unlink(path)  # the published final wins
+                            # The arbitration (the review's repeated-crash
+                            # finding): a published file AND a candidate
+                            # both exist — keep whichever holds more valid
+                            # progress, never prefer a filename.
+                            verdict = self._arbitrate(final_path, path)
+                            if verdict == "tmp":
+                                os.replace(path, final_path)
+                            else:
+                                os.unlink(path)
                         elif self._tmp_sound(path):
                             os.replace(path, final_path)
                         else:
@@ -111,28 +122,67 @@ class PreparedCache:
         """The checkpointed tmp's own validity: the header parses and
         every CACHED entry's extent fits the file (a torn tail layer
         reads EMPTY later, never a corrupt offset)."""
+        return self._file_progress(path) is not None
+
+    def _file_progress(self, path: str) -> Optional[dict]:
+        """One file's valid progress, whoever wrote it: the completion
+        flag and the CACHED entry count — the arbitration's common
+        measure for a published final and an interrupted tmp alike.
+        A corrupt or truncated file reports None."""
         try:
             with open(path, "rb") as handle:
                 header = handle.read(struct.calcsize(_HEADER_FMT))
                 if len(header) < struct.calcsize(_HEADER_FMT):
-                    return False
-                magic, version, id_len, count, _complete = struct.unpack(_HEADER_FMT, header)
+                    return None
+                magic, version, id_len, count, complete = struct.unpack(_HEADER_FMT, header)
                 if magic != _MAGIC or version != _FORMAT_VERSION or id_len <= 0 or count <= 0:
-                    return False
+                    return None
                 handle.read(id_len)
                 raw = handle.read(count * struct.calcsize(_TABLE_ENTRY_FMT))
                 if len(raw) < count * struct.calcsize(_TABLE_ENTRY_FMT):
-                    return False
+                    return None
                 table = [struct.unpack_from(_TABLE_ENTRY_FMT, raw,
                                             i * struct.calcsize(_TABLE_ENTRY_FMT))
                          for i in range(count)]
                 size = os.fstat(handle.fileno()).st_size
+                cached = 0
                 for state, offset, length in table:
-                    if state == STATE_CACHED and (offset <= 0 or offset + length > size):
-                        return False
-                return True
+                    if state == STATE_CACHED:
+                        if offset <= 0 or offset + length > size:
+                            return None
+                        cached += 1
+                return {"complete": bool(complete), "cached": cached,
+                        "count": count}
         except OSError:
-            return False
+            return None
+
+    def _arbitrate(self, final_path: str, tmp_path: str) -> str:
+        """The deterministic policy between an existing published file
+        and an interrupted candidate (the review's repeated-crash
+        finding — 30% published + a 70% tmp must keep the 70%): a
+        complete valid final beats an incomplete tmp; a more-complete
+        valid partial beats a less-complete one; equal progress goes
+        to the newer file. A corrupt or unsound candidate loses."""
+        final = self._file_progress(final_path)
+        tmp = self._file_progress(tmp_path)
+        if tmp is None:
+            return "final"
+        if final is None:
+            return "tmp"
+        if final["complete"]:
+            return "final"
+        if tmp["complete"]:
+            return "tmp"
+        if tmp["cached"] > final["cached"]:
+            return "tmp"
+        if tmp["cached"] < final["cached"]:
+            return "final"
+        try:
+            if os.stat(tmp_path).st_mtime >= os.stat(final_path).st_mtime:
+                return "tmp"
+        except OSError:
+            pass
+        return "final"
 
     def load_table(self, identity: str) -> Optional[dict]:
         """The layer table for a published cache as
@@ -306,6 +356,25 @@ class PreparedCache:
         self._evict(self._path(identity))
         return self._path(identity)
 
+    def suspend_write(self, writer: dict) -> bool:
+        """The normal-lifecycle CHECKPOINT (the review's clean-shutdown
+        finding): a close, a rebind or a machine switch publishes the
+        pass's committed layers as a valid INCOMPLETE store — the
+        header already carries completion 0 and every layer's table
+        slot was checkpointed in place — so the next session opens it
+        and resumes from the EMPTY slots. Only a genuinely failed or
+        stale writer is aborted (abort_write)."""
+        if writer is None:
+            return False
+        try:
+            writer["handle"].flush()
+            writer["handle"].close()
+            os.replace(writer["temp"], self._path(writer["identity"]))
+            return True
+        except OSError:
+            self.abort_write(writer)
+            return False
+
     def abort_write(self, writer: dict) -> None:
         """Abandon an unfinished writer: close the handle and remove
         the temp file, however far the append got . Idempotent — the caller's exit paths all reach
@@ -320,33 +389,38 @@ class PreparedCache:
             pass
 
     def _evict(self, keep: str) -> None:
-        """The size policy: drop the least-recently-accessed print
-        files while the directory's total exceeds the bound (the
-        current file and the live session's are protected)."""
+        """The print-level size policy (the review's unified-lifecycle
+        finding): one print folder's total cost is the index AND the
+        prepared representation together, and an evicted print loses
+        the WHOLE folder — never an orphaned half. The protected path
+        (the current/just-written entry) is skipped, never a stopper —
+        the eviction continues with the next candidate."""
         try:
-            entries = []
-            total = 0
+            totals = {}
             for root, _dirs, names in os.walk(self.directory):
-                for name in names:
-                    if not name.endswith(".mpfp"):
-                        continue
-                    path = os.path.join(root, name)
-                    try:
-                        stat = os.stat(path)
-                    except OSError:
-                        continue
-                    total += stat.st_size
-                    entries.append((stat.st_atime, path, stat.st_size))
-            # The policy: under budget,
-            # stop; a protected entry is SKIPPED, never a stopper —
-            # the eviction continues with the next candidate.
-            for _atime, path, size in sorted(entries):
-                if total <= self.max_bytes:
-                    break
-                if path == keep:
+                folder = os.path.basename(root)
+                if not folder.startswith("p-"):
                     continue
                 try:
-                    os.unlink(path)
+                    stats = [os.stat(os.path.join(root, name)) for name in names
+                             if name.endswith((".mpfp", ".mpfi.gz"))]
+                    if not stats:
+                        continue
+                    totals[root] = (max(stat.st_atime for stat in stats),
+                                    sum(stat.st_size for stat in stats))
+                except OSError:
+                    continue
+            keep_dir = os.path.dirname(keep) if keep else None
+            total = 0
+            for root, (_atime, size) in sorted(totals.items()):
+                if total + size <= self.max_bytes:
+                    total += size
+                    continue
+                total += size
+                if root == keep_dir:
+                    continue
+                try:
+                    shutil.rmtree(root, ignore_errors=True)
                     total -= size
                 except OSError:
                     pass

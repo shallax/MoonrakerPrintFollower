@@ -1121,6 +1121,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
     class Identity:
         uuid = "u"
         modified = 1
+        size = 100
 
         def __init__(self, key):
             self._key = key
@@ -1570,10 +1571,66 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertLess(full_at_demand, 60,
                         "the pass finished before the demand cut in")
 
-    def test_a_rebind_aborts_the_old_print_writer(self):
-        # : bind() must close and delete the
-        # previous print's unfinished temp writer — never leave a
-        # handle or a .tmp file behind.
+    def test_a_uuid_only_identity_never_restores(self):
+        # The review's identity policy at the SERVICE gate: the uuid
+        # alone must never make an identity "strong enough to
+        # restore" — the restore's strength is the reliable modified
+        # timestamp, because the lookup and the validation both
+        # ignore the uuid.
+        self._view(5)
+        self.service._restored = False
+        self.files.identity.uuid = "u1"
+        self.files.identity.modified = 0.0
+        self.files.identity.size = 0
+        submitted = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append(kind) or original(kind, work, lease))
+        self.service._advance()
+        self.assertTrue(self.service._restored)
+        self.assertNotIn("restore", submitted,
+                         "a uuid-only identity attempted the restore")
+
+    def test_a_weak_size_only_identity_never_restores(self):
+        # The weak case (the review's policy): a name + size with NO
+        # reliable timestamp is insufficient for cross-session reuse —
+        # the content may have changed between extractions, so the
+        # restore is skipped and the file rebuilds.
+        self._view(5)
+        self.service._restored = False
+        self.files.identity.uuid = ""
+        self.files.identity.modified = 0.0
+        self.files.identity.size = 100
+        submitted = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append(kind) or original(kind, work, lease))
+        self.service._advance()
+        self.assertTrue(self.service._restored)
+        self.assertNotIn("restore", submitted,
+                         "a weak size-only identity attempted the restore")
+
+    def test_a_timestamped_identity_takes_the_restore_gate(self):
+        # The contrasting gate: a reliable modified timestamp makes
+        # the identity strong enough for the persistent restore —
+        # the submission names the restore.
+        self._view(5)
+        self.service._restored = False
+        submitted = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append(kind) or original(kind, work, lease))
+        self.service._advance()
+        self.assertTrue(self.service._restored)
+        self.assertIn("restore", submitted,
+                      "a timestamped identity never took the restore gate")
+
+    def test_a_rebind_checkpoints_the_old_print_writer(self):
+        # The rebind CHECKPOINTS (the review's clean-shutdown finding):
+        # the old print's committed layers publish as an incomplete
+        # store — never a bare drop of the reference, never a .tmp
+        # left behind, and the old print's progress survives for its
+        # next session.
         self._view(5)
         self.service._prepared_open(self.files.identity)
         self.service._prepared_persist(0, self._payload(0))
@@ -1586,6 +1643,65 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         leftovers = [name for root, _dirs, names in os.walk(self._dir.name)
                      for name in names if ".tmp-" in name]
         self.assertEqual(leftovers, [])
+        table = self.store.load_table("print-key")
+        self.assertIsNotNone(table, "the checkpointed partial never published")
+        self.assertFalse(table["complete"], "the partial read as complete")
+        self.assertEqual(self.store.read("print-key", table["table"], 0),
+                         self._payload(0),
+                         "the checkpointed layer never round-tripped")
+
+    def test_a_clean_close_publishes_the_partial_preparation(self):
+        # The review's clean-shutdown P0: session A prepares a subset,
+        # then closes NORMALLY — the checkpoint publishes as an
+        # incomplete store. Session B (fresh stores, fresh service,
+        # same identity, NO dead pid) sees the coverage immediately,
+        # reads the prepared layers from disk, resumes from the EMPTY
+        # slots and reaches a complete store.
+        self._view(40)
+        self.service._prepared_open(self.files.identity)
+        # The production append path the pass's worker uses: three
+        # layers commit, the pass's remaining walk is interrupted by
+        # the NORMAL close — no fake crash, no dead pid.
+        for layer in range(3):
+            self.service._prepared_persist(layer, self._payload(layer))
+        writer = self.service._prepared_writer
+        self.assertIsNotNone(writer, "the pass never opened its writer")
+        self.service.close()  # the NORMAL close — no fake crash
+        table = self.store.load_table("print-key")
+        self.assertIsNotNone(table, "the clean close published nothing")
+        self.assertFalse(table["complete"], "the partial read as complete")
+        prepared = [i for i, entry in enumerate(table["table"])
+                    if entry[0] == self.state_cached]
+        self.assertGreater(len(prepared), 0, "no layer survived the close")
+        self.assertLess(len(prepared), 40, "the partial published as complete")
+        for layer in prepared[:3]:
+            self.assertEqual(self.store.read("print-key", table["table"], layer),
+                             self._payload(layer),
+                             "a checkpointed layer never round-tripped")
+        # Session B: fresh stores, fresh service, the same identity
+        # (the same process — a real disk-backed restart).
+        from plugins.PreparedStore import PreparedCache
+        self.store = PreparedCache(self._dir.name)
+        module = self.qt.load("GCodeIndexService")
+        self.service = module.GCodeIndexService(self.files, object(),
+                                                prepared=self.store)
+        self.addCleanup(self.service.close)
+        self.service.bind(self.files.job_key)
+        self.service._restored = True
+        self.service._wanted = True
+        self._view(40)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        fraction = self.service.plate_pass_fraction()
+        self.assertGreater(fraction, 0.0,
+                           "the resumed session lost the checkpoint")
+        self.assertLess(fraction, 1.0,
+                        "the resumed session read the partial as complete")
+        # The N prepared layers are served from the store; the pass
+        # resumes from the EMPTY slots and the final store completes.
+        self._pump()
+        self.assertTrue(self.service._prepared_saved)
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
 
     def test_the_byte_budgets_bind_the_ram_tiers(self):
         # : the packed tier is pure bytes,

@@ -27,7 +27,7 @@ RUNTIME_COMPONENTS = (
     "PrinterBinding.py", "CuraIntegration.py", "PreviewFollower.py",
     "PreviewPresentation.py", "PrintCoordinator.py", "RemoteFileService.py",
     "GCodeIndexService.py", "PauseController.py", "BedMeshPresenter.py",
-    "PluginPersistence.py",
+    "PluginPersistence.py", "CacheNamespaces.py",
 )
 
 
@@ -144,12 +144,13 @@ class SourceContractTests(unittest.TestCase):
             "FileManagerPolicy": set(),
             "SectionLayoutPolicy": set(),
             "FollowController": set(),
-            "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
+            "FollowerRuntime": {"BedMeshPresenter", "CacheNamespaces", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
                 "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreparedStore", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "ArcGeometry": set(),
             "GCodeIndex": {"ArcGeometry", "MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting", "PreparedStore"},
+            "CacheNamespaces": {"GCodeIndex", "PreparedStore"},
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
             "MonitorCommands": {"MonitorPermissions"},
