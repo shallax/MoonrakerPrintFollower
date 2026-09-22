@@ -602,6 +602,38 @@ G1 X5 Y0 Z0.2
                 handle.write(raw[: max(1, len(raw)//2)])
             self.assertIsNone(cache.load(identity))
 
+    def test_the_explicit_keep_survives_ambiguous_mtimes(self):
+        # The review's prune-protection finding: the protection rides
+        # the EXPLICIT keep path, never an mtime guess — equal (or
+        # deliberately backwards) mtimes must not evict the written
+        # entry merely because the ordering is ambiguous.
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=1)
+            cache.save(RemoteFileIdentity("a.gcode", len(data), 1.0, "u1"), index)
+            first = cache._path(RemoteFileIdentity("a.gcode", len(data), 1.0, "u1"))
+            # A rival print folder whose mtime EQUALS the just-written
+            # entry's, and one that is NEWER.
+            rival = os.path.join(directory, "p-rival")
+            os.makedirs(rival, exist_ok=True)
+            rival_file = os.path.join(rival, "index.mpfi.gz")
+            with open(rival_file, "wb") as handle:
+                handle.write(b"\x00" * 64)
+            os.utime(first, (1000.0, 1000.0))
+            os.utime(rival_file, (1000.0, 1000.0))  # the ambiguous tie
+            cache.prune(keep=first)
+            self.assertTrue(os.path.exists(first),
+                            "the keep lost to an equal-mtime rival")
+            # A NEWER rival must not unseat the keep either.
+            os.makedirs(rival, exist_ok=True)
+            with open(rival_file, "wb") as handle:
+                handle.write(b"\x00" * 64)
+            os.utime(rival_file, (2000.0, 2000.0))
+            cache.prune(keep=first)
+            self.assertTrue(os.path.exists(first),
+                            "the keep lost to a newer rival")
+
     def test_cache_prunes_entry_count(self):
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)

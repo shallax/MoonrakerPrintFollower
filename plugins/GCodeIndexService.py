@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from UM.Logger import Logger
+
+
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -834,6 +837,7 @@ class GCodeIndexService(QObject):
             self._prepared_complete = True
             self._prepared_saved = True
             self._full_next = total
+            Logger.log("i", "prepared store restored: %d/%d layers", total, total)
             return
         if len(table) != total:
             # The file's layer count no longer matches this print's
@@ -841,6 +845,9 @@ class GCodeIndexService(QObject):
             # overwrite the file.
             self._prepared_table = None
             self._prepared_coverage = set()
+            return
+        covered = sum(1 for entry in table if entry[0] != STATE_EMPTY)
+        Logger.log("i", "prepared store resumed: %d/%d layers", covered, total)
 
     def _prepared_persist(self, layer, encoded):
         """Every successfully encoded layer enters the incremental
@@ -879,7 +886,11 @@ class GCodeIndexService(QObject):
         if self._prepared_writer is None:
             return
         if self._prepared is not None:
+            covered = sum(1 for entry in self._prepared_writer["table"]
+                          if entry is not None)
             self._prepared.suspend_write(self._prepared_writer)
+            Logger.log("i", "prepared checkpoint published on shutdown: %d layers",
+                       covered)
         self._prepared_writer = None
 
     def rebind_stores(self, cache, prepared, initial=False):
