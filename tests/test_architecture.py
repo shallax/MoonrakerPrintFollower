@@ -125,6 +125,15 @@ class SourceContractTests(unittest.TestCase):
                     self.assertNotIn(node.name, {"__getattr__", "__setattr__"}, path.name)
                 if isinstance(node, ast.ImportFrom) and node.level:
                     self.assertNotIn(node.module, RETIRED, path.name)
+                # Cura loads each plugin's files as top-level modules —
+                # an absolute `plugins.X` import (resolvable only when
+                # the dev repo root sits on sys.path) breaks the real
+                # boot with "could not load plugin". Cross-module
+                # imports must stay relative.
+                if isinstance(node, ast.ImportFrom) and node.level == 0:
+                    self.assertFalse(str(node.module or "").startswith("plugins"),
+                                     f"{path.name}: absolute plugins import "
+                                     f"({node.module})")
 
     def test_components_import_only_their_declared_dependencies(self):
         allowed = {

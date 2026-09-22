@@ -32,7 +32,7 @@ import threading
 import time
 from typing import Optional
 
-from plugins.CachePolicy import evict_to_budget
+from .CachePolicy import evict_to_budget
 
 try:
     from UM.Logger import Logger as _Logger
@@ -59,19 +59,33 @@ def _windows_liveness(pid: int) -> bool:
     (dead); every other failure is indeterminate and keeps the tmp
     (conservative)."""
     import ctypes
-    kernel32 = ctypes.windll.kernel32
+    from ctypes import wintypes
+    # Explicit Win32 signatures (the review's 64-bit hardening): a
+    # HANDLE is pointer-sized, so the default c_int restype would
+    # truncate it; use_last_error makes the failure verdict read
+    # from ctypes.get_last_error() coherently.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     _STILL_ACTIVE = 259
-    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    _OpenProcess = kernel32.OpenProcess
+    _OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _OpenProcess.restype = wintypes.HANDLE
+    _GetExitCodeProcess = kernel32.GetExitCodeProcess
+    _GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    _GetExitCodeProcess.restype = wintypes.BOOL
+    _CloseHandle = kernel32.CloseHandle
+    _CloseHandle.argtypes = [wintypes.HANDLE]
+    _CloseHandle.restype = wintypes.BOOL
+    handle = _OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return kernel32.GetLastError() != 87  # 87: no such process
+        return ctypes.get_last_error() != 87  # 87: no such process
     try:
-        code = ctypes.c_ulong()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+        code = wintypes.DWORD()
+        if not _GetExitCodeProcess(handle, ctypes.byref(code)):
             return True  # indeterminate — keep the tmp
         return code.value == _STILL_ACTIVE
     finally:
-        kernel32.CloseHandle(handle)
+        _CloseHandle(handle)
 
 _MAGIC = b"MPFP"
 _FORMAT_VERSION = 3
