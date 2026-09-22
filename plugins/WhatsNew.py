@@ -26,6 +26,49 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.6.0",
+        "headline": "Version 4.6.0 draws your build plate in the Monitor — "
+            "every object where it actually sits — so a failed print points "
+            "at a place on the plate instead of a name in a list.",
+        "items": (
+            "The plate map is here: the objects the slicer defined, drawn "
+            "where they are, with the object printing right now "
+            "highlighted, excluded objects red and the ones already printed "
+            "green. It sits in the Information pane as a small map; click it "
+            "to open the picker full size.",
+            "Excluding is a gesture now: triple-click an object on the map "
+            "to exclude it, and triple-click an excluded object to bring it "
+            "back. There is no confirmation dialog — the pop-over counts "
+            "your clicks and the status line under the map reports the "
+            "outcome, a refusal included.",
+            "The old list of object names is gone: the map is the control. "
+            "Hover any object to read its name and state.",
+            "A new Print Follower section draws the print itself on the "
+            "plate: the previous and next layers ghosted, the current layer "
+            "with its printed part filling in as the print runs, and the "
+            "toolhead where it is. Walls, skin, infill and the other "
+            "features have their own colours with a key underneath, and "
+            "travel moves stay hidden until you switch them on.",
+            "The follower is a tool, not a picture: zoom and pan the plate, "
+            "drag the Layer slider to any layer (that alone detaches the "
+            "follow), scrub through the current layer, set the line "
+            "thickness, jump the view onto the toolhead and keep it "
+            "centred — and detach or attach whenever you like.",
+            "The temperature chart samples on its own steady one-second "
+            "clock now. A fast auxiliary update setting used to cut the "
+            "advertised 30-minute window down to minutes.",
+            "A print you have already looked at opens quickly the next "
+            "time: the prepared geometry is kept per printer and per "
+            "print, so the second visit skips the whole preparation walk. "
+            "The Diagnostics tab carries the size limit for that store "
+            "(512 MiB per printer by default), beside the clear button, "
+            "which still clears every printer.",
+            "Fixes: quick X and Y jog taps can no longer overshoot their "
+            "limits, the settings sliders grab from either side of the "
+            "handle and keep the keyboard while a save applies.",
+        ),
+    },
+    {
         "version": "4.5.0",
         "headline": "Version 4.5.0 moves the plugin's settings into its own "
             "folder, so your configuration and console history carry over "

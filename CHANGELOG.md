@@ -2,6 +2,77 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.6.0
+
+Version 4.6.0 is the plate release: the Monitor now draws your build
+plate — every object where the slicer defined it — so a failure
+mid-print points at a place on the plate instead of a name in a list.
+The print follower lands beside it, drawing the print's own layers on
+the same plate, and the prepared geometry gains a per-print home on
+disk.
+
+- **The plate map.** The object polygons Moonraker reports for the
+  printer's `exclude_object` status, drawn to scale on the bed:
+  included objects in the text colour, the object printing right now
+  in the theme's accent, excluded objects red, and the objects the
+  print has already visited green while the print's index is
+  available. An object whose definition carries no usable polygon
+  degrades to a centre point with a generous hit radius instead of
+  vanishing. The section sits in the Information pane as a glance
+  whose slot is always reserved — the plate arriving mid-print never
+  reflows the pane — and a click on it opens the picker pop-over.
+- **Triple-click excludes, and restores.** The gesture is the
+  confirmation: excluding an object asks no question, and the old
+  per-name action and its dialog are gone. The pop-over's permanent
+  line counts the clicks ("Click again to exclude (2 of 3)") and
+  names the direction while a command is in flight, and the outcome —
+  a refusal included — lands in the status line rather than silently.
+  A restore sends Klipper's own name-scoped reset
+  (`EXCLUDE_OBJECT RESET=1 NAME=…`), never a bare reset that would
+  clear the whole plate, and a second gesture on the same object
+  while one is in flight says so instead of doubling the command.
+- **The object list becomes the map.** The old list of names is
+  removed: the picker is the control surface, and hovering an object
+  reads its name and state ("part_A — current"). The hover readout,
+  the click counter and the gesture hint share one permanent line, so
+  the map never reflows under the pointer.
+- **The print follower.** A second Information-pane section draws
+  what the printer is actually doing: the previous and next layers
+  ghosted, the current layer's printed portion filling in at the poll
+  cadence, and the live toolhead on the plate. Feature colours come
+  from the motion index's own per-motion types — walls, skin, infill
+  and the rest, with a key under the map — and travel moves are one
+  switch, off by default.
+- **The follower is a tool, not a picture.** Zoom and pan the plate;
+  the Layer slider seeks any layer and the seek is itself the detach;
+  the Layer-progress slider plays the frozen layer through by hand;
+  the line thickness scales from 0.5× to 2×; **Jump to toolhead** and
+  **Keep toolhead centred** hold the live position at a zoom; and
+  Detach/Attach is explicit. The view re-rasters once the interaction
+  settles instead of on every tick.
+- **The prepared geometry gets its own home.** Each printer's
+  prepared layers and G-code index share one folder per print under
+  that machine's own cache namespace: a print reopened from the
+  picker skips the whole preparation walk, a clean close checkpoints
+  the part-prepared work for the next session, and eviction drops
+  whole prints, least-recently-used first. The Diagnostics tab
+  carries the per-printer size limit (512 MiB by default, 16-4096)
+  beside the clear-cache button, which still clears every printer.
+- **The preparation pass shows its progress.** The Print-job bar
+  carries a teal sweep for the background optimisation's share,
+  and it vanishes when the pass completes.
+- **The temperature chart's own clock.** The chart samples on a fixed
+  one-second cadence instead of following the auxiliary delivery
+  slider, whose fast settings used to cut the advertised 30-minute
+  window down to minutes. A slower delivery holds the last value as a
+  truthful step, the feed pauses while disconnected so a reconnect
+  re-arms the window, and the Temps readouts still follow the slider —
+  the chart can read fresher than the numbers above it.
+- **Fixes:** rapid X/Y jog taps can no longer overshoot their maxima
+  (the projections are per axis now), and the settings dialog's
+  sliders grab the handle from either side and keep the keyboard
+  while a save applies.
+
 ## 4.5.0
 
 Version 4.5.0 is the persistence release: the plugin's settings leave

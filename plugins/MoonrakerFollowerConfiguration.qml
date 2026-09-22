@@ -68,6 +68,7 @@ Cura.MachineAction {
             "z_tolerance": zToleranceField.text,
             "trace_layer": layerTraceBox.checked,
             "trace_http": httpTraceBox.checked,
+            "seek_trace": seekTraceBox.checked,
             "memory_diagnostics_log": memoryDiagnosticsBox.checked,
             "memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked,
             "camera_disabled": cameraDisabledBox.checked,
