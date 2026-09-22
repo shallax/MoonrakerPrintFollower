@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
+from UM.Logger import Logger
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
@@ -1306,14 +1307,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._follower_popover_open:
             live_anchor = progress["anchor"] if progress is not None else None
             popover_anchor = popover["anchor"] if popover is not None else None
-            # warning-level so the quartet reaches the live cura.log
-            # (debug is filtered) — the review's isolation step.
-            logging.getLogger("MoonrakerPrintFollower").warning(
-                "plate follow: liveAnchor=%s popoverAnchor=%s "
-                "layerCount=%s split=%s",
-                live_anchor, popover_anchor,
-                self._values.get("plateLayerCount"),
-                popover["split"] if popover is not None else None)
+            # Cura's own logger (UM.Logger) is what reaches cura.log —
+            # the bare Python logger's warnings never did (the live
+            # "no logs" report). The review's isolation step.
+            Logger.log("w", "plate follow: liveAnchor=%s popoverAnchor=%s "
+                           "layerCount=%s split=%s",
+                       live_anchor, popover_anchor,
+                       self._values.get("plateLayerCount"),
+                       popover["split"] if popover is not None else None)
         # The surfaces gate their payloads: a closed popover or a
         # collapsed section never re-wraps a fresh payload, so the
         # memo churn costs nothing while nothing renders (the live
