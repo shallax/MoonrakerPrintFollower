@@ -3936,6 +3936,12 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
+        # The identity change now REBINDS the namespace stores (the
+        # budget-follow finding): the service's job resets with them,
+        # and the next status frame re-establishes it — exactly the
+        # production order for an identity resolution.
+        self.deliver_state("printing")
+        self.qt.events(1)
         model.improveEta()
         self.qt.events(1)
         self.qt.events()  # the publish coalescer flushes on the next turn

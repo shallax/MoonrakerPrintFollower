@@ -162,12 +162,16 @@ class FollowerRuntime:
             cache_bytes_source=lambda: int(
                 getattr(self.binding.config, "cache_max_mb", 512) or 512
             ) * 1024 * 1024)
-        # The machine switch's OWN signal (the binding's changed also
-        # fires on plain config applies — the stores follow the
-        # DURABLE machine identity, never a settings save).
+        # The namespace follows BOTH its inputs: the machine switch's
+        # own signal and the binding's applied-config signal. follow()
+        # compares the effective key (machine hash + byte budget), so
+        # an unrelated settings save changes neither and costs
+        # nothing — a machine switch or a budget change rebinds
+        # through the ordinary writer-retirement lifecycle.
         machine_signal = getattr(application, "globalContainerStackChanged", None)
-        trigger = machine_signal if machine_signal is not None else self.binding.changed
-        trigger.connect(lambda *_args: self.cache_namespaces.follow())
+        if machine_signal is not None:
+            machine_signal.connect(lambda *_args: self.cache_namespaces.follow())
+        self.binding.changed.connect(lambda *_args: self.cache_namespaces.follow())
         self.preview = PreviewFollower(self.cura)
         # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
         # "Diagnostics"); it is never written in ordinary operation.
