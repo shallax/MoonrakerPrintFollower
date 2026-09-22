@@ -2521,7 +2521,7 @@ class MonitorQtTests(unittest.TestCase):
         # forbidden by the estimate — the head never goes below zero.
         # (The drain merges queued taps, so the script COUNT is not
         # pinned; the estimate is the guard.)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
         self.assertGreaterEqual(len(z_scripts), 1)
 
@@ -2581,7 +2581,7 @@ class MonitorQtTests(unittest.TestCase):
         # instead of re-arming against each stale poll.
         model.jog("z", -1)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
         self.assertIn("rejected", model._toolhead._status)
 
     def test_z_projection_follows_fresh_telemetry_and_upward_motion(self):
@@ -2603,17 +2603,17 @@ class MonitorQtTests(unittest.TestCase):
                                                      self.follower.client._generation, time.monotonic())
         deliver_z(0.3)  # the head arrived: the poll adopts
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.3)
         model.jog("z", 1)  # upward: projection 0.4
         self.qt.events(1)
         deliver_z(0.4)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.4)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.4)
         model.jog("z", -1)  # downward again: projection 0.3
         self.qt.events(1)
         deliver_z(0.3)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.3)
 
     def test_emergency_stop_clears_pending_jog_queue(self):
         model = self.monitor()

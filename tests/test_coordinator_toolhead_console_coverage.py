@@ -1640,31 +1640,31 @@ class ToolheadCoverageTests(unittest.TestCase):
         commands.busy = True
         controller.set_distance(5)
         controller.jog("z", 1)
-        self.assertAlmostEqual(controller._z_estimate, 15.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 15.0)
         controller.jog("z", 1)
-        self.assertAlmostEqual(controller._z_estimate, 20.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
         # While a Z move is queued the poll never re-syncs the estimate.
         data.set_state("paused", live=(0.0, 0.0, 10.0, 0.0))
-        self.assertAlmostEqual(controller._z_estimate, 20.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
         commands.complete()
         commands.complete()
-        self.assertAlmostEqual(controller._z_estimate, 10.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 10.0)
 
     def test_polled_z_prefers_the_live_motion_report(self):
         controller, data, _ = self._make()
-        self.assertAlmostEqual(controller._polled_z(), 10.0)
+        self.assertAlmostEqual(controller._polled_axis("z"), 10.0)
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0, "high"]},
                   "gcode_move": {"gcode_position": [0, 0, 3.5]}}, auxiliary={})
-        self.assertAlmostEqual(controller._polled_z(), 3.5)
+        self.assertAlmostEqual(controller._polled_axis("z"), 3.5)
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0]},
                   "gcode_move": {"gcode_position": [0, 0, "north"]}}, auxiliary={})
-        self.assertIsNone(controller._polled_z())
+        self.assertIsNone(controller._polled_axis("z"))
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0]},
                   "gcode_move": {"gcode_position": []}}, auxiliary={})
-        self.assertIsNone(controller._polled_z())
+        self.assertIsNone(controller._polled_axis("z"))
 
     def test_a_bad_axis_limit_abandons_the_clamp(self):
         controller, _, commands = self._make(live=(10.0, 10.0, 10.0, 0.0),
@@ -1829,6 +1829,10 @@ class ToolheadCoverageTests(unittest.TestCase):
     def test_the_queue_full_cap_rejects_the_newest_tap(self):
         controller, _, commands = self._make(state="paused")
         commands.busy = True
+        # A distance the axis projection never clamps (16 x 5 mm of
+        # headroom from x=10): the cap, not the limit, is what the
+        # newest tap hits.
+        controller.set_distance(5)
         for _ in range(16):
             controller.jog("x", 1)
         controller.jog("x", 1)
