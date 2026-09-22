@@ -17,6 +17,20 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
 
+try:
+    from UM.Logger import Logger as _Logger
+except ImportError:
+    _Logger = None  # the host stdlib suite has no UM
+
+
+def _log(message, *args):
+    """The persistence diagnostics, at the DECISION points only
+    (never per layer): an INFO line names the reason a restore or an
+    eviction happened. The host stdlib suite runs without UM — the
+    log no-ops there."""
+    if _Logger is not None:
+        _Logger.log("i", message, *args)
+
 from . import ArcGeometry
 from .MoonrakerProtocol import RemoteFileIdentity
 
@@ -1766,6 +1780,7 @@ class PersistentIndexCache:
                 if idx >= self.max_entries or total > self.max_bytes:
                     try:
                         shutil.rmtree(root, ignore_errors=True)
+                        _log("cache print evicted: %s (%d bytes)", root, size)
                     except OSError:
                         pass
         except OSError:

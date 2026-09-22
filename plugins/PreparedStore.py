@@ -31,6 +31,20 @@ import struct
 import time
 from typing import Optional
 
+try:
+    from UM.Logger import Logger as _Logger
+except ImportError:
+    _Logger = None  # the host stdlib suite has no UM
+
+
+def _log(message, *args):
+    """The persistence diagnostics, at the DECISION points only
+    (never per layer): an INFO line names the reason a restore or an
+    eviction happened. The host stdlib suite runs without UM — the
+    log no-ops there."""
+    if _Logger is not None:
+        _Logger.log("i", message, *args)
+
 _MAGIC = b"MPFP"
 _FORMAT_VERSION = 3
 _HEADER_FMT = "<4sIHHB"
@@ -174,6 +188,8 @@ class PreparedCache:
         if tmp["complete"]:
             return "tmp"
         if tmp["cached"] > final["cached"]:
+            _log("prepared interrupted candidate superseded the older partial (%d > %d layers)",
+                       tmp["cached"], final["cached"])
             return "tmp"
         if tmp["cached"] < final["cached"]:
             return "final"
@@ -297,7 +313,8 @@ class PreparedCache:
         handle.write(identity.encode("utf-8"))
         handle.write(b"\0" * (layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
         return {"identity": identity, "temp": temp, "handle": handle,
-                "layer_count": layer_count, "table": [None] * layer_count}
+                "layer_count": layer_count, "table": [None] * layer_count,
+                "checkpoint_layers": 0, "checkpoint_bytes": 0}
 
     def _table_offset(self, writer: dict) -> int:
         """The table region's byte offset: the header plus the
@@ -310,6 +327,12 @@ class PreparedCache:
         handle = writer["handle"]
         writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
         handle.write(payload)
+        # The durability ordering (the review's checkpoint finding):
+        # a table entry advertised CACHED after recovery must refer to
+        # bytes that were durably written BEFORE the entry became
+        # visible — the payload flushes first, only then does the
+        # slot's write advertise it.
+        handle.flush()
         # The in-place checkpoint (the review's resumable-persistence
         # finding): the table slot writes NOW, so an interrupted pass
         # keeps this layer's entry and the adoption resumes from the
@@ -318,7 +341,22 @@ class PreparedCache:
         handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
         handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
                                  writer["table"][layer][1], len(payload)))
+        handle.flush()
         handle.seek(end)
+        # The periodic durability checkpoint: an fsync every 32
+        # layers or 4 MiB of payload — the crash-consistency guarantee
+        # at a cadence whose cost is invisible next to the encode
+        # walk (a per-layer fsync would). The suspension and the
+        # finish always sync (their callers).
+        writer["checkpoint_layers"] += 1
+        writer["checkpoint_bytes"] += len(payload)
+        if writer["checkpoint_layers"] >= 32 or writer["checkpoint_bytes"] >= 4 * 1024 * 1024:
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
+            writer["checkpoint_layers"] = 0
+            writer["checkpoint_bytes"] = 0
 
     def append_uncacheable(self, writer: dict, layer: int) -> None:
         """Record a layer the pass walked but the codec refused: no
@@ -348,6 +386,13 @@ class PreparedCache:
             handle.seek(struct.calcsize(_HEADER_FMT) - 1)
             handle.write(b"\x01")
             handle.flush()
+            # The publish's durability boundary: the complete store's
+            # bytes sync before the rename (a crash after the publish
+            # must never leave a torn store).
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
             handle.close()
             os.replace(writer["temp"], self._path(identity))
         except OSError:
@@ -368,6 +413,13 @@ class PreparedCache:
             return False
         try:
             writer["handle"].flush()
+            # The publish's durability boundary: the checkpointed
+            # bytes and the table slots sync before the rename — a
+            # crash after the publish must never leave a torn store.
+            try:
+                os.fsync(writer["handle"].fileno())
+            except OSError:
+                pass
             writer["handle"].close()
             os.replace(writer["temp"], self._path(writer["identity"]))
             return True
@@ -422,6 +474,7 @@ class PreparedCache:
                 try:
                     shutil.rmtree(root, ignore_errors=True)
                     total -= size
+                    _log("cache print evicted: %s (%d bytes)", root, size)
                 except OSError:
                     pass
         except OSError:
