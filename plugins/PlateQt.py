@@ -401,6 +401,25 @@ def _geometry_pen(plot: dict, view: dict) -> QPen:
     sx, _sy, _ox, _oy, _bx, _by = _transform(plot, view)
     stroke = max(0.01, float(view.get("nominalWidthMm", 0.2)) * sx * line_scale
                  * (7.0 if compact else 1.0))
+    # The device-floor coverage (measured): the QML canvas paints at
+    # the window's device grid, so a sub-floor stroke presents as
+    # min(2/dpr, 1) FULL-intensity logical px there, while the
+    # backed raster's own thin paint downscales to a faded fraction
+    # (the ghostly-raster report — the QML reads brighter). The
+    # floor gives the raster the same presented footprint WITHOUT
+    # the old fixed floor's zoom magnification: the exact rasters
+    # paint at the zoom already (floor = min(2, dpr) paint px), and
+    # the camera-independent nav raster divides by the view's zoom —
+    # a zoom change re-bakes that raster (the zoom rides its key) —
+    # so the presented floor stays min(2/dpr, 1) at every zoom.
+    backing = _backing_scale(view)
+    dpr = max(1.0, float(view.get("dpr", 1.0)))
+    if view.get("backing"):
+        zoom = max(1.0, float(view.get("zoom") or 1.0))
+        floor = backing * min(2.0 / dpr, 1.0) / zoom
+    else:
+        floor = min(2.0, dpr)
+    stroke = max(stroke, floor)
     pen = QPen()
     pen.setWidthF(stroke)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -465,9 +484,10 @@ def _paint_below_split(painter: QPainter, pen: QPen, payload: dict, plot: dict,
 def _paint_grid(painter: QPainter, plot: dict, view: dict) -> None:
     """The bed grid, the interaction scene's BOTTOM raster: the same
     10 mm thin / 50 mm thick graduations and the border the face's
-    mapping canvas paints — so the COMPLETE scene (the grid AND the
-    geometry) switches to the warm raster as one unit, never two
-    independently-moving pictures."""
+    mapping canvas paints — the warm raster is ONE flat composite of
+    every canvas component (the live ruling: a separately-painted
+    grid pans at its own pace, so the grid must never be a second
+    layer)."""
     bed_width = float(view.get("bedWidth") or 0)
     bed_depth = float(view.get("bedDepth") or 0)
     if bed_width <= 0 or bed_depth <= 0:
@@ -479,10 +499,18 @@ def _paint_grid(painter: QPainter, plot: dict, view: dict) -> None:
     bottom = offset_y + bed_depth * sy
     bed_x_max = bed_x_min + bed_width
     bed_y_min = bed_y_max - bed_depth
+    # The adaptive width (the live ruling): the raster's camera
+    # transform presents a painted pen at painted x zoom / backing,
+    # so the pen painted at backing / zoom presents as the canvas's
+    # constant 1 (or 2) px AT THIS ZOOM — a zoom change re-bakes the
+    # raster (the zoom rides the nav key), and the single flat
+    # raster keeps the grid at the correct thickness at every level.
+    zoom = max(1.0, float(view.get("zoom") or 1.0))
+    backing = _backing_scale(view)
     thin = QPen(QColor(_PLATE_GRID_THIN))
-    thin.setWidthF(4.0)  # the face's 1 logical px at the 4x backing
+    thin.setWidthF(4.0 * backing / (4.0 * zoom))  # 1 logical px at any zoom
     thick = QPen(QColor(_PLATE_GRID_BORDER))
-    thick.setWidthF(8.0)  # the face's 2 logical px
+    thick.setWidthF(8.0 * backing / (4.0 * zoom))  # 2 logical px at any zoom
     painter.setPen(thin)
     gx = math.ceil(bed_x_min / 10.0) * 10.0
     while gx <= bed_x_max:

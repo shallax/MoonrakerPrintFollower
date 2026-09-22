@@ -16,6 +16,15 @@ from UM.Logger import Logger
 from .GCodeIndex import PersistentIndexCache
 from .PreparedStore import PreparedCache
 
+# The persistent cache's directory name (the 2026-09-22 ruling): it
+# must NEVER match the plugin's package ID — Uranium's package
+# manager deletes directories named after the package being replaced
+# while purging an upgrade, and the cache sits under Cura's storage
+# root where that purge walks. The explicit suffix keeps the cache
+# out of the purge's path (the pre-4.6.0 name collided and the whole
+# index cache vanished on every package install).
+CACHE_DIRECTORY_NAME = "MoonrakerPrintFollowerPersistentCache"
+
 
 class CacheNamespaces:
     def __init__(self, cache_root: str, identity_source, service, parent=None,

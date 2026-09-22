@@ -16,6 +16,7 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .BedMeshPresenter import BedMeshPresenter
+from .CacheNamespaces import CACHE_DIRECTORY_NAME
 from .CuraIntegration import CuraIntegration
 from .GCodeIndexService import GCodeIndexService
 from .MigrationNotice import MigrationNotice
@@ -140,7 +141,17 @@ class FollowerRuntime:
         # download — the unconditional entry point the bind/close
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
-        self._cache_root = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        # The cache root's name is the SHARED constant (never the
+        # package ID — the package manager's purge deletes a
+        # directory named after the replaced package, and the cache
+        # sits under the storage root the purge walks, so the old
+        # name cost the whole index cache on every package install).
+        # No migrator: the purge runs during the OLD package's
+        # uninstall, before this code boots, so a legacy directory
+        # rarely survives to move — the one-time rebuild after this
+        # upgrade is the accepted cost, and the clear action still
+        # sweeps the legacy name.
+        self._cache_root = os.path.join(Resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
         # The per-machine namespace owner (the review's persistence
         # finding): the configured printer's stable identity hashes
         # into the cache's own subtree, so two printers can never

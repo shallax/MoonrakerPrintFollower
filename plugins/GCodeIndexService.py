@@ -138,6 +138,10 @@ class _ByteBoundedLru:
         self._bytes = 0
         self.max_bytes = max_bytes
         self.min_entries = min_entries
+        # The demanded windows (the live print's ±1 and the detached
+        # follower's frozen ±1): eviction skips these layers — the
+        # owner updates the set as the anchors move.
+        self.protected = set()
 
     def __len__(self):
         return len(self._data)
@@ -214,9 +218,21 @@ class _ByteBoundedLru:
     def _trim(self) -> None:
         # The floor (the decoded LRU's): below it, never evict — the
         # active windows must survive a single pathological layer.
+        # The protected windows (the live ±1 and the frozen ±1) are
+        # skipped: evicting a demanded layer flips the memoised
+        # bundle's decoded bit and the demand re-decodes it — a
+        # per-poll eviction/redemption thrash (the detached 114%
+        # burn).
         while self._bytes > self.max_bytes and len(self._data) > self.min_entries:
-            _key, _value = self._data.popitem(last=False)
-            self._bytes -= self._sizes.pop(_key, 0)
+            victim = None
+            for key in self._data:
+                if key not in self.protected:
+                    victim = key
+                    break
+            if victim is None:
+                break
+            del self._data[victim]
+            self._bytes -= self._sizes.pop(victim, 0)
 
 
 def _polygon_identity(polygon):
@@ -316,6 +332,8 @@ class GCodeIndexService(QObject):
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
+        self._manual_anchor_calls = 0
+        self._manual_anchor_changes = 0
         # The within-layer scrub (the pop-over's progress slider): the
         # manual split for the frozen layer, None while the live print's
         # boundary is the one being shown.
@@ -374,6 +392,54 @@ class GCodeIndexService(QObject):
         self._wanted = True
         self._advance()
 
+    def invalidate(self):
+        """The cache-clear reset (the live ruling): the backing files
+        are GONE, so every listener must drop to the no-index state —
+        the in-memory index, the prepared tables, the decoded and
+        full caches, the hydration latches and the memoised
+        boundaries all go. The changed signal drives the
+        coordinator's refresh, so the follower, the EOP and the ETA
+        republish the unavailable state; a later request rebuilds
+        from the session's downloaded file or re-downloads it."""
+        self._cancel.set()
+        self._cancel = threading.Event()
+        self._generation += 1
+        self._view = None
+        self._job = None
+        self._wanted = self._restored = self._save = False
+        self._busy = ""
+        self._error = ""
+        self._progress = None
+        self._hydrate.clear()
+        self._hydrating = None
+        self._failed_hydrate.clear()
+        self._prepared_table = None
+        self._prepared_identity = None
+        self._prepared_saved = False
+        self._prepared_writer = None
+        self._prepared_retry_count = 0
+        self._prepared_complete = False
+        self._prepared_flag_complete = False
+        self._prepared_coverage = set()
+        self._full_cache.clear()
+        self._full_next = 0
+        self._last_save_at = None
+        self._decoded_lru.clear()
+        self._decoded_lru.protected = set()
+        self._decoded_pins = {}
+        self._decoded_sizes = {}
+        self._plate_layers_memos = {}
+        self._manual_anchor = None
+        self._manual_split = None
+        self._split_floor = None
+        self._split_refined = None
+        self._split_floor_key = None
+        self._visited_key = None
+        self._visited = set()
+        self._visited_upto = -1
+        self._visited_settled = frozenset()
+        self.changed.emit()
+
     def request_hydration(self, layer):
         view = self._view
         if view is None or not 0 <= layer < len(view.ranges):
@@ -391,8 +457,21 @@ class GCodeIndexService(QObject):
         layer would evict the live layer the dot, the split and the
         printed fill all read. ``None`` rejoins the live print's window.
         """
-        self._manual_anchor = layer if isinstance(layer, int) and not isinstance(layer, bool) \
+        normalised = layer if isinstance(layer, int) and not isinstance(layer, bool) \
             and layer >= 0 else None
+        # The idempotency diagnostics: the calls vs the real changes
+        # (the detached burn's proof — the coordinator re-asserts the
+        # same anchor every refresh).
+        self._manual_anchor_calls = getattr(self, "_manual_anchor_calls", 0) + 1
+        if normalised == self._manual_anchor:
+            # The coordinator re-asserts the SAME anchor on every
+            # refresh while detached; without this no-op the rewind,
+            # the demand and the advance ran per refresh and the
+            # worker's own completion fed the loop back through
+            # changed -> refresh (the detached 114% burn).
+            return
+        self._manual_anchor_changes = getattr(self, "_manual_anchor_changes", 0) + 1
+        self._manual_anchor = normalised
         if self._manual_anchor is None:
             # Rejoining the live print abandons the scrub: the live
             # split is the print's own again.
@@ -435,6 +514,24 @@ class GCodeIndexService(QObject):
             return
         with view._index.cache_lock:
             view._index.manual_anchor = manual
+        self._update_decoded_protection()
+
+    def _update_decoded_protection(self):
+        """The demanded windows must survive the decoded budget's
+        eviction: the live print's ±1 and the frozen follower's ±1.
+        Evicting a demanded layer flips the memoised bundle's decoded
+        bit and the demand re-decodes it — a per-poll
+        eviction/redemption thrash (the detached 114% burn)."""
+        if self._view is None:
+            return
+        index = self._view._index
+        protected = set()
+        followed = getattr(index, "followed_layer", None)
+        manual = getattr(index, "manual_anchor", None)
+        for anchor in (followed, manual):
+            if isinstance(anchor, int) and anchor >= 0:
+                protected.update((anchor - 1, anchor, anchor + 1))
+        self._decoded_lru.protected = protected
 
     def _presentation_source(self, layer):
         """Cheapest source for the PRESENTATION payload of one layer.
@@ -730,7 +827,14 @@ class GCodeIndexService(QObject):
         while (self._decoded_lru.total_bytes() + self.pinned_decoded_bytes()
                > self._decoded_lru.max_bytes
                and len(self._decoded_lru) > self._decoded_lru.min_entries):
-            self._decoded_lru.popitem(last=False)
+            victim = None
+            for key in self._decoded_lru:
+                if key not in self._decoded_lru.protected:
+                    victim = key
+                    break
+            if victim is None:
+                break
+            self._decoded_lru.pop(victim)
 
     def pinned_decoded_bytes(self):
         """The wrapper-pinned payload bytes the LRU has already
@@ -760,6 +864,7 @@ class GCodeIndexService(QObject):
         index = self._view._index
         with index.cache_lock:
             index.followed_layer = layer
+        self._update_decoded_protection()
         # A moved anchor may have stranded a pending prefetch outside
         # the window; drop it before the worker picks it. The window is
         # then topped back up: an anchor move is exactly when the new
@@ -979,6 +1084,8 @@ class GCodeIndexService(QObject):
         self._prepared_flag_complete = False
         self._prepared_coverage = set()
         self._manual_anchor = None
+        self._manual_anchor_calls = 0
+        self._manual_anchor_changes = 0
         self._split_floor = None
         self._split_refined = None
         self._split_floor_key = None
@@ -1359,6 +1466,19 @@ class GCodeIndexService(QObject):
                     # re-adopts.
                     self._prepared_open(self._files.identity)
                     self._adopt_prepared()
+                    # A detach or a scrub that raced the build/restore
+                    # dropped its demand at the view-None guards; the
+                    # coordinator's post-commit re-assertion carries
+                    # the SAME anchor and the idempotency guard would
+                    # swallow it — so the windows re-raise HERE, the
+                    # moment the view exists (the live report: a
+                    # future-layer scrub after a restore rendered
+                    # nothing and the slider stayed disabled).
+                    self._apply_manual_anchor()
+                    self._request_manual_window()
+                    index = self._view._index
+                    if index.followed_layer is not None:
+                        self._request_window(int(index.followed_layer))
                 elif kind == "build":
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)

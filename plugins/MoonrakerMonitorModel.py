@@ -86,7 +86,12 @@ from .MonitorFormatting import (
 )
 from dataclasses import replace
 
-from .PrinterConfig import normalise_temperature_chart
+from .PrinterConfig import (
+    CAMERA_FPS_DEFAULT,
+    CAMERA_FPS_FALLBACK_MAX,
+    CAMERA_FPS_MIN,
+    normalise_temperature_chart,
+)
 from .StateStore import StateStore
 from .MonitorTemperatureHistory import (
     DORMANT_CHART,
@@ -403,6 +408,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
     cameraRecoveringChanged = pyqtSignal()
+    cameraFpsChanged = pyqtSignal()
     webcamStreamEnabledChanged = pyqtSignal()
     followerViewChanged = pyqtSignal()
     connectionDetailChanged = pyqtSignal()
@@ -474,6 +480,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
+        ("cameraFpsChanged", ("cameraFps", "cameraFpsMin", "cameraFpsMax")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
@@ -503,6 +510,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
+                 request_follower_popover_open=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
                  identity=None, state_store=None, persistence=None, index_service=None):
         super().__init__(output_controller, number_of_extruders)
@@ -519,6 +527,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The split seam is the progress slider's scrub, same shape.
         self._request_plate_anchor = request_plate_anchor
         self._request_plate_split = request_plate_split
+        # The coordinator's explicit demand gate: the closed popover
+        # stops the frozen window's per-poll serving (the reviewer's
+        # C).
+        self._request_follower_popover_open = request_follower_popover_open
         self._identity = identity
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
@@ -2318,6 +2330,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     traceCameraTimingChanged = pyqtSignal()
     traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
     webcamStreamEnabled = value_property(bool, "webcamStreamEnabled", webcamStreamEnabledChanged, True)
+    # The webcam decode throttle: the effective rate the renderer is
+    # told to decode at, the bar's floor, and the selected camera's own
+    # configured ceiling (Moonraker's target_fps from the webcam list).
+    # The defaults hold until the first publish lands.
+    cameraFps = value_property(float, "cameraFps", cameraFpsChanged, CAMERA_FPS_DEFAULT)
+    cameraFpsMin = value_property(float, "cameraFpsMin", cameraFpsChanged, CAMERA_FPS_MIN)
+    cameraFpsMax = value_property(float, "cameraFpsMax", cameraFpsChanged, CAMERA_FPS_FALLBACK_MAX)
 
     @pyqtSlot()
     def cameraFirstFrameRendered(self):
@@ -2692,6 +2711,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if popover_open == self._follower_popover_open:
             return
         self._follower_popover_open = popover_open
+        if self._request_follower_popover_open is not None:
+            self._request_follower_popover_open(popover_open)
         if not popover_open:
             self._retire_surface(self._plate_surfaces["popover"])
         self._publish()
@@ -2787,6 +2808,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._mesh_thresholds_touched = True
         self._mesh.set_thresholds(low, high)
         self._publish()
+
+    @pyqtSlot(float)
+    def setCameraFps(self, fps):
+        """The FPS control's commit (the bar's drag or a wheel notch):
+        the pane's renderer decodes at the new rate, the value persists
+        per machine, and the stream itself is untouched."""
+        self._camera.set_fps(fps)
 
     @pyqtSlot(bool)
     def setWebcamStreamEnabled(self, enabled):
@@ -3194,6 +3222,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 round(float(surface.view.get("lineScale") or 0.7), 6),
                 int(surface.view.get("width") or 0),
                 int(surface.view.get("height") or 0),
+                # The ZOOM rides the key (the live ruling): the grid
+                # is baked at the width that presents as the canvas's
+                # 1 px AT THIS ZOOM, so a zoom change re-bakes the
+                # single flat raster. The pan stays a presentation
+                # transform and never appears here.
+                round(float(surface.view.get("scale") or 1.0), 6),
                 round(float(self.bedMeshMachineWidth or 0.0), 6),
                 round(float(self.bedMeshMachineDepth or 0.0), 6),
                 tuple(sorted((k, round(float(v), 6))
@@ -3224,6 +3258,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         view = {"width": int(surface.view.get("width") or 0),
                 "height": int(surface.view.get("height") or 0),
                 "scale": 1.0,
+                # The grid's adaptive width: the pen painted at
+                # backing / zoom presents as the canvas's 1 px at
+                # this zoom (the raster's camera transform scales
+                # it back up — the live ruling). The dpr rides the
+                # same coverage contract: the stroke floor presents
+                # min(2/dpr, 1) logical px at this zoom.
+                "zoom": float(surface.view.get("scale") or 1.0),
+                "dpr": min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))),
                 "lineScale": float(surface.view.get("lineScale") or 0.7),
                 "travelVisualRatio": surface.view.get("travelVisualRatio"),
                 "compact": False, "panX": 0.0, "panY": 0.0,

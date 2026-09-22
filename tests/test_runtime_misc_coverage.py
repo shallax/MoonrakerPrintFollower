@@ -1390,11 +1390,33 @@ class FollowerRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime_instance._closed)
 
     def test_the_smoothing_trace_lands_under_the_cache_directory_when_opted_in(self):
+        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
         with patch.dict(os.environ, {"MOONRAKER_FOLLOWER_SMOOTHING_TRACE": "smoothing.csv"}):
             _, follower = self.build()
         trace_path = follower._runtime.motion._trace_path
         self.assertEqual(pathlib.Path(trace_path).name, "smoothing.csv")
-        self.assertEqual(pathlib.Path(trace_path).parent.name, "MoonrakerPrintFollower")
+        self.assertEqual(pathlib.Path(trace_path).parent.name, CACHE_DIRECTORY_NAME)
+
+    def test_the_cache_directory_name_never_matches_the_package_id(self):
+        # The 2026-09-22 collision: Uranium's package purge deletes
+        # every child directory of the storage root named after the
+        # replaced package. The cache directory must never match the
+        # package ID, and the purge's own walk must leave it alone
+        # (the legacy name dies wholesale — that is exactly the bug).
+        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
+        self.assertNotEqual(CACHE_DIRECTORY_NAME, "MoonrakerPrintFollower")
+        with tempfile.TemporaryDirectory() as root:
+            legacy = os.path.join(root, "MoonrakerPrintFollower")
+            os.makedirs(os.path.join(legacy, "cache-v2"), exist_ok=True)
+            safe = os.path.join(root, CACHE_DIRECTORY_NAME)
+            os.makedirs(os.path.join(safe, "cache-v2"), exist_ok=True)
+            # The purge's recipe: any child dir matching the package
+            # being replaced is removed wholesale.
+            for name in os.listdir(root):
+                if name == "MoonrakerPrintFollower":
+                    shutil.rmtree(os.path.join(root, name))
+            self.assertTrue(os.path.isdir(safe),
+                            "the package purge reached the renamed cache")
 
     def test_the_migration_clean_and_the_toast_run_from_initialization_finished(self):
         binding_module = self.qt.load("PrinterBinding")

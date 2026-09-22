@@ -14,6 +14,23 @@ from urllib.parse import urlsplit, urlunsplit
 _CONSOLE_TRANSCRIPT_CAP = 60  # MAX_TRANSCRIPT (50) + the command retention (10)
 _CONSOLE_LINE_CAP = 8 * 1024
 
+# The webcam throttle's bounds and default. The real ceiling is the
+# SELECTED CAMERA's configured target_fps (a Moonraker setting that
+# varies by installation), so CAMERA_FPS_MAX is only the coercion
+# guard for a corrupt record. MonitorCamera owns the same numbers for
+# its live coercion (module-layering pin), so a drifted pair costs a
+# re-clamp on read, never a bad value.
+CAMERA_FPS_MIN = 0.5
+CAMERA_FPS_MAX = 120.0
+# The ceiling published before the camera list lands: the renderer's
+# own idle cadence (30 FPS), also the value used when a camera reports
+# no target_fps at all.
+CAMERA_FPS_FALLBACK_MAX = 30.0
+# The idle-load default: half the fallback ceiling, so a fresh install
+# decodes a fraction of what the unthrottled stream cost while the
+# picture stays smooth enough to watch a print by.
+CAMERA_FPS_DEFAULT = 15.0
+
 
 def normalise_url(value: Any) -> str:
     """Canonical Moonraker base URL: scheme required, no trailing slash.
@@ -161,6 +178,10 @@ class PrinterConfig:
     camera_rotation: int = 0
     camera_mirror: bool = False
     camera_selected: str = ""
+    # The webcam's decode rate (FPS): the user's own throttle for the
+    # monitor page's idle load, persisted per machine like the other
+    # camera settings.
+    camera_fps: float = CAMERA_FPS_DEFAULT
 
     # Monitor user preferences that are machine-specific: sensor names
     # differ between printers, so chart colours/visibility and the
@@ -225,6 +246,14 @@ class PrinterConfig:
         except (TypeError, ValueError):
             rotation = defaults.camera_rotation
         data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
+
+        try:
+            fps = float(data["camera_fps"])
+            if not isfinite(fps):
+                raise ValueError(fps)
+        except (TypeError, ValueError):
+            fps = defaults.camera_fps
+        data["camera_fps"] = max(CAMERA_FPS_MIN, min(CAMERA_FPS_MAX, fps))
 
         for key in ("aux_interval_ms", "console_interval_ms"):
             try:

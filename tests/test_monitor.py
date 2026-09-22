@@ -4876,6 +4876,20 @@ Item {
             # only change on a printer switch, which is user-initiated.
             "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
             "visible: root.printerModel != null && root.printerModel.hasBedMesh",
+            # The webcam FPS bar: parked until the pane is wide enough
+            # and the stream is live — layout-static within the pane.
+            "visible: root.cameraBarFits && root.cameraControlLive",
+            # The camera bar's two modes (zoom / FPS) and its compact
+            # chip: mode and size gates inside the camera pane's own
+            # reserved strip — never layout-shifting elsewhere.
+            'visible: root.cameraBarMode === "zoom"',
+            'visible: root.cameraBarMode === "fps"',
+            # The FPS scale's mirrored graduation edge: decoration
+            # inside the bar's own reserved strip (the zoom scope's
+            # own !major mirror).
+            "visible: !line",
+            "visible: !root.cameraBarFits && root.cameraControlLive && root.cameraPictureWidth >= 96 * screenScaleFactor && root.cameraPictureHeight >= 96 * screenScaleFactor",
+            "visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected && cameraImage.visible && cameraImage.imageWidth > 0 && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
             # The plate's toolhead dot: scene-graph decoration INSIDE
             # the canvas's reserved slot — it can never shift layout,
             # only its own marker can appear inside the fixed map.
@@ -5483,6 +5497,169 @@ Item {
         # that controls stay silent.
         self.assertGreaterEqual(len(webcam_changes), 1)
         self.assertEqual(control_changes, [])
+
+    def test_the_decode_rate_persists_per_machine_and_costs_no_reconnect(self):
+        # The throttle is the renderer's decode cadence, never the
+        # stream: committing a rate must persist it per machine and
+        # leave the connection exactly as it was — no new generation,
+        # no rebind, no re-request of anything.
+        model = self.monitor()
+        self.deliver()
+        cameras = [{"uid": "front-uid", "name": "Front", "stream_url": "/front", "target_fps": 30}]
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 15.0, "the product default until the user moves it")
+        generation = self.follower.client._generation
+        requests = len(self.transport.requests)
+
+        model.setCameraFps(12.0)
+        self.qt.events()
+
+        self.assertEqual(model.cameraFps, 12.0, "the published rate is the one committed")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 12.0)
+        document = self.follower.persistence.settings_document()
+        machine_id = self.follower.current_printer_identity()[0]
+        self.assertEqual(document["machines"][machine_id]["camera_fps"], 12.0,
+                         "the rate rides the same per-machine settings record")
+        self.assertEqual(self.follower.client._generation, generation,
+                         "a rate change is never a reconnect")
+        self.assertEqual(len(self.transport.requests), requests,
+                         "and it asks the printer for nothing")
+
+        # The range it publishes is the camera's own, and the rate
+        # survives a restart of the whole follower.
+        self.assertEqual(model.cameraFpsMin, 0.5)
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        app2 = self.qt.Application(preferences=self.app.preferences)
+        transport2 = ScriptedTransport()
+        runtime_module = self.qt.load("FollowerRuntime")
+        real_client = runtime_module.MoonrakerClient
+        with patch.object(runtime_module, "MoonrakerClient", lambda parent: real_client(parent, transport=transport2, socket=ScriptedSocket())):
+            follower2 = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app2)
+        self.addCleanup(follower2.deinitialize)
+        self.assertEqual(follower2.current_printer_config().camera_fps, 12.0,
+                         "the rate is restored from the settings document")
+        restored = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(app2, follower2)
+        restored.start()
+        self.addCleanup(restored.stop)
+        restored_model = restored._current.activePrinter
+        restored_model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(restored_model.cameraFps, 12.0,
+                         "and the restored machine renders at it")
+
+    def test_an_idle_rate_control_never_saves_the_config(self):
+        # The commit is a real change or nothing: a stale widget echoing
+        # back the rate the model already holds (the pane's own binding
+        # round trip) must not write the settings document, and neither
+        # must a value that clamps to where the model already stands.
+        model = self.monitor()
+        model._data._update(webcams=[
+            {"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 15}])
+        self.qt.events(10)
+
+        def stored():
+            return json.dumps(self.follower.persistence.settings_document(), sort_keys=True)
+
+        settling = stored()
+        model.setCameraFps(15.0)  # already the effective rate
+        self.qt.events(10)
+        self.assertEqual(stored(), settling, "a stale echo of the current rate saves nothing")
+        model.setCameraFps(30.0)  # past the camera; clamps back onto it
+        self.qt.events(10)
+        self.assertEqual(stored(), settling, "and neither does a commit that cannot move it")
+        model.setCameraFps(0.2)  # below the floor
+        self.qt.events(10)
+        self.assertNotEqual(stored(), settling, "the floor clamp is a real change")
+        self.assertEqual(model.cameraFps, 0.5)
+
+    def test_the_rate_is_capped_by_the_selected_cameras_own_target(self):
+        # The ceiling is the camera's configured target_fps, never a
+        # product constant: a 15 FPS camera cannot be asked for 30, and
+        # the commit stores what was actually applied — while the
+        # OBSERVE path only lowers the effective rate, leaving the
+        # preference alone for the faster camera it came from.
+        model = self.monitor()
+        model._data._update(webcams=[
+            {"uid": "fast", "name": "Fast", "stream_url": "/fast", "target_fps": 60},
+            {"uid": "slow", "name": "Slow", "stream_url": "/slow", "target_fps": 15},
+        ])
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 60.0, "the selected camera's own ceiling")
+        model.setCameraFps(45.0)
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 45.0)
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0)
+
+        model.selectWebcam(1)  # the slower camera
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 15.0, "the new camera publishes its own ceiling")
+        self.assertEqual(model.cameraFps, 15.0, "and the effective rate follows it down")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0,
+                         "the stored preference is not rewritten by the cap")
+        model.setCameraFps(30.0)  # past this camera's ceiling
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 15.0, "the commit is capped at the camera")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0,
+                         "a commit that cannot move the rate rewrites nothing")
+        model.setCameraFps(10.0)  # inside this camera's ceiling
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 10.0)
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 10.0,
+                         "and a commit that does move it stores what was applied")
+        model.selectWebcam(0)  # back to the fast camera
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 60.0)
+        self.assertEqual(model.cameraFps, 10.0, "the user's own rate, uncapped by the slower camera")
+
+    def test_a_camera_without_a_usable_target_fps_falls_back_to_the_render_ceiling(self):
+        # An older Moonraker, or a front-end-written entry, carries no
+        # target_fps: the ceiling is the renderer's own idle cadence
+        # rather than a camera that cannot be read as one.
+        model = self.monitor()
+        for entry in (
+                {"uid": "none", "name": "None", "stream_url": "/none"},
+                {"uid": "zero", "name": "Zero", "stream_url": "/zero", "target_fps": 0},
+                {"uid": "junk", "name": "Junk", "stream_url": "/junk", "target_fps": "nonsense"},
+                {"uid": "huge", "name": "Huge", "stream_url": "/huge", "target_fps": 5000},
+                {"uid": "tiny", "name": "Tiny", "stream_url": "/tiny", "target_fps": 0.01},
+        ):
+            with self.subTest(entry=entry["uid"]):
+                model._data._update(webcams=[entry])
+                self.qt.events()
+                expected = {"huge": 120.0, "tiny": 0.5}.get(entry["uid"], 30.0)
+                self.assertEqual(model.cameraFpsMax, expected,
+                                 "a corrupt or absent target_fps lands on a usable ceiling")
+                self.assertLessEqual(model.cameraFps, model.cameraFpsMax)
+                self.assertGreaterEqual(model.cameraFps, model.cameraFpsMin)
+                model.setCameraFps(120.0)
+                self.qt.events()
+                self.assertEqual(model.cameraFps, min(expected, 120.0),
+                                 "the control can never ask the renderer for more")
+
+    def test_a_reconfigured_camera_re_reads_its_own_ceiling(self):
+        # The ceiling rides the camera SIGNATURE: an installation that
+        # changes its stream's target_fps while the pane is open must
+        # re-read it rather than keep offering the old range.
+        model = self.monitor()
+        cameras = [{"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 30}]
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        model.setCameraFps(20.0)
+        self.qt.events()
+
+        reconfigured = [{"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 10}]
+        model._data._update(webcams=reconfigured)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 10.0, "the re-configured camera's new ceiling")
+        self.assertEqual(model.cameraFps, 10.0, "and the rate with it")
+        # The stored preference is the user's, uncapped: a stream put
+        # back to 30 restores the rate the user chose.
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        self.assertEqual(model.cameraFps, 20.0, "the user's own rate comes back with the room")
 
     def test_selected_camera_persists_through_the_settings_document_and_restores_after_webcams(self):
         model = self.monitor()

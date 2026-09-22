@@ -807,11 +807,15 @@ class CoordinatorCoverageTests(unittest.TestCase):
         # even while the print is still on that layer.
         parts = self._printing(self._make())
         parts.index.view = _view()
+        # The serving gate (the reviewer's C): the frozen payload
+        # serves while the popover is open.
+        parts.coordinator.set_popover_open(True)
         parts.coordinator.set_plate_anchor(4)  # == the live layer
         parts.coordinator.refresh()
-        # TWO payloads per refresh while detached: the live one for
-        # the mini, the frozen one for the popover (the live request).
-        # The detach's own refresh plus the explicit one: four calls.
+        # TWO payloads per refresh while detached and the popover is
+        # open: the live one for the mini, the frozen one for the
+        # popover (the live request). The detach's own refresh plus
+        # the explicit one: four calls.
         self.assertEqual(parts.index.plate_anchors, [4, 4, 4, 4])
         self.assertIsNone(parts.index.plate_positions[-1],
                           "the frozen layer was still handed the live position")

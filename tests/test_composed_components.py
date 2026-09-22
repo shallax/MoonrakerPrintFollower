@@ -174,6 +174,188 @@ class ComposedComponentTests(unittest.TestCase):
         with self.assertRaises(TypeError): view.current_layer_map[2] = 1
         self.assertFalse(hasattr(view, "motion_offsets"))
 
+    def test_a_restored_index_serves_a_future_layer_scrub_without_a_prepared_table(self):
+        # The live report: after a restart restores the index but the
+        # prepared table is missing (the previous session quit before
+        # the pass published it), scrubbing to a FUTURE layer
+        # rendered only the grid and the layer-progress bar stayed
+        # disabled — a reindex was the only fix. The restored view
+        # must demand the raw file for the far layer and serve it
+        # once the file arrives — never latch, never stall.
+        service, files = self.parts.index, self.parts.files
+        key = ("part.gcode", 100, 1)
+        files.bind(key)
+        identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity(
+            "part.gcode", 100, modified=1)
+        files._identity = identity
+        service.bind(key)
+        service._restored = True
+        service._wanted = True
+        layers = b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
+            for layer in range(10))
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        self.addCleanup(os.remove, target)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(target, compact=True)
+        # The previous session saved the index but never published a
+        # prepared table.
+        service._cache.save(identity, index)
+        # The restart: a fresh boot restores through the real branch;
+        # the session's downloaded file is gone with the old process.
+        service._view = None
+        service._restored = False
+        service._prepared_table = None
+        service._prepared_identity = None
+        files._path = None
+        requests = []
+        with patch.object(files, "request_file", lambda *a, **k: requests.append(1)):
+            service._advance()
+            for _ in range(200):
+                self.qt.events(5)
+                if service._view is not None and not service._busy:
+                    break
+        self.assertIsNotNone(service._view,
+                            "the restore never installed the view")
+        # The scrub to a future layer: the raw demand must re-request
+        # the file (no prepared table, no hydrated arrays), and the
+        # layer must land once the download arrives.
+        service.set_manual_anchor(8)
+        for _ in range(50):
+            self.qt.events(5)
+        self.assertEqual(requests, [1],
+                         "the future-layer demand never re-requested the file")
+        files._path = target
+        files.changed.emit()
+        for _ in range(400):
+            self.qt.events(5)
+            if service._presentation_source(8) == "decoded":
+                break
+        self.assertEqual(service._presentation_source(8), "decoded",
+                         "the restored view never served the future layer")
+        self.assertNotIn(8, service._failed_hydrate,
+                         "the future layer latched instead of hydrating")
+
+    def test_a_scrub_that_races_the_restore_still_serves_its_window(self):
+        # The live report's race: the detach/scrub arrived while the
+        # restore was still in flight — its demand died at the
+        # view-None guards, and the coordinator's same-anchor
+        # re-assertion after the commit hit the idempotency no-op.
+        # The commit must re-raise the frozen window itself.
+        service, files = self.parts.index, self.parts.files
+        key = ("part.gcode", 100, 1)
+        files.bind(key)
+        identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity(
+            "part.gcode", 100, modified=1)
+        files._identity = identity
+        service.bind(key)
+        service._restored = True
+        service._wanted = True
+        layers = b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
+            for layer in range(10))
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        self.addCleanup(os.remove, target)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(target, compact=True)
+        service._cache.save(identity, index)
+        # The restart: the view is gone and the restore has not run.
+        service._view = None
+        service._restored = False
+        service._prepared_table = None
+        service._prepared_identity = None
+        files._path = target
+        # The race: the scrub lands BEFORE the restore completes.
+        service.set_manual_anchor(8)
+        self.assertIsNone(service._view, "the race never raced")
+        service._advance()
+        for _ in range(400):
+            self.qt.events(5)
+            if service._view is not None and not service._busy:
+                break
+        self.assertIsNotNone(service._view, "the restore never installed the view")
+        for _ in range(400):
+            self.qt.events(5)
+            if service._presentation_source(8) == "decoded":
+                break
+        self.assertEqual(service._presentation_source(8), "decoded",
+                         "the racing scrub's window never hydrated")
+
+    def test_the_cache_clear_invalidate_drops_every_index_listener_state(self):
+        # The live ruling: once the cache-clear wipes the backing
+        # files, every listener must believe the index does not exist —
+        # the view, the prepared tables, the decoded and full caches,
+        # the manual anchor and the memos all go, the changed signal
+        # fires, and nothing rebuilds on its own.
+        module = self.qt.load("GCodeIndexService")
+        service = self.parts.index
+        index = self.qt.load("GCodeIndex").LayerMotionIndex(
+            ranges=[(0, 100)], current_layer_map={1: 0})
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        service._job = ("part.gcode", 100, 1)
+        service._wanted = service._restored = service._save = True
+        service._prepared_table = {"layer": 0}
+        service._prepared_identity = ("part.gcode", 100, 1)
+        service._prepared_complete = True
+        service._prepared_coverage = {0}
+        service._full_cache.set("layer", object(), 16)
+        service._decoded_lru.set("layer", object(), 16)
+        service._decoded_lru.protected = {3}
+        service._decoded_pins = {3: 16}
+        service._decoded_sizes = {3: 16}
+        service._plate_layers_memos = {("part.gcode", 100, 1): object()}
+        service._manual_anchor = 4
+        service._manual_split = 12
+        service._split_floor = 7
+        service._split_refined = 9
+        service._split_floor_key = ("part.gcode", 4)
+        service._visited = {1, 2}
+        service._visited_upto = 5
+        service._visited_settled = frozenset({1})
+        service._visited_key = ("part.gcode", 100, 1)
+        service._hydrate = {4}
+        service._hydrating = 4
+        service._failed_hydrate = {2}
+        service._progress = 0.5
+        emissions = []
+        service.changed.connect(lambda: emissions.append(1))
+
+        service.invalidate()
+
+        self.assertEqual(emissions, [1], "the invalidate never announced itself")
+        self.assertIsNone(service.view)
+        self.assertIsNone(service._job)
+        self.assertFalse(service._wanted or service._restored or service._save)
+        self.assertIsNone(service._prepared_table)
+        self.assertIsNone(service._prepared_identity)
+        self.assertFalse(service._prepared_complete)
+        self.assertEqual(service._prepared_coverage, set())
+        self.assertEqual(len(service._full_cache), 0)
+        self.assertEqual(len(service._decoded_lru), 0)
+        self.assertEqual(service._decoded_lru.protected, set())
+        self.assertEqual(service._decoded_pins, {})
+        self.assertEqual(service._decoded_sizes, {})
+        self.assertEqual(service._plate_layers_memos, {})
+        self.assertIsNone(service._manual_anchor)
+        self.assertIsNone(service._manual_split)
+        self.assertIsNone(service._split_floor)
+        self.assertIsNone(service._split_refined)
+        self.assertIsNone(service._split_floor_key)
+        self.assertEqual(service._visited, set())
+        self.assertEqual(service._visited_upto, -1)
+        self.assertEqual(service._visited_settled, frozenset())
+        self.assertIsNone(service._visited_key)
+        self.assertEqual(service._hydrate, set())
+        self.assertIsNone(service._hydrating)
+        self.assertEqual(service._failed_hydrate, set())
+        self.assertIsNone(service._progress)
+
     def test_start_print_power_probe_checks_every_device(self):
         config = self.config_type(url="http://printer-a", power_devices="socket,psu")
         upload = self.qt.load("UploadController").UploadController(
@@ -1446,10 +1628,10 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_qml_public_api_is_present_without_model_subclasses(self):
         model = self.monitor()
-        properties = "monitorState monitorConnected connectionDetail monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorPositionCompact monitorVelocity monitorFlowRate monitorFlowDiameter monitorAccelLimit monitorMessage printActive printJobCaption canPausePrint canResumePrint pauseReason pauseReasonDetail resumeReason resumeReasonDetail canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible bedMeshThresholdLow bedMeshThresholdHigh bedMeshMachineWidth bedMeshMachineDepth bedMeshCenterIsZero jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus jogReason jogReasonDetail canRestart restartReason restartReasonDetail sectionReason sectionReasonDetail controlsLocked controlsCollapsed infoCollapsed statusCollapsed sectionLayout sectionHiddenMap consoleHeight cameraRefreshNonce cameraRecovering emergencyHoldProgress temperatureChartMini temperatureChartFull temperatureChartLatest temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
+        properties = "monitorState monitorConnected connectionDetail monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorPositionCompact monitorVelocity monitorFlowRate monitorFlowDiameter monitorAccelLimit monitorMessage printActive printJobCaption canPausePrint canResumePrint pauseReason pauseReasonDetail resumeReason resumeReasonDetail canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical cameraFps cameraFpsMin cameraFpsMax monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible bedMeshThresholdLow bedMeshThresholdHigh bedMeshMachineWidth bedMeshMachineDepth bedMeshCenterIsZero jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus jogReason jogReasonDetail canRestart restartReason restartReasonDetail sectionReason sectionReasonDetail controlsLocked controlsCollapsed infoCollapsed statusCollapsed sectionLayout sectionHiddenMap consoleHeight cameraRefreshNonce cameraRecovering emergencyHoldProgress temperatureChartMini temperatureChartFull temperatureChartLatest temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
-        for name in "pausePrint resumePrint cancelPrint reconnect refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible setBedMeshThresholds macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setSectionLayout sectionLayoutFor setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileClearWalkError fileRequestVisibleThumbnails".split():
+        for name in "pausePrint resumePrint cancelPrint reconnect refreshAll refreshWebcams selectWebcam setCameraFps runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible setBedMeshThresholds macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setSectionLayout sectionLayoutFor setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileClearWalkError fileRequestVisibleThumbnails".split():
             self.assertTrue(any(bytes(meta.method(i).name()).decode() == name for i in range(meta.methodCount())), name)
         self.assertEqual(type(model).__bases__[0].__name__, "PrinterModel")
 
@@ -2264,6 +2446,122 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         model._observe_follower_job("other-job")
         self.assertNotIn(5, surface.layers,
                          "the print change left the old epoch's wrapper")
+
+    def test_the_demanded_windows_survive_the_decoded_trim(self):
+        # Both demanded windows — the live print's ±1 and the
+        # detached follower's frozen ±1 — must survive the decoded
+        # budget's eviction: evicting a demanded layer flips the
+        # memoised bundle's decoded bit and the demand re-decodes
+        # it, a per-poll eviction/redemption thrash (the detached
+        # 114% burn).
+        model = self.monitor()
+        service = model._index_service
+        service._decoded_lru.max_bytes = 10 ** 9
+        for layer in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+            service._decoded_lru.set(layer, self._payload(), 5000)
+            service._decoded_sizes[layer] = 5000
+        service._decoded_lru.min_entries = 1
+        service._decoded_lru.max_bytes = 1000
+        # The wiring: both anchors hand their windows to the
+        # protection (a minimal view stands in — this fixture's
+        # service never builds a real one).
+        from types import SimpleNamespace
+        from threading import Lock
+        service._view = SimpleNamespace(_index=SimpleNamespace(manual_anchor=None,
+                                                               followed_layer=None,
+                                                               cache_lock=Lock()),
+                                        ranges=list(range(20)),
+                                        hydrated=lambda layer: False,
+                                        pause_layers=set())
+        # The worker machinery stays out of this scope: the test pins
+        # the trim's protection, not the demand loop.
+        service._request_window = lambda layer: None
+        service._advance = lambda: None
+        service.set_followed_layer(10)
+        self.assertEqual(service._decoded_lru.protected, {9, 10, 11},
+                         "the live window never entered the protection")
+        service._manual_anchor = 5
+        service._apply_manual_anchor()
+        self.assertEqual(service._decoded_lru.protected, {4, 5, 6, 9, 10, 11},
+                         "the frozen window never joined the protection")
+        service._decoded_lru.set(13, self._payload(), 5000)  # the trim fires
+        for layer in (4, 5, 6, 9, 10, 11):
+            self.assertIn(layer, service._decoded_lru,
+                          "a demanded layer %d evicted" % layer)
+        self.assertNotIn(1, service._decoded_lru,
+                         "an undemanded layer survived the trim")
+        service._manual_anchor = None
+        service._apply_manual_anchor()
+        self.assertEqual(service._decoded_lru.protected, {9, 10, 11},
+                         "re-attaching kept the frozen window protected")
+
+    def test_the_same_manual_anchor_is_a_no_op(self):
+        # The coordinator re-asserts the SAME anchor on every
+        # refresh while detached; without the no-op the rewind, the
+        # demand and the advance ran per refresh and the worker's
+        # own completion fed the loop back through changed ->
+        # refresh (the detached 114% burn).
+        service = self.follower._runtime.index
+        service._manual_anchor_calls = 0
+        service._manual_anchor_changes = 0
+        advances = []
+        windows = []
+        original_advance = service._advance
+        original_window = service._request_manual_window
+        service._advance = lambda: advances.append(1) or original_advance()
+        service._request_manual_window = lambda: windows.append(1) or original_window()
+        try:
+            service.set_manual_anchor(5)
+            first = (service._full_next, len(advances), len(windows))
+            service.set_manual_anchor(5)
+            service.set_manual_anchor(5)
+            self.assertEqual((service._full_next, len(advances), len(windows)),
+                             first, "the same anchor re-ran the seek focus")
+            self.assertEqual(service._manual_anchor_calls, 3,
+                             "the idempotency counters missed calls")
+            self.assertEqual(service._manual_anchor_changes, 1,
+                             "the same anchor counted as a change")
+        finally:
+            service._advance = original_advance
+            service._request_manual_window = original_window
+
+    def test_the_closed_popover_stops_the_frozen_serving(self):
+        # The explicit demand gate: the manual anchor stays as
+        # lightweight state, but a closed popover serves no frozen
+        # window; reopening re-arms the gate and the next poll's
+        # refresh resumes the serving.
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self.assertFalse(coordinator._popover_open,
+                         "the popover starts open")
+        model.setFollowerPopoverOpen(True)
+        self.assertTrue(coordinator._popover_open,
+                        "the open never reached the coordinator")
+        self.follower.setPlateAnchor(5)
+        self.assertTrue(coordinator._manual_serving_active(),
+                        "the open popover does not serve the frozen window")
+        model.setFollowerPopoverOpen(False)
+        self.assertFalse(coordinator._popover_open)
+        self.assertEqual(coordinator._plate_anchor, 5,
+                         "closing dropped the manual anchor")
+        self.assertFalse(coordinator._manual_serving_active(),
+                         "the closed popover keeps serving the frozen window")
+        # The reopen re-arms the gate itself; the serving resumes on
+        # the next refresh (the per-poll cadence — no immediate
+        # recompute that would throw away the standing snapshot).
+        model.setFollowerPopoverOpen(True)
+        self.assertTrue(coordinator._manual_serving_active(),
+                        "the reopen never re-armed the frozen serving")
+
+    def test_a_real_anchor_change_still_focuses_once(self):
+        # The idempotency must not swallow real changes: each new
+        # anchor focuses the preparation exactly once.
+        service = self.follower._runtime.index
+        service._manual_anchor_changes = 0
+        self.follower.setPlateAnchor(100)
+        self.follower.setPlateAnchor(250)
+        self.assertEqual(service._manual_anchor_changes, 2,
+                         "the real anchor changes did not both land")
 
     def test_wrapper_payloads_pin_the_decoded_budget(self):
         # The wrappers charge their payloads against the decoded

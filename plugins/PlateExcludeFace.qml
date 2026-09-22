@@ -119,6 +119,22 @@ Item {
         return row.name + " — included";
     }
 
+    function hoverInk() {
+        // The label wears the map's own state ink (the live request):
+        // the words and the outline always agree on the colour.
+        var row = root._rowFor(root.hoveredName);
+        if (row == null) {
+            return UM.Theme.getColor("text_inactive");
+        }
+        if (row.excluded === true) {
+            return MoonrakerTheme.dangerRed;
+        }
+        if (row.current === true) {
+            return UM.Theme.getColor("primary");
+        }
+        return row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
+    }
+
     PlateCanvas {
         id: canvas
         anchors.fill: parent

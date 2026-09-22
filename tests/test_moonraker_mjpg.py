@@ -22,6 +22,7 @@ try:
                 MAX_HEADER_BYTES,
                 MAX_IN_PROGRESS_FRAME_BYTES,
                 MoonrakerMJPGImage,
+                RENDER_INTERVAL_MS,
                 RETAINED_GARBAGE_LIMIT,
             )
         finally:
@@ -305,6 +306,38 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._reply().deliver(_multipart(_jpeg(64, 48)))
         self._drain(80)
         self.assertEqual(seen, [(64, 48)])
+
+    def test_clearing_the_frame_re_announces_the_size(self):
+        # The blank is a real size change (NxM -> 0x0) and the
+        # remembered rect goes with it: the stream off/on left zoom and
+        # FPS dead because the resumed stream's first frame repeated
+        # the old resolution, announced nothing, and the consumer that
+        # gated on imageWidth kept the value it latched before the
+        # blank.
+        self._start()
+        seen = []
+        self.item.imageSizeChanged.connect(
+            lambda: seen.append((self.item.imageWidth, self.item.imageHeight)))
+        self._reply().deliver(_multipart(_jpeg(64, 48)))
+        self._drain(80)
+        self.assertEqual(seen, [(64, 48)])
+
+        self.item.clearFrame()
+        self.assertEqual((self.item.imageWidth, self.item.imageHeight), (0, 0),
+                         "a blanked frame reports no size")
+        self.assertEqual(seen, [(64, 48), (0, 0)], "the blank is announced")
+
+        # The resume: the SAME resolution on the same reply.
+        self._reply().deliver(_multipart(_jpeg(64, 48)))
+        self._drain(80)
+        self.assertEqual(seen, [(64, 48), (0, 0), (64, 48)],
+                         "the first frame after a blank re-announces its size")
+
+        # Nothing changed means nothing announced: the notify stays a
+        # real-change signal, however often the pane blanks.
+        self.item.clearFrame()
+        self.item.clearFrame()
+        self.assertEqual(len(seen), 4)
 
     def test_an_unterminated_oversized_part_is_discarded_not_reconnected(self):
         # A part that never terminates (no declared length, no next
@@ -606,6 +639,112 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._drain(80)
         self.assertEqual(self.item.framesDisplayed, 1)
         self.assertEqual(self.item.imageWidth, 40)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class DecodeThrottleTests(unittest.TestCase):
+    """The decode throttle: the render tick is the one place a JPEG
+    becomes a QImage, so the rate the pane asks for IS the render
+    timer's interval. The receive/parse side is deliberately left
+    alone — the drain still runs at the wire's own pace and only the
+    newest frame survives — so a low rate costs decodes, never
+    latency or a reconnect."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        self.nam = FakeNam()
+        self.item = MoonrakerMJPGImage()
+        self.item._network_manager = self.nam  # the injection seam
+        self.item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
+        self.addCleanup(self.item.stop)
+
+    def _reply(self):
+        return self.nam.requests[-1]
+
+    def _start(self):
+        def _get_with_type(request):
+            reply = FakeReply()
+            self.nam.requests.append(reply)
+            return reply
+        self.nam.get = _get_with_type
+        self.item.start()
+
+    def test_the_target_round_trips_and_the_render_timer_follows(self):
+        emissions = []
+        self.item.targetFpsChanged.connect(lambda: emissions.append(self.item.targetFps))
+        self.item.targetFps = 5.0
+        self.assertEqual(self.item.getTargetFps(), 5.0)
+        self.assertEqual(self.item.targetFps, 5.0)  # the property read
+        self.assertEqual(self.item.renderIntervalMs, 200)
+        self.assertEqual(self.item._render_timer.interval(), 200,
+                         "the timer's interval is the throttle's own effect")
+        self.assertEqual(emissions, [5.0], "one notify, carrying the new rate")
+        # A second rate moves both again; the same rate is a no-op.
+        self.item.targetFps = 60.0
+        self.assertEqual((self.item.targetFps, self.item.renderIntervalMs), (60.0, 17))
+        self.assertEqual(self.item._render_timer.interval(), 17)
+        self.item.targetFps = 60.0
+        self.assertEqual(emissions, [5.0, 60.0], "an unchanged rate never re-notifies")
+        # Both the getter and the setter are the property's, not a QML-only shim.
+        self.item.setTargetFps(30.0)
+        self.assertEqual(self.item.getTargetFps(), 30.0)
+
+    def test_a_non_positive_target_is_the_idle_ceiling(self):
+        for value in (0, 0.0, -1.0, None, "not a number", float("nan")):
+            with self.subTest(value=value):
+                self.item.setTargetFps(30.0)  # a live throttle first
+                self.item.setTargetFps(value)
+                self.assertEqual(self.item.targetFps, 0.0,
+                                 "a non-positive or unusable target releases the throttle")
+                self.assertEqual(self.item.renderIntervalMs, RENDER_INTERVAL_MS)
+                self.assertEqual(self.item._render_timer.interval(), RENDER_INTERVAL_MS)
+
+    def test_a_corrupt_target_never_spins_the_timer(self):
+        # The 1 ms floor: a rate the interval maths would round to
+        # zero (or an infinity from a corrupt payload) still leaves a
+        # timer with a positive interval.
+        for value in (float("inf"), 1e9, 2000.0):
+            with self.subTest(value=value):
+                self.item.setTargetFps(value)
+                self.assertGreaterEqual(self.item.renderIntervalMs, 1)
+                self.assertEqual(self.item._render_timer.interval(),
+                                 self.item.renderIntervalMs)
+
+    def test_a_low_rate_throttles_the_decode_and_never_the_parse(self):
+        # The saving is the decode. The buffer still drains at the
+        # wire's pace (every frame parses), the tick is what follows
+        # the rate, and the newest frame is the one that decodes.
+        self.item.setTargetFps(2.0)  # one render tick every 500 ms
+        self._start()
+        frames = [_jpeg(40, 30, shade=40 + index) for index in range(9)]
+        self._reply().deliver(b"".join(_multipart(frame) for frame in frames))
+        self.assertEqual(self.item.framesParsed, 9, "the parse is never throttled")
+        self.qt.events(200)  # inside the throttle's own interval
+        self.assertEqual(self.item.framesDisplayed, 0,
+                         "the render tick follows the requested rate")
+        self.qt.events(500)  # one tick lands
+        self.assertEqual(self.item.framesDisplayed, 1, "and decodes one frame")
+        self.assertEqual(self.item.framesDropped, 8,
+                         "the superseded eight are counted as dropped")
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
+                         "the newest frame wins the display")
+        self.assertEqual(self._reply()._aborted, 0, "no reconnect anywhere")
+
+    def test_the_throttle_survives_a_restart_and_releases_with_zero(self):
+        # The throttle is item state, not stream state: a source
+        # restart must not silently restore the idle ceiling, and
+        # zero must give it back.
+        self.item.setTargetFps(10.0)
+        self._start()
+        self.assertEqual(self.item._render_timer.interval(), 100)
+        self.item.stop()
+        self.item.start()
+        self.assertEqual(self.item.targetFps, 10.0)
+        self.assertEqual(self.item._render_timer.interval(), 100)
+        self.item.setTargetFps(0)
+        self.assertEqual(self.item._render_timer.interval(), RENDER_INTERVAL_MS)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")

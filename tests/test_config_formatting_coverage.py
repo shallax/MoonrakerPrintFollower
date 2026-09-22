@@ -57,7 +57,8 @@ from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, 
 from plugins.PluginPersistence import PluginPersistence
 from plugins.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
                                        pause_unavailable, status_icon, status_text)
-from plugins.PrinterConfig import (FeedMode, PrinterConfig, PrinterConfigStore, normalise_url,
+from plugins.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
+                                   PrinterConfig, PrinterConfigStore, normalise_url,
                                    normalise_temperature_chart, upload_path_safe)
 from plugins.StateStore import StateStore
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
@@ -723,6 +724,7 @@ class PrinterConfigCoverageTests(unittest.TestCase):
             "z_tolerance": "nonsense",
             "ready_retry_interval_s": "nonsense",
             "camera_rotation": "nonsense",
+            "camera_fps": "nonsense",
             "aux_interval_ms": "nonsense",
             "console_interval_ms": "nonsense",
             "cache_max_mb": "nonsense",
@@ -731,19 +733,21 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(config.z_tolerance, 0.04)
         self.assertEqual(config.ready_retry_interval_s, 0.5)
         self.assertEqual(config.camera_rotation, 0)
+        self.assertEqual(config.camera_fps, CAMERA_FPS_DEFAULT)
         self.assertEqual(config.aux_interval_ms, 2500)
         self.assertEqual(config.console_interval_ms, 1000)
         self.assertEqual(config.cache_max_mb, 512)
 
         clamped = PrinterConfig.from_dict({
             "poll_interval_ms": 10 ** 9, "z_tolerance": 0.5, "ready_retry_interval_s": 120.0,
-            "camera_rotation": 45, "aux_interval_ms": 10, "console_interval_ms": 10 ** 6,
-            "cache_max_mb": 10 ** 6,
+            "camera_rotation": 45, "camera_fps": 10 ** 6, "aux_interval_ms": 10,
+            "console_interval_ms": 10 ** 6, "cache_max_mb": 10 ** 6,
         })
         self.assertEqual(clamped.poll_interval_ms, 3_600_000)
         self.assertEqual(clamped.z_tolerance, 0.04)          # above the 0.250 ceiling
         self.assertEqual(clamped.ready_retry_interval_s, 60.0)
         self.assertEqual(clamped.camera_rotation, 0)         # not a quarter turn
+        self.assertEqual(clamped.camera_fps, CAMERA_FPS_MAX)  # the corrupt-record guard
         self.assertEqual(clamped.aux_interval_ms, 250)
         self.assertEqual(clamped.console_interval_ms, 60_000)
         self.assertEqual(clamped.cache_max_mb, 4096)         # above the 4096 ceiling
@@ -756,6 +760,27 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(PrinterConfig.from_dict({"camera_rotation": 180}).camera_rotation, 180)
         self.assertEqual(PrinterConfig.from_dict({"camera_rotation": 90}).camera_rotation, 90)
         self.assertIsInstance(PrinterConfig.from_dict(None), PrinterConfig)
+
+    def test_from_dict_holds_the_decode_rate_inside_the_throttles_own_range(self):
+        # The rate is the user's own throttle, so the stored value is
+        # held to what the renderer can honour: the floor is the 0.5 the
+        # control bottoms out at, and the ceiling is the corrupt-record
+        # guard — a real camera's own target_fps caps it again at the
+        # camera, which is MonitorCamera's job, not the store's.
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 0}).camera_fps, CAMERA_FPS_MIN)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": -4}).camera_fps, CAMERA_FPS_MIN)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": float("nan")}).camera_fps,
+                         CAMERA_FPS_DEFAULT)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": None}).camera_fps,
+                         CAMERA_FPS_DEFAULT)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 0.5}).camera_fps, 0.5)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 60}).camera_fps, 60.0)
+        # An absent key is the product default, and the round trip keeps
+        # the rate exactly.
+        self.assertEqual(PrinterConfig.from_dict({}).camera_fps, CAMERA_FPS_DEFAULT)
+        settings, _state = split_record({"url": "http://a:7125", "camera_fps": 2.5})
+        self.assertEqual(settings["camera_fps"], 2.5, "the rate rides the settings side")
+        self.assertEqual(PrinterConfig.from_dict(settings).camera_fps, 2.5)
 
     def test_from_dict_cleans_the_console_transcript(self):
         config = PrinterConfig.from_dict({"console_transcript": [

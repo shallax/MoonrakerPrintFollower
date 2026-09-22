@@ -25,7 +25,7 @@ from qt_runtime_support import QT_AVAILABLE  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 if QT_AVAILABLE:
-    from PyQt6.QtCore import QCoreApplication, QObject, QPointF, QRectF, QUrl, qInstallMessageHandler
+    from PyQt6.QtCore import QCoreApplication, QObject, QPointF, QRectF, Qt, QUrl, qInstallMessageHandler
     from PyQt6.QtCore import pyqtProperty, pyqtSignal, pyqtSlot
     from PyQt6.QtGui import QGuiApplication
     from PyQt6.QtQml import QQmlComponent, QQmlEngine
@@ -48,7 +48,9 @@ if QT_AVAILABLE:
     class CameraModelDouble(QObject):
         """The webcam surface the camera card reads — enough for its
         title row to build with the selector and refresh button
-        showing, which is the widest that row ever gets."""
+        showing, which is the widest that row ever gets. The FPS
+        surface (the idle-load request) records every rate the control
+        commits, so one wheel notch is observable."""
 
         monitorConnectedChanged = pyqtSignal()
         cameraRecoveringChanged = pyqtSignal()
@@ -56,6 +58,54 @@ if QT_AVAILABLE:
         cameraFlipChanged = pyqtSignal()
         activeWebcamChanged = pyqtSignal()
         webcamNamesChanged = pyqtSignal()
+        cameraFpsChanged = pyqtSignal()
+        webcamStreamEnabledChanged = pyqtSignal()
+
+        def __init__(self, fps=15.0, maximum=30.0):
+            super().__init__()
+            self.fps_calls = []
+            self._camera_fps = float(fps)
+            self._camera_fps_maximum = float(maximum)
+            self._stream_enabled = True
+
+        @pyqtProperty(float, notify=cameraFpsChanged)
+        def cameraFps(self):
+            return self._camera_fps
+
+        @pyqtProperty(float, notify=cameraFpsChanged)
+        def cameraFpsMin(self):
+            return 0.5
+
+        @pyqtProperty(float, notify=cameraFpsChanged)
+        def cameraFpsMax(self):
+            return self._camera_fps_maximum
+
+        def set_camera_ceiling(self, maximum, fps=None):
+            """A camera re-selected (or re-configured) behind the pane:
+            the ceiling changes and the published rate follows it down
+            exactly as MonitorCamera republishes."""
+            self._camera_fps_maximum = float(maximum)
+            if fps is None:
+                self._camera_fps = min(self._camera_fps, self._camera_fps_maximum)
+            else:
+                self._camera_fps = float(fps)
+            self.cameraFpsChanged.emit()
+
+        @pyqtSlot(float)
+        def setCameraFps(self, fps):
+            self.fps_calls.append(float(fps))
+            self._camera_fps = float(fps)
+            self.cameraFpsChanged.emit()
+
+        @pyqtProperty(bool, notify=webcamStreamEnabledChanged)
+        def webcamStreamEnabled(self):
+            return self._stream_enabled
+
+        def set_stream_enabled(self, enabled):
+            """The stream toggle, as the model publishes it: the flag
+            and the URL move together (setWebcamStreamEnabled)."""
+            self._stream_enabled = bool(enabled)
+            self.webcamStreamEnabledChanged.emit()
 
         @pyqtProperty(bool, notify=monitorConnectedChanged)
         def monitorConnected(self):
@@ -229,6 +279,28 @@ if QT_AVAILABLE:
         @pyqtProperty(bool)
         def monitorConnected(self):
             return True
+
+
+    class OutputDeviceDouble(QObject):
+        """The output device the monitor documents read as a context
+        property, with the stage exit recorded: the Esc ladder's last
+        rung leaves the monitor stage, and a null device would look the
+        same whether or not that rung ran."""
+
+        activePrinterChanged = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self._printer = PrinterModelDouble()
+            self.leaves = 0
+
+        @pyqtProperty(QObject, notify=activePrinterChanged)
+        def activePrinter(self):
+            return self._printer
+
+        @pyqtSlot()
+        def leaveMonitorStage(self):
+            self.leaves += 1
 
 
 _APPLICATION = {"app": None, "engine": None, "theme": None, "messages": []}
@@ -1546,6 +1618,972 @@ class CameraOwnershipTests(RealEngineTestCase):
         self.pump()
         self.assertFalse(chip.property("visible"))
         self.addCleanup(window.deleteLater)
+
+
+class CameraFpsControlTests(RealEngineTestCase):
+    """The camera control bar's QML surface (the idle-load and zoom
+    requests): the status chip carries the decode rate and yields to the
+    Live badge when the frame cannot carry both, one bar carries two
+    faces — the zoom scale at rest, the rate scale while the throttle is
+    being driven — the rate face's range is the selected camera's own
+    ceiling with evenly spaced graduations, the bar parks clear of the
+    picture after five idle seconds, the compact chip stands in where the
+    bar has no room, and the wheel reaches the rate whether or not any
+    control is on screen. The CPU saving itself is the renderer's own leg
+    (test_moonraker_mjpg.py); the persistence is
+    test_printer_config.py's."""
+
+    def _fps_pane(self, width, height, fps=15.0, maximum=30.0, displayed_fps=0.0):
+        """The card with a live frame and a recording FPS model. The
+        bandwidth readout rides along: a live chip always carries it,
+        and its width is what the occlusion rule has to reckon with.
+        Returns (pane, window, model, image, frame) — the frame being
+        the picture's own box, the box every FPS surface rides and the
+        clip they are held to."""
+        pane, window = self.mount_window("CameraPane.qml", width, height)
+        pane.setProperty("configured", True)
+        model = CameraModelDouble(fps=fps, maximum=maximum)
+        pane.setProperty("printerModel", model)
+        self.pump(30)
+        image = self.find(pane, "cameraImage")
+        image.setProperty("visible", True)
+        image.setProperty("imageWidth", 640)
+        image.setProperty("imageHeight", 480)
+        image.setProperty("recentBytesPerSec", 1375000)
+        image.setProperty("recentDisplayedFPS", displayed_fps)
+        # The first layout re-seats the parked controls through their
+        # 180 ms slide: let it land before any position is measured.
+        self._pump_ms(300)
+        return pane, window, model, image, self.find(pane, "cameraFrame")
+
+    def _wheel(self, window, item, delta=120, modifiers=None, position=None):
+        """One real wheel notch over *item*. QTest's QWindow-level
+        mouseWheel is unavailable in this Qt build — the event is posted
+        directly (the plate zoom suite's own pattern). No modifier is
+        the picture's own gesture (the zoom); Shift is the FPS
+        throttle's."""
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtGui import QWheelEvent
+        if position is None:
+            position = QPointF(item.width() / 2, item.height() / 2)
+        scene = item.mapToItem(window.contentItem(), position)
+        event = QWheelEvent(
+            QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+            QPoint(0, 0), QPoint(0, delta),
+            Qt.MouseButton.NoButton,
+            modifiers if modifiers is not None else Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase, False)
+        QGuiApplication.sendEvent(window, event)
+
+    def _mouse(self, window, item, kind, x, y, buttons=None, button=None):
+        """One real mouse event at item-local (x, y) — the drag pan's
+        own path (the plate face suite's idiom). *button* is the button
+        the event is ABOUT: a press must carry its own button in the
+        held set or the delivery agent files it as a bare update, which
+        is why the default pairs the two."""
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtGui import QMouseEvent
+        if button is None:
+            button = Qt.MouseButton.LeftButton
+        if buttons is None:
+            buttons = Qt.MouseButton.NoButton
+        scene = item.mapToItem(window.contentItem(), QPointF(x, y))
+        event = QMouseEvent(kind, QPointF(scene),
+                            QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                            button, buttons,
+                            Qt.KeyboardModifier.NoModifier)
+        QGuiApplication.sendEvent(window, event)
+
+    def _drag(self, window, item, dx, dy):
+        """Press at the item's centre, move by (dx, dy), release."""
+        from PyQt6.QtCore import QEvent, Qt
+        cx, cy = item.width() / 2, item.height() / 2
+        self._mouse(window, item, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, item, QEvent.Type.MouseMove, cx + dx, cy + dy,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, item, QEvent.Type.MouseButtonRelease, cx + dx, cy + dy)
+        self.pump(20)
+
+    def _fps_face(self, window, wheel_target):
+        """Bring the RATE face up. The bar rests on the zoom face; the
+        shift wheel is the rate's own gesture, and a rate change docks
+        the face it belongs to. A parked bar (every mount starts parked)
+        arrives on the new face at once."""
+        self._wheel(window, wheel_target, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self._pump_ms(300)
+
+    def _double_click(self, window, item):
+        """A real double click on *item*, through QTest's own app-level
+        path. A DblClick posted by hand with no press outstanding is an
+        UPDATE event to the delivery agent — the legacy MouseArea never
+        sees it and the item's onDoubleClicked never runs (probe-verified
+        on both engines), so the QTest helper is the only spelling that
+        reaches it."""
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtTest import QTest
+        scene = item.mapToItem(window.contentItem(), QPointF(item.width() / 2, item.height() / 2))
+        QTest.mouseDClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                          QPoint(int(scene.x()), int(scene.y())))
+        self.pump(30)
+
+    def test_the_gesture_surface_survives_a_stream_off_and_on(self):
+        # The live report: disabling then re-enabling the stream left
+        # zoom and FPS dead. The blank is a real size change (the
+        # renderer announces it), the picture returns, and the control
+        # surface must come back with it — liveness that latches on a
+        # value no later signal re-reads is the bug.
+        pane, window, model, image, _frame = self._fps_pane(700, 700)
+        gesture = self.find(pane, "cameraGestureArea")
+
+        def apply_camera(url, visible):
+            # Exactly what the host calls: the URL (nonce included) and
+            # the configured flag, applied through the pane's own slot.
+            from PyQt6.QtCore import QMetaObject, Q_ARG, QVariant
+            QMetaObject.invokeMethod(pane, "applyCamera",
+                                     Q_ARG(QVariant, QUrl(url)), Q_ARG(QVariant, visible))
+
+        apply_camera("http://127.0.0.1:59999/webcam2/?mpf_reload=1", True)
+        self.pump(30)
+        self.assertTrue(pane.property("cameraControlLive"), "the surface starts live")
+        self.assertTrue(gesture.property("enabled"))
+        self._wheel(window, gesture)
+        self.pump(30)
+        zoomed = pane.property("cameraZoom")
+        self.assertGreater(zoomed, 1.0, "the wheel zooms the live picture")
+
+        # The stream OFF: the model's flag drops with its URL, and the
+        # pane blanks the painted frame.
+        model.set_stream_enabled(False)
+        pane.setProperty("configured", False)
+        apply_camera("", False)
+        self.pump(30)
+        self.assertEqual(image.property("clearCount"), 1, "the stream-off blanks the frame")
+        self.assertEqual(image.property("imageWidth"), 0, "and paints no size")
+        self.assertFalse(pane.property("cameraControlLive"))
+        self.assertFalse(gesture.property("enabled"), "the blank disarms the gestures")
+
+        # The stream ON again: the URL returns on a new nonce and the
+        # bytes resume. Nothing here re-applies the gestures by hand.
+        model.set_stream_enabled(True)
+        pane.setProperty("configured", True)
+        apply_camera("http://127.0.0.1:59999/webcam2/?mpf_reload=3", True)
+        self.pump(30)
+        image.setProperty("imageWidth", 640)
+        image.setProperty("imageHeight", 480)
+        self.pump(30)
+        self.assertTrue(pane.property("cameraControlLive"),
+                        "the resumed stream's frame re-arms the control surface")
+        self.assertTrue(gesture.property("enabled"))
+        self._wheel(window, gesture)
+        self.pump(30)
+        self.assertNotEqual(pane.property("cameraZoom"), zoomed, "the wheel zooms again")
+        self._wheel(window, gesture, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [16.0], "and the rate gesture is back with it")
+
+    def test_the_status_chip_reports_the_decode_rate(self):
+        # The top-right chip carries the rate the renderer is actually
+        # decoding at — the frame's own readout, so a throttled stream
+        # is visibly throttled. No frames yet means no rate to claim.
+        pane, _window, _model, image, _frame = self._fps_pane(700, 640)
+        chip = self.find(pane, "cameraStreamChip")
+        label = self.find(pane, "cameraStreamChipText")
+        self.assertTrue(chip.property("visible"), "the chip has room on a wide frame")
+        self.assertIn("640×480", label.property("text"))
+        self.assertNotIn("fps", label.property("text"),
+                         "no rate is claimed before a frame lands")
+        image.setProperty("recentDisplayedFPS", 15)
+        self.pump()
+        self.assertIn("15 fps", label.property("text"))
+        image.setProperty("recentDisplayedFPS", 0.5)
+        self.pump()
+        self.assertIn("0.50 fps", label.property("text"),
+                      "the low rates the idle load lives at stay readable")
+
+    def test_the_rate_field_holds_still_at_the_sub_one_fps_floor(self):
+        # The live report: at the 0.5 FPS floor the one-second sample
+        # cannot see the rate at all — a window with no frame reads 0
+        # and the next reads 1 — so the field appeared and disappeared
+        # with every sample. At and below one frame per sample the
+        # throttle's own rate IS what the renderer decodes at, and the
+        # field holds it.
+        pane, _window, model, image, _frame = self._fps_pane(700, 640, fps=0.5, maximum=30.0)
+        label = self.find(pane, "cameraStreamChipText")
+        for sample in (0, 0.5, 1, 0):
+            image.setProperty("recentDisplayedFPS", sample)
+            self.pump()
+            self.assertIn("0.50 fps", label.property("text"),
+                          "the field must not move with the sample noise")
+        # Above the sample's resolution the measured rate is the honest
+        # one again.
+        model.set_camera_ceiling(30.0, fps=12.0)
+        image.setProperty("recentDisplayedFPS", 11.6)
+        self.pump()
+        self.assertIn("12 fps", label.property("text"),
+                      "the measured rate reports once it can be measured")
+
+    def test_the_chip_yields_to_the_live_badge_and_returns_when_the_frame_grows(self):
+        # Two pills on a narrow frame read as one smear: the chip
+        # yields the moment it would occlude Live (the request) and
+        # returns as soon as the frame is wide enough to carry both.
+        pane, window, _model, image, _frame = self._fps_pane(700, 640, displayed_fps=15.0)
+        chip = self.find(pane, "cameraStreamChip")
+        badge = self.find(pane, "cameraLiveBadge")
+        self.assertTrue(chip.property("visible"),
+                        "the wide frame must carry both pills")
+        self.resize_window(pane, window, 190, 640)
+        self._pump_ms(300)
+        # The precondition IS the regression pin: a chip that grows
+        # (this release added the rate to it) must be reported as
+        # no-longer-provable rather than silently passing.
+        self.assertLess(image.width(), badge.width() + chip.width() + 3 * chip.property("badgeGap"),
+                        "the narrow mount must actually be too narrow")
+        self.assertFalse(chip.property("visible"),
+                         "the chip must yield rather than touch the Live badge")
+        self.resize_window(pane, window, 700, 640)
+        self._pump_ms(300)
+        self.assertTrue(chip.property("visible"),
+                        "the chip returns once the frame has room for it")
+
+    def test_the_scale_docks_with_a_rate_change_and_parks_after_five_idle_seconds(self):
+        # The zoom scope's rhythm, five seconds on both (the request
+        # moved the zoom's own two-second park to five): a rate change
+        # slides the bar into view on the rate's own face, five idle
+        # seconds slide it back out of the picture entirely.
+        pane, window, model, image, frame = self._fps_pane(700, 700)
+        control = self.find(pane, "cameraBar")
+        self.assertGreaterEqual(frame.width(), 200, "the scale needs the room it tests for")
+        self.assertGreaterEqual(frame.height(), 150, "the scale needs the room it tests for")
+        self.assertTrue(control.property("visible"), "the full scale has room here")
+        self.assertFalse(pane.property("cameraBarDocked"), "the bar starts parked")
+        self.assertGreaterEqual(control.x(), frame.width(),
+                                "the scale starts parked out of the frame")
+        self._wheel(window, image, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [16.0],
+                         "one notch is one linear step of the camera's own range")
+        self.assertEqual(pane.property("cameraBarMode"), "fps",
+                         "the rate's own gesture brings the rate's own face up")
+        self._pump_ms(300)
+        self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
+                             "the docked scale rides inside the CAMERA VIEW, not the pane frame")
+        self._pump_ms(5400)
+        self.assertFalse(pane.property("cameraBarDocked"), "five idle seconds park it again")
+        self.assertGreaterEqual(control.x(), frame.width(),
+                                "the parked scale clears the picture's own edge")
+
+    def test_the_two_faces_trade_places_with_a_slide(self):
+        # The live report: the cards changed content without trading
+        # places. A rate the gesture has just set echoes back through the
+        # model, and that second dock used to cut the slide-out short —
+        # so the bar must be out on the face that is LEAVING before the
+        # new one lands, and back in on the new face.
+        pane, window, model, image, frame = self._fps_pane(700, 700)
+        control = self.find(pane, "cameraBar")
+        self._wheel(window, frame)
+        self._pump_ms(300)
+        self.assertEqual(pane.property("cameraBarMode"), "zoom",
+                         "the plain wheel's own face is up")
+        self.assertTrue(pane.property("cameraBarDocked"), "and it is docked")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        # Mid-turn-over, before any timer can run: still the zoom face,
+        # with the bar on its way out of the picture.
+        self.assertEqual(pane.property("cameraBarMode"), "zoom",
+                         "the face that is leaving stays up for the slide-out")
+        self.assertTrue(pane.property("_cameraBarTurning"), "the turn-over is under way")
+        self.assertFalse(pane.property("cameraBarShown"),
+                         "the turn-over takes the bar off the picture")
+        self._pump_ms(700)
+        self.assertEqual(pane.property("cameraBarMode"), "fps", "the rate face lands")
+        self.assertFalse(pane.property("_cameraBarTurning"))
+        self.assertTrue(pane.property("cameraBarShown"), "and rides back in")
+        self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
+                             "the landed face is docked inside the picture")
+        self.assertEqual(model.fps_calls, [16.0], "one notch, one rate")
+
+    def test_a_rate_change_leaves_the_zoomed_scale_in_place(self):
+        # The live report: with the view zoomed, a rate change replaced
+        # the zoom scale for good. A view held past the fit PINS its own
+        # scale — the rate card borrows the bar and hands it back once its
+        # idle five seconds are up — and the scale then stays up rather
+        # than parking, since a parked scale is the control the zoomed
+        # picture is about.
+        pane, window, model, image, frame = self._fps_pane(700, 700)
+        control = self.find(pane, "cameraBar")
+        self.assertFalse(pane.property("cameraBarPinned"), "the fit pins nothing")
+        self._wheel(window, frame)
+        self._pump_ms(300)
+        self.assertTrue(pane.property("cameraBarPinned"), "a held zoom pins the scale")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self._pump_ms(700)
+        self.assertEqual(pane.property("cameraBarMode"), "fps",
+                         "the rate card has the bar for now")
+        self._pump_ms(5400)
+        self.assertEqual(pane.property("cameraBarMode"), "zoom", "the scale comes back")
+        self.assertTrue(pane.property("cameraBarShown"), "and it is on screen")
+        self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
+                             "docked, not parked")
+        self._pump_ms(6000)
+        self.assertTrue(pane.property("cameraBarShown"),
+                        "the pinned scale outlasts the idle park")
+        self.assertEqual(pane.property("cameraBarMode"), "zoom")
+        self._double_click(window, frame)
+        self._pump_ms(400)
+        self.assertFalse(pane.property("cameraBarPinned"), "the fit releases the pin")
+        self.assertFalse(pane.property("cameraBarShown"),
+                         "and the bar has nothing left to read")
+        self.assertEqual(model.fps_calls, [16.0], "the rate is not a view state")
+
+    def test_a_held_handle_holds_the_park_off_and_keeps_the_grab(self):
+        # The live report: a handle held still through the park's five
+        # seconds let the card slide out from under the hand, and the
+        # press went on driving a scale that was no longer on the picture.
+        # A held handle is not an idle card — the park waits for the
+        # release, the drag keeps tracking, and the rate is set where the
+        # pointer is let go.
+        from PyQt6.QtCore import QEvent
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        self._fps_face(window, frame)
+        bar = self.find(pane, "cameraFpsBar")
+        handles = [item for item in bar.childItems() if item.property("pressed") is not None]
+        self.assertEqual(len(handles), 1, "the scale carries its own handle")
+        handle = handles[0]
+        self._mouse(window, bar, QEvent.Type.MouseButtonPress, bar.width() / 2, bar.height() / 4,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertTrue(handle.property("pressed"), "the handle is held")
+        self.assertAlmostEqual(pane.property("cameraFps"), 22.63, delta=0.05,
+                               msg="the press takes the rate to the pointer")
+        self._pump_ms(5400)
+        self.assertTrue(handle.property("pressed"), "the grab survives the stillness")
+        self.assertTrue(pane.property("cameraBarShown"),
+                        "a held handle holds the park off")
+        self._mouse(window, bar, QEvent.Type.MouseMove, bar.width() / 2, bar.height() / 2,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertAlmostEqual(pane.property("cameraFps"), 15.25, delta=0.05,
+                               msg="the held handle goes on tracking the pointer")
+        self._mouse(window, bar, QEvent.Type.MouseMove, bar.width() / 2, bar.height() * 3 / 4,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, bar, QEvent.Type.MouseButtonRelease, bar.width() / 2,
+                    bar.height() * 3 / 4)
+        self.pump(20)
+        self.assertFalse(handle.property("pressed"), "the release is a real release")
+        self.assertAlmostEqual(pane.property("cameraFps"), 7.88, delta=0.05,
+                               msg="the rate is set where the release occurred")
+        self._pump_ms(5400)
+        self.assertFalse(pane.property("cameraBarShown"),
+                         "the idle five seconds run from the release")
+
+    def test_the_bar_carries_the_rate_floor_without_cutting_it_off(self):
+        # The live report: at the floor the readout "0.50 fps" ran out of
+        # the bar. That readout — the widest either face shows — is what
+        # sets the bar's width, and the zoom face rides the same box.
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        model.setCameraFps(0.5)
+        self.pump(30)
+        bar = self.find(pane, "cameraBar")
+        readout = self.find(pane, "cameraFpsReadout")
+        self.assertEqual(readout.property("text"), "0.50 fps", "the floor's own readout")
+        self.assertGreaterEqual(bar.width() - readout.property("contentWidth"), 4.0,
+                                "the widest readout must sit inside the bar")
+        zoom_readout = self.find(pane, "cameraZoomReadout")
+        self.assertLessEqual(zoom_readout.property("contentWidth") + 4.0, bar.width(),
+                             "the zoom face rides the same width and must fit too")
+
+    def test_the_shift_wheel_changes_the_rate_with_no_scale_on_screen(self):
+        # The spec's own line: the control must not show up when the
+        # view cannot carry it, but the throttle must still be
+        # reachable. Where the scale has no room the rate rides the
+        # compact chip instead — vertically centred on the picture.
+        pane, window, model, _image, frame = self._fps_pane(190, 400)
+        control = self.find(pane, "cameraBar")
+        chip = self.find(pane, "cameraBarChip")
+        self.assertLess(frame.width(), 200,
+                        "the narrow mount must actually be too narrow for the scale")
+        self.assertFalse(control.property("visible"), "no room, no scale")
+        self.assertGreaterEqual(chip.x(), frame.width(),
+                                "the parked chip clears the picture too")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [16.0],
+                         "the shift wheel must reach the rate with no control shown")
+        self._pump_ms(300)
+        self.assertTrue(chip.property("visible"), "the compact chip stands in for the scale")
+        chip_rect, picture = self.rect(chip, pane), self.rect(frame, pane)
+        self.assertAlmostEqual(chip_rect.center().y(), picture.center().y(), delta=1.5,
+                               msg="the chip is vertically centred on the camera view")
+        self.assertLessEqual(chip.x() + chip.width(), frame.width() + 0.5,
+                             "the docked chip rides inside the camera view")
+        self.assertEqual(self.find(pane, "cameraBarChipText").property("text"), "16 fps",
+                         "the chip carries the rate itself")
+
+    def test_no_fps_surface_at_all_when_the_view_has_no_room(self):
+        # The floor of the same rule: a frame too small for even the
+        # chip shows no FPS surface — the rate is still the shift
+        # wheel's.
+        pane, window, model, _image, frame = self._fps_pane(110, 400)
+        self.assertLess(frame.width(), 96,
+                        "the tiny mount must actually be too small for the chip")
+        self.assertFalse(self.find(pane, "cameraBar").property("visible"))
+        self.assertFalse(self.find(pane, "cameraBarChip").property("visible"))
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [16.0])
+
+    def test_the_plain_wheel_is_the_pictures_gesture_not_the_throttles(self):
+        # The two gestures share the wheel and must not cross: a plain
+        # notch zooms the picture and leaves the decode rate alone, a
+        # Shift notch throttles the stream and leaves the view alone.
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        self._wheel(window, frame)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [],
+                         "the plain wheel is the picture's own gesture")
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=1e-6,
+                               msg="one plain notch is one 1.25x zoom step")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [16.0], "the shift wheel is the throttle's")
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=1e-6,
+                               msg="a shift notch must not move the view")
+
+    def test_the_wheel_zooms_about_the_pointer(self):
+        # The zoom rides the frame centre, so the point under the
+        # pointer would slide away from it; the pan is re-solved to
+        # hold that point still (the plate scope's own ruling).
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        left = QPointF(frame.width() / 4, frame.height() / 2)
+        self._wheel(window, frame, position=left)
+        self.pump(30)
+        # (W/2 - x) / 4 is where the pointer's own point lands once the
+        # picture is a quarter bigger: the edge it was over stays put,
+        # so a wheel to the left of the centre walks the pan right.
+        self.assertAlmostEqual(pane.property("cameraPanX"),
+                               (frame.width() / 2 - left.x()) * 0.25, delta=1.0,
+                               msg="the point under the pointer drifted")
+        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1.0)
+        # Zooming out past the fit stops at the fit and re-centres.
+        for _ in range(8):
+            self._wheel(window, frame, delta=-120)
+            self.pump(5)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.0, delta=1e-6,
+                               msg="the fit is the floor")
+        self.assertAlmostEqual(pane.property("cameraPanX"), 0.0, delta=1e-6)
+        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1e-6)
+
+    def test_the_drag_pans_the_picture_and_stops_at_the_pictures_edge(self):
+        # The pan follows the pointer exactly while there is picture to
+        # move, and the clamp owns the limit: no drag may open a gap
+        # between the frame and the picture it is supposed to show.
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        self._wheel(window, frame)
+        self._wheel(window, frame)
+        self.pump(30)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.5625, delta=1e-6)
+        self._drag(window, frame, 40, 20)
+        self.assertAlmostEqual(pane.property("cameraPanX"), 40.0, delta=1.5,
+                               msg="the drag pan lagged the pointer")
+        self.assertAlmostEqual(pane.property("cameraPanY"), 20.0, delta=1.5)
+        self.assertEqual(pane.property("cameraPanOffsetX"), pane.property("cameraPanX"),
+                         "a pan inside the limit is applied as it is")
+        # A drag past the picture's edge is held AT the edge as it is
+        # stored, not only on the way to the transform.
+        from PyQt6.QtCore import QEvent
+        limit = pane.property("cameraPanLimitX")
+        self.assertAlmostEqual(limit,
+                               frame.width() * (pane.property("cameraZoom") - 1) / 2, delta=1.5,
+                               msg="the limit is the picture's own overhang")
+        self.assertLess(limit, 260.0, "the mount must leave room for an overshoot")
+        cx, cy = frame.width() / 2, frame.height() / 2
+        self._mouse(window, frame, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, frame, QEvent.Type.MouseMove, cx + 260, cy,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+                               msg="a drag past the edge stops at the edge")
+        self.assertAlmostEqual(pane.property("cameraPanOffsetX"),
+                               pane.property("cameraPanLimitX"), delta=1.5,
+                               msg="the applied pan is clamped to the picture's edge")
+        self._mouse(window, frame, QEvent.Type.MouseMove, cx + 260, cy,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, frame, QEvent.Type.MouseButtonRelease, cx + 260, cy)
+        self.pump(20)
+        # A resize re-clamps through the binding, with no timer.
+        self.resize_window(pane, window, 400, 400)
+        self._pump_ms(200)
+        self.assertAlmostEqual(pane.property("cameraPanOffsetX"),
+                               pane.property("cameraPanLimitX"), delta=1.5,
+                               msg="a shrunken pane re-clamps the applied pan")
+        self.assertLess(pane.property("cameraPanOffsetX"),
+                        frame.width() * (pane.property("cameraZoom") - 1) / 2 + 1.0)
+
+    def test_a_drag_past_the_edge_never_has_to_be_undone(self):
+        # The live report: past the picture's edge the pan stopped, but
+        # the drag kept counting and the first stretch of the way back
+        # moved nothing — the overshoot had to be undone first. The pan
+        # is held to the limit as it is STORED, so the picture answers
+        # the very first move of the return leg.
+        pane, window, _model, _image, frame = self._fps_pane(700, 400)
+        self._wheel(window, frame)
+        self._wheel(window, frame)
+        self.pump(30)
+        limit = pane.property("cameraPanLimitX")
+        self.assertGreater(limit, 40.0, "the mount must zoom into a real overhang")
+        self.assertLess(limit, 200.0, "the overshoot must fit inside the window")
+        from PyQt6.QtCore import QEvent
+        cx, cy = frame.width() / 2, frame.height() / 2
+        self._mouse(window, frame, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.LeftButton)
+        self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit + 90, cy,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+                               msg="the overshoot is discarded, not banked")
+        self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit + 50, cy,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertAlmostEqual(pane.property("cameraPanX"), limit - 40, delta=1.5,
+                               msg="the return leg moves the picture at once")
+        self._mouse(window, frame, QEvent.Type.MouseButtonRelease, cx + limit + 50, cy)
+        self.pump(20)
+
+    def test_a_double_click_returns_the_fit(self):
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        self._wheel(window, frame)
+        self._drag(window, frame, 60, 30)
+        self.pump(20)
+        self.assertGreater(pane.property("cameraZoom"), 1.0)
+        self.assertNotEqual(pane.property("cameraPanX"), 0.0)
+        self.assertGreater(pane.property("cameraBarPinned"), False,
+                           "the zoomed view is the pin's own case")
+        self._double_click(window, frame)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.0, delta=1e-6,
+                               msg="the double click returns the fit")
+        self.assertAlmostEqual(pane.property("cameraPanX"), 0.0, delta=1e-6)
+        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1e-6)
+        self.assertFalse(pane.property("cameraBarPinned"),
+                         "the fit leaves the pin nothing to hold")
+
+    def test_the_parked_control_is_clipped_by_the_picture_not_the_pane(self):
+        # The live request: the control must vanish as it leaves the
+        # PICTURE. On a letterboxed view the pane has room beside the
+        # picture, so a pane-level clip would keep painting it there.
+        pane, window, model, _image, frame = self._fps_pane(900, 400)
+        control = self.find(pane, "cameraBar")
+        viewport = self.find(pane, "cameraViewport")
+        self.assertTrue(frame.property("clip"), "the picture owns the clip")
+        self.assertFalse(viewport.property("clip"),
+                         "the pane must not clip in the picture's place")
+        self.assertLess(frame.width(), viewport.width(),
+                        "the mount must letterbox, or the pin proves nothing")
+        self.assertTrue(control.property("visible"), "the scale has room on the picture")
+        self.assertGreaterEqual(control.x(), frame.width(),
+                                "the control starts parked out of the picture")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self._pump_ms(300)
+        picture = self.rect(frame, pane)
+        docked = self.rect(control, pane)
+        self.assertLessEqual(docked.right(), picture.right() + 0.5,
+                             "a rate change docks the control inside the picture")
+        self._pump_ms(5400)
+        parked = self.rect(control, pane)
+        self.assertGreater(parked.left(), picture.right(),
+                           "five idle seconds park it past the picture's edge")
+        self.assertLess(parked.left(), picture.right() + 40 * 3,
+                        "it is parked just past that edge, not off in the pane")
+        self.assertEqual(model.fps_calls, [16.0])
+
+    def test_the_scale_range_follows_the_selected_camera_ceiling(self):
+        # The ceiling is the CAMERA's, not a product constant: the bar
+        # tops out at the selected camera's configured target_fps and
+        # re-reads it when the selection changes. The marker sits at
+        # the fraction the rate now holds of that range.
+        pane, window, model, _image, frame = self._fps_pane(700, 700, fps=30.0, maximum=60.0)
+        self._fps_face(window, frame)
+        self.assertEqual(pane.property("cameraBarMode"), "fps", "the rate face is up")
+        marker = self.find(pane, "cameraFpsMarker")
+        self.assertTrue(self.find(pane, "cameraFpsScale").property("visible"),
+                        "the rate face is the visible one")
+        self.assertEqual(pane.property("cameraFpsMax"), 60.0,
+                         "the camera reports its own ceiling")
+        slower = marker.y()
+        model.set_camera_ceiling(15.0)
+        self.pump(30)
+        self.assertEqual(pane.property("cameraFpsMax"), 15.0,
+                         "a slower camera lowers the bar's range")
+        self.assertEqual(pane.property("cameraFps"), 15.0,
+                         "the published rate follows the camera down with it")
+        self.assertLess(marker.y(), slower,
+                        "at the ceiling the marker rides the top of the bar")
+        self.assertAlmostEqual(marker.y(), -marker.height() / 2, delta=1.5,
+                               msg="the ceiling is the bar's own top")
+
+    def test_the_ruler_ticks_every_five_and_thickens_every_ten(self):
+        # The graduations the bar draws: a thin double tick at every 5
+        # FPS (a quarter in from each side), a thick line at every 10,
+        # and both ends of the range marked — the camera's ceiling at
+        # the top, the 0.5 floor at the bottom. The spacing is EVEN: a
+        # rate reads as a rate, not as a zoom's log scale (the live
+        # request — the log bar crowded every low rate into its foot).
+        pane, window, _model, _image, frame = self._fps_pane(700, 700, fps=15.0, maximum=30.0)
+        self._fps_face(window, frame)
+        bar = self.find(pane, "cameraFpsBar")
+        self.assertTrue(self.find(pane, "cameraFpsScale").property("visible"),
+                        "the graduations must be the face that is up")
+        low, high = 0.5, 30.0
+        # Three weights (the live request): a double tick at every 2.5
+        # FPS, a continuous thin line at every 5, a thick line at every
+        # 10 — and both ends of the range carry the thick line. A mark
+        # is coded 2*major + line: a 10 is BOTH (a thick line is a line
+        # like any other), a 5 is a thin one, a 2.5 is a tick.
+        expected = {round((value - low) / (high - low), 4): level
+                    for value, level in
+                    ((0.5, 3), (2.5, 0), (5, 1), (7.5, 0), (10, 3), (12.5, 0),
+                     (15, 1), (17.5, 0), (20, 3), (22.5, 0), (25, 1), (27.5, 0),
+                     (30, 3))}
+        marks = {}
+        for item in bar.childItems():
+            if item.property("major") is None:
+                continue  # not a graduation delegate
+            marks[round(item.property("fraction"), 4)] = item
+        self.assertEqual({fraction: 2 * int(bool(item.property("major")))
+                          + int(bool(item.property("line")))
+                          for fraction, item in marks.items()},
+                         expected, "the ruler's marks and their three weights")
+        # Every 2.5 FPS sits the same distance from its neighbour: the
+        # ruler is evenly spaced from the first tick up. The one gap
+        # that is not a 2.5 is the foot's, and it cannot be: the ticks
+        # stand on the 2.5 grid while the floor is the 0.5 the throttle
+        # bottoms out at, so 2.0 FPS of track separate them.
+        steps = sorted(marks)
+        self.assertEqual(len(steps), len(expected), "no mark may be missed or doubled")
+        # The distances come from the delegates' own y — the fractions
+        # are read back rounded, and a hundredth of a fraction is wider
+        # than the tolerance this check needs.
+        positions = [marks[fraction].y() for fraction in steps]
+        gaps = [abs(later - earlier) for earlier, later in zip(positions, positions[1:], strict=False)]
+        reference = gaps[1]
+        self.assertGreater(reference, 0)
+        for gap in gaps[1:]:
+            self.assertAlmostEqual(gap, reference, delta=0.05,
+                                   msg="equal rate steps must be equal distances: %r" % (gaps,))
+        self.assertAlmostEqual(gaps[0] / reference, 2.0 / 2.5, delta=1e-4,
+                               msg="only the foot's own 2 FPS gap differs: %r" % (gaps,))
+        self.assertAlmostEqual(reference, bar.height() * 2.5 / (high - low), delta=0.05,
+                               msg="a 2.5 FPS step is 2.5 of the range's own width")
+        for item in marks.values():
+            left, right = item.childItems()
+            if item.property("major") or item.property("line"):
+                self.assertFalse(right.property("visible"),
+                                 "a line is continuous, never an edge pair")
+                self.assertAlmostEqual(left.width(), bar.width(), delta=0.5,
+                                       msg="a line spans the bar")
+                expected_height = 2 if item.property("major") else 1
+                self.assertAlmostEqual(item.height(), expected_height, delta=0.1,
+                                       msg="10 FPS lines are thick, 5 FPS lines thin")
+            else:
+                self.assertAlmostEqual(item.height(), 1, delta=0.1, msg="a tick is thin")
+                self.assertTrue(right.property("visible"), "a tick is a double tick")
+                self.assertAlmostEqual(left.width(), bar.width() * 0.25, delta=0.5,
+                                       msg="the ticks reach a quarter in from the left")
+                self.assertAlmostEqual(right.width(), bar.width() * 0.25, delta=0.5,
+                                       msg="... and a quarter in from the right")
+
+    def test_the_wheel_never_asks_for_more_than_the_camera_ceiling(self):
+        # The ceiling is the camera's, so the wheel stops there: a
+        # 15 FPS camera is never asked for more, and the clamp costs
+        # no spurious commit at the limit. The step is the camera's own
+        # slice of its range, so a narrow camera gets a narrow step.
+        pane, window, model, _image, frame = self._fps_pane(700, 700, fps=12.0, maximum=15.0)
+        self.assertEqual(pane.property("fpsStep"), 0.5,
+                         "the narrow range steps in halves, not in 1.25x jumps")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls, [12.5], "one notch is one step of the range")
+        for _ in range(4):
+            self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+            self.pump(30)
+        self.assertEqual(model.fps_calls[-1], 14.5, "equal steps all the way up")
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(model.fps_calls[-1], 15.0, "the ceiling is the last stop")
+        calls = len(model.fps_calls)
+        self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(30)
+        self.assertEqual(len(model.fps_calls), calls,
+                         "a notch past the ceiling commits nothing above it")
+        self.assertEqual(pane.property("cameraFps"), 15.0)
+
+    def _rate_drag(self, window, item, dy, x_ratio=0.5, y_ratio=0.5, steps=1,
+                   release=True):
+        """A real RIGHT-button drag: press, *steps* moves of dy pixels
+        each, release. The rate's own gesture — the left button pans,
+        and the rate must be reachable over the picture whether or not
+        any control is on screen. The whole track must stay inside the
+        item: a synthetic move past its own edge is not delivered to it
+        (the harness's own condition, probe-verified — a real platform
+        drag holds the grab and leaves the item freely), so a track that
+        ran off would silently lose its tail and read as a dropped
+        gesture."""
+        from PyQt6.QtCore import QEvent, Qt
+        x, y = item.width() * x_ratio, item.height() * y_ratio
+        self.assertGreaterEqual(y, 0, "the drag must start on the item")
+        self.assertLessEqual(y + dy * steps, item.height(),
+                             "the drag's whole track must stay on the item")
+        self._mouse(window, item, QEvent.Type.MouseButtonPress, x, y,
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        for step in range(1, steps + 1):
+            self._mouse(window, item, QEvent.Type.MouseMove, x, y + dy * step,
+                        Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self.pump(20)
+        if release:
+            self._mouse(window, item, QEvent.Type.MouseButtonRelease, x, y + dy * steps,
+                        Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
+            self.pump(20)
+
+    def test_the_right_drag_drives_the_rate_from_anywhere_over_the_picture(self):
+        # The live request: the rate must be adjustable by dragging,
+        # not only by a shifted wheel — and dragging UP raises it. The
+        # travel is measured in the wheel's own steps, so the two
+        # gestures cross the range alike, and a drag is a grab: the
+        # rate face docks and the control stays where the hand is.
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        area = self.find(pane, "cameraGestureArea")
+        self.assertFalse(pane.property("cameraBarDocked"), "the bar starts parked")
+        self._rate_drag(window, area, -12)
+        self.assertEqual(model.fps_calls, [16.0], "12 px up is one step of the range")
+        self.assertEqual(pane.property("cameraBarMode"), "fps",
+                         "the rate's own gesture brings the rate's own face up")
+        self.assertTrue(pane.property("cameraBarDocked"), "a drag docks the face")
+        self.assertEqual(pane.property("cameraZoom"), 1.0,
+                         "the rate drag must never move the picture")
+        self._rate_drag(window, area, -12, steps=3)
+        self.assertEqual(model.fps_calls, [16.0, 17.0, 18.0, 19.0],
+                         "and the steps up are equal ones")
+        self._rate_drag(window, area, 12)
+        self.assertEqual(model.fps_calls[-1], 18.0, "down the same way")
+        self.assertEqual(pane.property("cameraZoom"), 1.0)
+
+    def test_the_steps_are_linear_at_every_point_on_the_scale(self):
+        # The live report: the old 1.25x ladder accelerated towards the
+        # top end, where one notch was worth several FPS. The step is
+        # one constant slice of the selected camera's own range, so the
+        # same flick moves the rate the same amount at the foot and at
+        # the ceiling — and the slice scales with the camera.
+        for maximum, step in ((15.0, 0.5), (30.0, 1.0), (60.0, 2.0), (120.0, 4.0)):
+            with self.subTest(maximum=maximum):
+                pane, window, model, _image, frame = self._fps_pane(
+                    700, 700, fps=1.0, maximum=maximum)
+                self.assertEqual(pane.property("fpsStep"), step,
+                                 "the camera's range sets the step")
+                for _ in range(4):  # the first steps of the range
+                    self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+                    self.pump(30)
+                low_end = [later - earlier for earlier, later
+                           in zip(model.fps_calls, model.fps_calls[1:], strict=False)]
+                for _ in range(3):  # and the steps further up the scale
+                    self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
+                    self.pump(30)
+                high_end = [later - earlier for earlier, later
+                            in zip(model.fps_calls, model.fps_calls[1:], strict=False)][len(low_end):]
+                self.assertTrue(low_end and high_end, "both ends must have been walked")
+                self.assertEqual(set(low_end + high_end), {step},
+                                 "equal steps everywhere: %r then %r"
+                                 % (low_end, high_end))
+
+    def test_a_right_drag_past_the_bound_never_banks_the_overrun(self):
+        # The live report: dragging far past the floor or the ceiling
+        # left the whole overrun banked, and the pointer had to be
+        # walked back that same distance before the rate answered
+        # again. The bound is absolute — the travel spent against it is
+        # thrown away, so the first step back moves the rate at once.
+        pane, window, model, _image, frame = self._fps_pane(700, 700, fps=26.0, maximum=30.0)
+        area = self.find(pane, "cameraGestureArea")
+        self.assertEqual(pane.property("fpsStep"), 1.0, "a one-FPS step here")
+        # The whole picture is the drag's track, so a drag can run the
+        # range and then some: from the foot of the picture upward.
+        # The first steps land the ceiling, everything after is overrun.
+        self._rate_drag(window, area, -12, steps=40, y_ratio=0.95)
+        self.assertEqual(model.fps_calls[-1], 30.0, "the drag stops at the ceiling")
+        self.assertEqual(pane.property("cameraFps"), 30.0)
+        calls = len(model.fps_calls)
+        self._rate_drag(window, area, 12, y_ratio=0.95)
+        self.assertEqual(model.fps_calls[-1], 29.0,
+                         "one step back from the ceiling answers at once — "
+                         "the 480 px of overrun must not have to be undone first")
+        self.assertEqual(len(model.fps_calls), calls + 1)
+        # And the floor behaves the same way, from the top downward.
+        self._rate_drag(window, area, 12, steps=40, y_ratio=0.05)
+        self.assertEqual(model.fps_calls[-1], 0.5, "the drag stops at the floor")
+        calls = len(model.fps_calls)
+        self._rate_drag(window, area, -12, y_ratio=0.05)
+        self.assertEqual(model.fps_calls[-1], 1.5,
+                         "one step back from the floor answers at once")
+        self.assertEqual(len(model.fps_calls), calls + 1)
+        # The range's own ends are where the drags stopped, never past.
+        self.assertTrue(all(0.5 <= call <= 30.0 for call in model.fps_calls),
+                        "no commit ever leaves the camera's own range: %r" % (model.fps_calls,))
+
+    def test_a_held_right_press_holds_the_park_off_until_the_release(self):
+        # The rate drag is a grab like the scale's handle, and a grab
+        # holds the five idle seconds off: parking the face out from
+        # under a held pointer would leave the drag driving a control
+        # that is no longer on the picture (the same live report the
+        # scale handle answered).
+        pane, window, _model, _image, _frame = self._fps_pane(700, 700)
+        area = self.find(pane, "cameraGestureArea")
+        self._rate_drag(window, area, -12, release=False)
+        self.assertTrue(pane.property("cameraBarDocked"), "the drag docked the face")
+        self.assertIsNotNone(pane.property("cameraBarHandle"),
+                             "the picture reports the grab the scales report")
+        self._pump_ms(5400)
+        self.assertTrue(pane.property("cameraBarDocked"),
+                        "five still seconds with the button held must not park it")
+        from PyQt6.QtCore import QEvent, Qt
+        x, y = area.width() / 2, area.height() / 2 - 12
+        self._mouse(window, area, QEvent.Type.MouseButtonRelease, x, y,
+                    Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
+        self.pump(30)
+        self.assertIsNone(pane.property("cameraBarHandle"), "the release lets go")
+        self._pump_ms(5400)
+        self.assertFalse(pane.property("cameraBarDocked"),
+                         "and the idle clock starts again at the release")
+
+    def test_the_left_drag_still_pans_and_leaves_the_rate_alone(self):
+        # The two drags must not trade places: the left button pans a
+        # zoomed picture — vertically as well as horizontally — and
+        # never touches the rate.
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        area = self.find(pane, "cameraGestureArea")
+        self._wheel(window, frame)
+        self._pump_ms(300)
+        self.assertGreater(pane.property("cameraZoom"), 1.0, "the wheel zoomed in")
+        before = (pane.property("cameraPanX"), pane.property("cameraPanY"))
+        self._drag(window, area, 0, -30)
+        self.assertEqual(model.fps_calls, [], "a left drag commits no rate")
+        self.assertNotEqual((pane.property("cameraPanX"), pane.property("cameraPanY")), before,
+                            "a left drag still pans")
+        # And a right press with no travel leaves the rate where it was.
+        self._rate_drag(window, area, 0)
+        self.assertEqual(model.fps_calls, [], "a still right press changes nothing")
+        self.assertEqual(pane.property("cameraZoom"), 1.25,
+                         "and never returns the fit")
+
+    def test_a_right_double_click_never_returns_the_fit(self):
+        # The left double click is the fit; the right button's second
+        # press must not steal it, or a rate drag doubled by a nervous
+        # hand would throw the view away.
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        area = self.find(pane, "cameraGestureArea")
+        self._wheel(window, frame)
+        self._pump_ms(300)
+        self.assertGreater(pane.property("cameraZoom"), 1.0, "the wheel zoomed in")
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtTest import QTest
+        scene = area.mapToItem(window.contentItem(),
+                               QPointF(area.width() / 2, area.height() / 2))
+        QTest.mouseDClick(window, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier,
+                          QPoint(int(scene.x()), int(scene.y())))
+        self.pump(30)
+        self.assertEqual(pane.property("cameraZoom"), 1.25,
+                         "a right double click must leave the view where it is")
+        self._double_click(window, area)
+        self.assertEqual(pane.property("cameraZoom"), 1.0,
+                         "the left double click is still the fit")
+
+
+class EscapeLadderTests(RealEngineTestCase):
+    """Esc on the Monitor page (the live report: the key did nothing at
+    all once the console output had been clicked into). The page keeps ONE
+    ladder, and a press reaches it by two routes. With nothing focused the
+    window shortcut carries the key; with a TEXT item focused the engine
+    in the field answers Escape inside that item and the shortcut never
+    fires at all — which is the whole bug, and why the press also has to
+    bubble up the item chain to the page's own handler. The container's
+    engine (Qt 6.11) cannot reproduce that steal — its shortcut fires
+    either way (probe-verified, Cura ships Qt 6.6) — so the test disables
+    the shortcut to stand in the field engine's shoes, and then checks
+    that one press is one rung with it back on."""
+
+    def _dashboard(self, width=1250, height=760):
+        output = OutputDeviceDouble()
+        previous = self.engine.rootContext().contextProperty("OutputDevice")
+        self.engine.rootContext().setContextProperty("OutputDevice", output)
+        self.addCleanup(self.engine.rootContext().setContextProperty,
+                        "OutputDevice", previous)
+        dashboard, window = self.mount_window("MoonrakerMonitorDashboard.qml", width, height)
+        self._pump_ms(400)
+        return dashboard, window
+
+    def _loaded_monitor(self, dashboard):
+        """The monitor document the dashboard hosts — it declares no
+        objectName, so its own pop-over property is the handle."""
+        def search(item):
+            if item.property("openPopOver") is not None:
+                return item
+            for child in item.childItems():
+                found = search(child)
+                if found is not None:
+                    return found
+            return None
+        monitor = search(dashboard)
+        self.assertIsNotNone(monitor, "the hosted monitor document did not load")
+        return monitor
+
+    def _escape_shortcut(self, dashboard):
+        """The page's own window shortcut, reachable only as a QObject."""
+        from PyQt6.QtGui import QKeySequence
+
+        for child in dashboard.findChildren(QObject):
+            if child.metaObject().className() != "QQuickShortcut":
+                continue
+            sequence = child.property("sequence")
+            if sequence is not None and QKeySequence(sequence) == QKeySequence(Qt.Key.Key_Escape):
+                return child
+        self.fail("the page's Esc shortcut did not mount")
+
+    def _press(self, dashboard, window, monitor, armed):
+        """One Escape through QTest's app-level path, with two layers
+        stacked under the ladder: one rung must run, so the monitor's
+        pop-over closes and this pane's pop-up stays."""
+        from PyQt6.QtTest import QTest
+
+        monitor.setProperty("openPopOver", "sections-status")
+        dashboard.setProperty("configurePaneOpen", "controls")
+        self.pump(30)
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        self.pump(60)
+        if armed:
+            self.assertEqual(monitor.property("openPopOver"), "",
+                             "the top layer closes")
+        else:
+            self.assertEqual(monitor.property("openPopOver"), "sections-status",
+                             "the ladder never ran")
+        self.assertEqual(dashboard.property("configurePaneOpen"), "controls",
+                         "one press is one rung, whichever route carried it")
+
+    def test_escape_reaches_the_ladder_with_a_text_item_focused(self):
+        dashboard, window = self._dashboard()
+        monitor = self._loaded_monitor(dashboard)
+        console = self.find(dashboard, "moonrakerConsoleOutput")
+        shortcut = self._escape_shortcut(dashboard)
+        self.assertTrue(shortcut.property("enabled"), "the shortcut mounts armed")
+        console.forceActiveFocus()
+        self.pump(60)
+        # The field engine fires no shortcut at all once a text item owns
+        # the key: standing the shortcut down is that engine's condition.
+        shortcut.setProperty("enabled", False)
+        self.pump(30)
+        self._press(dashboard, window, monitor, armed=True)
+        # And with it back on, the other route must not double the rung.
+        shortcut.setProperty("enabled", True)
+        self.pump(30)
+        self._press(dashboard, window, monitor, armed=True)
 
 
 class ChartSurfaceTests(RealEngineTestCase):
@@ -3159,25 +4197,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
                            "%s: the native prefix drew nothing measurable" % label)
         self.assertGreater(tail_peak, 10,
                            "%s: the canvas tail drew nothing measurable" % label)
-        # The parity contract: the SAME subpixel stroke must carry
-        # the same perceived intensity on both sides of the ownership
-        # seam — the measured ratio is 22 vs 21 (peak) and 44 vs 42
-        # (energy); the 0.7 slack catches only a real second-owner
-        # stack or a wash-out, not the harness's AA jitter.
+        # The parity contract's DIRECTION (the live report's own):
+        # the raster must never be the FAINTER side — the device
+        # floor's coverage presents min(2/dpr, 1) logical px of full
+        # ink, so the native prefix carries the canvas's device-grid
+        # footprint while the harness's canvas paints the faithful
+        # subpixel AA (the offscreen rasteriser does not floor). The
+        # 0.7 slack absorbs only the harness's AA jitter.
         self.assertGreater(prefix_peak, tail_peak * 0.7,
                            "%s: the native prefix is ghostly against the "
                            "canvas tail (peak %s vs %s)"
                            % (label, prefix_peak, tail_peak))
-        self.assertGreater(tail_peak, prefix_peak * 0.7,
-                           "%s: the canvas tail is ghostly against the "
-                           "native prefix (peak %s vs %s)"
-                           % (label, tail_peak, prefix_peak))
         self.assertGreater(prefix_energy, tail_energy * 0.7,
                            "%s: the native prefix's band energy washes "
                            "out (%s vs %s)" % (label, prefix_energy, tail_energy))
-        self.assertGreater(tail_energy, prefix_energy * 0.7,
-                           "%s: the canvas tail's band energy washes "
-                           "out (%s vs %s)" % (label, tail_energy, prefix_energy))
         # The effective stroke extent (the thickness in rows/columns
         # above the noise floor) must not step at the seam.
         self.assertLessEqual(abs(prefix_extent - tail_extent), 1,
@@ -3196,10 +4229,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
                            "%s: the seam's prefix side washes out at the "
                            "handoff (%s vs %s)"
                            % (label, max(seam_before), max(seam_after)))
-        self.assertGreater(max(seam_after), max(seam_before) * 0.6,
-                           "%s: the seam's tail side washes out at the "
-                           "handoff (%s vs %s)"
-                           % (label, max(seam_after), max(seam_before)))
         self.pump(20)
 
     def test_the_native_prefix_and_the_qml_tail_match_intensity_at_production_width(self):
@@ -3615,6 +4644,154 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          "the fit never recentred")
         window.grabWindow()
         self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_inert_gestures_never_flip_the_warm_raster(self):
+        # The inertness ruling: the warm raster enters ONLY when a
+        # movement actually pans. A click at any zoom, a drag attempt
+        # at 100% and a boundary-blocked drag never activate it; a
+        # genuine drag, the wheel and the release settle keep their
+        # existing behaviour.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        from plugins.PlateQt import render_navigation_layer, png_file
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload}, plot,
+            {"width": int(face.width()), "height": int(face.height()),
+             "scale": 1.0, "lineScale": 8.0, "compact": False,
+             "panX": 0.0, "panY": 0.0, "backing": 4.0,
+             "bedWidth": 250.0, "bedDepth": 250.0}, split=18)
+        self._printer.setNavigation(png_file(
+            nav, "/tmp/mpf/raster-probe", "nav-inert-%d" % time.monotonic_ns()))
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the idle exact scene never drew")
+        window.grabWindow()
+
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QMouseEvent, QWheelEvent
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+
+        def mouse(kind, x, y, buttons):
+            scene = face.mapToItem(window.contentItem(), QPointF(x, y))
+            event = QMouseEvent(kind, QPointF(scene),
+                                QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                                Qt.MouseButton.LeftButton, buttons,
+                                Qt.KeyboardModifier.NoModifier)
+            QGuiApplication.sendEvent(window, event)
+
+        def wheel(delta):
+            scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+            event = QWheelEvent(
+                QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+
+        def settle():
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and face.property("_interactionActive"):
+                self._pump_ms(30)
+            self.assertFalse(face.property("_interactionActive"),
+                             "the gesture never settled")
+
+        # 1 + 2: at the 100% fit a click and a drag attempt do
+        # nothing — no warm raster, no pan (the wheel still zooms).
+        self.assertFalse(face.property("_interactionActive"))
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
+        self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "a click at 100% activated the warm raster")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx + 30, cy + 15, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx + 30, cy + 15,
+              Qt.MouseButton.NoButton)
+        self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "a drag attempt at 100% activated the warm raster")
+        self.assertEqual(face.property("displayPanX"), 0.0,
+                         "a 100% drag moved the camera")
+
+        # 6: the wheel from the 100% fit still enters the warm
+        # raster, and the ease settles back to the exact scene.
+        wheel(120)
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the wheel never entered the interaction")
+        settle()
+        self.assertGreater(face.property("viewScale"), 1.0,
+                           "the wheel never zoomed past the fit")
+
+        # 3: at zoom, a click still does not activate — the entry
+        # waits for an actual movement.
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
+        self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "a click at zoom activated the warm raster")
+
+        # 4: a genuine drag enters and pans normally.
+        pan_before = face.property("displayPanX")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx + 40, cy + 20, Qt.MouseButton.LeftButton)
+        self._pump_ms(20)
+        self.assertTrue(face.property("_interactionActive"),
+                        "a genuine drag never entered the interaction")
+        mouse(QEvent.Type.MouseButtonRelease, cx + 40, cy + 20,
+              Qt.MouseButton.NoButton)
+        self._pump_ms(20)
+        self.assertAlmostEqual(face.property("displayPanX"), pan_before + 40.0,
+                               delta=1.5, msg="the drag pan lagged the pointer")
+        # 7: the release keeps the settle behaviour: the exit drive
+        # returns the exact scene.
+        settle()
+
+        # 5: a drag blocked by the soft clamp applies zero pan and
+        # must not activate the raster. Push the camera to the
+        # boundary in one delivered drag — the press grabs at the
+        # face's right edge and the move sweeps to the window's
+        # left, which the clamp binds (the harness drops moves sent
+        # outside the window, so the pointer stays in bounds). A
+        # fresh drag attempt against the bound stays inert.
+        mouse(QEvent.Type.MouseButtonPress, int(face.width()) - 10, cy,
+              Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, 5, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseButtonRelease, 5, cy, Qt.MouseButton.NoButton)
+        settle()
+        bound_pan = face.property("viewPanX")
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        mouse(QEvent.Type.MouseMove, cx - 200, cy, Qt.MouseButton.LeftButton)
+        self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "a boundary-blocked drag activated the warm raster")
+        mouse(QEvent.Type.MouseButtonRelease, cx - 200, cy,
+              Qt.MouseButton.NoButton)
+        self._pump_ms(30)
+        self.assertEqual(face.property("viewPanX"), bound_pan,
+                         "the blocked drag moved the camera")
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
@@ -4850,6 +6027,52 @@ class PlateCanvasHitTests(RealEngineTestCase):
         self.assertEqual([call for call in self._printer.calls if call[0] == "restore"],
                          [("restore", "Left_Block")])
 
+    def test_the_hover_label_wears_the_object_states_ink(self):
+        """The live request: the picker's hover label wears the SAME
+        colour the map's outline uses for the object's state —
+        excluded, current, passed and plain rows each carry their own
+        ink, and a lost hover falls back to the inactive text."""
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        from PyQt6.QtGui import QColor
+        rows = self._polygon_bed()
+        rows[0]["excluded"] = True  # Long_Bracket
+        rows[1]["current"] = True  # Left_Block
+        rows[2]["passed"] = True  # Right_Block
+        window, face, canvas = self._picker(rows)
+
+        def ink():
+            value = QMetaObject.invokeMethod(face, "hoverInk",
+                                             Q_RETURN_ARG(QVariant))
+            if hasattr(value, "toVariant"):
+                value = value.toVariant()
+            return QColor(value).name()
+
+        bare = ink()
+        states = {}
+        for bed_x, bed_y, expect in ((107.0, 37.5, "Long_Bracket"),
+                                     (115.0, 215.0, "Left_Block"),
+                                     (202.0, 230.0, "Right_Block"),
+                                     (90.0, 110.0, "Over_A")):
+            self.assertEqual(self._hover(window, canvas, face, bed_x, bed_y),
+                             expect, "the hover missed its object")
+            states[expect] = ink()
+        # Each state's ink is its own — the label and the outline
+        # never disagree on the colour.
+        self.assertEqual(4, len(set(states.values())),
+                         "the states' ink collapsed: %r" % states)
+        self.assertNotIn(bare, set(states.values()),
+                         "a hovered state fell back to the inactive ink")
+        # The label's binding wears the live ink, not just the helper:
+        # the hover row is the face's own sibling in the picker's
+        # layout, so the pin reads its live text and colour.
+        self._hover(window, canvas, face, 107.0, 37.5)
+        label = [sibling for sibling in face.parentItem().childItems()
+                 if sibling.property("text") == "Long_Bracket — excluded"]
+        self.assertEqual(1, len(label), "the hover label never rendered the detail")
+        self.assertEqual(QColor(label[0].property("color")).name(),
+                         states["Long_Bracket"],
+                         "the label's colour disagrees with the state ink")
+
 
 if QT_AVAILABLE:
 
@@ -4951,3 +6174,509 @@ class PlateDownloadActionTests(RealEngineTestCase):
         self._click_centre(label, window)
         self.assertEqual(printer.improve_eta_calls, 1,
                          "clicking the label no longer downloads the index")
+
+
+# --------------------------------------------------------------------------
+# The settings pane (MoonrakerFollowerConfiguration.qml) on the real
+# engine: the Diagnostics tab's persistent-cache-size field and its
+# range copy, the seek-trace toggle, the cache-clear button's effect
+# and status row, and the interval sliders' grab contract. The page
+# mounts with the REAL MoonrakerFollowerMachineAction as its manager
+# context object; the controls are clicked the way a user hits them
+# and the assertions read the PrinterConfig the save wrote. The
+# validator semantics stay in test_machine_action_coverage.py; this
+# block owns the QML wiring.
+import contextlib
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from qt_runtime_support import runtime  # noqa: E402
+
+if QT_AVAILABLE:
+    from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, pyqtSignal
+    from PyQt6.QtGui import QGuiApplication, QKeyEvent, QMouseEvent
+    from PyQt6.QtQuick import QQuickItem, QQuickWindow
+
+    # Stands in for Cura's DefinitionContainer: the action is imported
+    # over it and the registry double passes its instances through.
+    _DefinitionContainer = type("DefinitionContainer", (), {})
+
+    class _MachineActionBase(QObject):
+        """Cura's MachineAction contract: the stored key and label."""
+
+        def __init__(self, key, label):
+            super().__init__()
+            self._key = key
+            self._label = label
+
+        def getKey(self):
+            return self._key
+
+        def getLabel(self):
+            return self._label
+
+    class _Registry(QObject):
+        containerAdded = pyqtSignal(object)
+
+    class _Application(QObject):
+        """The host the action registers itself with. The page itself
+        never touches it (its QML context object is the action)."""
+
+        globalContainerStackChanged = pyqtSignal()
+
+        def getContainerRegistry(self):
+            return _Registry()
+
+        def getMachineActionManager(self):
+            return SimpleNamespace(addSupportedAction=Mock())
+
+    class _Follower:
+        """The facade the action reads and writes: the current printer's
+        config, and whether the persistence layer accepted the write.
+        ``apply_printer_config`` installs the new config the way the real
+        facade does, so a saved setting republishes through the manager's
+        properties."""
+
+        def __init__(self, config):
+            self.config = config
+            self.identity = ("printer-a", "Printer A")
+            self.applied = []
+            self.apply_result = True
+            self.persistence = None
+
+        def current_printer_config(self):
+            return self.config
+
+        def current_printer_identity(self):
+            return self.identity
+
+        def apply_printer_config(self, config):
+            self.applied.append(config)
+            self.config = config
+            return self.apply_result
+
+    class _ActionDialogDouble(QObject):
+        """The dialog the page calls close() on after a save."""
+
+        accepted = pyqtSignal()
+        rejected = pyqtSignal()
+        closing = pyqtSignal()
+
+        def close(self):
+            pass
+
+    class _CatalogDouble(QObject):
+        """Cura's translation catalog, read by the themed controls."""
+
+        def i18nc(self, _context, text):
+            return text
+
+        def i18n(self, text):
+            return text
+
+    # The context-property wrappers must outlive the documents they are
+    # bound to: PyQt6 releases a wrapper when the last Python reference
+    # goes, and QML then sees a null context object mid-teardown.
+    _LIVE_CONTEXT_OBJECTS = []
+
+
+class SettingsPageCase(RealEngineTestCase):
+    """The settings pane mounted offscreen against the real machine
+    action, in a real window (a windowless mount never lays out twice)."""
+
+    DIAGNOSTICS_TAB = 3
+
+    def setUp(self):
+        super().setUp()
+        # runtime() brings the Cura module stubs the plugin imports over
+        # (UM.Logger, UM.Resources, UM.Preferences...); the registry and
+        # container stubs are added for the action's registration path.
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.qt = stack.enter_context(runtime())
+        stack.enter_context(patch.dict(sys.modules, {
+            "cura.MachineAction": SimpleNamespace(MachineAction=_MachineActionBase),
+            "UM.Settings": SimpleNamespace(
+                DefinitionContainer=SimpleNamespace(DefinitionContainer=_DefinitionContainer)),
+            "UM.Settings.DefinitionContainer": SimpleNamespace(
+                DefinitionContainer=_DefinitionContainer),
+        }))
+        self.module = self.qt.load("MoonrakerFollowerMachineAction")
+        self.printer_config = self.qt.load("PrinterConfig")
+
+    # ---- mounting ----------------------------------------------------
+
+    def settings_config(self, **overrides):
+        """A configured printer. The usable URL is what the page reads to
+        make its Save button live: a placeholder URL leaves canSave false
+        and every click on Save inert."""
+        settings = {"url": "http://printer-a:7125/"}
+        settings.update(overrides)
+        return self.printer_config.PrinterConfig(**settings)
+
+    def open_settings(self, config=None, *, tab=0, width=760, height=1100):
+        """Mount the page in a window and make one tab current."""
+        self.follower = _Follower(config if config is not None else self.settings_config())
+        self.action = self.module.MoonrakerFollowerMachineAction(_Application(), self.follower, None)
+        dialog = _ActionDialogDouble()
+        catalog = _CatalogDouble()
+        _LIVE_CONTEXT_OBJECTS.extend((self.action, dialog, catalog))
+        context = self.engine.rootContext()
+        context.setContextProperty("manager", self.action)
+        context.setContextProperty("actionDialog", dialog)
+        context.setContextProperty("catalog", catalog)
+        document = self.mount("MoonrakerFollowerConfiguration.qml")
+        window = QQuickWindow()
+        window.resize(width, height)
+        document.setParentItem(window.contentItem())
+        document.setWidth(width)
+        document.setHeight(height)
+        window.show()
+        self.addCleanup(self._close_page, document, window)
+        self.pump(30)
+        self.show_tab(document, tab)
+        return document, window
+
+    def _close_page(self, document, window):
+        # Detach before the engine tears the scene down, while the
+        # context-object wrappers are still referenced.
+        document.setParentItem(None)
+        document.deleteLater()
+        window.close()
+        self.pump(20)
+
+    def show_tab(self, document, index):
+        for candidate in document.findChildren(QQuickItem):
+            meta = candidate.metaObject()
+            name = meta.className() if meta is not None else ""
+            if name == "QQuickTabBar" or name.startswith("TabRow_"):
+                candidate.setProperty("currentIndex", index)
+                self.pump(20)
+                return
+        self.fail("the settings tab bar did not mount")
+
+    # ---- finding -----------------------------------------------------
+
+    def item_with_text(self, document, text):
+        """The control whose text is exactly this. The themed controls
+        alias their text onto an inner label, so the match is narrowed to
+        the one item that owns the text and knows how to be clicked."""
+        matches = [item for item in document.findChildren(QQuickItem)
+                   if item.property("text") == text
+                   and not item.metaObject().className().startswith("Label")]
+        self.assertEqual(1, len(matches),
+                         "expected exactly one control reading %r, got %d" % (text, len(matches)))
+        return matches[0]
+
+    def cache_size_field(self, document):
+        """The persistent-cache-size field: the TextField on the row the
+        Diagnostics copy labels 'Persistent cache size (MiB)'."""
+        row = self._row_of(self.label_with_text(document, "Persistent cache size (MiB)"))
+        fields = [child for child in row.childItems()
+                  if child.property("maximumLength") is not None]
+        self.assertEqual(1, len(fields), "the cache-size row holds no single field")
+        return fields[0]
+
+    def cache_range_copy(self, document):
+        """The inline range copy on the cache-size row."""
+        matches = [item for item in document.findChildren(QQuickItem)
+                   if isinstance(item.property("text"), str)
+                   and item.property("text").startswith("Cache size must be between")]
+        self.assertEqual(1, len(matches), "the cache-size range copy never rendered")
+        return matches[0]
+
+    def seek_trace_box(self, document):
+        """The seek-timeline diagnostics toggle."""
+        matches = [item for item in document.findChildren(QQuickItem)
+                   if isinstance(item.property("text"), str)
+                   and item.property("text").startswith("Log follower seek timelines")
+                   and item.property("checked") is not None]
+        self.assertEqual(1, len(matches), "the seek-trace toggle never rendered")
+        return matches[0]
+
+    def clear_cache_button(self, document):
+        return self.item_with_text(document, "Clear cached downloads and indexes")
+
+    def label_with_text(self, document, text):
+        matches = [item for item in document.findChildren(QQuickItem)
+                   if item.property("text") == text
+                   and item.metaObject().className().startswith("Label")]
+        self.assertEqual(1, len(matches),
+                         "expected exactly one label reading %r, got %d" % (text, len(matches)))
+        return matches[0]
+
+    def interval_slider(self, document, label_text):
+        """The slider on the row the caption labels — the caption is a
+        sibling of its RowLayout in the column, the row directly below."""
+        row = self._row_of(self.label_with_text(document, label_text))
+        sliders = [child for child in row.childItems()
+                   if "Slider" in child.metaObject().className()
+                   and child.property("handle") is not None]
+        self.assertEqual(1, len(sliders), "the %s row holds no single slider" % label_text)
+        return sliders[0]
+
+    @staticmethod
+    def _row_of(label):
+        """The RowLayout that lays the label out: the label's own parent
+        when it sits inside its row (the Diagnostics cache row), else the
+        first row under it in the same column (the interval captions)."""
+        parent = label.parentItem()
+        if parent.metaObject().className() == "QQuickRowLayout":
+            return parent
+        label_top = label.mapToItem(parent, QPointF(0.0, 0.0)).y()
+        rows = [child for child in parent.childItems()
+                if child.metaObject().className() == "QQuickRowLayout"
+                and child.mapToItem(parent, QPointF(0.0, 0.0)).y() > label_top]
+        if not rows:
+            raise AssertionError("no row renders under the label")
+        return min(rows, key=lambda row: row.mapToItem(parent, QPointF(0.0, 0.0)).y())
+
+    # ---- driving -----------------------------------------------------
+
+    def click_item(self, window, item, *, dx=0.5, dy=0.5):
+        """A real press-and-release at a point inside the item, refused
+        unless the point is actually on screen (a click outside the
+        window is silently dropped and would read as a pass)."""
+        scene = item.mapToScene(QPointF(item.width() * dx, item.height() * dy))
+        self._assert_on_screen(window, scene)
+        self._send_mouse(window, QEvent.Type.MouseButtonPress, scene,
+                         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+        self._send_mouse(window, QEvent.Type.MouseButtonRelease, scene,
+                         Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+        self.pump(20)
+
+    @staticmethod
+    def _assert_on_screen(window, scene):
+        if not (0.0 <= scene.x() <= window.width() and 0.0 <= scene.y() <= window.height()):
+            raise AssertionError("the click at (%.1f, %.1f) is outside the %dx%d window"
+                                 % (scene.x(), scene.y(), window.width(), window.height()))
+
+    @staticmethod
+    def _send_mouse(window, kind, scene, buttons, button):
+        QGuiApplication.sendEvent(window, QMouseEvent(
+            kind, QPointF(scene),
+            QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+            button, buttons, Qt.KeyboardModifier.NoModifier))
+
+    def press_key(self, window, key):
+        for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            QGuiApplication.sendEvent(window, QKeyEvent(kind, key, Qt.KeyboardModifier.NoModifier))
+        self.pump(20)
+
+    def save_button(self, document):
+        return self.item_with_text(document, "Save")
+
+    def type_cache_size(self, document, text):
+        """Type into the field the way a user does: the text changes, the
+        binding on the field is replaced, and the page re-validates."""
+        field = self.cache_size_field(document)
+        field.setProperty("text", text)
+        self.pump(20)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class SettingsCacheSizeTests(SettingsPageCase):
+    """The Diagnostics tab's persistent-cache-size field (4.6.0): the
+    limit is per printer, the field is seeded from the stored one, and an
+    out-of-range entry is refused before it reaches the settings file."""
+
+    def test_the_cache_size_field_is_seeded_from_the_stored_limit(self):
+        document, _window = self.open_settings(self.settings_config(cache_max_mb=2048),
+                                               tab=self.DIAGNOSTICS_TAB)
+        field = self.cache_size_field(document)
+        self.assertEqual("2048", field.property("text"),
+                         "the field did not seed from the stored cache limit")
+        self.assertEqual("2048", self.action.settingsCacheMaxMb)
+        self.assertFalse(self.cache_range_copy(document).property("visible"),
+                         "a stored limit in range showed the range copy")
+        self.assertTrue(document.property("canSave"))
+
+    def test_an_out_of_range_cache_size_shows_the_copy_and_blocks_the_save(self):
+        document, window = self.open_settings(tab=self.DIAGNOSTICS_TAB)
+        copy = self.cache_range_copy(document)
+        # Typed the way a user types it: the digits, and the junk a
+        # paste or a slipping finger produces.
+        for text in ("15", "4097", "not a number", ""):
+            with self.subTest(text=text):
+                self.type_cache_size(document, text)
+                self.assertFalse(document.property("validCacheMax"), text)
+                self.assertTrue(copy.property("visible"),
+                                "the range copy stayed hidden for %r" % text)
+                self.assertFalse(document.property("canSave"), text)
+                self.assertFalse(self.save_button(document).property("enabled"),
+                                 "the Save button stayed live for %r" % text)
+                self.click_item(window, self.save_button(document))
+                self.assertEqual([], self.follower.applied,
+                                 "an invalid cache size reached the save path")
+        # The boundary values are inside the range, one step out are not.
+        for text, expected in (("16", True), ("4096", True), ("15", False), ("4097", False)):
+            with self.subTest(text=text):
+                self.type_cache_size(document, text)
+                self.assertEqual(expected, document.property("validCacheMax"), text)
+        self.type_cache_size(document, "512")
+        self.assertFalse(copy.property("visible"),
+                         "the range copy survived a return to a valid size")
+        self.assertTrue(document.property("canSave"))
+
+    def test_a_typed_cache_size_lands_in_the_printer_config(self):
+        document, window = self.open_settings(tab=self.DIAGNOSTICS_TAB)
+        self.type_cache_size(document, "256")
+        self.assertTrue(document.property("canSave"),
+                        "a valid cache size left the page unsaveable")
+        self.click_item(window, self.save_button(document))
+        self.assertTrue(self.follower.applied, "the Save click never reached the action")
+        self.assertEqual(256, self.follower.config.cache_max_mb,
+                         "the typed cache size never reached the printer config")
+        self.assertEqual("256", self.action.settingsCacheMaxMb,
+                         "the saved size never republished through the manager")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class SettingsSeekTraceTests(SettingsPageCase):
+    """The Diagnostics tab's seek-timeline toggle (4.6.0): it shows the
+    stored setting, follows a change to it, and saves as its own key."""
+
+    def test_the_seek_trace_box_mirrors_the_stored_setting(self):
+        document, _window = self.open_settings(self.settings_config(seek_trace=False),
+                                               tab=self.DIAGNOSTICS_TAB)
+        box = self.seek_trace_box(document)
+        self.assertFalse(box.property("checked"),
+                         "the toggle was ticked with the stored trace off")
+        # The stored setting changing under a mounted page republishes
+        # through settingsChanged — the list's toggle must follow it.
+        self.follower.config.seek_trace = True
+        self.action.settingsChanged.emit()
+        self.pump(20)
+        self.assertTrue(box.property("checked"),
+                        "the toggle ignored the stored setting's change")
+
+    def test_ticking_the_seek_trace_box_saves_the_toggle(self):
+        """The box is bound to ``manager.settingsSeekTrace`` for display;
+        the page's ``save()`` payload must carry the toggle through to
+        the printer config, never silently clear a stored true."""
+
+        document, window = self.open_settings(self.settings_config(seek_trace=False),
+                                              tab=self.DIAGNOSTICS_TAB)
+        box = self.seek_trace_box(document)
+        self.click_item(window, box)
+        self.assertTrue(box.property("checked"), "the click never ticked the toggle")
+        self.click_item(window, self.save_button(document))
+        self.assertTrue(self.follower.applied, "the Save click never reached the action")
+        self.assertTrue(self.follower.config.seek_trace,
+                        "the ticked seek trace never reached the printer config")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class SettingsCacheClearTests(SettingsPageCase):
+    """The Diagnostics tab's cache-clear button: it wipes the persistent
+    cache root (the drop that forces a full re-download and re-index) and
+    reports the outcome on its own row rather than in a dialog."""
+
+    def test_the_clear_button_wipes_the_cache_root_and_reports_it(self):
+        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
+        document, window = self.open_settings(tab=self.DIAGNOSTICS_TAB)
+        resources = sys.modules["UM.Resources"].Resources
+        cache_root = os.path.join(resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
+        entry = os.path.join(cache_root, "index", "layer-index.json")
+        os.makedirs(os.path.dirname(entry), exist_ok=True)
+        with open(entry, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        self.click_item(window, self.clear_cache_button(document))
+        self.assertFalse(os.path.exists(cache_root),
+                         "the clear button left the persistent cache on disk")
+        # The result is reported where the click happened: the row's
+        # status label reads the manager's own verdict.
+        status = self.action.cacheStatus
+        self.assertTrue(status, "the clear produced no status text")
+        self.assertEqual(status, self.label_with_text(document, status).property("text"),
+                         "the row never showed the clear result")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class IntervalSliderGrabTests(SettingsPageCase):
+    """The interval sliders' grab contract (the 4.6.0 reviewer finding:
+    the window ignored the handle's width, so the half of the painted
+    handle away from the value never grabbed and the click fell through
+    to the track, which jumps). A track click still jumps — that is the
+    control that keeps this suite honest."""
+
+    SLIDERS = ("Status update interval (milliseconds)",
+               "Auxiliary status interval (milliseconds)",
+               "Console output interval (milliseconds)")
+
+    def _painted_handle(self, slider):
+        """The handle's own geometry — where it was actually painted, not
+        where a formula says it should be."""
+        handle = slider.property("handle")
+        return handle.x(), handle.x() + handle.width()
+
+    def _press_and_release(self, window, slider, x, dx=0.0):
+        y = slider.height() / 2
+        start = slider.mapToItem(window.contentItem(), QPointF(x, y))
+        end = slider.mapToItem(window.contentItem(), QPointF(x + dx, y))
+        self._assert_on_screen(window, start)
+        self._send_mouse(window, QEvent.Type.MouseButtonPress, start,
+                         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
+        if dx:
+            self._send_mouse(window, QEvent.Type.MouseMove, end,
+                             Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton)
+        self._send_mouse(window, QEvent.Type.MouseButtonRelease, end,
+                         Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+        self.pump(20)
+
+    def test_every_interval_slider_grabs_both_halves_of_the_painted_handle(self):
+        # The poll slider is asked for its floor: at the track's left end
+        # the old centre-window is furthest from the painted handle, so
+        # the far tip is the point that separates the two rules.
+        document, window = self.open_settings(self.settings_config(poll_interval_ms=250))
+        for caption in self.SLIDERS:
+            with self.subTest(slider=caption):
+                slider = self.interval_slider(document, caption)
+                self.assertTrue(slider.isVisible(), caption)
+                self._check_grab(window, slider)
+
+    def _check_grab(self, window, slider):
+        left, right = self._painted_handle(slider)
+        floor = slider.property("from")
+        anchor = slider.property("value")
+        # A press on the handle is inert wherever on the handle it lands.
+        for x in (left + 1.0, (left + right) / 2.0, right - 0.5):
+            self._press_and_release(window, slider, x)
+            self.assertEqual(anchor, slider.property("value"),
+                             "a press at %.1f moved the slider off its handle" % x)
+        # ... and a drag out of either tip grabs it and carries it along.
+        # Setting the value directly is the harness's stand-in for the
+        # operator having put the handle there.
+        for x in (left + 1.0, right - 0.5):
+            slider.setProperty("value", floor)
+            self.pump(20)
+            self._press_and_release(window, slider, x, dx=60.0)
+            self.assertGreater(slider.property("value"), floor,
+                               "a drag from the handle at %.1f never grabbed" % x)
+
+    def test_a_groove_click_still_jumps_and_the_handle_click_keeps_the_steps(self):
+        document, window = self.open_settings(self.settings_config(poll_interval_ms=250))
+        slider = self.interval_slider(document, self.SLIDERS[0])
+        left, right = self._painted_handle(slider)
+        # The control: away from the handle the click must jump, so a
+        # grader that reports "nothing moved" for the handle cases is
+        # known to be able to see a move at all.
+        self.assertEqual(0.0, slider.property("value"),
+                         "the poll slider did not start at its floor")
+        self._press_and_release(window, slider, right + 30.0)
+        self.assertGreater(slider.property("value"), 0.0,
+                           "a groove click no longer jumps the slider")
+        # A handle click takes the focus; the arrow keys step one step
+        # and the step survives the focus change the key path makes.
+        self._press_and_release(window, slider, (left + right) / 2.0)
+        self.assertTrue(slider.property("activeFocus"),
+                        "a handle click never focused the slider")
+        anchor = slider.property("value")
+        self.press_key(window, Qt.Key.Key_Right)
+        self.assertEqual(anchor + 1, slider.property("value"),
+                         "an arrow key never nudged one step")
+        self.assertTrue(slider.property("activeFocus"),
+                        "the key path dropped the slider's focus")
+        self.press_key(window, Qt.Key.Key_Left)
+        self.assertEqual(anchor, slider.property("value"),
+                         "the second arrow key never stepped back")

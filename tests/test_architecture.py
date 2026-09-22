@@ -170,7 +170,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorPermissions": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"CameraTiming", "MoonrakerProtocol", "MoonrakerSession"},
-            "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerMonitorModel", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
+            "MoonrakerFollowerMachineAction": {"CacheNamespaces", "FollowController", "MoonrakerMonitorModel", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
             "MoonrakerMonitorModel": {"CameraTiming", "ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PlateQt", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "PersistenceMigration": {"PrinterConfig"},
             "MigrationNotice": set(),

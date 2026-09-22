@@ -146,7 +146,7 @@ Item {
     }
     Timer {
         id: scopeHideTimer
-        interval: 2000
+        interval: 5000
         onTriggered: root._scopeDocked = false
     }
     // The view-settle timer (the awful-zoom report): a zoom or line
@@ -675,6 +675,23 @@ Item {
         return root.toolpathWidthPx() * root.travelVisualRatio;
     }
 
+    function _barZoomPan(target) {
+        // The zoom bar's anchor (the live ruling): the scene point
+        // under the viewport CENTRE stays put through the scale
+        // change — the bar must never zoom around the bed origin.
+        // The retarget reads the CURRENT display transform, exactly
+        // like the wheel's cursor anchor.
+        var cx = root.width / 2;
+        var cy = root.height / 2;
+        var panX = cx - (cx - root.displayPanX) / root.displayScale * target;
+        var panY = cy - (cy - root.displayPanY) / root.displayScale * target;
+        var clamped = root._softClampPan(panX, panY);
+        return {
+            "x": clamped.x,
+            "y": clamped.y
+        };
+    }
+
     // The raster stack's painted state: the split the progress canvas
     // has accumulated up to, the anchor it was built for, and the
     // periodic re-raster counter (the live design: a full re-raster
@@ -974,8 +991,10 @@ Item {
         // zero keeps the canvas alive and painted for free; the
         // input stays gated by the availability. During a camera
         // interaction the grid rides the WARM RASTER (the complete
-        // scene switches as one unit — the grid must never move
-        // independently of the geometry).
+        // scene switches as one unit — the warm raster is ONE flat
+        // composite, never two independently-moving layers; the
+        // live report: a separately-painted grid panned at its own
+        // pace).
         opacity: root.available() && !root._interactionActive ? 1.0 : 0.0
         enabled: root.available()
         printerModel: root.printerModel
@@ -1616,11 +1635,9 @@ Item {
             zoomAnimator.restart();
         }
         onPressed: function (mouse) {
-            // The press moves nothing: the camera stays exactly where
-            // it is (no start snap) — a running ease keeps gliding
-            // underneath and the first move's delta applies from this
-            // grab point.
-            root._enterInteraction();
+            // The press records the grab point only: the warm raster
+            // waits for a movement that actually pans (the review's
+            // ruling — a click at any zoom never flips the scene).
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
@@ -1641,6 +1658,13 @@ Item {
             var clamped = root._softClampPan(root.viewPanX + dx, root.viewPanY + dy);
             var appliedX = clamped.x - root.viewPanX;
             var appliedY = clamped.y - root.viewPanY;
+            // The interaction raster flips in only when this
+            // movement pans for real: a click's zero delta and a
+            // boundary-blocked drag never activate it (the review's
+            // ruling — no warm-raster transition on inert gestures).
+            if (appliedX !== 0.0 || appliedY !== 0.0) {
+                root._enterInteraction();
+            }
             root.viewPanX = clamped.x;
             root.viewPanY = clamped.y;
             root.displayPanX += appliedX;
@@ -1653,6 +1677,11 @@ Item {
         onReleased: root._finishGesture()
         onCanceled: root._finishGesture()
         onDoubleClicked: {
+            // At the 100% fit there is nothing to reset (the live
+            // ruling: click/down/drag stay inert at full zoom).
+            if (root.viewScale <= 1.0) {
+                return;
+            }
             // The reset is a programmatic camera change: the target
             // and the display land together, and the exact scene
             // returns only once the barrier passes.
@@ -1782,14 +1811,27 @@ Item {
                     var target = Math.pow(20.0, fraction);
                     root._enterInteraction();
                     // A direct manipulation: the display follows the
-                    // handle immediately (like the drag pan).
-                    root.displayScale = target;
+                    // handle immediately (like the drag pan), and the
+                    // pan retargets so the viewport CENTRE stays put
+                    // (the live ruling — no bed-origin zoom). The
+                    // view scale lands FIRST (the soft clamp reads
+                    // it), while the retarget still reads the OLD
+                    // display transform — assigning the display
+                    // scale first would degenerate the anchor to 0.
                     root.viewScale = target;
                     if (target <= 1.0) {
                         root.viewPanX = 0.0;
                         root.viewPanY = 0.0;
                         root.displayPanX = 0.0;
                         root.displayPanY = 0.0;
+                        root.displayScale = target;
+                    } else {
+                        var pan = root._barZoomPan(target);
+                        root.viewPanX = pan.x;
+                        root.viewPanY = pan.y;
+                        root.displayPanX = pan.x;
+                        root.displayPanY = pan.y;
+                        root.displayScale = target;
                     }
                 }
             }
