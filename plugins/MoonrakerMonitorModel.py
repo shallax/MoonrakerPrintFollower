@@ -254,9 +254,6 @@ def _follower_view_state(stored) -> dict:
         "showNext": flag("showNext", True),
         "showBase": flag("showBase", True),
         "showTravels": flag("showTravels", False),
-        # The centred follow is an OPTION and stays one: the default
-        # render path is the cheap one (the 2026-09-20 ruling).
-        "keepCentred": flag("keepCentred", False),
         "lineScale": scale(stored.get("lineScale", 0.7)),
     }
 
@@ -452,7 +449,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # still reads the previous attached state and then clears it
         # .
         ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
-                                 "followerTravelVisualRatio", "followerKeepCentred", "followerAttached", "followerLayerAnchor")),
+                                 "followerTravelVisualRatio", "followerAttached", "followerLayerAnchor")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
@@ -601,7 +598,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_show_base = follower_view["showBase"]
         self._follower_show_travels = follower_view["showTravels"]
         self._follower_line_scale = follower_view["lineScale"]
-        self._follower_keep_centred = follower_view["keepCentred"]
         # The follower's attach state and its frozen layer — a LIVE view
         # state, never persisted: a restart follows the print again, and
         # the frozen layer belongs to the file that was printing.
@@ -1538,7 +1534,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowTravels=self._follower_show_travels,
             followerLineScale=self._follower_line_scale,
             followerTravelVisualRatio=_PLATE_TRAVEL_VISUAL_RATIO,
-            followerKeepCentred=self._follower_keep_centred,
             followerAttached=self._follower_attached,
             followerLayerAnchor=self._follower_layer_anchor,
             britishSpelling=_british_spelling(),
@@ -1712,7 +1707,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 0.7)
     followerTravelVisualRatio = value_property(float, "followerTravelVisualRatio", followerViewChanged,
                                                _PLATE_TRAVEL_VISUAL_RATIO)
-    followerKeepCentred = value_property(bool, "followerKeepCentred", followerViewChanged, False)
     followerAttached = value_property(bool, "followerAttached", followerViewChanged, True)
     followerLayerAnchor = value_property(int, "followerLayerAnchor", followerViewChanged, -1)
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
@@ -2642,7 +2636,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "showNext": self._follower_show_next,
                 "showBase": self._follower_show_base,
                 "showTravels": self._follower_show_travels,
-                "keepCentred": self._follower_keep_centred,
                 "lineScale": self._follower_line_scale,
             },
             # The chrome-only rewrite in __init__ runs BEFORE the
@@ -2893,14 +2886,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._follower_line_scale == scale:
             return
         self._follower_line_scale = scale
-        self._save_state()
-        self._publish()
-
-    @pyqtSlot(bool)
-    def setFollowerKeepCentred(self, keep):
-        if self._follower_keep_centred is bool(keep):
-            return
-        self._follower_keep_centred = bool(keep)
         self._save_state()
         self._publish()
 

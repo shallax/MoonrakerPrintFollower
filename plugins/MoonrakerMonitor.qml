@@ -3171,10 +3171,9 @@ Component {
                     showBase: root.printer != null ? root.printer.followerShowBase : true
                     showTravels: root.printer != null ? root.printer.followerShowTravels : false
                     lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
-                    // The follow state and the centred-follow option
-                    // (default off — the cheap render path).
+                    // The follow state (the centred follow is
+                    // retired — the per-poll re-pan was too slow).
                     attached: root.printer == null || root.printer.followerAttached
-                    keepCentred: root.printer != null ? root.printer.followerKeepCentred : false
                 }
 
                 // The toolhead view controls (the 4.6.0 request): the
@@ -3404,28 +3403,11 @@ Component {
                     Item {
                         Layout.fillWidth: true
                     }
-                }
-
-                // The layer selection (the 4.6.0 request): the slider
-                // seeks the anchor the face draws. A seek from the
-                // LIVE layer is itself the detach — the model freezes
-                // on the committed layer (the live request: the slider
-                // must never sit dead while attached). A seek commits
-                // only once the drag quietens: every step rebuilds a
-                // layer window and rehydrates it, so a release commits
-                // at once and a drag settles first.
-                // The attach/detach owns its own row, right-aligned
-                // (the live request): out of the slider row, so the
-                // two sliders below share their full length. The
-                // toolhead controls share this row — hiding them in
-                // their own row reflowed the face whenever the zoom
-                // crossed 100%; here the row persists via the attach
-                // button and they hide in place.
-                RowLayout {
-                    Layout.fillWidth: true
-                    Item {
-                        Layout.fillWidth: true
-                    }
+                    // The toolhead controls ride the line-thickness
+                    // row (the live request: the centred follow's
+                    // retirement emptied their own row — the sliders
+                    // below close the gap). The jump hides at 100%
+                    // and the attach persists the row.
                     Cura.SecondaryButton {
                         id: jumpButton
                         objectName: "moonrakerFollowerJump"
@@ -3433,21 +3415,6 @@ Component {
                         text: "Jump to toolhead"
                         enabled: progressFace.dotAvailable()
                         onClicked: progressFace.centreOnToolhead()
-                    }
-                    UM.CheckBox {
-                        objectName: "moonrakerFollowerKeepCentred"
-                        visible: progressFace.viewScale > 1.0 && progressFace.attached
-                        text: "Keep toolhead centred"
-                        // The follow needs a live dot: detached there is
-                        // nothing to centre on (the preference itself
-                        // persists unchecked).
-                        enabled: progressFace.dotAvailable()
-                        checked: root.printer != null ? root.printer.followerKeepCentred : false
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerKeepCentred(checked);
-                            }
-                        }
                     }
                     Cura.SecondaryButton {
                         id: attachButton
@@ -3465,6 +3432,15 @@ Component {
                         }
                     }
                 }
+
+                // The layer selection (the 4.6.0 request): the slider
+                // seeks the anchor the face draws. A seek from the
+                // LIVE layer is itself the detach — the model freezes
+                // on the committed layer (the live request: the slider
+                // must never sit dead while attached). A seek commits
+                // only once the drag quietens: every step rebuilds a
+                // layer window and rehydrates it, so a release commits
+                // at once and a drag settles first.
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("thin_margin").width

@@ -85,7 +85,6 @@ ColumnLayout {
                 // toolhead dot whatever the popover does (the live
                 // request).
                 attached: true
-                keepCentred: root.printerModel != null ? root.printerModel.followerKeepCentred : false
                 opacity: root.printerModel != null && root.printerModel.plateLiveAvailable ? 1 : 0
                 MouseArea {
                     anchors.fill: parent
