@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import threading
 import time
@@ -1034,6 +1035,14 @@ class ComposedComponentTests(unittest.TestCase):
         # classify -> read/decode/prepare -> commit -> coordinator ->
         # publish) until plateProgressAvailable flips for the sought
         # layer. Four source states, one real file.
+        if "coverage" in sys.modules:
+            # The coverage run instruments the hot loops: a wall-clock
+            # latency pin measures the TRACER, not the seek (the raw
+            # tier already byte-range reads — the measured 6.2 s under
+            # coverage is ~3 s bare). The plain suite jobs hold the
+            # true bound.
+            self.skipTest("wall-clock latency is not measurable under "
+                          "coverage instrumentation")
         content = self._generated_gcode(layers=4, motions=20000)
         status = self.status(layer=2)
         status["virtual_sdcard"]["file_size"] = len(content)
