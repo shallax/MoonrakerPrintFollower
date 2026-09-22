@@ -2684,6 +2684,7 @@ class SettingsSaveRefusalTests(unittest.TestCase):
             "console_interval_ms": 1000,
             "follow_mode": "exact",
             "z_tolerance": "0.05",
+            "cache_max_mb": "512",
             "ready_retry_interval_s": "1.0",
             "filename_translate_input": "a",
             "filename_translate_output": "b",

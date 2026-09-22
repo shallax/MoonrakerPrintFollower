@@ -917,10 +917,12 @@ class MachineNamespaceTests(unittest.TestCase):
                           "data stranded in the unknown namespace")
 
     def test_the_cache_budget_follows_the_machine_config(self):
-        # The author's per-machine cache setting: the prepared store's
-        # byte bound rides the ACTIVE machine's configured value, read
-        # fresh at every bind — each machine's own cache-v2 directory
-        # obeys its own saved size, and the default is 512 MiB.
+        # The author's per-machine cache setting: BOTH unified
+        # stores' byte bounds ride the ACTIVE machine's configured
+        # value, read fresh at every bind — each machine's own
+        # cache-v2 directory obeys its own saved size, and the
+        # default is 512 MiB. The index's entry-count bound is
+        # disabled (the byte budget is the user-facing limit).
         app = self._app(started=True)
         app.stack = self.qt.Machine("A")
         from plugins.MigrationNotice import MigrationNotice
@@ -928,19 +930,62 @@ class MachineNamespaceTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         store_a = owner.index._prepared
+        index_a = owner.index._cache
         self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
-                         "the default bound is not 512 MiB")
+                         "the prepared default bound is not 512 MiB")
+        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024,
+                         "the index default bound is not the machine's")
+        self.assertIsNone(index_a.max_entries,
+                          "the hidden entry-count cap survived")
         owner.persistence.set_machine("A", {"cache_max_mb": 256})
         owner.persistence.set_machine("B", {"cache_max_mb": 128})
         self._switch(app, "B")
         store_b = owner.index._prepared
+        index_b = owner.index._cache
         self.assertEqual(store_b.max_bytes, 128 * 1024 * 1024,
-                         "B never bound its own configured size")
+                         "B's prepared store never bound its size")
+        self.assertEqual(index_b.max_bytes, 128 * 1024 * 1024,
+                         "B's index store never bound its size")
+        self.assertIsNone(index_b.max_entries,
+                          "B kept the hidden entry-count cap")
         self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
                          "the switch rewrote A's store object")
         self._switch(app, "A")
         self.assertEqual(owner.index._prepared.max_bytes, 256 * 1024 * 1024,
-                         "the return to A never bound A's configured size")
+                         "the return to A never bound A's prepared size")
+        self.assertEqual(owner.index._cache.max_bytes, 256 * 1024 * 1024,
+                         "the return to A never bound A's index size")
+
+    def test_the_index_side_cannot_evict_before_the_machine_budget(self):
+        # The review's premature-eviction finding: with both stores
+        # on the SAME machine budget, the index's prune can never
+        # delete a folder below the configured limit — a retained
+        # set that fits the machine's budget survives the index
+        # prune even when it exceeds the index's OLD 128 MiB
+        # standalone default.
+        from plugins.GCodeIndex import PersistentIndexCache
+        from plugins.PreparedStore import PreparedCache
+        machine_budget = 256 * 1024 * 1024
+        index = PersistentIndexCache(self.base, max_bytes=machine_budget,
+                                     max_entries=None)
+        prepared = PreparedCache(self.base, max_bytes=machine_budget)
+        # Three prints totalling ~165 MiB — over the index's OLD
+        # 128 MiB standalone default, comfortably under the
+        # machine's 256 MiB budget.
+        payload = self._payload(1)
+        for key in ("p1", "p2", "p3"):
+            prepared.finalise(key, [payload * 750000])  # ~45 MiB each
+        self.assertGreater(len(payload) * 750000 * 3, 128 * 1024 * 1024,
+                           "the fixture never crossed the old default")
+        self.assertLess(len(payload) * 750000 * 3, machine_budget,
+                        "the fixture never fits the machine budget")
+        folders = {key: os.path.dirname(prepared._path(key))
+                   for key in ("p1", "p2", "p3")}
+        index.prune()
+        for key, folder in folders.items():
+            self.assertTrue(os.path.exists(os.path.join(folder, "prepared.mpfp")),
+                            "the index pruned print %s under the "
+                            "machine budget" % key)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -1290,6 +1335,29 @@ class BindingReadinessTests(unittest.TestCase):
                                  cura_cfg_path=self.cura_cfg, old_state_path=None)
         binding.start()
         self.assertEqual(self.persistence.settings_document()["machines"]["A"]["url"], "http://a:7125")
+
+    def test_an_early_config_read_does_not_pin_pre_migration_state(self):
+        # The bootstrap regression (the cache-size source reads the
+        # config at construction): an early read populates the
+        # per-machine cache, and the already-ready start() must
+        # invalidate it after its migration — the same clear
+        # mark_ready performs. The apply-path reads may repopulate
+        # the cache, but only with the MIGRATED record, never the
+        # pre-migration one. (The end-to-end form lives in the
+        # bootstrap test, where the pre-migration record genuinely
+        # differs.)
+        self.app.started = True
+        binding = PrinterBinding(self.app, self.client, self.persistence,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=None)
+        self.assertIsNotNone(binding.config)  # the early boot read
+        self.assertIsNotNone(binding._config_cache,
+                             "the early read never cached the record")
+        binding.start()
+        self.assertEqual(binding.config.url, "http://a:7125")
+        cache = binding._config_cache
+        if cache is not None:
+            self.assertEqual(cache[1].url, "http://a:7125",
+                             "the cache kept a pre-migration record")
 
     def test_repeated_readiness_notifications_are_idempotent(self):
         original = PrinterBinding.run_persistence_migration

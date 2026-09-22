@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
 import threading
 import time
 from typing import Optional
@@ -46,6 +47,31 @@ def _log(message, *args):
     log no-ops there."""
     if _Logger is not None:
         _Logger.log("i", message, *args)
+
+
+def _windows_liveness(pid: int) -> bool:
+    """The Windows owner-liveness verdict through the native process
+    API, dependency-free: a query-limited handle opens only while
+    the process OBJECT exists, and its exit code leaves
+    STILL_ACTIVE once the process is gone — so a child that exited
+    and was waited reads dead even while its zombie object lingers
+    in the waiter. ERROR_INVALID_PARAMETER names no live process
+    (dead); every other failure is indeterminate and keeps the tmp
+    (conservative)."""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _STILL_ACTIVE = 259
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return kernel32.GetLastError() != 87  # 87: no such process
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # indeterminate — keep the tmp
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 _MAGIC = b"MPFP"
 _FORMAT_VERSION = 3
@@ -135,29 +161,29 @@ class PreparedCache:
         existed. The probe is deliberately CONSERVATIVE — an owner
         that cannot be disproved keeps its tmp; only a provably dead
         or impossible owner releases it for adoption. Windows reads
-        OpenProcess's own verdict (ERROR_INVALID_PARAMETER names no
-        live process), never POSIX signal-0 semantics."""
+        the native process API (never the POSIX signal idiom):
+        ALIVE or MAYBE-ALIVE -> True, PROVABLY DEAD -> False."""
         try:
             pid = int(name.split(".tmp-", 1)[1].split("-", 1)[0])
         except (IndexError, ValueError):
             return False  # no live writer ever stamped this name
         if pid <= 0:
             return False  # impossible: writers stamp their real pid
+        if pid > 0xFFFFFFFF:
+            return False  # beyond any platform's pid space
+        if sys.platform == "win32":
+            return _windows_liveness(pid)
         try:
             os.kill(pid, 0)
             return True
         except ProcessLookupError:
-            return False  # POSIX: no such process
+            return False  # no such process
         except PermissionError:
             return True  # cannot disprove the owner — keep the tmp
         except OverflowError:
-            return False  # beyond any platform's pid space
-        except OSError as error:
-            if os.name == "nt" and getattr(error, "winerror", None) == 87:
-                # ERROR_INVALID_PARAMETER: the pid names no live
-                # process (Windows has no ESRCH mapping for it).
-                return False
-            return True  # any other failure keeps the tmp
+            return False  # beyond the platform's pid space
+        except OSError:
+            return True  # indeterminate — keep the tmp
 
     def _tmp_sound(self, path: str) -> bool:
         """The checkpointed tmp's own validity: the header parses and

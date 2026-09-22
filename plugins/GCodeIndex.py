@@ -1439,10 +1439,15 @@ def _arc_columns(counts: Sequence[int], arcs, start_planes) -> Optional[Dict]:
 
 
 class PersistentIndexCache:
-    def __init__(self, directory: str, *, max_bytes: int = 128 * 1024 * 1024, max_entries: int = 16) -> None:
+    def __init__(self, directory: str, *, max_bytes: int = 128 * 1024 * 1024,
+                 max_entries: Optional[int] = 16) -> None:
         self.directory = directory
         self.max_bytes = max(1 * 1024 * 1024, int(max_bytes))
-        self.max_entries = max(1, int(max_entries))
+        # None disables the entry-count bound (the unified runtime
+        # cache's choice — the configured byte budget governs the
+        # whole print-folder cache; a hidden folder-count cap would
+        # silently override a 4096 MiB selection for small prints).
+        self.max_entries = None if max_entries is None else max(1, int(max_entries))
         os.makedirs(self.directory, exist_ok=True)
 
     def _path(self, identity: RemoteFileIdentity) -> str:

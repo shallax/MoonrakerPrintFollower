@@ -43,16 +43,23 @@ class CacheNamespaces:
     def _bind(self, initial=False) -> None:
         """The unified per-print lifecycle (the review's finding):
         BOTH stores root at the machine's prints folder — one print's
-        index and prepared table are siblings under one directory."""
+        index and prepared table are siblings under one directory —
+        and BOTH obey the SAME machine byte budget (the author's
+        per-printer setting): one configured limit governs the whole
+        unified cache, never a smaller index-side default that could
+        evict whole folders early. The index's entry-count bound is
+        disabled here — the byte budget is the user-facing limit,
+        and a hidden 16-print cap would silently override it."""
         print_root = os.path.join(self._cache_root, "cache-v2", self._machine_hash, "prints")
         cache_bytes = None
         if self._cache_bytes_source is not None:
             cache_bytes = self._cache_bytes_source()
         prepared = PreparedCache(print_root) if cache_bytes is None \
             else PreparedCache(print_root, max_bytes=cache_bytes)
-        self._service.rebind_stores(
-            PersistentIndexCache(print_root), prepared,
-            initial=initial)
+        index = PersistentIndexCache(print_root) if cache_bytes is None \
+            else PersistentIndexCache(print_root, max_bytes=cache_bytes,
+                                      max_entries=None)
+        self._service.rebind_stores(index, prepared, initial=initial)
 
     def follow(self) -> None:
         """The binding's changed signal: rebind only when the durable
