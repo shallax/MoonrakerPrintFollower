@@ -1768,18 +1768,25 @@ class PersistentIndexCache:
                     continue
                 totals[root] = (mtime, size)
             keep_dir = os.path.dirname(keep) if keep else None
-            total = 0
+            # The running total tracks RETAINED bytes (the review's
+            # prune-over-eviction finding): a deleted folder's bytes
+            # leave the accounting, so an entry past the crossing
+            # still counts on its own merits — the eviction stops
+            # once the retained set fits the budget, never a
+            # wholesale clearing of every older folder.
+            retained = 0
             for idx, (root, (_mtime, size)) in enumerate(
                     sorted(totals.items(), key=lambda item: item[1][0],
                            reverse=True)):
-                total += size
+                retained += size
                 if root == keep_dir:
-                    # The protected entry still counts its bytes
-                    # against the budget.
+                    # The protected entry always survives, and its
+                    # bytes still count against the budget.
                     continue
-                if idx >= self.max_entries or total > self.max_bytes:
+                if idx >= self.max_entries or retained > self.max_bytes:
                     try:
                         shutil.rmtree(root, ignore_errors=True)
+                        retained -= size
                         _log("cache print evicted: %s (%d bytes)", root, size)
                     except OSError:
                         pass

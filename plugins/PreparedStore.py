@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import shutil
 import struct
+import threading
 import time
 from typing import Optional
 
@@ -63,6 +64,13 @@ class PreparedCache:
     def __init__(self, directory: str, max_bytes: int = _DEFAULT_MAX_BYTES) -> None:
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
+        # The writer-ownership lock (the review's ownership finding):
+        # every writer touch and the publish boundaries (suspend,
+        # abort, finish) serialize through it, so an owner's suspend
+        # can never close a handle mid-append and a retired writer
+        # refuses every later write atomically. Re-entrant — the
+        # failure paths abort from inside.
+        self._lock = threading.RLock()
         os.makedirs(self.directory, exist_ok=True)
         # Crash leftovers: a tmp writer from a previous run now
         # ADOPTS its successfully prepared layers (the review's
@@ -314,7 +322,13 @@ class PreparedCache:
         handle.write(b"\0" * (layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
         return {"identity": identity, "temp": temp, "handle": handle,
                 "layer_count": layer_count, "table": [None] * layer_count,
-                "checkpoint_layers": 0, "checkpoint_bytes": 0}
+                "checkpoint_layers": 0, "checkpoint_bytes": 0,
+                # The generation-owned retirement flag (the review's
+                # writer-ownership finding): the OWNER flips it when a
+                # suspend/close/rebind begins publishing — every write
+                # and the finish honour it, so a stale worker can
+                # never touch the file after retirement.
+                "retired": False}
 
     def _table_offset(self, writer: dict) -> int:
         """The table region's byte offset: the header plus the
@@ -322,54 +336,67 @@ class PreparedCache:
         return struct.calcsize(_HEADER_FMT) + len(writer["identity"].encode("utf-8"))
 
     def append(self, writer: dict, layer: int, payload: bytes) -> None:
-        if layer < 0 or layer >= writer["layer_count"] or writer["table"][layer] is not None:
-            return
-        handle = writer["handle"]
-        writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
-        handle.write(payload)
-        # The durability ordering (the review's checkpoint finding):
-        # a table entry advertised CACHED after recovery must refer to
-        # bytes that were durably written BEFORE the entry became
-        # visible — the payload flushes first, only then does the
-        # slot's write advertise it.
-        handle.flush()
-        # The in-place checkpoint (the review's resumable-persistence
-        # finding): the table slot writes NOW, so an interrupted pass
-        # keeps this layer's entry and the adoption resumes from the
-        # EMPTY slots.
-        end = handle.tell()
-        handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
-        handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
-                                 writer["table"][layer][1], len(payload)))
-        handle.flush()
-        handle.seek(end)
-        # The periodic durability checkpoint: an fsync every 32
-        # layers or 4 MiB of payload — the crash-consistency guarantee
-        # at a cadence whose cost is invisible next to the encode
-        # walk (a per-layer fsync would). The suspension and the
-        # finish always sync (their callers).
-        writer["checkpoint_layers"] += 1
-        writer["checkpoint_bytes"] += len(payload)
-        if writer["checkpoint_layers"] >= 32 or writer["checkpoint_bytes"] >= 4 * 1024 * 1024:
-            try:
-                os.fsync(handle.fileno())
-            except OSError:
-                pass
-            writer["checkpoint_layers"] = 0
-            writer["checkpoint_bytes"] = 0
+        # The whole append holds the lock: the retired check and the
+        # write are one atomic step, so an owner's suspend can never
+        # interleave — it either precedes this append (the flag
+        # refuses it) or follows it (the bytes are checkpointed).
+        with self._lock:
+            if writer.get("retired"):
+                # The owner began publishing this writer: a stale
+                # generation must never write to it again (the
+                # review's writer-ownership finding).
+                return
+            if layer < 0 or layer >= writer["layer_count"] or writer["table"][layer] is not None:
+                return
+            handle = writer["handle"]
+            writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
+            handle.write(payload)
+            # The durability ordering (the review's checkpoint
+            # finding): a table entry advertised CACHED after a
+            # process crash must refer to bytes the page cache
+            # already holds — the payload flushes first, only then
+            # does the slot's write advertise it.
+            handle.flush()
+            # The in-place checkpoint (the review's
+            # resumable-persistence finding): the table slot writes
+            # NOW, so an interrupted pass keeps this layer's entry
+            # and the adoption resumes from the EMPTY slots.
+            end = handle.tell()
+            handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+            handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
+                                     writer["table"][layer][1], len(payload)))
+            handle.flush()
+            handle.seek(end)
+            # The periodic durability checkpoint: an fsync every 32
+            # layers or 4 MiB of payload — the periodic durability
+            # guarantee at a cadence whose cost is invisible next to
+            # the encode walk (a per-layer fsync would). The
+            # suspension and the finish always sync (their callers).
+            writer["checkpoint_layers"] += 1
+            writer["checkpoint_bytes"] += len(payload)
+            if writer["checkpoint_layers"] >= 32 or writer["checkpoint_bytes"] >= 4 * 1024 * 1024:
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+                writer["checkpoint_layers"] = 0
+                writer["checkpoint_bytes"] = 0
 
     def append_uncacheable(self, writer: dict, layer: int) -> None:
         """Record a layer the pass walked but the codec refused: no
         payload follows, and the state says never retry."""
-        if writer is None or layer < 0 or layer >= writer["layer_count"] \
-                or writer["table"][layer] is not None:
+        if writer is None:
             return
-        writer["table"][layer] = (STATE_UNCACHEABLE, 0, 0)
-        handle = writer["handle"]
-        end = handle.tell()
-        handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
-        handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_UNCACHEABLE, 0, 0))
-        handle.seek(end)
+        with self._lock:
+            if writer.get("retired") or layer < 0 \
+                    or layer >= writer["layer_count"] or writer["table"][layer] is not None:
+                return
+            writer["table"][layer] = (STATE_UNCACHEABLE, 0, 0)
+            handle = writer["handle"]
+            end = handle.tell()
+            handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+            handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_UNCACHEABLE, 0, 0))
+            handle.seek(end)
 
     def finish_write(self, writer: dict) -> Optional[str]:
         """Flip the completion flag, then atomically publish. The
@@ -378,26 +405,29 @@ class PreparedCache:
         pass complete. A remaining slot means the pass never resolved
         it — EMPTY (a latched hydrate), retried on the next session,
         never confused with an uncacheable layer (which was marked
-        explicitly)."""
-        identity = writer["identity"]
-        handle = writer["handle"]
-        try:
-            # The completion flag is the header's final byte.
-            handle.seek(struct.calcsize(_HEADER_FMT) - 1)
-            handle.write(b"\x01")
-            handle.flush()
-            # The publish's durability boundary: the complete store's
-            # bytes sync before the rename (a crash after the publish
-            # must never leave a torn store).
+        explicitly). A RETIRED writer never finishes: the owner's
+        suspend owns its publication."""
+        with self._lock:
+            if writer.get("retired"):
+                return None
+            identity = writer["identity"]
+            handle = writer["handle"]
             try:
-                os.fsync(handle.fileno())
+                # The completion flag is the header's final byte.
+                handle.seek(struct.calcsize(_HEADER_FMT) - 1)
+                handle.write(b"\x01")
+                handle.flush()
+                # The publish's durability boundary: the complete
+                # store's bytes sync before the rename.
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+                handle.close()
+                os.replace(writer["temp"], self._path(identity))
             except OSError:
-                pass
-            handle.close()
-            os.replace(writer["temp"], self._path(identity))
-        except OSError:
-            self.abort_write(writer)
-            return None
+                self.abort_write(writer)
+                return None
         self._evict(self._path(identity))
         return self._path(identity)
 
@@ -408,37 +438,46 @@ class PreparedCache:
         header already carries completion 0 and every layer's table
         slot was checkpointed in place — so the next session opens it
         and resumes from the EMPTY slots. Only a genuinely failed or
-        stale writer is aborted (abort_write)."""
+        stale writer is aborted (abort_write). The retirement flag
+        flips FIRST, under the lock: from the first moment of the
+        publication no worker can ever write to the writer again —
+        an in-flight append completes before the freeze, and every
+        later one is refused."""
         if writer is None:
             return False
-        try:
-            writer["handle"].flush()
-            # The publish's durability boundary: the checkpointed
-            # bytes and the table slots sync before the rename — a
-            # crash after the publish must never leave a torn store.
+        with self._lock:
+            writer["retired"] = True
             try:
-                os.fsync(writer["handle"].fileno())
+                writer["handle"].flush()
+                # The publish's durability boundary: the checkpointed
+                # bytes and the table slots sync before the rename.
+                try:
+                    os.fsync(writer["handle"].fileno())
+                except OSError:
+                    pass
+                writer["handle"].close()
+                os.replace(writer["temp"], self._path(writer["identity"]))
+                return True
             except OSError:
-                pass
-            writer["handle"].close()
-            os.replace(writer["temp"], self._path(writer["identity"]))
-            return True
-        except OSError:
-            self.abort_write(writer)
-            return False
+                self.abort_write(writer)
+                return False
 
     def abort_write(self, writer: dict) -> None:
         """Abandon an unfinished writer: close the handle and remove
-        the temp file, however far the append got . Idempotent — the caller's exit paths all reach
-        it."""
-        try:
-            writer["handle"].close()
-        except (OSError, ValueError):
-            pass
-        try:
-            os.unlink(writer["temp"])
-        except OSError:
-            pass
+        the temp file, however far the append got. Idempotent — the
+        caller's exit paths all reach it. The retirement flag flips
+        under the lock too, so an abandoned writer is exactly as
+        untouchable as a suspended one."""
+        with self._lock:
+            writer["retired"] = True
+            try:
+                writer["handle"].close()
+            except (OSError, ValueError):
+                pass
+            try:
+                os.unlink(writer["temp"])
+            except OSError:
+                pass
 
     def _evict(self, keep: str) -> None:
         """The print-level size policy (the review's unified-lifecycle
@@ -464,7 +503,15 @@ class PreparedCache:
                     continue
             keep_dir = os.path.dirname(keep) if keep else None
             total = 0
-            for root, (_atime, size) in sorted(totals.items()):
+            # The recency walk (the review's LRU finding): the
+            # eviction runs NEWEST first by access time — the
+            # retained set is the most recently used prefix that fits
+            # the budget, and the evicted tail is the least recently
+            # read. The folder's hash order never decides an
+            # eviction.
+            for root, (_atime, size) in sorted(totals.items(),
+                                               key=lambda item: item[1][0],
+                                               reverse=True):
                 if total + size <= self.max_bytes:
                     total += size
                     continue

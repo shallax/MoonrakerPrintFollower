@@ -1703,6 +1703,112 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertTrue(self.service._prepared_saved)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
 
+    def test_a_weak_re_extraction_never_adopts_the_old_prepared_geometry(self):
+        # F3's required E2E: session 1 persists prepared geometry for
+        # a WEAK identity (same name + size, modified 0, uuid A).
+        # Session 2 is the re-extraction — same key, same layer
+        # count, a fresh uuid and DIFFERENT geometry — and must
+        # neither attempt the index restore nor adopt the old
+        # prepared table: the rebuilt geometry replaces the old
+        # representation byte for byte.
+        module = self.qt.load("GCodeIndexService")
+        self.files.identity.uuid = "uA"
+        self.files.identity.modified = 0.0
+        self.files.identity.size = 100
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self._pump()
+        self.assertTrue(self.service._prepared_saved)
+        old_table = self.store.load_table("print-key")
+        self.assertIsNotNone(old_table, "session 1 persisted nothing")
+        old_payload = self.store.read("print-key", old_table["table"], 0)
+
+        # Session 2: fresh stores, fresh service, the re-extracted
+        # identity — same name + size, still no timestamp, a NEW uuid
+        # and different geometry (40 motions vs 20) over the SAME
+        # layer count, so a layer-count check cannot save us.
+        self.service.close()
+        from plugins.PreparedStore import PreparedCache
+        self.store = PreparedCache(self._dir.name)
+        self.service = module.GCodeIndexService(self.files, object(),
+                                                prepared=self.store)
+        self.addCleanup(self.service.close)
+        self.service.bind(self.files.job_key)
+        self.service._restored = False  # the gate is genuinely exercised
+        self.service._wanted = True
+        self.files.identity.uuid = "uB"
+        index_b = make_index(layers=5, motions=40)
+        self.service._view = module.IndexView(self.files.job_key, index_b)
+        submitted = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append(kind) or original(kind, work, lease))
+        self.service._advance()
+        self.assertNotIn("restore", submitted,
+                         "the weak re-extraction attempted the index restore")
+        self.assertIsNone(self.service._prepared_table,
+                          "the old prepared table was adopted")
+        self.assertEqual(self.service._prepared_coverage, set(),
+                         "the old prepared coverage leaked in")
+        self._pump()
+        self.assertTrue(self.service._prepared_saved)
+        # The published store now holds the NEW geometry's exact
+        # bytes — the old representation was replaced, never served.
+        new_table = self.store.load_table("print-key")
+        self.assertIsNotNone(new_table)
+        new_payload = self.store.read("print-key", new_table["table"], 0)
+        self.assertNotEqual(new_payload, old_payload,
+                            "the old geometry survived the rebuild")
+        expected = module._encode_layer(
+            module._prepare_layer(index_b, 0, lambda: False))
+        self.assertEqual(new_payload, expected,
+                         "the published layer is not the new geometry's bytes")
+
+    def test_a_regenerated_uuid_with_strong_metadata_still_reuses(self):
+        # The preserved strong case: the same filename/size/mtime and
+        # a REGENERATED uuid — the reliable timestamp is the voucher,
+        # so the persisted prepared store still takes the fast path
+        # across sessions (no rebuild, no raw re-walk).
+        module = self.qt.load("GCodeIndexService")
+        self.files.identity.uuid = "uA"
+        self.files.identity.modified = 1.0
+        self.files.identity.size = 100
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self._pump()
+        self.assertTrue(self.service._prepared_saved)
+        old_payload = self.store.read(
+            "print-key", self.store.load_table("print-key")["table"], 0)
+
+        self.service.close()
+        from plugins.PreparedStore import PreparedCache
+        self.store = PreparedCache(self._dir.name)
+        self.service = module.GCodeIndexService(self.files, object(),
+                                                prepared=self.store)
+        self.addCleanup(self.service.close)
+        self.service.bind(self.files.job_key)
+        self.service._restored = True
+        self.service._wanted = True
+        self.files.identity.uuid = "uB"  # the regenerated token
+        self._view(5)
+        submitted = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append(kind) or original(kind, work, lease))
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        self.assertTrue(self.service._prepared_saved,
+                        "the strong metadata never took the fast path")
+        self.assertEqual(self.service._full_next, 5)
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
+        self.service._advance()
+        self.assertNotIn("fullprep", submitted,
+                         "the strong reuse rebuilt the whole store")
+        table = self.store.load_table("print-key")
+        self.assertEqual(self.store.read("print-key", table["table"], 0),
+                         old_payload,
+                         "the reused persistence serves different geometry")
+
     def test_the_byte_budgets_bind_the_ram_tiers(self):
         # : the packed tier is pure bytes,
         # the decoded tier holds its slot floor under pressure, and a

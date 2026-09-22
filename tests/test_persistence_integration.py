@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -913,6 +915,223 @@ class MachineNamespaceTests(unittest.TestCase):
         owner.index._prepared.finalise("print-key", [self._payload(3)])
         self.assertIsNone(unknown_store.load_table("print-key"),
                           "data stranded in the unknown namespace")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class WriterOwnershipTests(unittest.TestCase):
+    """The review's writer-ownership findings (F1+F2): the machine
+    switch and the normal close RETIRE the in-flight prepared writer
+    before the checkpoint — the retired flag plus the store's lock
+    make the freeze and the publication one atomic step, so a blocked
+    pass worker can never append or finalise through the swapped (or
+    closed) stores, the checkpoint lands in the machine whose pass
+    produced it, and the already-committed layers are never lost."""
+
+    class Identity:
+        uuid = "u"
+        modified = 1
+        size = 100
+
+        def __init__(self, key):
+            self._key = key
+
+        def stable_key(self):
+            return self._key
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.base = base.name
+        self.prefs = Preferences({})
+        from UM.Resources import Resources
+        self.resources_patcher = patch.object(
+            Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
+        self.config_patcher = patch.object(
+            Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", return_value=base.name)
+        self.resources_patcher.start()
+        self.config_patcher.start()
+        self.cache_patcher.start()
+        self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
+        from plugins.FollowerRuntime import FollowerRuntime
+        self.FollowerRuntime = FollowerRuntime
+
+    def _app(self, started):
+        app = self.qt.Application(self.prefs)
+        app.started = started
+        return app
+
+    def _owner(self, machine):
+        app = self._app(started=True)
+        app.stack = self.qt.Machine(machine)
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        return app, owner
+
+    def _switch(self, app, machine_id):
+        app.stack = self.qt.Machine(machine_id)
+        app.globalContainerStackChanged.emit()
+
+    def _start_blocked_pass(self, owner):
+        """Seed the runtime's REAL service with a view and run the
+        fullprep pass with the worker blocked inside layer 1's
+        prepare — layer 0 is committed to the writer BEFORE the block
+        (the `entered` event fires only after that append), so the
+        cutover below always races a worker that still owns the
+        writer."""
+        from plugins.GCodeIndexService import IndexView
+        import plugins.GCodeIndexService as service_module
+        from tests.test_plate_progress import make_index
+
+        service = owner.index
+        job_key = ("part.gcode", 100, 1)
+        owner.files._job = job_key
+        owner.files._identity = self.Identity("print-key")
+        service.bind(job_key)
+        service._wanted = True
+        service._restored = True
+        service._view = IndexView(job_key, make_index(layers=5, motions=20))
+        service._prepared_open(owner.files.identity)
+
+        entered = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        real_prepare = service_module._prepare_layer
+        calls = []
+        def blocking_prepare(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                entered.set()
+                if not release.wait(30.0):
+                    raise RuntimeError("the test never released the blocked worker")
+            return real_prepare(*args, **kwargs)
+        service_module._prepare_layer = blocking_prepare
+        self.addCleanup(setattr, service_module, "_prepare_layer", real_prepare)
+
+        service._advance()
+        self.assertTrue(entered.wait(10.0),
+                        "the pass never reached the blocked layer")
+        writer = service._prepared_writer
+        self.assertIsNotNone(writer, "the pass opened no prepared writer")
+        self.assertIsNotNone(writer["table"][0],
+                             "layer 0 never committed before the block")
+        return service, release, writer["handle"]
+
+    def _drain(self, service):
+        """Pump the queue until the stale worker's completion lands."""
+        from PyQt6.QtCore import QCoreApplication
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and service._busy:
+            QCoreApplication.processEvents()
+            time.sleep(0.005)
+        return service._busy == ""
+
+    @staticmethod
+    def _empty_slots_after(loaded, first_empty):
+        """The checkpoint holds exactly the pre-cutover layers: every
+        slot after the committed prefix reads EMPTY."""
+        from plugins.PreparedStore import STATE_EMPTY
+        return all(entry[0] == STATE_EMPTY
+                   for entry in loaded["table"][first_empty:])
+
+    def test_a_blocked_preparation_cannot_cross_a_machine_switch(self):
+        # F1's required regression, through the real lifecycle: the
+        # runtime's own service runs the pass, the worker blocks
+        # inside layer 1's prepare with layer 0 committed, and the
+        # machine switch RETIRES the writer before the checkpoint —
+        # A's checkpoint appears only under A, B contains no A file,
+        # the released worker's later appends no-op, nothing raises
+        # from the closed handle, and A's partial coverage is
+        # recoverable on the return.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_a = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        self._switch(app, "B")
+
+        table_a = store_a.load_table("print-key")
+        self.assertIsNotNone(table_a, "A's checkpoint never published")
+        self.assertFalse(table_a["complete"],
+                         "the cutover published the partial as complete")
+        self.assertEqual(table_a["table"][0][0], STATE_CACHED)
+        self.assertGreater(table_a["table"][0][2], 0)
+        self.assertIsNotNone(store_a.read("print-key", table_a["table"], 0),
+                             "the checkpointed layer never reads back")
+        self.assertTrue(self._empty_slots_after(table_a, 1),
+                        "a layer crossed the cutover into the checkpoint")
+        self.assertTrue(handle.closed,
+                        "the cutover never closed the writer's handle")
+        self.assertIsNone(service._prepared_writer,
+                          "the cutover kept the old writer attached")
+        # B contains no A prepared file — the checkpoint (and every
+        # later append) stays in A's namespace.
+        self.assertIsNone(service._prepared.load_table("print-key"),
+                          "A's writer published into B's namespace")
+
+        release.set()
+        self.assertTrue(self._drain(service), "the stale worker never completed")
+        self.assertEqual(failed, [], "the cutover surfaced a worker failure")
+        self.assertEqual(service._error, "")
+        # The released worker's later appends landed nowhere.
+        self.assertIsNone(service._prepared.load_table("print-key"),
+                          "the released worker wrote into B's store")
+        self.assertTrue(self._empty_slots_after(
+            store_a.load_table("print-key"), 1),
+            "the released worker appended after the cutover")
+
+        # Back to A: the partial is recoverable — the fresh store over
+        # A's namespace reads the checkpoint and resumes from the
+        # EMPTY slots.
+        self._switch(app, "A")
+        recovered = service._prepared.load_table("print-key")
+        self.assertIsNotNone(recovered, "A's checkpoint never recovered")
+        self.assertFalse(recovered["complete"])
+        self.assertEqual(recovered["table"][0][0], STATE_CACHED)
+        self.assertIsNotNone(
+            service._prepared.read("print-key", recovered["table"], 0))
+
+    def test_a_blocked_preparation_survives_a_normal_close(self):
+        # F2's second required regression: the normal shutdown retires
+        # the in-flight writer the same way — the checkpoint publishes
+        # the committed layers, the released worker's later appends
+        # are refused, and nothing raises from touching the retired
+        # (closed) writer.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_a = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        owner.close()
+        self.assertTrue(handle.closed, "the close never closed the writer's handle")
+        table = store_a.load_table("print-key")
+        self.assertIsNotNone(table, "the close never checkpointed the partial")
+        self.assertFalse(table["complete"])
+        self.assertEqual(table["table"][0][0], STATE_CACHED)
+        self.assertIsNotNone(store_a.read("print-key", table["table"], 0),
+                             "the committed layer was lost over the close")
+        self.assertTrue(self._empty_slots_after(table, 1),
+                        "a layer crossed the close into the checkpoint")
+
+        release.set()
+        self.assertTrue(self._drain(service), "the stale worker never completed")
+        self.assertEqual(failed, [], "the close surfaced a worker failure")
+        self.assertEqual(service._error, "")
+        self.assertTrue(self._empty_slots_after(
+            store_a.load_table("print-key"), 1),
+            "a post-close append landed")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")

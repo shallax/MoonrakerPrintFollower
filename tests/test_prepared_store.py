@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 
 from plugins.PlateProgress import decode_layer, encode_layer
@@ -322,3 +323,41 @@ class PreparedStoreTests(unittest.TestCase):
         cache._evict(cache._path("print-3"))
         self.assertFalse(os.path.exists(path1),
                          "the oldest print's file survived the bound")
+
+    def test_the_eviction_walks_recency_not_hash_order(self):
+        # The review's LRU finding: the walk must follow ACCESS time,
+        # never the folder hash. The keys sort aaa, mmm, zzz
+        # lexically; the ACTUAL READS stamp the recency mmm (oldest),
+        # aaa, zzz (newest) — the reverse pairing. With a budget for
+        # exactly two folders, the least recently READ print must go
+        # (mmm, the lexical middle) while the most recent survives
+        # despite sorting last lexically.
+        cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+        payload = encode_layer(_payload(0))
+        for key in ("aaa", "mmm", "zzz"):
+            cache.finalise(key, [payload])
+        # The reads re-stamp the recency in the OPPOSITE pairing of
+        # the write order: mmm first (oldest), zzz last (newest).
+        cache.load_table("mmm")
+        time.sleep(0.02)
+        cache.load_table("aaa")
+        time.sleep(0.02)
+        cache.load_table("zzz")
+        folders = {key: os.path.dirname(cache._path(key))
+                   for key in ("aaa", "mmm", "zzz")}
+        sizes = {key: os.path.getsize(cache._path(key))
+                 for key in ("aaa", "mmm", "zzz")}
+        # The bound tightens AFTER the writes and reads: exactly two
+        # folders fit — one specific old print must disappear.
+        cache.max_bytes = sizes["aaa"] + sizes["zzz"]
+        cache._evict(None)
+        self.assertFalse(os.path.exists(folders["mmm"]),
+                         "the least recently read print survived")
+        self.assertIsNone(cache.load_table("mmm"),
+                          "the evicted print still reads")
+        self.assertTrue(os.path.exists(folders["aaa"]),
+                        "the middle print was evicted")
+        self.assertTrue(os.path.exists(folders["zzz"]),
+                        "the most recently read print was evicted")
+        self.assertIsNotNone(cache.load_table("aaa"))
+        self.assertIsNotNone(cache.load_table("zzz"))

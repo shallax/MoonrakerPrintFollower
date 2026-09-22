@@ -357,12 +357,14 @@ class GCodeIndexService(QObject):
         self._progress = None
         # The incremental writer: the pass
         # appends the encodings layer by layer, so the first session
-        # never retains the whole cold store in RAM. A rebind
-        # CHECKPOINTS the old print's unfinished writer — its
-        # committed layers publish as an incomplete store the print's
-        # next session resumes (never a bare drop of the reference,
-        # never a needless loss of the old print's progress).
-        self._suspend_prepared_writer()
+        # never retains the whole cold store in RAM. A bind
+        # RETIRES the old print's unfinished writer (the ownership
+        # cutover — the freeze precedes the checkpoint) and
+        # CHECKPOINTS it: its committed layers publish as an
+        # incomplete store the print's next session resumes (never a
+        # bare drop of the reference, never a needless loss of the
+        # old print's progress).
+        self._retire_prepared_writer()
         self._reset_print_state()
         # Keep _busy until the submitted worker actually completes. No new task
         # is submitted while a stale job is still executing.
@@ -794,13 +796,30 @@ class GCodeIndexService(QObject):
 
     def _prepared_open(self, identity):
         """Open the table for the current file's prepared cache (a
-        one-shot per identity)."""
+        one-shot per identity). The adoption obeys the SAME strength
+        gate as the index restore (the review's identity-policy
+        finding): only a RELIABLE modified timestamp may reuse
+        persisted geometry across sessions — a weak identity (name +
+        size alone, whatever its uuid) never adopts an old prepared
+        table, so a re-extracted file can never resurrect stale
+        geometry. The key still targets the same path: the fresh
+        pass's publish replaces the old representation."""
         if self._prepared is None or identity is None:
             return
         key = identity.stable_key() if hasattr(identity, "stable_key") else None
         if key is None or key == self._prepared_identity:
             return
         self._prepared_identity = key
+        # The strength gate — the same decision the index restore
+        # makes: modified > 0 is the only voucher for cross-session
+        # reuse. A uuid is Moonraker's per-extraction token, never
+        # content identity, and a name + size alone cannot tell two
+        # extractions apart — prefer rebuilding over stale geometry.
+        if not bool(getattr(identity, "modified", 0) > 0):
+            self._prepared_table = None
+            self._prepared_flag_complete = False
+            self._prepared_coverage = set()
+            return
         loaded = self._prepared.load_table(key)
         if loaded is None:
             self._prepared_table = None
@@ -866,54 +885,78 @@ class GCodeIndexService(QObject):
         if writer is not None:
             self._prepared.append(writer, layer, encoded)
 
-    def _abort_prepared_writer(self):
+    def _abort_prepared_writer(self, store=None):
         """Abandon an unfinished writer on every exit path: rebind,
         close and any abandonment —
         the temp file goes, the handle closes, and an old
         generation's worker can never finalise it."""
         if self._prepared_writer is None:
             return
-        if self._prepared is not None:
-            self._prepared.abort_write(self._prepared_writer)
+        store = store if store is not None else self._prepared
+        if store is not None:
+            store.abort_write(self._prepared_writer)
         self._prepared_writer = None
 
-    def _suspend_prepared_writer(self):
+    def _suspend_prepared_writer(self, store=None):
         """The normal-lifecycle checkpoint (the review's clean-shutdown
         finding): a close or a store rebind publishes the writer's
         committed layers as an INCOMPLETE store — the next session
         opens it and resumes from the EMPTY slots. Only a genuinely
-        failed or stale writer is aborted."""
+        failed or stale writer is aborted. The store is the writer's
+        OWN store — during a rebind the caller passes the OLD one
+        explicitly, so the checkpoint lands in the machine whose
+        pass produced it."""
         if self._prepared_writer is None:
             return
-        if self._prepared is not None:
+        store = store if store is not None else self._prepared
+        if store is not None:
             covered = sum(1 for entry in self._prepared_writer["table"]
                           if entry is not None)
-            self._prepared.suspend_write(self._prepared_writer)
+            store.suspend_write(self._prepared_writer)
             Logger.log("i", "prepared checkpoint published on shutdown: %d layers",
                        covered)
         self._prepared_writer = None
 
+    def _retire_prepared_writer(self, store=None):
+        """The writer-ownership cutover (the review's ownership
+        finding): bind, close and the machine rebind all RETIRE
+        before they checkpoint. The retired flag freezes every later
+        append and finish, and the store's own lock makes the freeze
+        and the publication one atomic step against an in-flight
+        append — once this returns no worker can ever write to the
+        writer again, and the checkpoint holds exactly the committed
+        layers. No blocking beyond one bounded append: the suspend
+        only ever waits for a write already in progress."""
+        if self._prepared_writer is None:
+            return
+        self._prepared_writer["retired"] = True
+        self._suspend_prepared_writer(store)
+
     def rebind_stores(self, cache, prepared, initial=False):
         """The machine-switch rebind (the review's namespace finding):
-        the index and prepared stores swap while THIS service survives
-        — the old generation cancels and its writer SUSPENDS into the
-        OLD machine's namespace (its committed layers are never lost),
-        and the print-specific state resets. A worker from the old
-        machine can never commit into the new stores: the generation
-        bump and the cancel event retire it before the swap. The
-        INITIAL bind at construction only installs the stores — the
-        state is already fresh."""
-        self._cache = cache
-        self._prepared = prepared
+        the index and prepared stores swap while THIS service survives.
+        The cutover is ordered (the review's ownership finding):
+        retire/cancel the old generation, freeze its writer, then
+        checkpoint it through the OLD machine's own store — all
+        BEFORE the new stores install — so an A writer can never
+        publish into B's namespace and a stale worker can never touch
+        the retired writer again. The print-specific state resets.
+        The INITIAL bind at construction only installs the stores —
+        the state is already fresh."""
         if initial:
+            self._cache = cache
+            self._prepared = prepared
             return
+        old_prepared = self._prepared
         self._generation += 1
         self._cancel.set()
         self._cancel = threading.Event()
         self._job = None
         self._view = None
         self._progress = None
-        self._suspend_prepared_writer()
+        self._retire_prepared_writer(old_prepared)
+        self._cache = cache
+        self._prepared = prepared
         self._reset_print_state()
         self.changed.emit()
 
@@ -1121,7 +1164,11 @@ class GCodeIndexService(QObject):
             self._save = False
             self._last_save_at = time.monotonic()
             index = self._view._index
-            self._submit("save", lambda: self._cache.save(identity, index))
+            # The store is captured NOW, like the prepared workers: a
+            # rebind swaps self._cache before the worker runs, and
+            # this save belongs to the machine it was built for.
+            cache_store = self._cache
+            self._submit("save", lambda: cache_store.save(identity, index))
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
                 and self._prepared is not None and not self._prepared_saved:
             # The pass's completion finishes the incremental writer.
@@ -1132,8 +1179,13 @@ class GCodeIndexService(QObject):
             writer = self._prepared_writer
             self._prepared_writer = None
             if writer is not None:
+                # The store is captured NOW: a machine rebind swaps
+                # self._prepared before the worker runs, and this
+                # writer's finalise must publish through the store
+                # that opened it (its own machine's namespace).
+                store = self._prepared
                 def prepared_save():
-                    return self._prepared.finish_write(writer)
+                    return store.finish_write(writer)
                 self._submit("prepared_save", prepared_save)
         elif self._view is not None and self._full_next < len(self._view.ranges):
             # The full prepared cache's background pass (the live
@@ -1183,6 +1235,13 @@ class GCodeIndexService(QObject):
                 self._prepared_writer = self._prepared.open_for_write(
                     self._prepared_identity, len(self._view.ranges))
             prepared_writer = self._prepared_writer
+            # The store the writer belongs to is captured NOW: a
+            # machine rebind swaps self._prepared while the batch
+            # runs, and the appends must reach the store that opened
+            # the writer (which refuses them after the cutover's
+            # retirement anyway — the capture makes the ownership
+            # structural, never a thread-timing accident).
+            prepared_store = self._prepared
 
             # No demand exists on the owner thread at this instant.
             # Any later request flips the event and cooperatively
@@ -1215,7 +1274,7 @@ class GCodeIndexService(QObject):
                         # HERE, so the pass's finish can never publish
                         # a hole for a layer that WAS prepared.
                         if prepared_writer is not None:
-                            self._prepared.append(prepared_writer, layer, packed)
+                            prepared_store.append(prepared_writer, layer, packed)
                         frontier = layer + 1
                         continue
                     if prepared_table is not None and layer < len(prepared_table) \
@@ -1235,7 +1294,7 @@ class GCodeIndexService(QObject):
                         # are read anyway for the table walk; the
                         # copy costs a write, not a decode.
                         if prepared_writer is not None:
-                            self._prepared.append(prepared_writer, layer, raw)
+                            prepared_store.append(prepared_writer, layer, raw)
                         frontier = layer + 1
                         continue
                     if index.compact and layer not in index.hydrated_layers:
@@ -1255,7 +1314,7 @@ class GCodeIndexService(QObject):
                             packed = _encode_layer(payload)
                             encoded[layer] = packed
                             if prepared_writer is not None:
-                                self._prepared.append(prepared_writer, layer, packed)
+                                prepared_store.append(prepared_writer, layer, packed)
                         except Exception:
                             # A layer the codec cannot hold simply
                             # stays out of the cache; the pass must
@@ -1412,9 +1471,12 @@ class GCodeIndexService(QObject):
         self._closed = True
         self._generation += 1
         self._cancel.set()
-        # The normal shutdown CHECKPOINTS the unfinished writer (the
-        # review's clean-shutdown finding): its committed layers
-        # publish as an incomplete store the next session resumes —
-        # a plain abort would throw away a partly-prepared print.
-        self._suspend_prepared_writer()
+        # The normal shutdown RETIRES then CHECKPOINTS the unfinished
+        # writer (the review's clean-shutdown and ownership findings):
+        # the freeze precedes the publication under the store's lock,
+        # so an in-flight pass worker can never write to the writer
+        # again, and the committed layers publish as an incomplete
+        # store the next session resumes — a plain abort would throw
+        # away a partly-prepared print.
+        self._retire_prepared_writer()
         self._executor.shutdown(wait=False, cancel_futures=True)
