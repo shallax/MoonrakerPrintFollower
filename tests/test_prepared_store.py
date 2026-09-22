@@ -377,6 +377,100 @@ class PreparedStoreTests(unittest.TestCase):
                              encode_layer(_payload(layer)),
                              "the newer partial never round-tripped")
 
+    def test_a_crashed_repair_that_resolved_more_beats_a_holey_complete_file(self):
+        # The release-candidate finding: a completed pass can publish
+        # EMPTY slots (a latched hydrate). A repair that resolved
+        # MORE of those slots before crashing holds more real
+        # coverage — the completion flag alone must never discard it.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(8):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.finish_write(writer)  # complete: 8 cached, 2 EMPTY
+        # Session 2: the repair resolves layer 8 too, then crashes.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(9):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table)
+        self.assertFalse(table["complete"], "the adopted repair read complete")
+        cached = sum(1 for entry in table["table"] if entry[0] == STATE_CACHED)
+        self.assertEqual(cached, 9,
+                         "the completion flag discarded the fuller repair")
+        self.assertEqual(reloaded.read("print-1", table["table"], 8),
+                         encode_layer(_payload(8)),
+                         "the repair's extra resolution never round-tripped")
+
+    def test_a_crashed_repair_behind_the_holey_complete_file_loses(self):
+        # The companion rule: a repair that crashed EARLY holds fewer
+        # resolved layers than the published complete file — the
+        # published file must survive, however holey it is.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(8):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.finish_write(writer)  # complete: 8 cached, 2 EMPTY
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(5):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table)
+        self.assertTrue(table["complete"],
+                        "the published complete file lost to a behind repair")
+        cached = sum(1 for entry in table["table"] if entry[0] == STATE_CACHED)
+        self.assertEqual(cached, 8)
+
+    def test_an_uncacheable_entry_counts_toward_the_arbitration(self):
+        # UNCACHEABLE is a RESOLVED state: a complete file with six
+        # cached + one uncacheable entry (7 resolved) must lose to a
+        # crashed repair holding eight cached entries — cached alone
+        # would misread the final as merely 6.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(6):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.append_uncacheable(writer, 6)
+        self.cache.finish_write(writer)  # complete: 7 resolved, 3 EMPTY
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(8):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table)
+        cached = sum(1 for entry in table["table"] if entry[0] == STATE_CACHED)
+        self.assertEqual(cached, 8,
+                         "the uncacheable entry never counted as coverage")
+
+    def test_equal_arbitration_coverage_goes_to_the_newer_file(self):
+        # Equal resolved coverage falls to the recency tie-break —
+        # the policy never prefers a filename over fresher work.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(5):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.suspend_write(writer)  # the published 5/10 partial
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(5):
+            self.cache.append(writer, layer, encode_layer(_payload(layer + 5)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        future = time.time() + 60.0
+        os.utime(dead_tmp, (future, future))
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table)
+        self.assertEqual(reloaded.read("print-1", table["table"], 0),
+                         encode_layer(_payload(5)),
+                         "the equal-coverage newer candidate lost the tie")
+
     def test_a_complete_final_beats_any_interrupted_candidate(self):
         # The policy's top rule: a complete valid final outranks an
         # incomplete tmp however many layers the tmp committed.

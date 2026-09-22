@@ -15,6 +15,8 @@ from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_
 # The in-flight latch's hard ceiling: a gesture's pending state expires
 # on its own after a few multiples of the status lag (the review's
 # rule: never a permanent wedge, and never against the rescue direction).
+# The plate that settles a gesture releases its latch sooner; this is the
+# backstop for a status that never arrives.
 PENDING_CEILING_SECONDS = 10.0
 
 
@@ -82,6 +84,11 @@ class MonitorControls(QObject):
         self._remembered_channels.clear()
         self._macro_cache.clear()
         self._config_identity = None
+        # A pending exclusion is a claim about a gesture on THIS session
+        # and THIS plate: a printer switch (the invalidated signal) makes
+        # it meaningless, and it must not refuse the same gesture on the
+        # printer that replaces it.
+        self._pending.clear()
         self.observe()
 
     @staticmethod
@@ -102,6 +109,7 @@ class MonitorControls(QObject):
 
     def observe(self):
         snapshot = self._data.snapshot
+        self._release_settled_latches(snapshot)
         aux = snapshot.auxiliary
         configfile = aux.get("configfile") or {}
         config = configfile.get("config") or {}
@@ -396,16 +404,12 @@ class MonitorControls(QObject):
 
     def exclude(self, name):
         name = str(name or "")
-        status = _exclude_status(self._data.snapshot)
-        names = {item.get("name") for item in status.get("objects", ())}
-        if name in status.get("excluded_objects", ()):
-            # A no-op must still receipt (the no-confirm ruling: the
-            # receipt IS the confirmation — silence re-triggers the
-            # gesture, and a toggle applied twice is the inverse).
-            self._commands.report_status(f"Exclude refused: '{name}' is already excluded")
-            return
-        if name not in names:
-            self._commands.report_status(f"Exclude refused: '{name}' is not on the plate")
+        # A no-op must still receipt (the no-confirm ruling: the
+        # receipt IS the confirmation — silence re-triggers the
+        # gesture, and a toggle applied twice is the inverse).
+        refusal = self._object_refusal("exclude", name, _exclude_status(self._data.snapshot))
+        if refusal:
+            self._commands.report_status(f"Exclude refused: {refusal}")
             return
         observation = getattr(self._data, "observation", None)
         verdict = can_exclude(observation) if observation is not None \
@@ -416,18 +420,25 @@ class MonitorControls(QObject):
             # exact class this release exists to end.
             self._commands.report_status(f"Exclude refused: {verdict.reason or 'no longer allowed'}")
             return
-        if not self._arm(("exclude", name)):
+        key = ("exclude", name)
+        if not self._arm(key):
             return
-        self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{_escape_exclude_name(name)}"', rule=can_exclude)
+        started = self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{_escape_exclude_name(name)}"',
+                                        rule=self._object_rule("exclude", name))
+        if not started:
+            # The lane never sent it (a dead transport, a full queue):
+            # nothing is in flight, so the latch must not refuse the
+            # retry for the rest of its ceiling.
+            self._pending.pop(key, None)
 
     def restore(self, name):
         name = str(name or "")
-        status = _exclude_status(self._data.snapshot)
         if not name:
             self._commands.report_status("Restore refused: no object named")
             return
-        if name not in status.get("excluded_objects", ()):
-            self._commands.report_status(f"Restore refused: '{name}' is not excluded")
+        refusal = self._object_refusal("restore", name, _exclude_status(self._data.snapshot))
+        if refusal:
+            self._commands.report_status(f"Restore refused: {refusal}")
             return
         observation = getattr(self._data, "observation", None)
         verdict = can_restore(observation) if observation is not None \
@@ -435,12 +446,58 @@ class MonitorControls(QObject):
         if verdict.mode != "allowed":
             self._commands.report_status(f"Restore refused: {verdict.reason or 'no longer allowed'}")
             return
-        if not self._arm(("restore", name)):
+        key = ("restore", name)
+        if not self._arm(key):
             return
         # The name rides INSIDE the RESET line, proven non-empty above;
         # there is deliberately no no-name branch — a bare RESET=1
         # clears every exclusion on the plate (the review's blocker).
-        self._commands.script("Restore " + name, f'EXCLUDE_OBJECT RESET=1 NAME="{_escape_exclude_name(name)}"', rule=can_restore)
+        started = self._commands.script("Restore " + name, f'EXCLUDE_OBJECT RESET=1 NAME="{_escape_exclude_name(name)}"',
+                                        rule=self._object_rule("restore", name))
+        if not started:
+            self._pending.pop(key, None)
+
+    @staticmethod
+    def _object_refusal(direction, name, status):
+        """Why this object gesture cannot land against the OBSERVED
+        plate, '' when it can. One derivation behind three readers —
+        the click gate, a queued entry's dispatch revalidation and the
+        latch release — so no two of them can disagree about a name."""
+        names = {item.get("name") for item in status.get("objects") or () if isinstance(item, Mapping)}
+        excluded = set(status.get("excluded_objects") or ())
+        if direction == "exclude":
+            if name in excluded: return f"'{name}' is already excluded"
+            return "" if name in names else f"'{name}' is not on the plate"
+        return "" if name in excluded else f"'{name}' is not excluded"
+
+    def _object_rule(self, direction, name):
+        """The dispatch-time rule for one object gesture: the mid-print
+        permission row re-run (the lane's queued-entry revalidation)
+        PLUS the name-level predicate, which the click-time gate could
+        only check before the entry queued — the plate moves while the
+        lane is busy. A denial kills the entry, so its latch dies with
+        it: a dead gesture must not hold the retry, nor the other
+        direction, for the rest of the ceiling."""
+        row = can_exclude if direction == "exclude" else can_restore
+        def rule(observation):
+            verdict = row(observation)
+            if verdict.mode == "allowed":
+                refusal = self._object_refusal(direction, name, _exclude_status(self._data.snapshot))
+                if not refusal: return verdict
+                verdict = Verdict("disabled", refusal)
+            self._pending.pop((direction, name), None)
+            return verdict
+        return rule
+
+    def _release_settled_latches(self, snapshot):
+        """A latch claims a gesture is still in flight; the plate that
+        settles it — the exclusion landed, the restore landed, the name
+        left the plate — releases it. The ten-second ceiling is the
+        backstop for a status that never came, never the release."""
+        status = _exclude_status(snapshot)
+        if not status: return
+        for key in [key for key in self._pending if self._object_refusal(key[0], key[1], status)]:
+            self._pending.pop(key, None)
 
     def exclude_current(self):
         """The Exclude current button's dispatch: the readout's current
@@ -453,14 +510,6 @@ class MonitorControls(QObject):
             self._commands.report_status("Exclude refused: no object is printing right now")
             return
         self.exclude(str(current))
-
-    def confirm_exclusion(self, name):
-        """The status shows the name excluded: the gesture landed."""
-        self._pending.pop(("exclude", name), None)
-
-    def confirm_restore(self, name):
-        """The status shows the name restored: the gesture landed."""
-        self._pending.pop(("restore", name), None)
 
     def _arm(self, key):
         """The in-flight latch: one gesture per (name, direction), a

@@ -633,22 +633,35 @@ class MoonrakerFollowerMachineAction(MachineAction):
         package-ID-named directory included — never only the current
         cache-v2 subtree (the live ruling)."""
         try:
-            # The sweep covers EVERY generation the plugin ever
-            # used: the legacy package-ID-named directory AND the
-            # current renamed one — never only the cache-v2 subtree
-            # (the live ruling).
-            for path in (os.path.join(Resources.getCacheStoragePath(),
-                                      "MoonrakerPrintFollower"),
-                         self._cache_root()):
-                shutil.rmtree(path, ignore_errors=True)
-            # The backing files are gone: every index listener
-            # (the improved ETA, the follower, the EOP) must drop
-            # to the no-index state, not keep serving the in-memory
-            # index whose store just vanished (the live ruling).
+            # The coordinated lifecycle (the review's cache-clear
+            # finding): the index service retires its active work
+            # and its writer FIRST — the invalidate cancels the
+            # worker, freezes the prepared writer and bumps the
+            # generation — so no worker holds a file the sweep is
+            # about to delete. Then the sweep removes EVERY
+            # generation the plugin ever used: the legacy
+            # package-ID-named directory AND the current renamed one
+            # (the live ruling — never only the cache-v2 subtree).
+            # A directory that refuses to go (Windows file locks
+            # from a retiring worker) is REPORTED, never silently
+            # ignored.
             invalidate = getattr(self._follower, "invalidateIndex", None)
             if invalidate is not None:
                 invalidate()
-            self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
+            refused = []
+            for path in (os.path.join(Resources.getCacheStoragePath(),
+                                      "MoonrakerPrintFollower"),
+                         self._cache_root()):
+                try:
+                    shutil.rmtree(path)
+                except OSError:
+                    refused.append(path)
+            if refused:
+                self._cache_status = ("Cache partially cleared — some files are still "
+                                      "in use. Restart Cura to also drop the session's "
+                                      "downloaded file.")
+            else:
+                self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
         except Exception as error:
             Logger.log("w", "Moonraker Print Follower: cache clear failed: %s", error)
             self._cache_status = "Could not clear the cache — see Cura's log."

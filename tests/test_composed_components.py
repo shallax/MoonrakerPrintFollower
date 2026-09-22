@@ -288,6 +288,63 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(service._presentation_source(8), "decoded",
                          "the racing scrub's window never hydrated")
 
+    def test_a_stale_completion_never_clears_the_new_jobs_busy(self):
+        # The review's cache-clear finding: a stale worker's terminal
+        # must not clear the busy flag a NEWER task owns — the old
+        # code cleared _busy before the generation check, so a second
+        # job could be submitted while the first still ran.
+        service = self.parts.index
+        released = threading.Event()
+        released2 = threading.Event()
+
+        def slow_worker():
+            released.wait(5)
+            return []
+
+        def second_worker():
+            released2.wait(5)
+            return []
+
+        service._generation = 10
+        service._submit("hydrate", slow_worker, None)
+        self.assertEqual(service._busy, "hydrate")
+        # A bind bumps the generation while the worker still runs;
+        # a NEW task submits under the new generation.
+        service.bind(("other.gcode", 200, 1))
+        service._submit("hydrate", second_worker, None)
+        # The stale worker completes: its terminal belongs to the
+        # OLD generation and must leave the newer task's busy alone.
+        released.set()
+        for _ in range(200):
+            self.qt.events(5)
+            if not service._busy:
+                break
+        self.assertEqual(service._busy, "hydrate",
+                         "a stale completion cleared the newer job's busy")
+        released2.set()
+        for _ in range(200):
+            self.qt.events(5)
+            if not service._busy:
+                break
+        self.assertEqual(service._busy, "",
+                         "the new job's own completion never cleared the busy")
+
+    def test_the_invalidate_retires_the_active_prepared_writer(self):
+        # The review's cache-clear finding: invalidate must RETIRE
+        # (freeze and checkpoint) the active prepared writer, not
+        # discard the reference — a bare drop would leak the writer's
+        # temp file and leave a future append racing the deletion.
+        service = self.parts.index
+        writer = {"retired": False}
+        service._prepared_writer = writer
+        with patch.object(service, "_suspend_prepared_writer") as suspend:
+            service.invalidate()
+        self.assertTrue(writer["retired"], "the writer was never frozen")
+        self.assertEqual(suspend.call_count, 1,
+                         "the writer was never suspended/checkpointed")
+        self.assertIsNone(service._prepared_writer,
+                          "the writer reference was dropped without retiring")
+
     def test_the_cache_clear_invalidate_drops_every_index_listener_state(self):
         # The live ruling: once the cache-clear wipes the backing
         # files, every listener must believe the index does not exist —
@@ -2250,6 +2307,113 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                                                 surface.job_epoch, 100))
         self.assertEqual(surface.nav["url"], ready,
                          "a stale key's navigation raster promoted")
+
+    def test_a_stale_nav_cancellation_never_clears_the_new_job(self):
+        # The review's finding: a superseded job's late terminal
+        # cleared the slot a NEWER job owned (the epoch matched).
+        # The serial gates every terminal path.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        surface.nav["job"] = {"key": ("k",), "cancel": None,
+                              "epoch": surface.job_epoch, "serial": 7}
+        with patch.object(model, "_schedule_navigation") as schedule:
+            model._nav_committed(("cancelled",),
+                                 ("popover", -1, 0, 0, ("k",), "nav", 50,
+                                  surface.job_epoch, 6))
+        self.assertIsNotNone(surface.nav["job"],
+                             "a stale cancellation cleared the newer job's slot")
+        self.assertEqual(surface.nav["job"]["serial"], 7)
+        self.assertEqual(schedule.call_count, 0,
+                         "a stale terminal rescheduled over the live job")
+
+    def test_the_active_nav_cancellation_clears_and_reschedules(self):
+        # The active job's own terminal clears its slot and re-arms
+        # an outstanding demand.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        surface.nav["job"] = {"key": ("k",), "cancel": None,
+                              "epoch": surface.job_epoch, "serial": 7}
+        with patch.object(model, "_schedule_navigation") as schedule:
+            model._nav_committed(("cancelled",),
+                                 ("popover", -1, 0, 0, ("k",), "nav", 50,
+                                  surface.job_epoch, 7))
+        self.assertIsNone(surface.nav["job"],
+                          "the active job's cancellation kept its slot")
+        self.assertEqual(schedule.call_count, 1,
+                         "the cancelled active job never re-armed its demand")
+
+    def test_a_stale_nav_success_never_promotes_over_the_new_job(self):
+        # Two jobs can share a KEY (a zoom away and back): the serial
+        # distinguishes them — a same-key stale success must not
+        # promote over the newer job.
+        from PyQt6.QtGui import QImage
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        ready = surface.nav["url"]
+        shared_key = ("k",)
+        surface.nav["job"] = {"key": shared_key, "cancel": None,
+                              "epoch": surface.job_epoch, "serial": 7}
+        model._nav_committed(
+            ("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+             "file:///tmp/mpf/raster-probe/stale-serial.png", shared_key),
+            ("popover", -1, 0, 0, shared_key, "nav", 50,
+             surface.job_epoch, 6))
+        self.assertEqual(surface.nav["url"], ready,
+                         "a same-key stale success promoted over the newer job")
+
+    def test_a_failed_navigation_render_never_hot_retries_the_same_demand(self):
+        # A persistently failing warm render must not retry forever:
+        # every publish re-arms the demand, and the failure terminal
+        # re-armed it AGAIN — the identical failing key looped at
+        # render cost. The failed key latches until the demand moves.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 50)
+        module = self.qt.load("MoonrakerMonitorModel")
+        attempts = []
+
+        def failing(*args, **kwargs):
+            attempts.append(1)
+            raise RuntimeError("injected navigation render failure")
+
+        with patch.object(module, "render_navigation_layer", failing):
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not attempts:
+                model._publish()
+                self.qt.events(5)
+                time.sleep(0.01)
+            self.assertEqual(len(attempts), 1,
+                             "the warm raster never attempted its render")
+            while time.monotonic() < deadline and surface.nav["job"] is not None:
+                self.qt.events(5)
+                time.sleep(0.01)
+            self.assertIsNone(surface.nav["job"],
+                              "the failed terminal never cleared the job slot")
+            # The publishes keep firing; the identical demand must
+            # not resubmit after the failed terminal.
+            for _ in range(5):
+                model._publish()
+                self.qt.events(5)
+                time.sleep(0.02)
+            self.assertEqual(len(attempts), 1,
+                             "the identical failing demand hot-retried")
+        # The demand moves (the split): the fresh key re-arms, and
+        # with the render healthy again the warm raster recovers.
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 120)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertTrue(surface.nav["url"],
+                        "the moved demand never painted the warm raster")
 
     def test_an_obsolete_navigation_job_never_promotes_after_the_demand_moved(self):
         # The review's stale-promotion finding: a job whose content

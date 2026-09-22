@@ -259,6 +259,73 @@ class RendererParityTests(_parent.RealEngineTestCase):
         self.assertEqual(col_grid_b - col_grid_a, col_stroke_b - col_stroke_a,
                          "the grid and the geometry are two layers")
 
+    def test_the_navigation_raster_respects_every_split_state(self):
+        """The review's finding: split=0 fell through to the whole
+        layer painted as printed — scrubbing to 0% and panning showed
+        the full layer as already printed. At 0% the warm raster must
+        show NO printed geometry (only the grey base when enabled);
+        the full and intermediate states keep their pictures, and a
+        complete split draws the full layer."""
+        from plugins.PlateQt import render_navigation_layer
+        # A 21-motion stroke: a mid split paints a real prefix.
+        stroke = [[20.0 + motion * 6.5, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [stroke]},
+                   "travels": [], "travelStarts": [], "travelEnds": [],
+                   "motions": 21}
+        sx = float(PROBE_PLOT["sx"]) * 4.0
+        row = int((float(PROBE_PLOT["bedYMax"]) - 125.0) * sx)
+        col0 = int((20.0 - float(PROBE_PLOT["bedXMin"])) * sx)
+        col1 = int((150.0 - float(PROBE_PLOT["bedXMin"])) * sx)
+
+        def render(split, show_base=True, show_travels=False):
+            view = {"width": 563, "height": 563, "scale": 1.0,
+                    "lineScale": 0.7, "backing": 4.0,
+                    "bedWidth": 250.0, "bedDepth": 250.0,
+                    "showBase": show_base, "showTravels": show_travels}
+            return render_navigation_layer(
+                {"prev": None, "current": payload, "next": None},
+                PROBE_PLOT, view, split=split)
+
+        def printed_excess(raster):
+            # The WALL-OUTER red over the grey base/background:
+            # printed ink carries a red excess, the base never does.
+            excess = 0
+            alpha = 0
+            for r in range(row - 3, row + 4):
+                for c in range(col0, col1 + 1):
+                    px = raster.pixelColor(c, r)
+                    alpha += px.alphaF()
+                    excess += max(0, px.red() - px.green())
+            return excess, alpha
+
+        full = printed_excess(render(None))
+        self.assertGreater(full[0], 0, "the full layer drew no printed ink")
+        # 0% with the base: the grey silhouette remains (more ink
+        # than the grid alone), NO printed ink.
+        zero_base = printed_excess(render(0))
+        zero_bare = printed_excess(render(0, show_base=False))
+        self.assertGreater(zero_base[1], zero_bare[1],
+                           "the 0% base never drew")
+        self.assertEqual(zero_base[0], 0,
+                         "0% paints the layer as printed")
+        # 0% without the base: no printed ink either — the grid's
+        # grey contributes no red excess.
+        self.assertEqual(zero_bare[0], 0,
+                         "0% without the base drew printed geometry")
+        # An intermediate split draws the prefix only: less printed
+        # ink than the full layer, more than none.
+        partial = printed_excess(render(10))
+        self.assertGreater(partial[0], 0, "the partial prefix never drew")
+        self.assertLess(partial[0], full[0],
+                        "the partial prefix drew the whole layer")
+        # A complete split is the full layer's picture (the model
+        # only ever passes a partial or None — the complete case
+        # resolves to the full representation).
+        complete = printed_excess(render(payload["motions"]))
+        self.assertGreaterEqual(complete[0], full[0] * 0.9,
+                                "the complete split lost the layer")
+
     def test_the_baked_grid_keeps_its_thickness_at_zoom(self):
         """The adaptive width: the grid pen painted at backing /
         zoom presents as the canvas's constant 1 px at this zoom —

@@ -1038,6 +1038,109 @@ class PlatePayloadTests(MonitorModelCase):
         self.assertTrue(row["excluded"])
 
 
+class QueuedObjectGestureTests(MonitorModelCase):
+    """The object gestures ride the one-shot lane: a click while another
+    command is in flight is QUEUED, so the plate predicate the click
+    checked has to be revalidated when the queue drains."""
+
+    def plate(self, objects, excluded=(), state="printing"):
+        """Land a plate with the state its gesture gate reads.
+        exclude_object rides the core lane."""
+        self.connect({"print_stats": {"filename": "part.gcode", "state": state},
+                      "exclude_object": {
+                          "objects": [{"name": name, "center": [0.0, 0.0], "polygon": []} for name in objects],
+                          "excluded_objects": list(excluded), "current_object": None}})
+
+    def hold_the_lane(self):
+        """A mid-print one-shot in flight: babystepping is the
+        legitimate mid-print command, and it is what the object click
+        then queues behind."""
+        self.model.adjustZOffset(0.05)
+        self.qt.events(10)
+        self.assertTrue(self.model.actionBusy)
+
+    def scripts(self):
+        return [request.options["body"]["script"] for request in self.sent("printer/gcode/script")]
+
+    def test_a_queued_exclusion_is_revalidated_against_the_plate(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        # The plate moved while the entry waited: another client
+        # excluded the name.
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.ack("printer/gcode/script")  # the nudge completes; the pump runs
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: 'PART_A' is already excluded")
+
+    def test_a_queued_restore_is_revalidated_against_the_plate(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.hold_the_lane()
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Restore PART_A queued")
+        # The exclusion was lifted under the entry (a print restart
+        # without it): RESET on an included name would be refused now.
+        self.plate(["PART_A"])
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Restore PART_A cancelled: 'PART_A' is not excluded")
+
+    def test_a_queued_exclusion_is_revalidated_against_the_print_state(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        # The print ended while the entry waited (the lane was still
+        # holding the nudge, so nothing pumped yet).
+        self.connect({"print_stats": {"state": "standby"}})
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: No print is running")
+
+    def test_a_dropped_queued_gesture_does_not_hold_the_next_one(self):
+        # The dropped entry's latch dies with it: the retry after the
+        # obstacle cleared is not read as a gesture already in flight.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.connect({"print_stats": {"state": "standby"}})
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.plate(["PART_A"])  # the print resumed
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+
+    def test_a_confirmed_exclusion_releases_the_latch(self):
+        # The end-to-end half of the latch contract: the printer's own
+        # status landing is the confirmation, and the lane idle again
+        # is all the next gesture must wait for.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.plate(["PART_A"])
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.scripts().count('EXCLUDE_OBJECT NAME="PART_A"'), 2)
+
+
 class PlateSplitPublicationTests(MonitorModelCase):
     """The follower face's boundary: the service's refined count crosses
     to the face as the bare number it is."""
