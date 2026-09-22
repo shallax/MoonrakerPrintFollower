@@ -1720,6 +1720,7 @@ if QT_AVAILABLE:
             self._attached = True
             self._keep_centred = False
             self._layer_anchor = -1
+            self._show_base = True
             self.calls = []
             self._plate = PlatePrinterDouble.PLATE if PlatePrinterDouble.PLATE is not None else {
                 "objects": [
@@ -1833,6 +1834,18 @@ if QT_AVAILABLE:
         @pyqtProperty(int, notify=followerViewChanged)
         def followerLayerAnchor(self):
             return self._layer_anchor
+
+        @pyqtProperty(bool, notify=followerViewChanged)
+        def followerShowBase(self):
+            return self._show_base
+
+        @pyqtSlot(bool)
+        def setFollowerShowBase(self, show):
+            self.calls.append(("showBase", bool(show)))
+            if self._show_base == bool(show):
+                return
+            self._show_base = bool(show)
+            self.followerViewChanged.emit()
 
         # The model's own slots, mirrored: the double's state follows
         # the same rules so the controls' surface is a real state
@@ -4447,6 +4460,65 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
         self.assertTrue(slider.property("enabled"))
         self.assertTrue(centred.property("enabled"), "re-attaching kept the centred follow dead")
+
+    def test_the_layer_ghost_stays_available_on_every_layer_detached(self):
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(9)
+        self.pump(20)
+        attach = self.find(monitor, "moonrakerFollowerAttach")
+        boxes = [item for item in monitor.findChildren(QQuickItem)
+                 if item.property("text") == "Layer ghost"
+                 and not item.metaObject().className().startswith("Label")]
+        self.assertEqual(1, len(boxes), "no Layer ghost checkbox mounted")
+        box = boxes[0]
+        self.assertTrue(box.property("visible"), "the ghost box hides while attached")
+        self.assertTrue(face.property("showBase"), "the live face lost its base")
+        # The partial default split frames the base: the probe reads
+        # the composition's own predicate, not a pixel.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+
+        def partial_base():
+            return bool(QMetaObject.invokeMethod(face, "_partialBase",
+                                                 Q_RETURN_ARG(QVariant)))
+
+        self.assertTrue(partial_base(), "the base never framed the partial layer")
+        self._click(window, attach)
+        self.assertFalse(face.property("attached"))
+        self.assertEqual(self._printer.followerLayerAnchor,
+                         self._printer.plateProgressAnchor,
+                         "the detach did not hold the live layer")
+        self.assertTrue(box.property("visible"),
+                        "the ghost box hid while detached on the live layer")
+        self.assertTrue(face.property("showBase"),
+                        "the detached-on-live face lost its base")
+        self.assertTrue(partial_base(), "the detached-on-live base never framed")
+        # The toggle drives the base through the model, detached or not.
+        self._click(window, box)
+        self.assertIn(("showBase", False), self._printer.calls)
+        self.assertFalse(face.property("showBase"),
+                         "unchecking the ghost box kept the base")
+        self.assertFalse(partial_base(), "the unchecked base kept framing")
+        self._click(window, box)
+        self.assertIn(("showBase", True), self._printer.calls)
+        self.assertTrue(face.property("showBase"), "re-checking lost the base")
+        # The ghost is available for ALL layers: the print advancing
+        # past the frozen layer changes nothing.
+        self._printer.setAnchor(12)
+        self.pump(20)
+        self.assertTrue(box.property("visible"),
+                        "the ghost box hid while detached on an old layer")
+        self.assertTrue(face.property("showBase"),
+                        "the base hid while detached on an old layer")
+        # The split-brain guard: the ghost frames the SELECTED layer's
+        # own partial progress — the same view the scrub shows, never
+        # the live print's.
+        self._printer.setFollowerLayerAnchor(5)
+        self._printer.setSplit(6)
+        self.pump(20)
+        self.assertEqual(self._printer.plateProgressAnchor, 5,
+                         "the scrub did not land on the selected layer")
+        self.assertTrue(partial_base(),
+                        "the ghost does not frame the selected layer's partial")
 
     def test_detach_and_scrub_work_from_layer_zero(self):
         # The P0 zero-index bug: the production model read anchor 0

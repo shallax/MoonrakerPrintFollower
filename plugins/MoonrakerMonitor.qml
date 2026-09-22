@@ -3156,12 +3156,10 @@ Component {
                     // rebinds and re-raster.
                     showPrevious: root.printer != null ? root.printer.followerShowPrevious : true
                     showNext: root.printer != null ? root.printer.followerShowNext : true
-                    // The detached face draws the frozen layer per the
-                    // progress slider's position, never as a whole grey
-                    // "pending" base — so the base is the live view's
-                    // own option and hides while detached (the live
-                    // request).
-                    showBase: progressFace.attached && (root.printer != null ? root.printer.followerShowBase : true)
+                    // The layer ghost frames the frozen layer's
+                    // partial fill on ANY layer — attached or
+                    // detached (the live request).
+                    showBase: root.printer != null ? root.printer.followerShowBase : true
                     showTravels: root.printer != null ? root.printer.followerShowTravels : false
                     lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
                     // The follow state and the centred-follow option
@@ -3206,8 +3204,7 @@ Component {
                         }
                     }
                     UM.CheckBox {
-                        text: "Pending"
-                        visible: progressFace.attached
+                        text: "Layer ghost"
                         checked: root.printer != null ? root.printer.followerShowBase : true
                         onToggled: {
                             if (root.printer != null) {
@@ -3333,7 +3330,7 @@ Component {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
-                            text: "Pending"
+                            text: "Layer ghost"
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
