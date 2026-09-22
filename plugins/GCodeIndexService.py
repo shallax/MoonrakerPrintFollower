@@ -352,47 +352,15 @@ class GCodeIndexService(QObject):
         # cache RESTORE otherwise — the bar read the previous
         # print's final 100% through the whole restore phase.
         self._progress = None
-        # The memoised layers belong to the previous index; a new
-        # print could coincidentally match the (anchor, counts) key.
-        self._plate_layers_memos = {}
-        # The full cache belongs to the file that was printing too.
-        self._full_cache = _ByteBoundedLru(_FULL_CACHE_MAX_BYTES)
-        self._full_next = 0
-        # The hot presentation cache belongs to that file as well.
-        self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
-        # The wrappers' pins die with the file they belonged to.
-        self._decoded_pins = {}
-        self._decoded_sizes = {}
-        # The prepared store's table follows the same identity.
-        self._prepared_table = None
-        self._prepared_identity = None
-        self._prepared_saved = False
-        self._prepared_retry_count = 0
-        self._prepared_complete = False
-        self._prepared_flag_complete = False
-        self._prepared_coverage = set()
         # The incremental writer: the pass
         # appends the encodings layer by layer, so the first session
-        # never retains the whole cold store in RAM. A rebind ABORTS
-        # the old print's unfinished writer 
-        # — never a bare drop of the reference.
-        self._abort_prepared_writer()
-        # The frozen layer belongs to the file that was printing.
-        self._manual_anchor = None
-        # The painted boundary belongs to that file's layer too: a new
-        # print's count is not this print's.
-        self._split_floor = None
-        self._split_refined = None
-        self._split_floor_key = None
-        self._visited_key = None
-        self._visited = set()
-        self._visited_upto = -1
-        self._visited_settled = frozenset()
-        self._wanted = self._restored = self._save = False
-        self._hydrate.clear()
-        self._hydrating = None
-        self._failed_hydrate.clear()
-        self._error = ""
+        # never retains the whole cold store in RAM. A rebind
+        # CHECKPOINTS the old print's unfinished writer — its
+        # committed layers publish as an incomplete store the print's
+        # next session resumes (never a bare drop of the reference,
+        # never a needless loss of the old print's progress).
+        self._suspend_prepared_writer()
+        self._reset_print_state()
         # Keep _busy until the submitted worker actually completes. No new task
         # is submitted while a stale job is still executing.
         self.changed.emit()
@@ -902,6 +870,74 @@ class GCodeIndexService(QObject):
             self._prepared.abort_write(self._prepared_writer)
         self._prepared_writer = None
 
+    def _suspend_prepared_writer(self):
+        """The normal-lifecycle checkpoint (the review's clean-shutdown
+        finding): a close or a store rebind publishes the writer's
+        committed layers as an INCOMPLETE store — the next session
+        opens it and resumes from the EMPTY slots. Only a genuinely
+        failed or stale writer is aborted."""
+        if self._prepared_writer is None:
+            return
+        if self._prepared is not None:
+            self._prepared.suspend_write(self._prepared_writer)
+        self._prepared_writer = None
+
+    def rebind_stores(self, cache, prepared, initial=False):
+        """The machine-switch rebind (the review's namespace finding):
+        the index and prepared stores swap while THIS service survives
+        — the old generation cancels and its writer SUSPENDS into the
+        OLD machine's namespace (its committed layers are never lost),
+        and the print-specific state resets. A worker from the old
+        machine can never commit into the new stores: the generation
+        bump and the cancel event retire it before the swap. The
+        INITIAL bind at construction only installs the stores — the
+        state is already fresh."""
+        self._cache = cache
+        self._prepared = prepared
+        if initial:
+            return
+        self._generation += 1
+        self._cancel.set()
+        self._cancel = threading.Event()
+        self._job = None
+        self._view = None
+        self._progress = None
+        self._suspend_prepared_writer()
+        self._reset_print_state()
+        self.changed.emit()
+
+    def _reset_print_state(self):
+        """The print-specific state a new identity (or a new machine)
+        renders meaningless: the memoised windows, the RAM tiers, the
+        prepared table and the scrub records all belong to the file
+        that was being served."""
+        self._plate_layers_memos = {}
+        self._full_cache = _ByteBoundedLru(_FULL_CACHE_MAX_BYTES)
+        self._full_next = 0
+        self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
+        self._decoded_pins = {}
+        self._decoded_sizes = {}
+        self._prepared_table = None
+        self._prepared_identity = None
+        self._prepared_saved = False
+        self._prepared_retry_count = 0
+        self._prepared_complete = False
+        self._prepared_flag_complete = False
+        self._prepared_coverage = set()
+        self._manual_anchor = None
+        self._split_floor = None
+        self._split_refined = None
+        self._split_floor_key = None
+        self._visited_key = None
+        self._visited = set()
+        self._visited_upto = -1
+        self._visited_settled = frozenset()
+        self._wanted = self._restored = self._save = False
+        self._hydrate.clear()
+        self._hydrating = None
+        self._failed_hydrate.clear()
+        self._error = ""
+
     def _request_window(self, layer):
         """Ask for the live anchor's presentation window, never a backlog.
 
@@ -934,7 +970,15 @@ class GCodeIndexService(QObject):
         if identity is None:
             self._files.request_metadata()
             return
-        strong = bool(identity.uuid or identity.modified > 0)
+        # The restore's strength gate (the review's identity policy):
+        # the RELIABLE modified timestamp is what makes a disk identity
+        # strong enough to restore. The uuid is Moonraker's
+        # per-extraction token — it must never be what vouches for a
+        # restore, because the lookup and the validation both ignore
+        # it. A name + size alone (no timestamp) is the weak case: the
+        # content may have changed between extractions, so the restore
+        # is skipped and the file rebuilds — the safe behaviour.
+        strong = bool(getattr(identity, "modified", 0) > 0)
         if not self._restored and strong:
             self._restored = True
             self._submit("restore", lambda: self._cache.load(identity))
@@ -1357,8 +1401,9 @@ class GCodeIndexService(QObject):
         self._closed = True
         self._generation += 1
         self._cancel.set()
-        # An unfinished incremental writer is abandoned, never
-        # published: the temp file and its handle go here (the
-        # same abort the rebind takes).
-        self._abort_prepared_writer()
+        # The normal shutdown CHECKPOINTS the unfinished writer (the
+        # review's clean-shutdown finding): its committed layers
+        # publish as an incomplete store the next session resumes —
+        # a plain abort would throw away a partly-prepared print.
+        self._suspend_prepared_writer()
         self._executor.shutdown(wait=False, cancel_futures=True)

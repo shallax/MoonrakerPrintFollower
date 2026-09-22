@@ -763,23 +763,32 @@ class CacheTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="mpfi-bytes-") as directory:
             cache = PersistentIndexCache(directory, max_bytes=1024 * 1024)
+            # The print-level layout: each filler print folder carries
+            # its index (and, in production, its prepared sibling —
+            # the policy's total covers both).
             for value in range(3):
-                blob = os.path.join(directory, f"filler-{value}.mpfi.gz")
+                folder = os.path.join(directory, f"p-filler-{value}")
+                os.makedirs(folder, exist_ok=True)
+                blob = os.path.join(folder, "index.mpfi.gz")
                 with open(blob, "wb") as handle:
                     handle.write(b"\x00" * 700000)
                 os.utime(blob, (1000.0, 1000.0 + value))
             cache.prune()
-            remaining = [n for n in os.listdir(directory) if n.endswith(".mpfi.gz")]
-            self.assertEqual(remaining, ["filler-2.mpfi.gz"])  # newest survives
+            remaining = sorted(folder for folder in os.listdir(directory)
+                               if folder.startswith("p-"))
+            self.assertEqual(remaining, ["p-filler-2"])  # newest survives
             # Another Cura instance pruning the same directory at the same
-            # moment can take the file first; the sweep still completes.
-            late = os.path.join(directory, "late.mpfi.gz")
+            # moment can take the folder first; the sweep still completes.
+            late_dir = os.path.join(directory, "p-late")
+            os.makedirs(late_dir, exist_ok=True)
+            late = os.path.join(late_dir, "index.mpfi.gz")
             with open(late, "wb") as handle:
                 handle.write(b"\x00" * 700000)
-            with patch("os.remove", side_effect=OSError("vanished")):
+            with patch("shutil.rmtree", side_effect=OSError("vanished")):
                 cache.prune()
             self.assertTrue(os.path.lexists(late))
-            self.assertTrue(os.path.lexists(os.path.join(directory, "filler-2.mpfi.gz")))
+            self.assertTrue(os.path.lexists(os.path.join(
+                directory, "p-filler-2", "index.mpfi.gz")))
 
     def test_the_constructor_clamps_its_budgets(self):
         cache = PersistentIndexCache(self.directory, max_bytes=1, max_entries=0)
@@ -812,11 +821,12 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory)
         cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1\n"))
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
-        # The per-print subdirectory: one folder per print, the blob
-        # inside named by the full content digest.
+        # The per-print folder (the unified lifecycle): one folder per
+        # print, keyed by the content digest, the index inside named
+        # by its role.
         self.assertEqual(os.listdir(self.directory), [f"p-{digest[:24]}"])
         self.assertEqual(os.listdir(os.path.join(self.directory, f"p-{digest[:24]}")),
-                         [f"{digest}.mpfi.gz"])
+                         ["index.mpfi.gz"])
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")

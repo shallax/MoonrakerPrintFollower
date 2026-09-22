@@ -516,6 +516,32 @@ G1 X5 Y0 Z0.2
             self.assertIsNone(cache.load(other),
                               "a different size read the old cache")
 
+    def test_a_weak_identity_with_a_fresh_uuid_never_restores(self):
+        # The review's weak-metadata rule: filename + size alone (no
+        # reliable modified timestamp) with a CHANGED uuid marks a
+        # re-extraction whose content may have changed — the stale
+        # entry is refused rather than trusted. With a reliable
+        # timestamp the uuid difference means nothing, and a
+        # genuinely different mtime still refuses.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            weak = RemoteFileIdentity("a.gcode", len(data), 0.0, "u1")
+            cache.save(weak, index)
+            self.assertIsNotNone(cache.load(weak),
+                                 "the weak identity never cached")
+            rolled = RemoteFileIdentity("a.gcode", len(data), 0.0, "u2")
+            self.assertIsNone(cache.load(rolled),
+                              "a rolled uuid restored under weak metadata")
+            strong = RemoteFileIdentity("a.gcode", len(data), 100.0, "u2")
+            self.assertIsNone(cache.load(strong),
+                              "a different mtime read the weak entry")
+            cache.save(strong, index)
+            self.assertIsNotNone(cache.load(RemoteFileIdentity(
+                "a.gcode", len(data), 100.0, "u3")),
+                "a rolled uuid refused the strong identity")
+
     def test_an_oversized_index_survives_its_own_prune(self):
         # The review's oversized-entry finding: a single index larger
         # than the whole budget must not be written and then

@@ -10,7 +10,6 @@ destructive half of the boot runs from Cura's initializationFinished
 
 from __future__ import annotations
 
-import hashlib
 import os
 
 from UM.Logger import Logger
@@ -18,7 +17,6 @@ from UM.Resources import Resources
 
 from .BedMeshPresenter import BedMeshPresenter
 from .CuraIntegration import CuraIntegration
-from .GCodeIndex import PersistentIndexCache
 from .GCodeIndexService import GCodeIndexService
 from .MigrationNotice import MigrationNotice
 from .MoonrakerClient import MoonrakerClient
@@ -142,22 +140,32 @@ class FollowerRuntime:
         # download — the unconditional entry point the bind/close
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
-        cache_dir = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
-        # The per-machine namespace (the review's persistence finding):
-        # the configured printer's stable identity hashes into the
-        # cache's own subtree, so two printers can never collide on a
-        # filename, an eviction budget or a prepared table.
-        machine_id = self.binding.identity[0] if self.binding.identity else ""
-        machine_hash = hashlib.sha256(str(machine_id).encode("utf-8")).hexdigest()[:24]
-        from .PreparedStore import PreparedCache
-        cache = PersistentIndexCache(os.path.join(cache_dir, "cache-v2", machine_hash, "indexes"))
-        prepared = PreparedCache(os.path.join(cache_dir, "cache-v2", machine_hash, "prepared"))
-        self.index = GCodeIndexService(self.files, cache, parent, prepared)
+        self._cache_root = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        # The per-machine namespace owner (the review's persistence
+        # finding): the configured printer's stable identity hashes
+        # into the cache's own subtree, so two printers can never
+        # collide on a filename, an eviction budget or a prepared
+        # table. The stores FOLLOW the active machine — the binding's
+        # changed signal (fired after every identity re-apply, the
+        # machine switch included) rebinds them, and a worker from
+        # the old machine never commits into the new one's cache.
+        from .CacheNamespaces import CacheNamespaces
+        self.index = GCodeIndexService(self.files, None, parent, None)
+        self.cache_namespaces = CacheNamespaces(
+            self._cache_root,
+            lambda: self.binding.identity[0] if self.binding.identity else "",
+            self.index)
+        # The machine switch's OWN signal (the binding's changed also
+        # fires on plain config applies — the stores follow the
+        # DURABLE machine identity, never a settings save).
+        machine_signal = getattr(application, "globalContainerStackChanged", None)
+        trigger = machine_signal if machine_signal is not None else self.binding.changed
+        trigger.connect(lambda *_args: self.cache_namespaces.follow())
         self.preview = PreviewFollower(self.cura)
         # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
         # "Diagnostics"); it is never written in ordinary operation.
         trace_name = os.environ.get("MOONRAKER_FOLLOWER_SMOOTHING_TRACE")
-        trace_path = os.path.join(cache_dir, trace_name) if trace_name else None
+        trace_path = os.path.join(self._cache_root, trace_name) if trace_name else None
         self.motion = PreviewMotion(self.cura, self.preview.remember, parent, trace_path=trace_path)
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)

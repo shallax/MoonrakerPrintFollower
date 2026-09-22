@@ -161,6 +161,48 @@ class PreparedStoreTests(unittest.TestCase):
                          encode_layer(_payload(0)),
                          "the adopted payload never round-tripped")
 
+    def test_a_newer_interrupted_candidate_beats_an_older_partial(self):
+        # The review's repeated-crash finding: a 30% published partial
+        # + a 70% interrupted tmp must keep the 70% — never fall back
+        # to the older less-complete file merely because it carries
+        # the published name.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.suspend_write(writer)  # the published INCOMPLETE 30% partial
+        # Session 2 resumes, reaches 70%, crashes: the tmp survives.
+        writer = self.cache.open_for_write("print-1", 10)
+        for layer in range(7):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertIsNotNone(table)
+        self.assertFalse(table["complete"])
+        cached = sum(1 for entry in table["table"] if entry[0] == STATE_CACHED)
+        self.assertEqual(cached, 7, "the arbitration kept the older partial")
+        for layer in range(7):
+            self.assertEqual(reloaded.read("print-1", table["table"], layer),
+                             encode_layer(_payload(layer)),
+                             "the newer partial never round-tripped")
+
+    def test_a_complete_final_beats_any_interrupted_candidate(self):
+        # The policy's top rule: a complete valid final outranks an
+        # incomplete tmp however many layers the tmp committed.
+        self.cache.finalise("print-1", [encode_layer(_payload(i)) for i in range(5)])
+        writer = self.cache.open_for_write("print-1", 5)
+        for layer in range(2):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        writer["handle"].close()
+        dead_tmp = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+        os.replace(writer["temp"], dead_tmp)
+        reloaded = PreparedCache(self.cache.directory)
+        table = reloaded.load_table("print-1")
+        self.assertTrue(table["complete"],
+                        "the complete final lost to an incomplete tmp")
+
     def test_a_live_process_tmp_is_never_touched(self):
         # The multi-process safety: another process's active writer
         # (its pid still exists) survives the startup adoption.
@@ -213,6 +255,62 @@ class PreparedStoreTests(unittest.TestCase):
                      for name in names if name.endswith(".mpfp")]
         self.assertEqual(survivors, [os.path.basename(keep_path)],
                          "the eviction stopped at the protected entry")
+
+    def test_the_index_and_prepared_store_are_siblings(self):
+        # The review's unified-lifecycle finding: the index and the
+        # prepared table live as siblings under ONE print folder —
+        # an entire print's cache is one folder to delete.
+        from plugins.GCodeIndex import PersistentIndexCache
+        index_cache = PersistentIndexCache(self._dir.name)
+        identity = type("Identity", (), {"stable_key": staticmethod(lambda: "print-1")})()
+        self.assertEqual(os.path.dirname(index_cache._path(identity)),
+                         os.path.dirname(self.cache._path("print-1")),
+                         "the two stores split the print's folder")
+        self.assertEqual(os.path.basename(index_cache._path(identity)),
+                         "index.mpfi.gz")
+        self.assertEqual(os.path.basename(self.cache._path("print-1")),
+                         "prepared.mpfp")
+
+    def test_an_evicted_print_loses_both_halves_together(self):
+        # The print-level eviction (the review's unified-lifecycle
+        # finding): a print past the budget loses the WHOLE folder —
+        # the index AND the prepared table — never an orphaned half,
+        # and a missing half reads gracefully on the other store.
+        from plugins.GCodeIndex import PersistentIndexCache
+        from plugins.GCodeIndex import build_index_from_bytes
+        index_cache = PersistentIndexCache(self._dir.name)
+
+        class Identity:
+            # The same stable key the prepared store uses, so the two
+            # halves share one print folder.
+            filename = "a.gcode"
+            size = 40
+            modified = 100.0
+            uuid = "u1"
+
+            @staticmethod
+            def stable_key():
+                return "print-1"
+        identity = Identity()
+        index_cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1 Y1 Z0.2\n"))
+        self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        folder = os.path.dirname(self.cache._path("print-1"))
+        self.assertTrue(os.path.exists(os.path.join(folder, "index.mpfi.gz")))
+        self.assertTrue(os.path.exists(os.path.join(folder, "prepared.mpfp")))
+        # The prepared store's own eviction: a protected current print
+        # survives even past the bound.
+        self.cache.max_bytes = 1
+        self.cache._evict(os.path.join(folder, "prepared.mpfp"))
+        self.assertTrue(os.path.exists(folder),
+                        "the protected print folder was evicted")
+        # An UNPROTECTED print past the bound loses the whole folder.
+        self.cache.finalise("print-other", [encode_layer(_payload(0))])
+        self.assertFalse(os.path.exists(folder),
+                         "the evicted print kept an orphaned half")
+        self.assertIsNone(self.cache.load_table("print-1"),
+                          "the evicted prepared table still reads")
+        self.assertIsNone(index_cache.load(identity),
+                          "the evicted index still reads")
 
     def test_the_size_policy_evicts_the_oldest_file(self):
         cache = PreparedCache(self._dir.name, max_bytes=16 * 1024 * 1024)

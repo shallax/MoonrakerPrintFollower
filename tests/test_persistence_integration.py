@@ -735,9 +735,14 @@ class LateActivationTests(unittest.TestCase):
             Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
         self.config_patcher = patch.object(
             Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", side_effect=lambda *args, **kwargs: base.name)
         self.resources_patcher.start()
         self.config_patcher.start()
+        self.cache_patcher.start()
         self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
         self.addCleanup(self.config_patcher.stop)
         from plugins.FollowerRuntime import FollowerRuntime
         self.FollowerRuntime = FollowerRuntime
@@ -793,6 +798,121 @@ class LateActivationTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         self.assertEqual(announce.call_count, 1)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class MachineNamespaceTests(unittest.TestCase):
+    """The review's machine-namespace P0: the RUNTIME's persistence
+    stores follow the active Cura machine — one runtime, a machine
+    switch, and the same service rebinds to the new machine's own
+    cache directory (never a construction-time freeze, never a
+    stranded unknown hash)."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.base = base.name
+        self.prefs = Preferences({})
+        from UM.Resources import Resources
+        self.resources_patcher = patch.object(
+            Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
+        self.config_patcher = patch.object(
+            Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", return_value=base.name)
+        self.resources_patcher.start()
+        self.config_patcher.start()
+        self.cache_patcher.start()
+        self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
+        from plugins.FollowerRuntime import FollowerRuntime
+        self.FollowerRuntime = FollowerRuntime
+
+    def _app(self, started):
+        app = self.qt.Application(self.prefs)
+        app.started = started
+        return app
+
+    def _payload(self, marker):
+        from plugins.PlateProgress import encode_layer
+        return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0],
+                                                   [1.0, float(marker), 1.0]]]},
+                             "travels": [], "travelStarts": [], "travelEnds": [],
+                             "motions": 2})
+
+    def _switch(self, app, machine_id):
+        app.stack = self.qt.Machine(machine_id)
+        app.globalContainerStackChanged.emit()
+
+    def test_a_machine_switch_rebinds_the_runtime_stores(self):
+        # The actual runtime lifecycle: machine A active, persist
+        # identifiable A data; Cura switches to B — the persistence
+        # directory changes and B's data lands in B's namespace; back
+        # to A — A's original persisted state is recovered.
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        store_a = owner.index._prepared
+        store_a.finalise("print-key", [self._payload(1)])
+        self.assertIsNotNone(store_a.load_table("print-key"))
+        self._switch(app, "B")
+        self.assertIsNot(owner.index._prepared, store_a,
+                         "the switch kept the old machine's store")
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+                            os.path.dirname(store_a.directory),
+                            "the two machines share one cache directory")
+        store_b = owner.index._prepared
+        store_b.finalise("print-key", [self._payload(2)])
+        # The isolation: B's write never touched A's store, and vice
+        # versa — the same key holds each machine's own payload.
+        from plugins.PlateProgress import decode_layer
+        table_a = store_a.load_table("print-key")
+        table_b = store_b.load_table("print-key")
+        self.assertNotEqual(decode_layer(store_a.read("print-key", table_a["table"], 0)),
+                            decode_layer(store_b.read("print-key", table_b["table"], 0)),
+                            "the two machines share one payload")
+        # Back to A: the ORIGINAL persisted state is recovered, and
+        # B's namespace keeps its own.
+        self._switch(app, "A")
+        self.assertEqual(owner.index._prepared.directory, store_a.directory,
+                         "the return to A never rebound its own namespace")
+        table = owner.index._prepared.load_table("print-key")
+        self.assertIsNotNone(table, "A's cache was lost over the switch")
+        self.assertEqual(decode_layer(owner.index._prepared.read(
+            "print-key", table["table"], 0))["classes"]["SKIN"][0][1][1], 1.0,
+            "A's persisted layer never round-tripped")
+
+    def test_a_runtime_born_unknown_moves_off_the_unknown_hash(self):
+        # The runtime constructs while Cura's active machine is
+        # unresolved: the stores sit on the unknown hash, nothing is
+        # persisted there, and the FIRST resolution moves them to the
+        # real machine's namespace.
+        app = self._app(started=True)
+        app.stack = None  # unresolved at construction
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        unknown_store = owner.index._prepared
+        from plugins.CacheNamespaces import CacheNamespaces
+        self.assertEqual(owner.cache_namespaces.machine_hash,
+                         CacheNamespaces._hash("unknown"),
+                         "the unresolved runtime never hashed the unknown id")
+        self._switch(app, "A")
+        self.assertIsNot(owner.index._prepared, unknown_store,
+                         "the first resolution kept the unknown store")
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+                            os.path.dirname(unknown_store.directory))
+        owner.index._prepared.finalise("print-key", [self._payload(3)])
+        self.assertIsNone(unknown_store.load_table("print-key"),
+                          "data stranded in the unknown namespace")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")

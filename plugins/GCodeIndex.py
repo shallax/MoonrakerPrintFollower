@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -1431,13 +1432,14 @@ class PersistentIndexCache:
 
     def _path(self, identity: RemoteFileIdentity) -> str:
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
-        # The per-print subdirectory (the review's persistence
-        # finding): the index and the prepared table live as siblings
+        # The per-print folder (the review's unified-persistence
+        # finding): the index AND the prepared store live as siblings
         # under one print's own directory — an entire print's cache
-        # is one folder to delete.
+        # is one folder to delete, and the eviction drops the whole
+        # folder (never an orphaned half).
         print_dir = os.path.join(self.directory, f"p-{digest[:24]}")
         os.makedirs(print_dir, exist_ok=True)
-        return os.path.join(print_dir, f"{digest}.mpfi.gz")
+        return os.path.join(print_dir, "index.mpfi.gz")
 
     def load(self, identity: Optional[RemoteFileIdentity]) -> Optional[LayerMotionIndex]:
         if identity is None:
@@ -1468,12 +1470,23 @@ class PersistentIndexCache:
                         return None
                     if identity.modified > 0 and float(fields[2]) > 0 and float(fields[2]) != identity.modified:
                         return None
-                    # The uuid is Moonraker's per-extraction token: a
-                    # metadata re-extraction rolls it without the gcode
-                    # changing, so it must never invalidate an
-                    # otherwise-valid entry (the review's UUID-policy
-                    # finding — the stable key already ignores it, and
-                    # the load may not contradict the key).
+                    # The uuid is Moonraker's per-extraction token: with
+                    # RELIABLE metadata (a real modified timestamp) a
+                    # re-extraction rolls it without the gcode changing,
+                    # so it must never invalidate an otherwise-valid
+                    # entry (the review's UUID-policy finding — the
+                    # stable key already ignores it, and the load may
+                    # not contradict the key). WITHOUT a modified
+                    # timestamp the weak identity (name+size alone) is
+                    # the only thing standing, and a rolled uuid then
+                    # marks a re-extraction whose content may have
+                    # changed: the stale entry is refused rather than
+                    # trusted (the review's weak-metadata rule — a
+                    # field ignored by the lookup must never vouch for
+                    # a restore).
+                    if identity.modified <= 0 and identity.size > 0 \
+                            and str(fields[3]) != str(identity.uuid):
+                        return None
                     # The per-machine namespace resolves cross-printer
                     # collisions instead.
                 if header.get("byteorder") != sys.byteorder:
@@ -1707,40 +1720,52 @@ class PersistentIndexCache:
                         handle.write(index.motion_y[i].tobytes())
                         handle.write(index.motion_z[i].tobytes())
                 os.replace(temp_path, path)
-                self.prune()
+                self.prune(keep=path)
             except OSError:
                 try:
                     os.remove(temp_path)
                 except OSError:
                     pass
 
-    def prune(self) -> None:
+    def prune(self, keep: Optional[str] = None) -> None:
+        """The print-level policy (the review's unified-lifecycle
+        finding): one print folder's total cost is the index AND the
+        prepared representation together, and an evicted print loses
+        the WHOLE folder — never an orphaned half. The protected path
+        (the just-written or currently used entry, passed explicitly
+        — the review's prune-protection finding, never an mtime
+        guess) survives even beyond the budgets."""
         try:
-            entries = []
+            # The print-level totals: one entry per print folder, its
+            # size the sum of every representation inside it.
+            totals = {}
             for root, _dirs, names in os.walk(self.directory):
-                for name in names:
-                    if not name.endswith(".mpfi.gz"):
-                        continue
-                    path = os.path.join(root, name)
-                    try:
-                        st = os.stat(path)
-                    except OSError:
-                        continue
-                    entries.append((st.st_mtime, st.st_size, path))
-            entries.sort(reverse=True)
+                folder = os.path.basename(root)
+                if not folder.startswith("p-"):
+                    continue
+                try:
+                    size = sum(os.stat(os.path.join(root, name)).st_size
+                               for name in names
+                               if name.endswith((".mpfi.gz", ".mpfp")))
+                    mtime = max(os.stat(os.path.join(root, name)).st_mtime
+                                for name in names
+                                if name.endswith((".mpfi.gz", ".mpfp")))
+                except OSError:
+                    continue
+                totals[root] = (mtime, size)
+            keep_dir = os.path.dirname(keep) if keep else None
             total = 0
-            for idx, (_mtime, size, path) in enumerate(entries):
+            for idx, (root, (_mtime, size)) in enumerate(
+                    sorted(totals.items(), key=lambda item: item[1][0],
+                           reverse=True)):
                 total += size
-                if idx == 0:
-                    # The just-written (or currently used) entry is
-                    # never evicted — a single index larger than the
-                    # whole budget survives its own write (the
-                    # review's oversized-entry finding) — but its
-                    # bytes still count against the budget.
+                if root == keep_dir:
+                    # The protected entry still counts its bytes
+                    # against the budget.
                     continue
                 if idx >= self.max_entries or total > self.max_bytes:
                     try:
-                        os.remove(path)
+                        shutil.rmtree(root, ignore_errors=True)
                     except OSError:
                         pass
         except OSError:
