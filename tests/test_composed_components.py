@@ -2369,30 +2369,41 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # every publish re-arms the demand, and the failure terminal
         # re-armed it AGAIN — the identical failing key looped at
         # render cost. The failed key latches until the demand moves.
+        # The contract is pinned on SUBMISSIONS — counted on the
+        # owner thread — never on the shared pool's scheduling (the
+        # coverage tracer's pool starvation would flake the latter).
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
-                         5, "motion index", 50)
         module = self.qt.load("MoonrakerMonitorModel")
-        attempts = []
+        submitted = []
+        real_job = module._RasterJob
+
+        class CountingJob(real_job):
+            def __init__(self, work):
+                super().__init__(work)
+                # The exact-scene scheduler shares this job class;
+                # only the nav build emits a "nav" payload.
+                if "nav" in work.__code__.co_consts:
+                    submitted.append(work)
 
         def failing(*args, **kwargs):
-            attempts.append(1)
             raise RuntimeError("injected navigation render failure")
 
-        with patch.object(module, "render_navigation_layer", failing):
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline and not attempts:
-                model._publish()
-                self.qt.events(5)
-                time.sleep(0.01)
-            self.assertEqual(len(attempts), 1,
-                             "the warm raster never attempted its render")
-            while time.monotonic() < deadline and surface.nav["job"] is not None:
-                self.qt.events(5)
-                time.sleep(0.01)
+        with patch.object(module, "_RasterJob", CountingJob), \
+                patch.object(module, "render_navigation_layer", failing):
+            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                             5, "motion index", 50)
+            model._publish()
+            self.qt.events(5)
+            self.assertEqual(len(submitted), 1,
+                             "the warm raster never scheduled its render")
+            # The worker's own terminal, delivered inline through the
+            # bridge: the failing render ends the active job, and its
+            # key latches.
+            submitted[0]()
+            self.qt.events(5)
             self.assertIsNone(surface.nav["job"],
                               "the failed terminal never cleared the job slot")
             # The publishes keep firing; the identical demand must
@@ -2400,8 +2411,7 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             for _ in range(5):
                 model._publish()
                 self.qt.events(5)
-                time.sleep(0.02)
-            self.assertEqual(len(attempts), 1,
+            self.assertEqual(len(submitted), 1,
                              "the identical failing demand hot-retried")
         # The demand moves (the split): the fresh key re-arms, and
         # with the render healthy again the warm raster recovers.
