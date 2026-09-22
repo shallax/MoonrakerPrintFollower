@@ -263,6 +263,15 @@ class PrintCoordinator(QObject):
                 position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
             except (TypeError, ValueError):
                 position = None
+            # The attach diagnosis: which upstream telemetry the split
+            # actually has — the live report's split=None with a valid
+            # anchor must separate an absent virtual_sdcard from an
+            # absent physical position.
+            if position is None:
+                Logger.log("w", "plate position: virtualSdcard=%r "
+                               "statusKeys=%s",
+                           list(sdcard.keys()) if isinstance(sdcard, Mapping) else None,
+                           sorted(self._status.keys()) if isinstance(self._status, dict) else None)
             # The toolhead's PHYSICAL position, in the G-code's own
             # coordinates: the plate split refines the dispatcher's
             # position with it, exactly as the Preview's follower does
