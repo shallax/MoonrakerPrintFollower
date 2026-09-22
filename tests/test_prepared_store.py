@@ -7,6 +7,8 @@ semantics pinned here, nowhere else."""
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -127,9 +129,16 @@ class PreparedStoreTests(unittest.TestCase):
     def test_startup_removes_previous_crash_temp_files(self):
         # : crash leftovers accumulate forever
         # (eviction only sees .mpfp) — a fresh cache instance cleans
-        # them, and never touches a published file.
+        # them, and never touches a published file. The leftover's
+        # owner is a REAL process that really died (spawned and
+        # waited) — no magic pid is assumed dead, so a host where
+        # pid 999 happens to be live still cleans only genuinely
+        # dead owners.
         self.cache.finalise("print-1", [encode_layer(_payload(0))])
-        stale = os.path.join(self.cache.directory, "deadbeef.mpfp.tmp-999-1234")
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        stale = os.path.join(self.cache.directory,
+                             "deadbeef.mpfp.tmp-%d-1234" % child.pid)
         with open(stale, "wb") as handle:
             handle.write(b"partial")
         reloaded = PreparedCache(self.cache.directory)
@@ -144,6 +153,34 @@ class PreparedStoreTests(unittest.TestCase):
         name = "print.mpfp.tmp-%d-1234" % os.getpid()
         self.assertTrue(self.cache._tmp_liveness(name),
                         "the live process's own tmp read dead")
+
+    def test_a_live_childs_tmp_reads_alive(self):
+        # A genuinely live foreign process (spawned, not yet
+        # reaped): its tmp must read ALIVE on every platform.
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(self._reap, child)
+        name = "print.mpfp.tmp-%d-1234" % child.pid
+        self.assertTrue(self.cache._tmp_liveness(name),
+                        "a live child's tmp read dead")
+
+    def test_the_same_child_reads_dead_after_exit(self):
+        # The same child, waited: the pid is provably gone — the
+        # verdict flips to DEAD, and the tmp becomes adoptable. On
+        # Windows the waiter still holds the process object, so the
+        # probe must read the EXIT CODE, not the handle's mere
+        # existence.
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        name = "print.mpfp.tmp-%d-1234" % child.pid
+        self.assertFalse(self.cache._tmp_liveness(name),
+                         "a waited child's tmp read alive")
+
+    @staticmethod
+    def _reap(child):
+        if child.poll() is None:
+            child.terminate()
+            child.wait()
 
     def test_a_malformed_pid_reads_dead_without_raising(self):
         # No live writer ever stamps a name it cannot parse — the
@@ -160,39 +197,70 @@ class PreparedStoreTests(unittest.TestCase):
             "print.mpfp.tmp-%d-1234" % (2 ** 40)))
 
     def test_an_unprovable_owner_keeps_its_tmp(self):
-        # The conservative half of the policy: a probe that cannot
-        # DISPROVE the owner keeps the tmp — access-denied and any
-        # unexplained failure read alive, so the adoption never
-        # destroys a file whose owner may still hold it.
+        # The conservative half of the policy, on the POSIX branch
+        # EXPLICITLY (the assertions never ride the host's own
+        # platform): a probe that cannot DISPROVE the owner keeps
+        # the tmp — access-denied and any unexplained failure read
+        # alive, so the adoption never destroys a file whose owner
+        # may still hold it.
         from unittest.mock import patch
         import plugins.PreparedStore as store_module
         name = "print.mpfp.tmp-12345-1234"
-        with patch.object(store_module.os, "kill", side_effect=PermissionError()):
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill", side_effect=PermissionError()):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an access-denied owner read dead")
-        with patch.object(store_module.os, "kill",
-                          side_effect=OSError("unexplained")):
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill",
+                             side_effect=OSError("unexplained")):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an unexplained probe failure read dead")
 
-    def test_the_windows_invalid_parameter_reads_dead(self):
-        # The Windows semantics: ERROR_INVALID_PARAMETER is
-        # OpenProcess's "no live process for this pid" verdict — it
-        # must read DEAD, never conservative, or a crashed session's
-        # tmp survives forever on Windows.
+    def test_the_windows_branch_defers_to_the_native_probe(self):
+        # The Windows branch's verdicts come from the NATIVE process
+        # API, never os.kill: ALIVE and PROVABLY DEAD pass straight
+        # through the probe. (The probe's own kernel calls run on
+        # the Windows host suite; this wiring is platform-pinned.)
         from unittest.mock import patch
         import plugins.PreparedStore as store_module
         name = "print.mpfp.tmp-12345-1234"
-        error = OSError("The parameter is incorrect")
-        error.winerror = 87
-        with patch.object(store_module.os, "name", "nt"), \
-                patch.object(store_module.os, "kill", side_effect=error):
+        with patch.object(store_module.sys, "platform", "win32"), \
+                patch.object(store_module, "_windows_liveness",
+                             return_value=True):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "the Windows alive verdict read dead")
+        with patch.object(store_module.sys, "platform", "win32"), \
+                patch.object(store_module, "_windows_liveness",
+                             return_value=False):
             self.assertFalse(self.cache._tmp_liveness(name),
-                             "a Windows invalid-parameter pid read alive")
-        # The same error shape on POSIX stays conservative: without
-        # the Windows semantics, the owner cannot be disproved.
-        with patch.object(store_module.os, "kill", side_effect=error):
-            self.assertTrue(self.cache._tmp_liveness(name))
+                             "the Windows dead verdict read alive")
+
+    def test_the_posix_branch_reads_the_signal_verdicts(self):
+        # The POSIX branch, pinned explicitly: alive on success,
+        # dead on ProcessLookupError, conservative alive on
+        # PermissionError and on any indeterminate OSError.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        name = "print.mpfp.tmp-12345-1234"
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill", return_value=None):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "a live POSIX owner read dead")
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill",
+                             side_effect=ProcessLookupError()):
+            self.assertFalse(self.cache._tmp_liveness(name),
+                             "a gone POSIX owner read alive")
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill",
+                             side_effect=PermissionError()):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "an access-denied POSIX owner read dead")
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill",
+                             side_effect=OSError("indeterminate")):
+            self.assertTrue(self.cache._tmp_liveness(name),
+                            "an indeterminate POSIX failure read dead")
 
     def test_an_interrupted_pass_adopts_its_encoded_layers(self):
         # The review's resumable-persistence finding: a pass that died

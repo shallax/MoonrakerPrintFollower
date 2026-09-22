@@ -427,7 +427,9 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
                 tolerance = float(str(raw.get("z_tolerance", "")).strip())
                 retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
-                cache_max = int(str(raw.get("cache_max_mb", "")).strip())
+                raw_cache = str(raw.get("cache_max_mb") or "").strip()
+                cache_max = int(raw_cache) if raw_cache \
+                    else getattr(self._config(), "cache_max_mb", 512)
             except ValueError as exc:
                 Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
                 return False
