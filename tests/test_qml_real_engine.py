@@ -5144,6 +5144,101 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_a_prefix_boundary_advance_never_exposes_a_gap(self):
+        # The review's composition-transaction repro: a prefix
+        # refresh lands at a new boundary while the canvas still
+        # covers the OLD one — the readiness gate holds the standing
+        # composition (the retained picture plus the canvas bitmap)
+        # until the replacement's joint delivery, and the printed
+        # history must never lose ink in any frame of the handover.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        from plugins.PlateQt import render_layer_prefix, png_file
+        layer = self._native_layer(payload, face)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0}
+        prefix_10 = render_layer_prefix(payload, plot, view, 10)
+        prefix_15 = render_layer_prefix(payload, plot, view, 15)
+        url_10 = png_file(prefix_10, "/tmp/mpf/raster-probe",
+                          "fixture-txn-a-%d" % time.monotonic_ns())
+        url_15 = png_file(prefix_15, "/tmp/mpf/raster-probe",
+                          "fixture-txn-b-%d" % time.monotonic_ns())
+        census_plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        # The model's view publishes race the hand-fed claim (a
+        # publish overwrites the wrapper's expected key), so the
+        # claim is re-asserted until the composition settles with
+        # the prefix OWNING [0, 10) and the canvas covering
+        # [10, 18).
+        deadline = time.monotonic() + 5.0
+        settled = False
+        image = None
+        while time.monotonic() < deadline:
+            layer.set_prefix(prefix_10, url_10, 10, "fixture-key")
+            layer.set_expected_key("fixture-key")
+            self.pump(5)
+            image = window.grabWindow()
+            if face.property("_vectorCoversFrom") == 10 \
+                    and self._stroke_ink(image, face, window, census_plot,
+                                         75.0, 125.0) > 0:
+                settled = True
+                break
+        self.assertTrue(settled, "the settled composition never formed")
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+            0, "the settled prefix never drew its history")
+        # The boundary advance: the replacement lands while the
+        # canvas still covers [10, 18). Every frame of the handover
+        # must keep the interior ink — the standing composition is
+        # never torn down before the joint swap.
+        layer.set_prefix(prefix_15, url_15, 15, "fixture-key")
+        deadline = time.monotonic() + 8.0
+        swapped = False
+        while time.monotonic() < deadline:
+            # A late view publish (the previous test's settle) may
+            # still overwrite the claim — re-assert it through the
+            # handover so the transition completes.
+            layer.set_expected_key("fixture-key")
+            self.pump(5)
+            grab = window.grabWindow()
+            self.assertGreater(
+                self._stroke_ink(grab, face, window, census_plot, 75.0, 125.0),
+                0, "a frame lost the printed history mid-transition")
+            if face.property("_vectorCoversFrom") == 15 \
+                    and self._stroke_ink(grab, face, window, census_plot,
+                                         115.0, 125.0) > 0:
+                swapped = True
+                break
+        self.assertTrue(swapped,
+                        "the boundary advance never reached the joint "
+                        "composition — covers %s, prefixSplit %s, "
+                        "prefixValid %s" % (
+                            face.property("_vectorCoversFrom"),
+                            layer.prefixSplit, layer.prefixValid))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
     def test_inert_gestures_never_flip_the_warm_raster(self):
         # The inertness ruling: the warm raster enters ONLY when a
         # movement actually pans. A click at any zoom, a drag attempt

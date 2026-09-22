@@ -1559,6 +1559,17 @@ class RemoteFileServiceRootSweepTests(_QtCase):
             os.makedirs(dead_root)
             with open(os.path.join(dead_root, "new.gcode"), "wb") as handle:
                 handle.write(b"x" * 64)
+            # A FRESH pid-less mpf-* name (the pre-pid builds'
+            # accumulation) cannot belong to a live current-version
+            # session: it goes outright, no age gate.
+            fresh_no_pid = os.path.join(tmpdir, "mpf-upload-fresh")
+            os.makedirs(fresh_no_pid)
+            with open(os.path.join(fresh_no_pid, "new.bin"), "wb") as handle:
+                handle.write(b"x" * 64)
+            legacy_fresh = os.path.join(tmpdir, "cura-moonraker-files-fresh")
+            os.makedirs(legacy_fresh)
+            with open(os.path.join(legacy_fresh, "live.gcode"), "wb") as handle:
+                handle.write(b"x" * 64)
             live_root = os.path.join(tmpdir, "mpf-raster-%d-y" % os.getpid())
             os.makedirs(live_root)
             with open(os.path.join(live_root, "live.bin"), "wb") as handle:
@@ -1578,6 +1589,10 @@ class RemoteFileServiceRootSweepTests(_QtCase):
                                  "%s survived the boot sweep" % path)
             self.assertFalse(os.path.isdir(dead_root),
                              "a dead session's fresh root survived the sweep")
+            self.assertFalse(os.path.isdir(fresh_no_pid),
+                             "a fresh pid-less mpf- root survived the sweep")
+            self.assertTrue(os.path.isdir(legacy_fresh),
+                            "a fresh legacy root was swept")
             self.assertTrue(os.path.isdir(live_root),
                             "a live session's root was swept")
             self.assertTrue(os.path.isdir(service._root))

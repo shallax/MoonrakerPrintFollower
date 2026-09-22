@@ -54,8 +54,10 @@ def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
     """Remove abandoned temp roots (sessions that died without the
     shutdown hook): every file the session never cleaned lives
     under these. A live pid's root stays — a concurrent Cura
-    session survives the sweep at any age; the age fallback covers
-    only the pid-less legacy names."""
+    session survives the sweep at any age. A pid-less mpf-* name
+    cannot belong to a live current-version session (the current
+    version always embeds its pid), so it goes outright; the age
+    gate covers only the pid-less LEGACY names."""
     try:
         entries = os.listdir(temp_dir)
     except OSError:
@@ -66,16 +68,17 @@ def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
         if not entry.startswith(_SWEPT_PREFIXES) or entry == current_name:
             continue
         path = os.path.join(temp_dir, entry)
-        pid = _owner_pid(entry)
-        if pid is not None:
-            if _pid_alive(pid):
+        if entry.startswith("mpf-"):
+            pid = _owner_pid(entry)
+            if pid is not None and _pid_alive(pid):
                 continue
-        else:
-            try:
-                if now - os.path.getmtime(path) < _STALE_ROOT_AGE_S:
-                    continue
-            except OSError:
+            shutil.rmtree(path, ignore_errors=True)
+            continue
+        try:
+            if now - os.path.getmtime(path) < _STALE_ROOT_AGE_S:
                 continue
+        except OSError:
+            continue
         shutil.rmtree(path, ignore_errors=True)
 
 

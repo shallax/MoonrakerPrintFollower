@@ -255,6 +255,59 @@ class NativeStrokeParityTests(unittest.TestCase):
         self.assertFalse(_bridge_emit(bridge, "started", ("ticket",)),
                          "a dead bridge's started emit reported a landing")
 
+    def test_a_backward_render_never_copies_the_larger_previous_picture(self):
+        # The review's backward-scrub repro: a prefix rendered at 6
+        # then re-requested at 2 must not copy the 6-motion image
+        # (painting cannot erase the future motions) — the target
+        # render starts clean, and the future strokes are gone.
+        points_a = [[10.0, 100.0, 0.0], [30.0, 100.0, 1.0],
+                    [50.0, 100.0, 2.0], [70.0, 100.0, 3.0]]
+        points_b = [[90.0, 100.0, 4.0], [110.0, 100.0, 5.0],
+                    [130.0, 100.0, 6.0]]
+        payload = {"classes": {"WALL-OUTER": [points_a, points_b]},
+                   "travels": [], "travelStarts": [], "travelEnds": [],
+                   "motions": 6}
+        plot, view = _plot(), _view()
+        full = render_layer_prefix(payload, plot, view, 6)
+        def alpha_at(bed_x):
+            col = int(plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+            row = int(plot["offsetY"] + (plot["bedYMax"] - 100.0) * plot["sy"])
+            return full.pixelColor(col, row).alpha()
+        self.assertGreater(alpha_at(100.0), 0,
+                           "the full render never drew the future stroke")
+        backward = render_layer_prefix(payload, plot, view, 2,
+                                       previous=full, previous_split=6)
+        col = int(plot["offsetX"] + (100.0 - plot["bedXMin"]) * plot["sx"])
+        row = int(plot["offsetY"] + (plot["bedYMax"] - 100.0) * plot["sy"])
+        self.assertEqual(backward.pixelColor(col, row).alpha(), 0,
+                         "the backward render kept a future motion's ink")
+        col = int(plot["offsetX"] + (20.0 - plot["bedXMin"]) * plot["sx"])
+        self.assertGreater(backward.pixelColor(col, row).alpha(), 0,
+                           "the backward render lost the requested history")
+
+    def test_a_forward_extension_leaves_completed_pixels_unchanged(self):
+        # The review's alpha-accumulation repro: an incremental
+        # extension must equal a fresh render of the same target
+        # pixel for pixel — the old bisect re-stroked a completed
+        # segment's trailing edge whenever that segment's motions
+        # ended before the previous boundary.
+        points_a = [[10.0, 100.0, 0.0], [30.0, 100.0, 1.0],
+                    [50.0, 100.0, 2.0], [70.0, 100.0, 3.0]]
+        points_b = [[90.0, 100.0, 4.0], [110.0, 100.0, 5.0],
+                    [130.0, 100.0, 6.0]]
+        payload = {"classes": {"WALL-OUTER": [points_a, points_b]},
+                   "travels": [], "travelStarts": [], "travelEnds": [],
+                   "motions": 6}
+        plot, view = _plot(), _view()
+        previous = render_layer_prefix(payload, plot, view, 5)
+        incremental = render_layer_prefix(payload, plot, view, 6,
+                                          previous=previous, previous_split=5)
+        fresh = render_layer_prefix(payload, plot, view, 6)
+        self.assertTrue(incremental == fresh,
+                        "the incremental extension differs from the "
+                        "fresh render — completed pixels were "
+                        "re-composited")
+
     def test_dropping_the_wrapper_releases_the_images(self):
         # The wrapper is the ONLY owner of its rendered pixels (the
         # QML side holds file URLs, never the Python images), so
