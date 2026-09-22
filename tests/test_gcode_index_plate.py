@@ -161,6 +161,80 @@ class FeatureTypeTests(unittest.TestCase):
         self.assertEqual(runs[-1][1], _TYPE_OTHER)
 
 
+class MotionLineFastPathTests(unittest.TestCase):
+    """The fast motion front (the seek profile: the three per-line
+    regexes cost most of a raw hydrate's second). The front must claim
+    the dominant slicer shape, and EVERY claim must agree with the
+    regex front — a disagreement means the fast path reinterpreted a
+    line the regexes would have read differently."""
+
+    # The adversarial battery: shapes the regexes accept that the fast
+    # path must either read identically or leave alone (None).
+    BATTERY = [
+        b"G1 X5 Y10 E0.2", b"G0 X5 Y0", b"G2 X5 Y0 I2 J0",
+        b"G3 X5 Y0 I2 J0 R5", b"G1 X5. Y10", b"G1 X.5 Y10",
+        b"G1 X-1.5 Y+2 E1e3", b"G1 X-1e-3", b"G1 E-3",
+        b"G1 F600 X5", b"G1 F600", b"G1 I2 J0", b"G1",
+        b"G1 ", b"G1;comment", b"G1 X5 ;comment", b"G1 X5;c",
+        b"G1\tX5\tY10", b"G1  X5  Y10", b"G1 X5 Y10 E0.2 ;x",
+        b"G1 x5", b"g1 x5", b"G1 X 5 Y10", b"G1 X5Y10",
+        b"G1 Xe3", b"G1 X5_0", b"G1 X0x1A", b"G1 X5, Y10",
+        b"G1 Xinf", b"G1 Xnan", b"G1 X5 E", b"G1 X", b"G1 S0 X5",
+        b"G01 X5", b"G10 X5", b"G12 X5", b"G4 P100", b"G92 X5",
+        b"M82", b"M104 S200", b"T0", b"G21", b"G20 X5",
+        b"  G1 X5", b"N12 G1 X5", b"N12G1 X5", b"n12g1 x5",
+        b";TYPE:WALL-OUTER", b";comment", b"", b"   ", b"N",
+        b"N12", b"G", b"GX5", b"GG1 X5", b"G1X5", b"G1E0.2X5",
+        b"G1 X5 Y10 E0.2 F600 Z1.5",
+    ]
+
+    def test_the_dominant_shape_takes_the_fast_path(self):
+        # The structural perf guard: if the pre-check ever stops
+        # claiming the dominant shape, the hydrate silently falls back
+        # to the regex front and the seek win regresses.
+        command, axes = gcode_index._fast_motion_line(b"G1 X5.5 Y10 E0.2")
+        self.assertEqual(command, b"G1")
+        self.assertEqual(axes, {"X": 5.5, "Y": 10.0, "E": 0.2})
+        for line in (b"G0 X5 Y0", b"G2 X5 Y0 I2 J0", b"G3 X5 Y0 I2 J0 R5"):
+            self.assertIsNotNone(gcode_index._fast_motion_line(line),
+                                 "%r did not take the fast path" % line)
+
+    def test_every_claim_agrees_with_the_regex_front(self):
+        for line in self.BATTERY:
+            code = line.split(b";", 1)[0]
+            fast = gcode_index._fast_motion_line(code)
+            if fast is None:
+                continue  # the fallback is always legal
+            match = gcode_index._COMMAND.search(code)
+            command = match.group(1).upper() if match else b""
+            axes = gcode_index._parse_axes(code)
+            self.assertEqual(fast, (command, axes), "%r" % line)
+            self.assertIsNotNone(gcode_index._MOTION.search(line),
+                                 "%r claimed a motion the motion regex refuses" % line)
+
+    def test_a_hydrated_layer_matches_the_full_scan_through_the_fast_path(self):
+        # A layer mixing dominant fast-path lines and fallback shapes
+        # hydrates into the same polylines the full scan derives.
+        from tests.test_plate_progress import layer_polylines
+        data = (b"M82\nG90\n;LAYER:0\n;TYPE:WALL-OUTER\n"
+                + b"G2 X8 Y8 I1 J0\n"     # an arc FIRST: any code-part leak
+                + b"".join(b"G1 X%.3f Y%.3f E%.4f\n" % (float(i), float(i % 50),
+                                                        0.05 + i * 0.001)
+                           for i in range(40))
+                + b"G1 X 5 Y 10 E0.2\n"   # the spaced axis — the regex path
+                + b"g1 x5 y10 e0.2\n"     # lowercase — the regex path
+                + b"G1 X5. Y10\n"         # the dot-trailing number
+                + b"G1 E-0.3\n")          # a retraction
+        path = _write_gcode(data)
+        self.addCleanup(os.remove, path)
+        full = build_index_from_file(path, compact=False)
+        compact = build_index_from_file(path, compact=True)
+        self.assertTrue(hydrate_layer_from_file(compact, path, 0, keep_anchor=0))
+        self.assertEqual(compact.motion_count(0), full.motion_count(0))
+        self.assertEqual(layer_polylines(compact, 0), layer_polylines(full, 0),
+                         "the fast-path hydrate diverged from the full scan")
+
+
 class TravelBoundaryTests(unittest.TestCase):
     """The E-axis rule: which motions are travel, and where a travel starts."""
 
