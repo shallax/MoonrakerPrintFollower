@@ -847,10 +847,19 @@ class MachineActionCase(unittest.TestCase):
         foreign = os.path.join(storage, "SomeOtherPlugin")
         os.makedirs(os.path.join(foreign, "index"))
         # The backing files are gone: the index listeners must reset
-        # to the no-index state (the live ruling).
+        # to the no-index state (the live ruling), and the invalidate
+        # runs FIRST — the worker and its writer retire before the
+        # sweep deletes anything (the review's ordering finding).
         follower = self._follower()
         invalidated = []
-        follower.invalidateIndex = lambda: invalidated.append(1)
+
+        def invalidate_index():
+            # At invalidate time the directories must still stand:
+            # the deletion follows the retirement, never precedes it.
+            invalidated.append([os.path.isdir(os.path.join(storage, name))
+                                for name in ("MoonrakerPrintFollower",
+                                             self.module.CACHE_DIRECTORY_NAME)])
+        follower.invalidateIndex = invalidate_index
         action = self._action(follower)
         statuses = []
         action.cacheStatusChanged.connect(lambda: statuses.append(action.cacheStatus))
@@ -861,8 +870,8 @@ class MachineActionCase(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(storage, name)),
                              "%s survived the clear" % name)
         self.assertTrue(os.path.isdir(foreign), "the sweep reached a foreign plugin")
-        self.assertEqual(invalidated, [1],
-                         "the clear never reset the index listeners")
+        self.assertEqual(invalidated, [[True, True]],
+                         "the invalidate ran after the deletion (or never ran)")
         self.assertEqual(action.cacheStatus,
                          "Cache cleared. Restart Cura to also drop the session's downloaded file.")
         self.assertEqual(statuses, [action.cacheStatus])
@@ -873,8 +882,12 @@ class MachineActionCase(unittest.TestCase):
         with patch.object(self.module.shutil, "rmtree", side_effect=OSError("read-only")):
             action.clearCache()
 
-        self.assertEqual(action.cacheStatus, "Could not clear the cache — see Cura's log.")
-        self.assertIn("cache clear failed", self.log.call_args[0][1])
+        # The refusal is REPORTED on the status row (the review's
+        # finding — a silently-ignored deletion failure read as a
+        # full clear), never raised.
+        self.assertEqual(action.cacheStatus,
+                         "Cache partially cleared — some files are still in use. "
+                         "Restart Cura to also drop the session's downloaded file.")
 
     def test_the_migration_surfaces_read_the_persistence_record(self):
         record = {"status": "failed", "backupWritten": True, "backupName": "cura.cfg.20260919"}

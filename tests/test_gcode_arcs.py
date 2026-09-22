@@ -369,6 +369,23 @@ class ArcPlaneTests(unittest.TestCase):
         self.assertAlmostEqual(fraction, 0.75, places=4)
 
 
+class ArcUnitConversionTests(unittest.TestCase):
+    """G20 scales an arc's centre offsets exactly as it scales the axes:
+    an inch command is the millimetre curve it stands for, not a curve
+    whose centre was read in millimetres."""
+
+    def test_an_inches_arc_draws_the_same_curve_as_its_millimetre_twin(self):
+        # One inch of I beside one inch of travel: 25.4 mm both ways, so
+        # the curve is the quarter circle of radius 25.4 about the origin.
+        inches = _index("M82\nG20\n;LAYER:0\n;TYPE:SKIN\n"
+                        "G0 X1 Y0\nG3 X0 Y1 I-1 J0 E1\n")
+        millimetres = _index("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                             "G0 X25.4 Y0\nG3 X0 Y25.4 I-25.4 J0 E1\n")
+        self.assertEqual(inches.motion_arcs[0], {1: (17, False, -25.4, 0.0)})
+        self.assertLess(_deviation(_chain(inches, "SKIN"), 0.0, 0.0, 25.4), 1e-4)
+        self.assertEqual(layer_polylines(inches, 0), layer_polylines(millimetres, 0))
+
+
 class ArcDegradationTests(unittest.TestCase):
     """Klipper-invalid arcs keep the index usable: the motion keeps its
     endpoint, its E, its feature and its place, and draws as the straight
@@ -795,6 +812,17 @@ class ArcCompactHydrationTests(unittest.TestCase):
         full, compact = self._hydrated(gcode, 1)
         self.assertEqual(compact.motion_arcs[1], full.motion_arcs[1])
         self.assertEqual(layer_polylines(compact, 1), layer_polylines(full, 1))
+
+    def test_a_hydrated_inches_arc_matches_the_full_scan(self):
+        # The units factor is applied by the compact scan and again by the
+        # hydration parse: the hydrated layer must carry the same offsets.
+        gcode = ("M82\nG20\n"
+                 ";LAYER:0\n;TYPE:SKIN\nG0 X1 Y0\nG3 X0 Y1 I-1 J0 E1\n"
+                 ";LAYER:1\nG1 X0.5 Y0.5 E2\n")
+        full, compact = self._hydrated(gcode, 0)
+        self.assertEqual(compact.motion_arcs[0], {1: (17, False, -25.4, 0.0)})
+        self.assertEqual(compact.motion_arcs[0], full.motion_arcs[0])
+        self.assertEqual(layer_polylines(compact, 0), layer_polylines(full, 0))
 
     def test_a_hydrated_arc_keeps_its_feature_and_travel_state(self):
         gcode = ("M83\n"

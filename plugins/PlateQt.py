@@ -584,7 +584,7 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
         painter.end()
         return image
     motions = current.get("motions") or 0
-    if split is not None and 0 < split < motions:
+    if split is not None and 0 <= split < motions:
         # The partial state: the grey whole-layer base, then the
         # printed prefix (the vector tail beyond the live split is
         # NOT printed — the boundary is the scene's truth).

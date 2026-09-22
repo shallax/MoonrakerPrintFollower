@@ -201,7 +201,7 @@ class TemperatureHistoryTests(unittest.TestCase):
 
     def test_default_window_matches_the_chart_cadence(self):
         self.assertEqual(WINDOW_SECONDS, 1800)
-        self.assertEqual(MAX_SAMPLES, 1801)
+        self.assertEqual(MAX_SAMPLES, 2 * WINDOW_SECONDS)
 
     def test_the_window_holds_the_full_span_at_the_fixed_chart_cadence(self):
         # Seeds the whole advertised window at the fixed 1 s chart
@@ -214,6 +214,21 @@ class TemperatureHistoryTests(unittest.TestCase):
             self.observe(history, tick * 1.0, {"extruder": (200.0 + (tick % 50) * 0.1, None, None)})
         points = history.points("extruder")
         self.assertEqual(points[-1][0] - points[0][0], WINDOW_SECONDS)
+
+    def test_a_fast_chart_clock_still_holds_the_full_window(self):
+        # The chart's 1 s clock is a coarse Qt timer, which may legally
+        # fire 5% early (measured on the host: a 0.95 s stretch). The
+        # elapsed trim owns the domain, so a fast clock costs at most
+        # the sample on the cutoff — a count cap at the window boundary
+        # would trim live samples and shrink the drawn window instead.
+        period = 0.95
+        history = TemperatureHistory()
+        for tick in range(int(WINDOW_SECONDS / period) + 8):
+            self.observe(history, tick * period, {"extruder": (200.0, None, None)})
+        points = history.points("extruder")
+        span = points[-1][0] - points[0][0]
+        self.assertGreater(span, WINDOW_SECONDS - period, "the count cap trimmed live samples")
+        self.assertLessEqual(span, WINDOW_SECONDS)
 
 
 class TargetCompressionTests(unittest.TestCase):

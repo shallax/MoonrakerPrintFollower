@@ -207,7 +207,8 @@ class PreparedCache:
 
     def _file_progress(self, path: str) -> Optional[dict]:
         """One file's valid progress, whoever wrote it: the completion
-        flag and the CACHED entry count — the arbitration's common
+        flag and the RESOLVED entry counts (CACHED and UNCACHEABLE
+        alike — both close the layer) — the arbitration's common
         measure for a published final and an interrupted tmp alike.
         A corrupt or truncated file reports None."""
         try:
@@ -227,38 +228,49 @@ class PreparedCache:
                          for i in range(count)]
                 size = os.fstat(handle.fileno()).st_size
                 cached = 0
+                uncacheable = 0
                 for state, offset, length in table:
                     if state == STATE_CACHED:
                         if offset <= 0 or offset + length > size:
                             return None
                         cached += 1
+                    elif state == STATE_UNCACHEABLE:
+                        uncacheable += 1
+                    elif state != STATE_EMPTY:
+                        return None  # an unknown state reads corrupt
                 return {"complete": bool(complete), "cached": cached,
-                        "count": count}
+                        "uncacheable": uncacheable, "count": count}
         except OSError:
             return None
 
     def _arbitrate(self, final_path: str, tmp_path: str) -> str:
         """The deterministic policy between an existing published file
         and an interrupted candidate (the review's repeated-crash
-        finding — 30% published + a 70% tmp must keep the 70%): a
-        complete valid final beats an incomplete tmp; a more-complete
-        valid partial beats a less-complete one; equal progress goes
-        to the newer file. A corrupt or unsound candidate loses."""
+        finding — 30% published + a 70% tmp must keep the 70%): the
+        ACTUAL resolved coverage (CACHED and UNCACHEABLE entries)
+        decides — a completion flag alone is not proof of coverage,
+        because a completed pass can publish EMPTY slots a repair was
+        filling. A fully resolved valid file stays authoritative; a
+        more-resolved partial beats a less-resolved one; equal
+        coverage goes to the newer file. A corrupt or unsound
+        candidate loses."""
         final = self._file_progress(final_path)
         tmp = self._file_progress(tmp_path)
         if tmp is None:
             return "final"
         if final is None:
             return "tmp"
-        if final["complete"]:
+        final_resolved = final["cached"] + final["uncacheable"]
+        tmp_resolved = tmp["cached"] + tmp["uncacheable"]
+        if final["complete"] and final_resolved == final["count"]:
             return "final"
-        if tmp["complete"]:
+        if tmp["complete"] and tmp_resolved == tmp["count"]:
             return "tmp"
-        if tmp["cached"] > final["cached"]:
-            _log("prepared interrupted candidate superseded the older partial (%d > %d layers)",
-                       tmp["cached"], final["cached"])
+        if tmp_resolved > final_resolved:
+            _log("prepared interrupted candidate superseded the older partial "
+                 "(%d > %d resolved layers)", tmp_resolved, final_resolved)
             return "tmp"
-        if tmp["cached"] < final["cached"]:
+        if tmp_resolved < final_resolved:
             return "final"
         try:
             if os.stat(tmp_path).st_mtime >= os.stat(final_path).st_mtime:

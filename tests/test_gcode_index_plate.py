@@ -1085,6 +1085,20 @@ class PlateVisitedTests(unittest.TestCase):
             frozenset({"Widget", "Box", "Fork"}),
             "a later poll changed the verdicts")
 
+    def test_an_extrusion_inside_overlapping_polygons_marks_both(self):
+        # The release-candidate overlap question: an edge inside the
+        # hulls of TWO objects has met both — the walk must not stop
+        # at the first matching hull, or the later-defined object
+        # never reads passed.
+        data = (b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\nG0 X6 Y4\n"
+                b"G1 X8 Y14 E2\n")  # motion 3: inside BOX and OVER both
+        self._bind(data)
+        over = [[5.0, 8.0], [15.0, 8.0], [15.0, 28.0], [5.0, 28.0]]
+        rows = self._rows(("Box", self.BOX), ("Over", over))
+        self.assertEqual(self.service.plate_visited(0, 4, rows),
+                         frozenset({"Box", "Over"}),
+                         "the overlap's second object was never marked")
+
     def test_a_changed_polygon_replays_the_consumed_range(self):
         # The same name with moved vertices is new geometry: the cache
         # keys on content, so the consumed range is judged again.
@@ -1570,6 +1584,67 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                 break
         self.assertLess(full_at_demand, 60,
                         "the pass finished before the demand cut in")
+
+    def test_the_batch_loop_yields_on_the_foreground_event_alone(self):
+        # The loop-top yield reads the thread-safe EVENT, never the
+        # mutable hydrate set across the thread boundary. With the
+        # event set (a demand's signal) and the set EMPTY, a batch
+        # must stop at the first loop-top check instead of running
+        # its whole deadline.
+        index = make_index(layers=5, motions=2)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        captured = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            captured.append((kind, work)))
+        self.service._advance()
+        self.service._submit = original
+        self.assertEqual(captured[0][0], "fullprep",
+                         "the first submission was not the pass")
+        work = captured[0][1]
+        self.assertEqual(self.service._hydrate, set())
+        self.service._foreground_pending.set()  # the demand's signal alone
+        frontier, _encoded, _uncacheable = work()
+        self.assertEqual(frontier, 0,
+                         "the batch ignored the event and walked on")
+        self.service._busy = ""  # the captured batch never ran for real
+
+    def test_the_repair_copies_an_uncacheable_entry_without_a_rewalk(self):
+        # The repair copies the old file's UNCACHEABLE state into the
+        # new writer WITHOUT re-walking the layer — the codec's
+        # refusal stands across sessions, the entry never becomes an
+        # EMPTY hole, and only the genuine hole regenerates.
+        from plugins.PreparedStore import STATE_UNCACHEABLE
+        writer = self.store.open_for_write("print-key", 5)
+        for layer in (0, 1, 4):
+            self.store.append(writer, layer, self._payload(layer))
+        self.store.append_uncacheable(writer, 3)
+        self.store.finish_write(writer)  # complete: 2 EMPTY, 3 refused
+        self._view(5)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        module = self.qt.load("GCodeIndexService")
+        prepared_walks = []
+        real_prepare = module._prepare_layer
+
+        def spied(index_arg, layer, should_yield=None):
+            prepared_walks.append(layer)
+            return real_prepare(index_arg, layer, should_yield)
+
+        with patch.object(module, "_prepare_layer", spied):
+            self._pump()
+        loaded = self.store.load_table("print-key")
+        self.assertIsNotNone(loaded)
+        self.assertTrue(loaded["complete"])
+        self.assertEqual(loaded["table"][3], (STATE_UNCACHEABLE, 0, 0),
+                         "the repair lost the uncacheable state")
+        self.assertEqual(loaded["table"][2][0], self.state_cached,
+                         "the genuine hole never regenerated")
+        self.assertNotIn(3, prepared_walks,
+                         "the repair re-walked the refused layer")
+        self.assertEqual(self.service.plate_pass_fraction(), 1.0)
 
     def test_a_uuid_only_identity_never_restores(self):
         # The review's identity policy at the SERVICE gate: the uuid

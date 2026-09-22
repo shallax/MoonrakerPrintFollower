@@ -24,8 +24,8 @@ if QT_AVAILABLE:
 
     from plugins import MonitorControls as controls_module
     from plugins.MonitorControls import MonitorControls
-    from plugins.MonitorPermissions import (Observation, R_UNKNOWN, can_exclude, can_macro,
-                                            can_restart, can_restore, can_z_offset)
+    from plugins.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN, can_macro,
+                                            can_restart, can_z_offset)
     from plugins.MonitorTuning import MonitorTuning
 
 
@@ -62,7 +62,12 @@ if QT_AVAILABLE:
             self.changed.emit()
 
     class Commands(QObject):
-        """The command capability: records every dispatch with its rule."""
+        """The command capability: records every dispatch with its rule.
+
+        ``started`` mirrors the lane's verdict from ``script``: False is
+        a dispatch that never reached the wire (a dead transport, a full
+        queue), and the gesture's latch must follow it.
+        """
 
         changed = pyqtSignal()
 
@@ -70,12 +75,15 @@ if QT_AVAILABLE:
             super().__init__()
             self.setup_allowed = True
             self.calls = []
+            self.started = True
 
         def script(self, label, script, rule=None):
             self.calls.append(("script", label, script, rule))
+            return self.started
 
         def request(self, label, path, payload, rule=None):
             self.calls.append(("request", label, path, payload, rule))
+            return self.started
 
         def send(self, label, path, payload):
             self.calls.append(("send", label, path, payload))
@@ -716,7 +724,14 @@ class PowerAndExclusionTests(ControlsCase):
         self.data.observation = record(state="printing")
         self.data.rebuild(auxiliary={"exclude_object": {"objects": [{"name": "part"}, {"name": 'a\\b"c\n'}]}})
         self.controls.exclude("part")
-        self.assertEqual(self.commands.calls[-1], ("script", "Exclude part", 'EXCLUDE_OBJECT NAME="part"', can_exclude))
+        self.assertEqual(self.commands.calls[-1][:3],
+                         ("script", "Exclude part", 'EXCLUDE_OBJECT NAME="part"'))
+        # The rule it rides is the lane's dispatch revalidation: the
+        # mid-print row AND the name's own plate predicate.
+        rule = self.commands.calls[-1][3]
+        self.assertEqual(rule(record(state="printing")).mode, "allowed")
+        self.assertEqual(rule(record(state="printing")).reason, "")
+        self.assertEqual(rule(record(state="standby")).reason, R_NOT_PRINTING)
         # A quote, a backslash and a newline must not break out of the
         # quoted NAME — a newline would otherwise start a second command.
         self.controls.exclude('a\\b"c\n')
@@ -752,8 +767,8 @@ class PowerAndExclusionTests(ControlsCase):
         self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}],
                                                    "excluded_objects": ["PART_A"]}})
         self.controls.restore("PART_A")
-        self.assertEqual(self.commands.calls[-1],
-                         ("script", "Restore PART_A", 'EXCLUDE_OBJECT RESET=1 NAME="PART_A"', can_restore))
+        self.assertEqual(self.commands.calls[-1][:3],
+                         ("script", "Restore PART_A", 'EXCLUDE_OBJECT RESET=1 NAME="PART_A"'))
 
     def test_restore_refuses_an_empty_name_without_dispatch(self):
         self.data.observation = record(state="printing")
@@ -781,14 +796,18 @@ class PowerAndExclusionTests(ControlsCase):
         self.assertEqual(self.commands.calls[-1], ("status", "Restore refused: 'PART_A' is not excluded"))
 
     def test_the_latch_blocks_the_same_gesture_until_the_status_confirms(self):
+        # The double tap inside the status lag stays one dispatch. The
+        # release is the PLATE, not a manual confirmation: the status
+        # that shows the exclusion landing is what frees the gesture.
         self.data.observation = record(state="printing")
-        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}], "excluded_objects": []}})
+        self.plate(["PART_A"])
         self.controls.exclude("PART_A")
         self.controls.exclude("PART_A")
         self.assertEqual(len(self.scripts()), 1)
         self.assertEqual(self.commands.calls[-1][0], "status")
         self.assertIn("already in flight", self.commands.calls[-1][1])
-        self.controls.confirm_exclusion("PART_A")
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.plate(["PART_A"])
         self.controls.exclude("PART_A")
         self.assertEqual(len(self.scripts()), 2)
 
@@ -801,6 +820,111 @@ class PowerAndExclusionTests(ControlsCase):
         # is still in flight — the rescue path is never gated.
         self.controls.restore("PART_B")
         self.assertEqual(len(self.scripts()), 2)
+
+    def plate(self, objects, excluded=()):
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": name} for name in objects],
+                                                   "excluded_objects": list(excluded)}})
+
+    def test_a_confirmed_exclusion_releases_the_latch_for_the_next_gesture(self):
+        # The exclude → restore → exclude cycle is a normal correction,
+        # and it fits inside the latch's ceiling. The plate status
+        # confirming the first exclusion IS the delivery — holding the
+        # gesture until the ten-second backstop expires wedges the
+        # third click on a command that finished long ago.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 1)
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 3)
+        self.assertEqual(self.commands.calls[-1][0], "script")
+
+    def test_a_confirmed_restore_releases_the_latch_for_the_next_gesture(self):
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 1)
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 3)
+        self.assertEqual(self.commands.calls[-1][0], "script")
+
+    def test_the_latch_follows_the_plate_and_not_the_clock(self):
+        # The plate turned over inside the ceiling (a finished print,
+        # a new one): the armed gesture can never land on the plate
+        # that does not list the name, so the name's next exclusion —
+        # on the plate it is actually on — is not refused by it.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.plate(["PART_B"])
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+
+    def test_pending_latches_do_not_survive_a_session_invalidation(self):
+        # A printer switch (or a reconnect cycle) resets the lane and
+        # the plate with it: a latch from the dead session must not
+        # refuse the same gesture on the new one.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.data.invalidated.emit()
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+
+    def test_a_dispatch_that_never_started_leaves_no_latch(self):
+        # The transport was down: nothing is in flight, so the retry
+        # must not be refused as one.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"])
+        self.commands.started = False
+        self.controls.exclude("PART_A")
+        self.commands.started = True
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+        self.assertEqual(self.commands.calls[-1][0], "script")
+
+    def test_a_restore_dispatch_that_never_started_leaves_no_latch(self):
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.commands.started = False
+        self.controls.restore("PART_A")
+        self.commands.started = True
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+
+    def test_the_latch_blocks_a_rapid_restore_until_the_plate_confirms(self):
+        # The exclusion and restoration directions latch independently
+        # and both release on their own plate status.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.restore("PART_A")
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 1)
+        self.assertIn("already in flight", self.commands.calls[-1][1])
+        self.plate(["PART_A"])
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.restore("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+
+    def test_a_refused_gesture_arms_no_latch(self):
+        # Every refusal happens before the arm — a refused click must
+        # never cost the user the next, legitimate one.
+        self.data.observation = record(state="printing")
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.controls.exclude("PART_A")  # already excluded: refused
+        self.plate(["PART_A"])
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 1)
 
 
 class FailClosedTests(ControlsCase):

@@ -3243,7 +3243,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 or surface.plot is None:
             return
         key = self._navigation_key(surface)
-        if key is None or key == surface.nav["key"]:
+        # The failed-key latch: a demand whose last attempt FAILED is
+        # never retried while it stays identical (every publish would
+        # re-arm it at render cost). Any demand change produces a new
+        # key and re-arms; a success clears the latch.
+        if key is None or key == surface.nav["key"] \
+                or key == surface.nav.get("failed"):
             return
         desired = surface.desired
         window = {}
@@ -3326,14 +3331,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         job = surface.nav["job"]
         if images and isinstance(images, tuple) and images[0] in ("failed", "cancelled"):
-            if job is not None and surface.job_epoch == epoch:
+            # The terminal must belong to the ACTIVE job — the serial
+            # is the job's own identity. A stale cancellation from a
+            # superseded job (A cancelled, B started, A's terminal
+            # arrives) must never clear the slot B owns (the review's
+            # finding).
+            if job is not None and job["serial"] == serial \
+                    and surface.job_epoch == epoch:
                 surface.nav["job"] = None
+                # The ACTIVE job ended without a picture: its key
+                # latches so the identical demand never hot-retries,
+                # and a demand that has SINCE CHANGED reschedules.
+                surface.nav["failed"] = job["key"]
+                self._schedule_navigation(surface)
             return
         if not images or not isinstance(images, tuple) or images[0] != "nav":
             return
         _kind, _image, url, painted_key = images
-        if job is None or surface.job_epoch != epoch or job["key"] != key \
-                or painted_key != key:
+        if job is None or surface.job_epoch != epoch or job["serial"] != serial \
+                or job["key"] != key or painted_key != key:
             self._unlink_asset_files(images)
             return
         # The demand gate (the review's stale-promotion finding): an
@@ -3347,6 +3363,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._schedule_navigation(surface)
             return
         surface.nav["job"] = None
+        surface.nav["failed"] = None
         old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
@@ -3537,6 +3554,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.nav["job"] = None
         surface.nav["key"] = None
         surface.nav["url"] = ""
+        # The close resets the failure latch too: a reopened popover
+        # retries a demand whose earlier failure may have been
+        # transient (a payload since rebuilt).
+        surface.nav["failed"] = None
 
     def _cancel_obsolete_job(self, surface):
         """The running job no longer matches the desired demand —

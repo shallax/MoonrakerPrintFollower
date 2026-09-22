@@ -346,7 +346,7 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("def clearCache(self)", action)
-        self.assertIn('shutil.rmtree(path, ignore_errors=True)', action)
+        self.assertIn("refused.append(path)", action)  # failures report, never hide
         self.assertIn('"MoonrakerPrintFollower"', action)
 
     def test_normalise_url_is_the_single_url_rule(self):

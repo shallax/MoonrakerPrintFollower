@@ -287,6 +287,11 @@ class GCodeIndexService(QObject):
         # preparation boundaries when a visible layer is demanded.
         self._foreground_pending = threading.Event()
         self._busy = ""
+        # The generation that OWNS the busy flag: a stale worker's
+        # terminal clears it only if it belongs to this generation —
+        # an old completion must never misrepresent a newer task
+        # (the review's cache-clear finding).
+        self._busy_generation = -1
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
         self._hydrating = None
@@ -404,10 +409,17 @@ class GCodeIndexService(QObject):
         self._cancel.set()
         self._cancel = threading.Event()
         self._generation += 1
+        # The active writer retires BEFORE the state resets (the
+        # review's cache-clear finding): the retire freezes every
+        # later append and finish and checkpoints the committed
+        # layers through its own store — no worker can ever write
+        # to it again.
+        self._retire_prepared_writer()
         self._view = None
         self._job = None
         self._wanted = self._restored = self._save = False
         self._busy = ""
+        self._busy_generation = self._generation
         self._error = ""
         self._progress = None
         self._hydrate.clear()
@@ -774,12 +786,14 @@ class GCodeIndexService(QObject):
             bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
             for name, polygon, bounds in polygons:
                 # The bounds reject most pairs for the price of four
-                # comparisons, before any vertex is touched.
+                # comparisons, before any vertex is touched. Every
+                # hull the edge meets records the visit — overlapping
+                # object hulls all touch the toolhead's path, and the
+                # verdict must never depend on the define order.
                 if right < bounds[0] or left > bounds[2] or top < bounds[1] or bottom > bounds[3]:
                     continue
                 if _segment_in_polygon(x0, y0, x1, y1, polygon):
                     self._visited.add(name)
-                    break
 
     def plate_progress(self, anchor, file_position=None, live_position=None):
         """The composed payload (the tests and the one-shot consumers):
@@ -1361,7 +1375,11 @@ class GCodeIndexService(QObject):
                 uncacheable = set()
                 frontier = start
                 while time.monotonic() < deadline:
-                    if self._hydrate:
+                    # The loop-top yield reads the thread-safe EVENT,
+                    # never the mutable hydrate set across the thread
+                    # boundary — the owner records every demand in
+                    # both, but only the event is the worker's signal.
+                    if self._foreground_pending.is_set():
                         break  # a demand arrived — it outranks the pass
                     layer = frontier
                     if layer >= len(index.ranges):
@@ -1437,6 +1455,7 @@ class GCodeIndexService(QObject):
     def _submit(self, kind, work, lease=None):
         generation = self._generation
         self._busy = kind
+        self._busy_generation = generation
         future = self._executor.submit(work)
         def done(result):
             try: value, error = result.result(), None
@@ -1450,7 +1469,12 @@ class GCodeIndexService(QObject):
 
     def _finish(self, generation, kind, value, error, lease):
         if lease is not None: lease.close()
-        self._busy = ""
+        # The busy flag clears ONLY for the generation that owns it —
+        # a stale worker's terminal (an old build completing after a
+        # bind/invalidate) must never misrepresent a newer task's
+        # state and let _advance pile a second job on the queue.
+        if generation == self._busy_generation:
+            self._busy = ""
         if self._closed: return
         if generation == self._generation:
             if kind in {"build", "restore"}:
