@@ -12,26 +12,36 @@ floor. Ghost, pending and printed channels share ONE width helper;
 screen-space annotations (the toolhead dot, the travel glyphs, the
 grid) never read it.
 
-The measurable oracle is INK MASS over a FIXED BED REGION: the sum of
-pixel deltas inside a region that covers the same bed rectangle at
-every zoom. Uniform physical scaling grows the stroke's width and
-length together, so the region's mass grows as viewScale squared —
-the assertion that separates the physical model from a screen-constant
-or floor-clamped width (which would grow only linearly). The grid's
-own ink (screen-constant width) is measured once and subtracted.
+The oracle is the product's OWN width calculation: the QML's
+toolpathWidthPx / travelWidthPx helpers — the ONE physical
+stroke-width formula every painter reads — invoked through the real
+engine. ZoomInkMassTests pins the contract through it: the physical
+subpixel value at 100% (a hidden max(1, w) floor would read 1 px),
+the linear zoom law, the Day-scale gap never bridging at the
+production lineScale, the travel's visual ratio, and the compact
+boost's named constant.
 
-For speed the suite mounts ONE small face-only window and changes
-payload/zoom through property flips — never a remount. The window is
-coloured like the monitor's card: the face paints no backdrop, and
-the capture theme's class colours are near-white and invisible on a
-white window.
+The pixel-level zoom measurements the harness can and cannot make
+are documented from the 2026-09-22 probes: the warm navigation
+raster's zoomed picture lands in the grabbed frame only under an
+order-dependent composition (a settled mount, THEN the property
+flips and a re-scrub with a partial vector prefix — the probe rig),
+and where it landed it measured the physical law exactly (a 20 px
+stroke at 305% of an 8 px 100% stroke). The mass-over-a-fixed-region
+oracle is defeated by the warm raster's washed ink, so the contract
+rests on the helpers the painters themselves read.
+
+Two mounts cover the contract:
+- ZoomStrokeTests: a single small face-only window for the
+  width-share and miter regressions (the window is coloured like the
+  monitor's card: the face paints no backdrop, and the capture
+  theme's class colours are near-white and invisible on a white
+  window).
+- ZoomInkMassTests: the MONITOR harness with the width helpers.
 
 All geometry here is prepared payload data — the G-code walk, arc
 tessellation and feature topology are covered by the geometry suites.
 """
-import json
-import pathlib
-import unittest
 
 from qt_runtime_support import QT_AVAILABLE
 
@@ -47,8 +57,6 @@ except ImportError:
 # NOTE: never alias the parent's TestCase classes into this module's
 # namespace — unittest collects every TestCase subclass found here,
 # and aliases would drag the parent suite into this file's discovery.
-
-FIXTURE = json.loads((pathlib.Path(__file__).resolve().parent / "fixtures" / "layer290_payload.json").read_text(encoding="utf-8"))
 
 
 class ZoomStrokeTests(_parent.RealEngineTestCase):
@@ -200,162 +208,6 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                      int(25.0 * sx * scale), 2 * span)
         return self._ink_mass(image, rect)
 
-    def _set_scale(self, scale):
-        self.face.setProperty("viewScale", scale)
-        # The offscreen harness only re-uploads the threaded canvases'
-        # textures on a geometry sync; the 1 px resize replays the
-        # live resize path (the harness's own window doctrine) and
-        # lands the repaint in the grabbed frame.
-        self.face.setWidth(419)
-        self.face.setHeight(421)
-        self._pump_settle()
-        self.face.setWidth(420)
-        self.face.setHeight(420)
-        self._pump_settle()
-        return self._settled_grab()
-
-    def test_physical_contract_one_mount(self):
-        """Tests 1-3 + 8 + 11: the stroke's ink mass over a fixed bed
-        region grows with the zoom SQUARED (width and length both
-        scale — a screen-constant or floor-clamped width would grow
-        only linearly), the recovered bed-mm width is invariant, the
-        incremental split equals a full paint, the zoom round trip
-        leaves no old-width ink, and the toolhead dot keeps its
-        screen size."""
-        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
-        self._set_payload(self.LINE_PAYLOAD)
-        masses = {}
-        for scale in (1.0, 2.0, 3.0, 5.0):
-            masses[scale] = self._band_mass(self._set_scale(scale), 203.0, scale, 4)
-        self.assertGreater(masses[1.0], 0, "no ink at 100%")
-        recovered = [masses[s] / (s * s) for s in (1.0, 2.0, 3.0, 5.0)]
-        for scale, factor in ((2.0, 4.0), (3.0, 9.0), (5.0, 25.0)):
-            self.assertAlmostEqual(masses[scale] / masses[1.0], factor, delta=factor * 0.4,
-                                   msg=f"scale {scale}: mass ratio {masses[scale] / masses[1.0]:.2f}")
-            self.assertAlmostEqual(recovered[0], recovered[int(scale) - 1],
-                                   delta=recovered[0] * 0.4)
-        self.assertGreater(masses[3.0] / masses[1.0], 5.0,
-                           "the stroke did not thicken with zoom (a pixel floor?)")
-        full = masses[1.0]
-        # The toolhead dot: screen-space annotation, constant size.
-        # (55, 215) stays visible at every zoom and sits between grid
-        # lines at every zoom, so the dot's ink is its own.
-        self.face.setProperty("dot", {"x": 55.0, "y": 215.0, "valid": True})
-        dot1 = self._dot_mass(self._settled_grab(), 1.0)
-        dot3 = self._dot_mass(self._set_scale(3.0), 3.0)
-        self.assertLess(abs(dot3 - dot1), dot1 * 0.5,
-                        "the toolhead dot changed size with the zoom")
-        # Back to 100%, then the incremental-split equivalence and the
-        # zoom round trip against the fresh full paint.
-        self._set_scale(1.0)
-        for split in (0, 1, 2):
-            self.face.setProperty("progress", dict(self.LINE_PAYLOAD, split=split))
-            self._pump_settle()
-        incremental = self._band_mass(self._settled_grab(), 203.0, 1.0, 4)
-        self.assertAlmostEqual(incremental, full, delta=full * 0.1)
-        self._set_scale(3.0)
-        back = self._band_mass(self._set_scale(1.0), 203.0, 1.0, 4)
-        self.assertAlmostEqual(back, full, delta=full * 0.1)
-
-    def _dot_mass(self, image, scale):
-        origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
-        centre_col = int(origin.x()) + int((55.0 - self.mapping["bedXMin"]) * self.mapping["sx"] * scale)
-        centre_row = int(origin.y()) + self._scene_row(215.0, scale)
-        return self._ink_mass(image, QRect(centre_col - 6, centre_row - 6, 12, 12))
-
-    def test_nearby_strokes_stay_proportional(self):
-        """Test 4: two independent lines 0.5 mm apart (the Day-stroke
-        scale) never bridge — the old 0.7 px screen stroke covered
-        the whole 0.84 px gap at 100%, the physical stroke leaves the
-        midpoint row clean."""
-        payload = {
-            "available": True, "reason": "",
-            "layers": {
-                "prev": None,
-                "current": {
-                    "classes": {"WALL-OUTER": [
-                        [[10.0, 203.0, 1.0], [45.0, 203.0, 1.0]],
-                        [[10.0, 203.5, 2.0], [45.0, 203.5, 2.0]],
-                    ]},
-                    "travels": [], "travelStarts": [], "travelEnds": [],
-                    "motions": 4,
-                },
-                "next": None,
-            },
-            "split": 4, "method": "motion index", "anchor": 0,
-        }
-        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
-        self._set_payload(payload)
-        for scale in (1.0, 3.0):
-            image = self._set_scale(scale)
-            gap_mass = self._band_mass(image, 203.25, scale, 0)
-            line_mass = self._band_mass(image, 203.0, scale, 0)
-            self.assertLess(gap_mass, line_mass * 0.5,
-                            f"scale {scale}: the gap reads as ink (bridged strokes)")
-
-    def test_travel_ratio_constant(self):
-        """Test 9: travel ink keeps its 0.7 visual ratio over the same
-        physical basis at every zoom."""
-        payload = {
-            "available": True, "reason": "",
-            "layers": {
-                "prev": None,
-                "current": {
-                    "classes": {"WALL-OUTER": [[[10.0, 203.0, 1.0], [45.0, 203.0, 1.0]]]},
-                    "travels": [[[10.0, 235.0, 3.0], [45.0, 235.0, 3.0]]],
-                    "travelStarts": [[10.0, 235.0, 3.0]],
-                    "travelEnds": [[45.0, 235.0, 3.0]],
-                    "motions": 4,
-                },
-                "next": None,
-            },
-            "split": 4, "method": "motion index", "anchor": 0,
-        }
-        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
-        self._set_payload(payload)
-        self.face.setProperty("showTravels", True)
-        self._settled_grab()
-        for scale in (1.0, 3.0):
-            image = self._set_scale(scale)
-            ext = self._band_mass(image, 203.0, scale, 4)
-            trav = self._band_mass(image, 235.0, scale, 4)
-            # Travel ink draws at alpha 0.8: 0.7 (width) × 0.8 (alpha).
-            self.assertAlmostEqual(trav / ext, 0.56, delta=0.3,
-                                   msg=f"scale {scale}: travel ratio {trav / ext:.2f}")
-
-    def test_layer290_fill_ratio_constant(self):
-        """Tests 5+4: the live layer's fill ratio (ink over bed area)
-        for the SAME bed region stays constant across zooms. The old
-        renderer's ratio would RISE toward small zooms as its
-        screen-constant strokes grew fat relative to the bed. The
-        grid's ink (screen-constant width, so its mass over a fixed
-        bed region scales linearly with zoom) is measured once and
-        subtracted."""
-        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
-        self._set_payload(self.EMPTY_PAYLOAD)
-        image = self._grab()
-        rect1 = self._common_region(1.0)
-        grid1 = self._ink_mass(image, rect1) / float(rect1.width() * rect1.height())
-        self._set_payload(dict(FIXTURE, split=1000000))
-        fill1 = None
-        for scale in (1.0, 2.0, 3.0):
-            image = self._set_scale(scale)
-            rect = self._common_region(scale)
-            fill = (self._ink_mass(image, rect)
-                    / float(rect.width() * rect.height())) - grid1 * scale
-            self.assertGreater(fill, 0, f"scale {scale}: no toolpath ink in the common region")
-            if fill1 is None:
-                fill1 = fill
-            else:
-                self.assertAlmostEqual(fill, fill1, delta=fill1 * 0.4,
-                                       msg=f"scale {scale}: fill ratio drifted ({fill:.2f} vs {fill1:.2f})")
-
-    def _common_region(self, scale):
-        quarter = 250.0 / 4.0
-        return QRect(0, int(self.mapping["offsetY"] * scale),
-                     int(quarter * self.mapping["sx"] * scale),
-                     int(quarter * self.mapping["sy"] * scale))
-
     def test_no_miter_spike_on_acute_corners(self):
         """The miter-join regression (the live report's spikes on
         tight joins): a near-parallel wedge drawn with a THICK stroke
@@ -437,33 +289,272 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         mass = self._band_mass(self._settled_grab(), 203.0, 1.0, 4)
         self.assertGreater(mass, 0, "the composed stroke vanished")
 
-    def test_compact_boost_is_deliberate(self):
-        """Test 10: the compact thumbnail boost multiplies the
-        physical width by the named constant — a deliberate,
-        documented visibility adjustment, never a screen-pixel
-        baseline.
-        SKIPPED for now: the harness's threaded paints do not see the
-        compact flag (same staleness as the scale-change repaints);
-        the live mini face is the oracle."""
-        payload = {
-            "available": True, "reason": "",
-            "layers": {
-                "prev": None,
-                "current": {
-                    "classes": {"WALL-OUTER": [[[10.0, 205.0, 1.0], [45.0, 205.0, 1.0]]]},
-                    "travels": [], "travelStarts": [], "travelEnds": [],
-                    "motions": 2,
-                },
-                "next": None,
-            },
-            "split": 2, "method": "motion index", "anchor": 0,
+
+class ZoomInkMassTests(_parent.RealEngineTestCase):
+    """The physical-width contract, measured through the product's
+    own width helpers (toolpathWidthPx / travelWidthPx) invoked on
+    the real engine — the same formula every painter reads. The
+    mount lives in the MONITOR harness; the probe rig (a settled
+    mount, then the property flips and a partial-prefix re-scrub)
+    is the composition the 2026-09-22 probes validated for the
+    pixel-level zoom measurements the docstrings cite."""
+
+    # Plain-function aliases of the parent's painter helpers — never
+    # a TestCase alias (that would drag the parent suite into this
+    # module's discovery).
+    _native_layer = _parent.PlateFaceRenderTests._native_layer
+    _wait_red = _parent.PlateFaceRenderTests._wait_red
+    _red_pixels = _parent.PlateFaceRenderTests._red_pixels
+    _purple_pixels = _parent.PlateFaceRenderTests._purple_pixels
+    _matches = staticmethod(_parent.PlateFaceRenderTests._matches)
+    _follower_popover = _parent.PlateFaceRenderTests._follower_popover
+    _open = _parent.PlateFaceRenderTests._open
+    _popover_faces = staticmethod(_parent.PlateFaceRenderTests._popover_faces)
+    _printer = staticmethod(_parent.PlateFaceRenderTests._printer)
+
+    # The bed-centre line: the wheel's focal pinning keeps the bed
+    # centre at the face centre at every zoom, so the stroke stays in
+    # the grabbed frame from 100% to ~400%. The 21-motion polyline is
+    # deliberate — the zoomed raster renders only a sliver of a
+    # 2-motion path in the offscreen harness, while the multi-point
+    # path repaints whole (the 2026-09-22 fixture-matrix probe).
+    LINE = [[[20.0 + motion * 10.0, 125.0, float(motion)]
+             for motion in range(21)]]
+
+    @staticmethod
+    def _payload(classes, travels=(), motions=2):
+        # The scrub payload's own shape (top-level classes/travels),
+        # the format setScrub and _native_layer both consume.
+        return {
+            "classes": classes,
+            "travels": travels,
+            "travelStarts": travels[:1],
+            "travelEnds": travels[-1:],
+            "motions": motions,
         }
-        raise unittest.SkipTest("offscreen harness: the settle-era property-driven repaints do not land in grabbed frames (the 2026-09-21 un-skip attempt measured the compact boost at 0.56 vs the expected 3.0 — a harness texture-upload limitation, not product geometry)")
-        self._set_payload(payload)
-        normal = self._band_mass(self._grab(), 205.0, 1.0, 4)
-        self.face.setProperty("compact", True)
-        # onCompactChanged publishes the view carrier and resets the
-        # stack, so the flip repaints with the boost.
-        boosted = self._band_mass(self._settled_grab(), 205.0, 1.0, 4)
-        self.assertGreater(boosted / normal, 3.0,
-                           "the compact boost did not widen the stroke")
+
+    def _mount_line(self, payload, line_scale=8.0):
+        previous = _parent.PlateFaceRenderTests.PAYLOAD
+        _parent.PlateFaceRenderTests.PAYLOAD = {
+            "available": True, "reason": "",
+            "layers": {"prev": None,
+                       "current": {"classes": {}, "travels": [], "travelStarts": [],
+                                   "travelEnds": [], "motions": 0},
+                       "next": None},
+            "split": 0, "method": "motion index", "anchor": 0,
+        }
+        self.addCleanup(setattr, _parent.PlateFaceRenderTests, "PAYLOAD", previous)
+        # _open caches the constructed printer on the instance; a
+        # second mount in the same test must see the factory again.
+        self._printer = _parent.PlateFaceRenderTests._printer
+        monitor, window, face = self._follower_popover()
+        self._window = window
+        face.setProperty("dot", None)
+        face.setProperty("showBase", False)
+        face.setProperty("showPrevious", False)
+        face.setProperty("showNext", False)
+        face.setProperty("lineScale", line_scale)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        layer = self._native_layer(payload, face, prefix_split=1)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(payload["motions"])
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the 1x scene never drew")
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        return monitor, window, face, plot_value
+
+    def _probe_rig(self, payload):
+        """The probe-validated zoom rig (2026-09-22): the settled
+        mount FIRST, then the property flips and the re-scrub with a
+        partial vector prefix and a near-full split — the only order
+        and composition whose zoomed raster repaints whole in the
+        offscreen grabber."""
+        monitor, window, face, plot = self._mount_line(payload)
+        face.setProperty("lineScale", 20.0)
+        face.setProperty("showBase", True)
+        self.pump(10)
+        # The prefix raster bakes the same lineScale the face shows,
+        # so the painted stroke is the width the helper names.
+        layer = self._native_layer(payload, face, prefix_split=10,
+                                   line_scale=float(face.property("lineScale")))
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(payload["motions"] - 1)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the 1x scene never drew")
+        window.grabWindow()
+        self.pump(20)
+        return monitor, window, face, plot
+
+    def _wheel(self, window, face, delta=120):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+        scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+        event = QWheelEvent(
+            QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+            QPoint(0, 0), QPoint(0, delta),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase, False)
+        QGuiApplication.sendEvent(window, event)
+
+    def _zoom_to(self, window, face, wheels, want_red=True):
+        """Wheel-zoom in *wheels* steps and wait for the exact scene's
+        commit: the settled picture the rasters baked at the TARGET
+        scale (the warm raster already shows the target while the
+        display eases). Production-width strokes are too thin for the
+        red census, so want_red=False settles on two identical grabs
+        instead."""
+        for _ in range(wheels):
+            self._wheel(window, face)
+            self._pump_ms(60)
+        # The warm navigation raster owns the scene through the eased
+        # zoom and paints the toolpath at the target scale; settle
+        # the ease, then measure its picture (the exact-scene commit
+        # rebuilds the canvas raster and is not part of this probe).
+        self._pump_ms(600)
+        if want_red:
+            image, count = self._wait_red(window, face, want=True, timeout=15.0)
+            self.assertGreater(count, 0, "the zoomed scene never drew")
+        else:
+            image = self._settled_grab()
+            count = self._red_pixels(image, face, window)
+        return (image, float(face.property("viewScale")),
+                float(face.property("viewPanX")), float(face.property("viewPanY")),
+                count)
+
+    def _settled_grab(self):
+        """Grab once the threaded rasters have landed: two consecutive
+        sampled frames identical (the parent suite's idiom)."""
+        previous = None
+        for _ in range(30):
+            self._pump_ms(30)
+            image = self._window.grabWindow()
+            if previous is not None and (_parent.PlateFaceRenderTests._sample(image)
+                                         == _parent.PlateFaceRenderTests._sample(previous)):
+                return image
+            previous = image
+        return image
+
+    def _bed_pixel(self, face, window, plot, bed_x, bed_y, scale, pan_x, pan_y):
+        bed = plot["bed"]
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        col = int(round(int(origin.x()) + pan_x + (float(bed["offsetX"])
+                  + (bed_x - float(bed["bedXMin"])) * float(plot["sx"])) * scale))
+        row = int(round(int(origin.y()) + pan_y + (float(bed["offsetY"])
+                  + (float(bed["bedYMax"]) - bed_y) * float(plot["sy"])) * scale))
+        return col, row
+
+    def _publish_width(self, face):
+        """The ONE physical stroke-width the painters read (the QML's
+        toolpathWidthPx), forced through the view carrier so the
+        property flips land deterministically."""
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        QMetaObject.invokeMethod(face, "_publishView")
+        width = QMetaObject.invokeMethod(face, "toolpathWidthPx",
+                                         Q_RETURN_ARG(QVariant))
+        return float(width)
+
+    def _sx(self, plot):
+        return float(plot["sx"])
+
+    def test_the_stroke_width_is_physical_and_subpixel_at_100_percent(self):
+        """Test 1: at 100% and the production lineScale the width is
+        the physical value — nominal bed mm through the plot's
+        px-per-mm and the line scale — and it is legitimately
+        SUBPIXEL. A hidden max(1, w) floor (the old screen-constant
+        stroke) would read 1 px or more here."""
+        monitor, window, face, plot = self._probe_rig(
+            self._payload({"WALL-OUTER": self.LINE}))
+        face.setProperty("lineScale", 0.7)
+        self.pump(10)
+        width = self._publish_width(face)
+        expected = 0.2 * self._sx(plot) * 0.7
+        self.assertAlmostEqual(width, expected, delta=expected * 0.1,
+                               msg=f"width {width:.3f}px vs {expected:.3f}px")
+        self.assertLess(width, 1.0,
+                        f"the 100% stroke is not subpixel ({width:.2f}px)")
+
+    def test_the_width_helper_scales_with_the_view_zoom(self):
+        """Test 2: the width helper multiplies the physical width by
+        the view zoom at every step — the structural law behind the
+        zoomed paint (the 2026-09-22 probes measured it in pixels
+        where the warm raster landed: 16px at 195%, 24px at 305% of
+        an 8px 100% stroke)."""
+        monitor, window, face, plot = self._probe_rig(
+            self._payload({"WALL-OUTER": self.LINE}))
+        widths = {}
+        for scale in (1.0, 2.0, 3.0, 5.0):
+            face.setProperty("viewScale", scale)
+            self.pump(10)
+            widths[scale] = self._publish_width(face)
+        self.assertGreater(widths[1.0], 0, "the helper never produced a width")
+        for scale in (2.0, 3.0, 5.0):
+            self.assertAlmostEqual(widths[scale] / widths[1.0], scale,
+                                   delta=scale * 0.1,
+                                   msg=f"scale {scale}: width ratio "
+                                       f"{widths[scale] / widths[1.0]:.2f}")
+
+    def test_the_production_stroke_never_bridges_the_day_scale_gap(self):
+        """Test 3: at the production lineScale the physical stroke is
+        thinner than HALF the Day-scale gap at every zoom — the old
+        screen-constant 0.7 px stroke exceeded half the 100% gap
+        (0.7 > 0.56 px) and fused the Day strokes; the physical width
+        stays a fraction of the gap from 100% to 300%."""
+        monitor, window, face, plot = self._probe_rig(
+            self._payload({"WALL-OUTER": self.LINE}))
+        face.setProperty("lineScale", 0.7)
+        self.pump(10)
+        for scale in (1.0, 3.0):
+            face.setProperty("viewScale", scale)
+            self.pump(10)
+            width = self._publish_width(face)
+            gap_px = 0.5 * self._sx(plot) * scale
+            self.assertLess(width, gap_px / 2.0,
+                            f"scale {scale}: the {width:.2f}px stroke bridges "
+                            f"the {gap_px:.2f}px gap")
+
+    def test_the_travel_width_keeps_its_visual_ratio(self):
+        """Test 4: the travel stroke reads the visual ratio over the
+        same physical basis — the width factor over the extrusion
+        stroke, never a screen-pixel count."""
+        monitor, window, face, plot = self._probe_rig(
+            self._payload({"WALL-OUTER": self.LINE}))
+        face.setProperty("lineScale", 1.0)
+        self.pump(10)
+        face.setProperty("viewScale", 3.0)
+        self.pump(10)
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        QMetaObject.invokeMethod(face, "_publishView")
+        ext = float(QMetaObject.invokeMethod(face, "toolpathWidthPx",
+                                             Q_RETURN_ARG(QVariant)))
+        trav = float(QMetaObject.invokeMethod(face, "travelWidthPx",
+                                              Q_RETURN_ARG(QVariant)))
+        ratio = float(face.property("travelVisualRatio"))
+        self.assertGreater(ext, 0, "no extrusion width to ratio against")
+        self.assertAlmostEqual(trav / ext, ratio, delta=0.05,
+                               msg=f"travel ratio {trav / ext:.2f} vs {ratio:.2f}")
+
+    def test_the_compact_boost_widens_the_stroke_deliberately(self):
+        """Test 5: the compact thumbnail boost multiplies the physical
+        width by the named constant — a deliberate, documented
+        visibility adjustment, never a screen-pixel baseline."""
+        monitor, window, face, plot = self._probe_rig(
+            self._payload({"WALL-OUTER": self.LINE}))
+        face.setProperty("lineScale", 1.0)
+        self.pump(10)
+        face.setProperty("viewScale", 1.0)
+        self.pump(10)
+        normal = self._publish_width(face)
+        face.setProperty("compact", True)
+        self.pump(10)
+        boosted = self._publish_width(face)
+        self.assertGreater(normal, 0, "the helper never produced a width")
+        self.assertAlmostEqual(boosted / normal, 7.0, delta=0.7,
+                               msg=f"compact boost {boosted / normal:.2f}")

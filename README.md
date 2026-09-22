@@ -8,8 +8,55 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.5.0
+- **Release:** 4.6.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 4.6.0
+
+Version 4.6.0 is the plate release: the Monitor now draws your build
+plate — every object where the slicer defined it — so a failure
+mid-print points at a place on the plate instead of a name in a list.
+The print follower lands beside it, drawing the print's own layers on
+the same plate, and the prepared geometry gains a per-print home on
+disk.
+
+- **The plate map** — the object polygons Moonraker reports for the
+  printer's `exclude_object` status, drawn to scale in the
+  Information pane: included objects in the text colour, the object
+  printing right now in the accent, excluded objects red, and the
+  objects the print has already visited green. Its slot is always
+  reserved, so the plate arriving mid-print never reflows the pane,
+  and a click opens the picker full size.
+- **Triple-click excludes, and restores** — the gesture is the
+  confirmation, so the old per-name action and its dialog are gone.
+  The permanent line under the map counts the clicks and names the
+  direction while a command is in flight, and the outcome — a refusal
+  included — lands in the status line. A restore sends Klipper's
+  name-scoped `EXCLUDE_OBJECT RESET=1 NAME=…`, never the bare
+  plate-wide reset.
+- **The print follower** — a second section on the same plate draws
+  the previous and next layers ghosted, the current layer's printed
+  portion filling in as the print runs, and the toolhead where it is.
+  Every motion type has its own colour in a key under the map, and
+  travels stay hidden until switched on.
+- **The follower is a tool** — zoom and pan the plate, seek any layer
+  on the Layer slider (the seek itself detaches the follow), scrub the
+  current layer by hand, set the line thickness, jump the view onto
+  the toolhead and keep it centred, and detach or attach whenever you
+  like.
+- **The prepared geometry gets its own home** — each printer's
+  prepared layers and G-code index share one folder per print under
+  that machine's cache namespace, so a print reopened from the picker
+  skips the whole preparation walk; eviction drops whole prints,
+  least-recently-used first, and the Diagnostics tab carries the
+  per-printer size limit (512 MiB by default).
+- **The temperature chart's own clock** — the chart samples on a
+  fixed one-second cadence instead of following the auxiliary delivery
+  slider, whose fast settings used to cut the advertised 30-minute
+  window down to minutes. The Temps readouts still follow the slider.
+- **Fixes** — rapid X and Y jog taps can no longer overshoot their
+  maxima, and the settings sliders grab from either side of the handle
+  and keep the keyboard while a save applies.
 
 ## What changed in 4.5.0
 - The webcam comes up in milliseconds on the Monitor page — the startup's two races (a refresh restarting its own websocket, and the first discovery applying the stream twice) are fixed.
@@ -393,7 +440,7 @@ For each Cura printer, the same Moonraker URL and optional API key now drive:
 - Pause, Resume and Cancel controls
 - Moonraker power-device controls
 - estimated remaining time and finish time
-- Exclude Object controls when Klipper exposes `exclude_object`
+- Exclude Object plate map and controls when Klipper exposes `exclude_object`
 - Klippy, host and MCU health information
 
 The generic Cura output controller remains conservative and does not advertise unrelated preheat/manual-control capabilities that are not implemented by this plugin. Print controls are provided by the dedicated Monitor view.
@@ -530,7 +577,15 @@ Unsupported object types simply do not appear.
 
 ### Exclude Object
 
-When Klipper exposes `exclude_object`, Monitor lists the known print objects, marks the current and already-excluded objects, and provides an **Exclude** action for remaining objects while the print is active.
+When Klipper exposes `exclude_object`, Monitor draws the print's objects to scale on the bed in the Information pane: included objects in the text colour, the object printing right now in the accent, excluded objects red, and the objects the print has already visited green while the print's index is available. An object whose definition carries no usable polygon still appears, as a centre point with a hit radius.
+
+A click on the pane's map opens the picker. **Triple-click an object to exclude it, and triple-click an excluded object to bring it back** — the gesture is the confirmation, so no dialog asks, and the old list of object names and its per-name action are gone. The picker's permanent line counts the clicks and names the direction while a command is in flight, and the status line under the map reports the outcome, refusals included. Restoring sends Klipper's name-scoped reset (`EXCLUDE_OBJECT RESET=1 NAME=…`), so one object comes back instead of the whole plate.
+
+### Print Follower
+
+The Information pane's second plate section draws what the printer is actually doing: the previous and next layers ghosted, the current layer with its printed portion filling in at the poll cadence, and the live toolhead. Every motion type the index knows has its own colour in a key under the map, and travel moves stay hidden until switched on.
+
+The plate is a tool rather than a picture. The plate zooms and pans; the Layer slider seeks any layer, and the seek itself detaches the follow; the layer-progress slider plays the frozen layer through by hand; the line thickness scales from 0.5× to 2×; **Jump to toolhead** and **Keep toolhead centred** hold the live position at the current zoom. Detach and Attach are explicit, and the view re-rasters once the interaction settles instead of on every tick.
 
 ### Power
 
