@@ -493,6 +493,26 @@ Item {
         return _partialPrefixReady() && !root._prefixShowHold;
     }
 
+    function _splitGate() {
+        // The delivery's split gate: the delivered canvas must be
+        // the CURRENT demand's picture. A detached scrub demands the
+        // EXACT split (the review's rapid-scrub policy — an
+        // intermediate split must not present once the demand moved
+        // on). The attached live follow advances monotonically: a
+        // canvas delivered for the previous poll IS the standing
+        // picture — its tail extends with the next paint — and the
+        // boundary match below is what keeps it a real composition.
+        // The retained frame read the exact split gate, so every
+        // poll's advance hid the LIVE prefix and stood the previous
+        // checkpoint's stale picture (the lag-behind-the-toolhead
+        // report). A backward move falls back to the exact gate.
+        var split = root.progress != null ? root.progress.split : null;
+        if (root.attached && split != null && root._lastSplit >= 0) {
+            return split >= root._lastSplit;
+        }
+        return root._lastSplit === split;
+    }
+
     function _compositionReady() {
         // The canvas-side half of the joint readiness, WITHOUT the
         // live image's status: the retained frame's visibility reads
@@ -502,7 +522,7 @@ Item {
         // visible binding and froze the face on the attach publish).
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return layer != null && split != null && root._textureReady && root._lastSplit === split && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
+        return layer != null && split != null && root._textureReady && root._splitGate() && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
     }
 
     function _partialPrefixReady() {
@@ -538,7 +558,7 @@ Item {
         // through 100% and back) keeps the covers-0 acceptance: the
         // standing picture is the complete one, and the trim follows
         // in place.
-        var delivered = root._textureReady && root._lastSplit === root.progress.split && ((root._vectorCoversFrom === 0 && root._prefixWasShown) || root._vectorCoversFrom === layer.prefixSplit);
+        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversFrom === 0 && root._prefixWasShown) || root._vectorCoversFrom === layer.prefixSplit);
         return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
@@ -1251,7 +1271,7 @@ Item {
             // its source: the source is written by this image's own
             // status/paint handlers, and reading it here looped the
             // binding (the live QML warning).
-            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))) && !retainedPrefixImage.visible
+            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !retainedPrefixImage.visible
             source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by

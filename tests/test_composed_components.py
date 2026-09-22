@@ -3180,6 +3180,253 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                         "a worker thread committed the raster")
 
 
+class AttachCadenceTests(NativeRenderSchedulerTests):
+    """The attached live-follow cadences: a continuously advancing
+    split must NOT re-bake the 4x navigation raster or the native
+    prefix per poll (the dire-follow report). The nav bake runs at
+    most once per start-time window and commits as a slightly older,
+    compatible raster; the prefix checkpoints on its own cadence
+    while the QML tail accumulates. A fake clock simulates the 30 s
+    print deterministically — the workers stay real."""
+
+    POLL_S = 0.75
+    POLLS = 40  # 30 s of print at the monitor's poll cadence
+
+    def _attached(self, model, name="popover", width=400, height=300):
+        """Attach, open the popover, feed the surface, and install the
+        deterministic clock plus the render-start counters."""
+        self._feed(model, name, width=width, height=height)
+        model.setFollowerAttached(True)
+        model.setFollowerPopoverOpen(True)
+        surface = model._plate_surfaces[name]
+        module = self.qt.load("MoonrakerMonitorModel")
+        clock = _FakeClock(module)
+        starts = {"nav": [], "prefix": []}
+        real_nav = module.render_navigation_layer
+        real_prefix = module.render_layer_prefix
+
+        def nav(window, plot, view, split=None, **kwargs):
+            starts["nav"].append((clock.t, split))
+            return real_nav(window, plot, view, split, **kwargs)
+
+        def prefix(payload, plot, view, split, **kwargs):
+            starts["prefix"].append((clock.t, split))
+            return real_prefix(payload, plot, view, split, **kwargs)
+
+        self.patches = [patch.object(module, "time", clock),
+                        patch.object(module, "render_navigation_layer", nav),
+                        patch.object(module, "render_layer_prefix", prefix)]
+        for entry in self.patches:
+            entry.start()
+        self.addCleanup(lambda: [entry.stop() for entry in self.patches])
+        armed = []
+        # The wake seam: the tests fire the wakes themselves at the
+        # fake clock's deadlines — a real singleShot would wait out
+        # the (simulated) window.
+        model._nav_arm_wake = lambda s: armed.append((s, s.nav.get("wake_at"))) or None
+        self.addCleanup(lambda: setattr(model, "_nav_arm_wake",
+                                        type(model)._nav_arm_wake))
+        return model, surface, clock, armed, starts
+
+    @staticmethod
+    def _fire_due_wakes(model, armed, clock):
+        due = [entry for entry in armed
+               if entry[1] is not None and clock.t >= entry[1]]
+        armed[:] = [entry for entry in armed if entry not in due]
+        for surface, deadline in due:
+            model._nav_wake(surface, deadline)
+
+    @staticmethod
+    def _drain_job(model, surface, qt, timeout=400):
+        for _ in range(timeout):
+            qt.events(6)
+            if surface.job is None and surface.nav["job"] is None:
+                return
+        raise AssertionError("the render queue never drained")
+
+    def _poll(self, model, surface, payload, anchor, split, clock, armed, qt):
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, anchor, "motion index", split)
+        clock.t += self.POLL_S
+        self._fire_due_wakes(model, armed, clock)
+        qt.events(6)
+
+    @staticmethod
+    def _spacing(starts, minimum):
+        for (a, _), (b, _) in zip(starts, starts[1:], strict=False):
+            if b - a < minimum:
+                raise AssertionError(
+                    "two starts %ss apart, the cadence is %ss" %
+                    (round(b - a, 2), minimum))
+
+    def test_attached_nav_bakes_once_per_window_and_lands_the_latest_split(self):
+        # 30 s of attached polls: the nav raster starts once per
+        # window (never per poll), every completed bake commits as a
+        # compatible raster (no discard loop), and the final bake
+        # paints the LATEST split.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        final_split = None
+        for poll in range(self.POLLS):
+            split = 20 + poll * 14
+            final_split = split
+            self._poll(model, surface, payload, 5, split, clock, armed,
+                       self.qt)
+        clock.t += 10.0  # the last window expires
+        self._fire_due_wakes(model, armed, clock)
+        self._drain_job(model, surface, self.qt)
+        self.assertTrue(surface.nav["url"], "the warm raster never landed")
+        self.assertEqual(surface.nav["key"][3], final_split,
+                         "the final bake painted a stale split")
+        self.assertLessEqual(len(starts["nav"]),
+                             self.POLLS * self.POLL_S / 3.0 + 2,
+                             "the nav raster baked near per poll")
+        self._spacing(starts["nav"], 2.9)
+
+    def test_attached_nav_keeps_a_compatible_raster_eligible(self):
+        # A committed raster whose key differs only in the split
+        # stays eligible while attached (the QML tail owns the exact
+        # progress); detached, the exact demand gate returns.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        self.assertTrue(surface.nav["url"], "the warm raster never landed")
+        painted = surface.nav["key"][3]
+        self._poll(model, surface, payload, 5, 300, clock, armed, self.qt)
+        self.assertEqual(model._navigation_data_value(surface),
+                         surface.nav["url"],
+                         "the compatible raster retired on a split advance")
+        model.setFollowerAttached(False)
+        self.assertEqual(model._navigation_data_value(surface), "",
+                         "the detached demand tolerates a stale split")
+        model.setFollowerAttached(True)
+        self.assertLess(painted, 300,
+                        "the compatible raster was not the older one")
+
+    def test_attached_nav_failure_retries_once_per_window(self):
+        # A failing warm render must not hot-retry per poll: the
+        # hard-key latch holds for the window, one retry per expiry,
+        # and the recovery after the window paints the raster.
+        model = self.monitor()
+        module = self.qt.load("MoonrakerMonitorModel")
+
+        def failing(window, plot, view, split=None, **kwargs):
+            raise RuntimeError("injected navigation render failure")
+
+        model, surface, clock, armed, starts = self._attached(model)
+        starts["nav"].clear()
+        with patch.object(module, "render_navigation_layer", failing):
+            payload = self._payload(600)
+            for poll in range(self.POLLS):
+                self._poll(model, surface, payload, 5, 20 + poll * 14,
+                           clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        self.assertEqual(surface.nav["url"], "", "a failed render promoted")
+        self.assertLessEqual(len(starts["nav"]),
+                             self.POLLS * self.POLL_S / 3.0 + 2,
+                             "the failing nav render hot-retried per poll")
+        self._spacing(starts["nav"], 2.9)
+        # The recovery: the next window's wake renders for real.
+        clock.t += 5.0
+        self._fire_due_wakes(model, armed, clock)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(6)
+            time.sleep(0.01)
+        self.assertTrue(surface.nav["url"],
+                        "the recovered render never painted the raster")
+
+    def test_a_hard_scene_change_bypasses_the_nav_window(self):
+        # A zoom change genuinely re-bakes the scene: it must not
+        # wait out the follow window.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        before = len(starts["nav"])
+        model.setFollowerView("popover", 2.0, 0.7, 400, 300, False, 0.0, 0.0)
+        self.qt.events(5)
+        self._drain_job(model, surface, self.qt)
+        self.assertGreater(len(starts["nav"]), before,
+                           "the zoom change waited out the follow window")
+
+    def test_attached_prefix_checkpoints_on_a_five_second_cadence(self):
+        # 30 s of attached polls: the native prefix advances at most
+        # once per cadence (never per motion threshold), and the last
+        # checkpoint snapshots the latest split.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        final_split = None
+        for poll in range(self.POLLS):
+            split = 100 + poll * 12
+            final_split = split
+            self._poll(model, surface, payload, 5, split, clock, armed,
+                       self.qt)
+        self._drain_job(model, surface, self.qt)
+        wrapped = surface.layers[5]
+        self.assertGreater(wrapped.prefixSplit, 0,
+                           "the attached prefix never checkpointed")
+        self.assertEqual(wrapped.prefixSplit, final_split,
+                         "the last checkpoint painted a stale split")
+        self.assertLessEqual(len(starts["prefix"]),
+                             self.POLLS * self.POLL_S / 5.0 + 2,
+                             "the prefix advanced far more than once per cadence")
+        self._spacing(starts["prefix"], 4.9)
+
+    def test_an_attached_layer_change_bypasses_the_prefix_cadence(self):
+        # A new layer's prefix is a fresh demand: it renders
+        # immediately, cadence or not.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        self._poll(model, surface, payload, 5, 300, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        starts["prefix"].clear()
+        self._poll(model, surface, payload, 6, 40, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        self.assertGreaterEqual(len(starts["prefix"]), 1,
+                                "the new layer's prefix waited for the cadence")
+        self.assertTrue(surface.layers[6].prefixValid,
+                        "the new layer's prefix never committed")
+
+    def test_detached_prefix_keeps_the_motion_threshold_policy(self):
+        # Detached scrubbing stays threshold-driven: the cadence must
+        # never stretch a manual seek.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(600)
+        self._window(model, "popover", 5, payload)
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, 5, "motion index", 100)
+        self._pump_rasters(model, "popover")
+        self.assertFalse(model._prefix_wanted(surface, 5, 150),
+                         "a sub-threshold advance re-rendered the prefix")
+        self.assertTrue(model._prefix_wanted(surface, 5, 250),
+                        "a past-threshold advance left the prefix stale")
+
+
+class _FakeClock:
+    """The deterministic test clock: only `monotonic` is simulated
+    (the model's cadences read it); every other attribute delegates
+    to the real module."""
+
+    def __init__(self, module):
+        self.t = 1000.0
+        self._real = module.time
+
+    def monotonic(self):
+        return self.t
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 class RendererOnlySeekBenchmarks(NativeRenderSchedulerTests):
     """A RENDERER/SCHEDULER microbenchmark, not an end-to-end latency
     proof: the payloads arrive pre-decoded via _qt_window(), so the

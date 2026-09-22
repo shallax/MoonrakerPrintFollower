@@ -815,7 +815,16 @@ def split_index(index: LayerMotionIndex, layer: int, file_position: int) -> Opti
         return None
     offsets = index.motion_offsets[layer] if layer < len(index.motion_offsets) else ()
     if not len(offsets):
-        return None
+        # The compact index's arrays hydrate on demand — an unhydrated
+        # live layer must still resolve its coarse boundary (the live
+        # report: the follow read "—" with a valid anchor and a fine
+        # file position). The born-correct count times the layer's
+        # byte-range fraction is the honest fallback.
+        fraction, _method = index.file_fraction(layer, int(file_position))
+        count = index.motion_count(layer)
+        if count <= 0:
+            return None
+        return int(fraction * count)
     return int(bisect_left(offsets, int(file_position)))
 
 

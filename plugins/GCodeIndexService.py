@@ -6,6 +6,7 @@ from UM.Logger import Logger
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from dataclasses import dataclass
+import math
 import sys
 import threading
 import time
@@ -736,6 +737,21 @@ class GCodeIndexService(QObject):
             if live_position is not None:
                 refined, _method = index.refined_split(anchor, file_position, live_position,
                                                        minimum_split=floor)
+                # The unhydrated layer's honest split: the index arrays
+                # are empty until the file hydration lands, and the
+                # byte-fraction seed is NOT proportional to motion
+                # (the live report: the fill drifted, regions reading
+                # far slower or faster than the toolhead). The same
+                # bounded live-position search runs over the payload
+                # geometry the plate already displays, so the split
+                # pins to the physical toolhead instead of the byte
+                # estimate.
+                if refined is None:
+                    offsets = index.motion_offsets[anchor] \
+                        if anchor < len(index.motion_offsets) else ()
+                    if not len(offsets):
+                        refined = self._refine_over_payload(
+                            memo[1].get("current"), coarse, live_position)
             if refined is None:
                 # The coarse anchor is the only estimate this layer has
                 # until a live position establishes one — on a machine
@@ -748,6 +764,72 @@ class GCodeIndexService(QObject):
                 split = refined
             self._split_floor = split if floor is None else max(floor, split)
             return split
+
+    @staticmethod
+    def _refine_over_payload(payload, coarse, live_position,
+                             lag_window=1024, ahead_window=8,
+                             max_distance_mm=3.0):
+        """The live-position refinement over a PAYLOAD's geometry (the
+        unhydrated compact layer): the index's own bounded search, run
+        against the decoded polylines the plate already draws. Each
+        segment contributes only its points inside the coarse window —
+        bisected, never walked — so the per-poll cost matches the
+        hydrated path's. Returns the refined motion count, or None
+        when the geometry or the match is absent (the coarse estimate
+        then stands, exactly as the index's refined_split would hold
+        it)."""
+        if payload is None or live_position is None or len(live_position) < 3:
+            return None
+        try:
+            px, py = float(live_position[0]), float(live_position[1])
+        except (TypeError, ValueError):
+            return None
+        lo = max(0, int(coarse) - int(lag_window) - 1)
+        hi = max(0, int(coarse) + int(ahead_window))
+        best_distance_sq = float("inf")
+        best_motion = None
+        for segments in (payload.get("classes") or {}).values():
+            for points in segments:
+                if len(points) < 2:
+                    continue
+                # The manual bisect: the bundled engine's bisect key
+                # compares the unkeyed needle, and an int < list
+                # TypeError is what that yields (the live traceback).
+                low2, high2 = 0, len(points)
+                while low2 < high2:
+                    mid2 = (low2 + high2) // 2
+                    if points[mid2][2] < lo:
+                        low2 = mid2 + 1
+                    else:
+                        high2 = mid2
+                begin = low2
+                if begin >= len(points):
+                    continue
+                begin = max(0, begin - 1)
+                for i in range(begin + 1, len(points)):
+                    if points[i][2] > hi:
+                        break
+                    ax, ay, _az = points[i - 1]
+                    bx, by, _bz = points[i]
+                    dx, dy = bx - ax, by - ay
+                    length_sq = dx * dx + dy * dy
+                    if length_sq <= 1e-12:
+                        t = 1.0
+                        qx, qy = bx, by
+                    else:
+                        t = ((px - ax) * dx + (py - ay) * dy) / length_sq
+                        t = max(0.0, min(1.0, t))
+                        qx, qy = ax + t * dx, ay + t * dy
+                    distance_sq = (px - qx) ** 2 + (py - qy) ** 2
+                    if distance_sq < best_distance_sq:
+                        best_distance_sq = distance_sq
+                        # The edge i spans points[i-1] -> points[i] and
+                        # belongs to motion points[i][2]: the completed
+                        # count is that motion, fraction t.
+                        best_motion = points[i][2] - 1 + t
+        if best_motion is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
+            return None
+        return int(best_motion)
 
     def plate_visited(self, anchor, split, rows):
         """The per-layer printed objects: which polygons the executed

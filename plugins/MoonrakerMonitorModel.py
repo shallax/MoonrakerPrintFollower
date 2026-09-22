@@ -123,10 +123,17 @@ SECTIONS_FILE_NAME = "moonrakerprintfollower_sections.json"
 # hand-edited file, or a stray drag value. The PANE bounds are the QML's
 # clamp: they depend on the live stage layout, which the model cannot see.
 CONSOLE_HEIGHT_MAX = 2000
-# The warm-raster follow throttle: while attached, the poll advances
+# The warm-raster follow window: while attached, the poll advances
 # the split constantly — the 4x navigation bake runs at most once per
-# window (the demand's latest split still supersedes in the key).
+# window, measured from the JOB'S START (a commit-time stamp starves
+# the throttle whenever the split outruns the render — the
+# render/discard/retry loop). A hard scene change (layer, print,
+# zoom, dimensions, toggles) bypasses the window.
 _NAV_FOLLOW_BAKE_S = 3.0
+# The attached prefix checkpoint cadence: the native prefix advances
+# at most once per window, snapshotting the latest split — the QML
+# tail accumulates [P, split) cheaply between checkpoints.
+_PREFIX_CHECKPOINT_S = 5.0
 
 
 def _sections_path() -> str:
@@ -355,7 +362,14 @@ class _RenderSurface:
         # live updates coalesce), both camera-independent and
         # epoch-keyed. The mini never carries one.
         self.nav = {"key": None, "url": "", "job": None, "cancel": None,
-                    "serial": 0}
+                    "serial": 0,
+                    # The attached follow's start-time throttle: `hard`
+                    # is the last submitted job's hard key (the key
+                    # with the volatile split neutralised), `wake_at`
+                    # when the next bake is permitted, `failed_hard`
+                    # the hard key whose render failed (retried once
+                    # per window, never per poll).
+                    "hard": None, "wake_at": None, "failed_hard": None}
 
     def render_key(self):
         """The key a raster must carry to display on this surface
@@ -3060,7 +3074,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The partial layer's prefix demand: none yet, a backward
         move, or the live split has run a quarter of the layer past
         the rendered prefix — the tail's QML walk stays a cheap
-        delta between prefix refreshes."""
+        delta between prefix refreshes. While attached the advance
+        is a time-budgeted CHECKPOINT instead of a motion threshold:
+        the QML tail accumulates [P, split) per poll, and the native
+        prefix advances at most once per cadence, snapshotting the
+        latest split when it does."""
         wrapped = surface.layers.get(layer)
         if wrapped is None or split is None or split <= 0:
             return False
@@ -3077,6 +3095,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return True
         if split < have:
             return True
+        if self._follower_attached:
+            return split > have and time.monotonic() >= getattr(
+                wrapped, "_prefix_checkpoint_at", 0.0)
         # The refresh threshold rides the INCREMENTAL render: the
         # worker strokes only [have, split) over the committed
         # picture, so a refresh costs O(delta), not O(split) — the
@@ -3242,9 +3263,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         moved, a replacement still rendering, a failed replacement)
         reads "" and the exact scene serves the gesture."""
         demand = self._navigation_key(surface)
-        if surface.nav["url"] and demand is not None \
-                and surface.nav["key"] == demand:
-            return surface.nav["url"]
+        if surface.nav["url"] and demand is not None:
+            stored = surface.nav.get("key")
+            if stored == demand or (self._follower_attached
+                                    and self._nav_key_hard(stored)
+                                    == self._nav_key_hard(demand)):
+                return surface.nav["url"]
         return ""
 
     def _navigation_key(self, surface):
@@ -3281,6 +3305,45 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 tuple(sorted((k, round(float(v), 6))
                              for k, v in (surface.plot or {}).items())))
 
+    @staticmethod
+    def _nav_key_hard(key):
+        """The navigation key with the volatile split neutralised:
+        everything that genuinely changes the scene (the window's
+        payloads, the print epoch, the toggles, the style, the
+        dimensions, the zoom, the plot) rides here. A key differing
+        ONLY in the split presents the SAME scene — a compatible
+        raster serves it."""
+        if key is None:
+            return None
+        return key[:3] + (None,) + key[4:]
+
+    def _nav_arm_wake(self, surface):
+        """Arm the attached throttle's expiry wake: when the start-
+        time window passes, the LATEST demand schedules once — the
+        coalesced catch-up, independent of any further poll. The
+        captured deadline makes a superseded arm inert: a wake
+        armed for an older window must never clear the newer one."""
+        wake_at = surface.nav.get("wake_at")
+        if not wake_at:
+            return
+        remaining_ms = max(0, int((wake_at - time.monotonic()) * 1000))
+        QTimer.singleShot(remaining_ms,
+                          lambda s=surface, deadline=wake_at:
+                          self._nav_wake(s, deadline))
+
+    def _nav_wake(self, surface, deadline=None):
+        """The window expired: clear the throttle and the failed-hard
+        latch, then let the scheduler take the latest demand."""
+        surface = self._surface_for(surface)
+        if surface is None or surface.name != "popover" \
+                or not self._follower_popover_open:
+            return
+        if deadline is not None and surface.nav.get("wake_at") != deadline:
+            return  # a newer submit owns the window now
+        surface.nav["wake_at"] = None
+        surface.nav["failed_hard"] = None
+        self._schedule_navigation(surface)
+
     def _schedule_navigation(self, surface):
         """The warm interaction raster's demand: ONE background job
         per surface (the live updates coalesce on the key), never on
@@ -3298,16 +3361,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if key is None or key == surface.nav["key"] \
                 or key == surface.nav.get("failed"):
             return
-        # The live-follow throttle: while attached, the poll advances
-        # the split constantly — re-baking the 4x warm raster per poll
-        # was the dire-follow cost (the live report). The demand's
-        # latest split still rides the key (the obsolete-job machinery
-        # reads it); the bake itself runs at most once per window and
-        # the next poll after it ends fires the LATEST demand.
+        # The attached start-time throttle: the window runs from the
+        # job's START, so a render overtaken by the split can never
+        # starve the stamp and loop (the commit-time stamp's hole).
+        # A soft split drift coalesces until the wake fires the
+        # LATEST demand; a hard change (layer, print, zoom, dims,
+        # toggles, plot) bypasses immediately. A failed hard key
+        # retries once per window, never per poll.
         if self._follower_attached:
-            at = surface.nav.get("at")
-            if at is not None and time.monotonic() - at < _NAV_FOLLOW_BAKE_S:
+            hard = self._nav_key_hard(key)
+            if hard is None:
                 return
+            wake_at = surface.nav.get("wake_at")
+            if wake_at is not None and hard == surface.nav.get("hard") \
+                    and time.monotonic() < wake_at:
+                self._nav_arm_wake(surface)
+                return
+            surface.nav["wake_at"] = None
         desired = surface.desired
         window = {}
         for role, layer in (("current", desired["current"]),
@@ -3353,6 +3423,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.nav["cancel"] = cancel
         surface.nav["job"] = {"key": key, "cancel": cancel, "epoch": epoch,
                              "serial": serial}
+        if self._follower_attached:
+            # The throttle stamps at the START: the next bake is
+            # permitted one window from now, whatever happens to this
+            # render — and the wake fires the latest demand when the
+            # window expires.
+            surface.nav["hard"] = self._nav_key_hard(key)
+            surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+            self._nav_arm_wake(surface)
         ticket = (surface.name, -1, 0, 0, key, "nav", split, epoch, serial)
 
         def build(ticket=ticket, window=window, plot=plot, view=view,
@@ -3411,7 +3489,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # The ACTIVE job ended without a picture: its key
                 # latches so the identical demand never hot-retries,
                 # and a demand that has SINCE CHANGED reschedules.
+                # While attached the latch rides the HARD key — the
+                # advancing split would re-arm the full key every
+                # poll — and the retry comes once per window.
                 surface.nav["failed"] = job["key"]
+                if self._follower_attached:
+                    surface.nav["failed_hard"] = self._nav_key_hard(job["key"])
+                    surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+                    self._nav_arm_wake(surface)
                 self._schedule_navigation(surface)
             return
         if not images or not isinstance(images, tuple) or images[0] != "nav":
@@ -3425,18 +3510,30 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # obsolete-but-internally-consistent job must not promote —
         # the content it painted is no longer what the surface needs,
         # even though its own ticket and key still match themselves.
+        # While attached, a key that differs ONLY in the split still
+        # presents the same scene: the render commits as a slightly
+        # older, compatible warm raster instead of feeding the
+        # render/discard/retry loop — the QML tail owns the exact
+        # progress.
         demand = self._navigation_key(surface)
-        if demand is None or demand != key:
+        compatible = self._follower_attached \
+            and self._nav_key_hard(demand) == self._nav_key_hard(key)
+        if demand is None or (demand != key and not compatible):
             self._unlink_asset_files(images)
             surface.nav["job"] = None
             self._schedule_navigation(surface)
             return
         surface.nav["job"] = None
         surface.nav["failed"] = None
+        if self._follower_attached:
+            # The next catch-up bake one window after this commit —
+            # the wake coalesces whatever the polls advance to.
+            surface.nav["failed_hard"] = None
+            surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+            self._nav_arm_wake(surface)
         old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
-        surface.nav["at"] = time.monotonic()
         if old and old != url:
             try:
                 os.unlink(QUrl(old).toLocalFile())
@@ -3645,6 +3742,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # popover (or a new print) retries a demand whose earlier
         # failure may have been transient (a payload since rebuilt).
         surface.nav["failed"] = None
+        # The follow throttle retires too: a wake armed for the old
+        # print must find nothing to clear (and the new print's hard
+        # key differs anyway — the epoch rides it).
+        surface.nav["wake_at"] = None
+        surface.nav["failed_hard"] = None
 
     def _cancel_obsolete_job(self, surface):
         """The running job no longer matches the desired demand —
@@ -3803,6 +3905,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 self._schedule_surface(surface)
                 return
             wrapped.set_prefix(prefix, prefix_data, prefix_split, key)
+            # The attached checkpoint's cadence re-arms from this
+            # commit: the next advance is due one window later, and
+            # the demand snapshots the split that is live THEN.
+            if self._follower_attached:
+                wrapped._prefix_checkpoint_at = time.monotonic() + _PREFIX_CHECKPOINT_S
             # The face's atomic handover retains the PREVIOUS prefix's
             # pixels until the new composition is jointly present — the
             # prune must protect that file too (one URL, replaced each

@@ -27,19 +27,21 @@ Component {
         // every write.
         property bool cameraConfigured: false
 
-        onOpenPopOverChanged: {
-            // The chart pop-over's hydration gate (the 2026-09-19
-            // review's K): the model builds the full temperature
-            // payload only while the pop-over is open. The plate
-            // popovers report their own open states the same way —
-            // a closed surface freezes its payload keys (the live
-            // request).
-            if (root.printer != null) {
-                root.printer.setChartOpen(openPopOver === "chart");
-                root.printer.setFollowerPopoverOpen(openPopOver === "plateprogress");
-                root.printer.setPickerPopoverOpen(openPopOver === "plate");
+        // The popover registration re-runs whenever the printer
+        // changes, not only when the open state changes: a printer
+        // that becomes available (or switches) while the popover is
+        // already open must re-claim the open state, or the model's
+        // gate freezes the payload forever (the review's attach
+        // finding).
+        function syncPopoverRegistration() {
+            if (root.printer == null) {
+                return;
             }
+            root.printer.setChartOpen(openPopOver === "chart");
+            root.printer.setFollowerPopoverOpen(openPopOver === "plateprogress");
+            root.printer.setPickerPopoverOpen(openPopOver === "plate");
         }
+        onOpenPopOverChanged: syncPopoverRegistration()
 
         // The camera image's visible AND source are applied
         // IMPERATIVELY: bindings on this dynamically created
@@ -92,6 +94,10 @@ Component {
             // guarantees the reconciliation runs after the printer
             // binding and the pane have settled.
             scheduleCameraApply();
+            // Re-claim the popover gates with the live state: loading
+            // raced the printer binding, and the model's gate stays
+            // frozen until something re-claims it.
+            syncPopoverRegistration();
         }
 
         Connections {
@@ -420,6 +426,11 @@ Component {
         onPrinterChanged: {
             refreshAvailabilityGates();
             openPopOver = "";
+            // The openPopOverChanged signal only fires on a CHANGE, so
+            // a printer swap while the popover was already closed
+            // never re-claims the gates and a stale open can freeze
+            // the payload. Re-claim the now-closed state explicitly.
+            syncPopoverRegistration();
             selectedChartSensor = "";
             // The stored section order applies on the model's ARRIVAL
             // (the deterministic trigger — no polling): the panes'
