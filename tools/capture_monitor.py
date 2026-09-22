@@ -204,6 +204,16 @@ def main():
                                                            "target": 45.0, "power": 0.2}
                 model._data._update(auxiliary=auxiliary)
                 model._data.auxiliaryChanged.emit()
+                # The chart's series feeds from the 1 s ticks — never
+                # from the data updates — so observe it HERE with the
+                # frozen clock, or the scenes' event pump would fill
+                # it with live-ticked samples stamped with the real
+                # wall minute (the 01/07 byte drift CI's compare
+                # catches: the axis clock text carried the capture's
+                # own minute, and the curve's extent carried the
+                # pump's duration).
+                model._history.observe(auxiliary, tick[0],
+                                       1700000000.0 + tick[0])
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")
         model.sendConsoleCommand("M104 S210")
@@ -221,6 +231,12 @@ def main():
             if entry["kind"] == "command":
                 entry["saved"] = False
         console.changed.emit()
+
+        # The seeded history is the chart's whole story: stop the tick
+        # before the scenes pump the event loop, or a live sample
+        # stamped with the real wall minute lands on top of the frozen
+        # series (the console's settle timer above froze the same way).
+        model._chart_timer.stop()
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
         # `or`, not a get() default: an empty CAPTURE_THEME is a value,
