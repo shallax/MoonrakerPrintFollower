@@ -2275,13 +2275,41 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertIn("G91\nG1 Z5 F600\nG90", self.scripts())
         self.controller.jog("z", 1)
         self.assertEqual(len(self.scripts()), 1)  # at the boundary: no-op
-        self.assertEqual(self.controller._z_estimate, 200.0)
+        self.assertEqual(self.controller._axis_estimate["z"], 200.0)
         self.commands.complete()
         # A fresh poll at the boundary keeps the tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 200.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
         self.assertEqual(self.controller._pending, ())
+
+    def test_merged_x_and_y_tails_never_overshoot_the_axis_limits(self):
+        # The stale-poll overshoot, X- and Y-flavoured (the Z fix
+        # generalised): rapid taps at the axis MAXIMUM used to clamp
+        # each against the stale poll, so the merged queue walked the
+        # head past the limit — the client-side projection now
+        # advances with every queued move on every axis, and the
+        # second tap at the boundary is a no-op.
+        self.data.set_state("paused")
+        self.controller.set_distance(25)
+        for axis, index in (("x", 0), ("y", 1)):
+            self.controller._reset()
+            self.data.snapshot.core["motion_report"]["live_position"][index] = 195.0
+            self.data.changed.emit()
+            self.controller.jog(axis, 1)
+            self.assertIn("G91\nG1 %s5 F3000\nG90" % axis.upper(), self.scripts())
+            self.assertEqual(self.controller._axis_estimate[axis], 200.0)
+            before = len(self.scripts())
+            self.controller.jog(axis, 1)
+            self.assertEqual(len(self.scripts()), before,
+                             "the %s+ tail overshot the maximum" % axis)
+            self.commands.complete()
+            # A fresh poll at the boundary keeps the tap a no-op.
+            self.data.snapshot.core["motion_report"]["live_position"][index] = 200.0
+            self.data.changed.emit()
+            self.controller.jog(axis, 1)
+            self.assertEqual(self.controller._pending, (),
+                             "the %s+ tap fired at the boundary" % axis)
 
     def test_z_floor_is_zero_even_with_a_negative_configured_minimum(self):
         # The live ruling: the jog pad must never send the
