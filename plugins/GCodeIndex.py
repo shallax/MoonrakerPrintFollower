@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 
-from plugins.CachePolicy import evict_to_budget
+from .CachePolicy import evict_to_budget
 from array import array
 from bisect import bisect_right
 from dataclasses import dataclass, field

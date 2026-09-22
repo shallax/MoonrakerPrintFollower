@@ -216,6 +216,69 @@ class PreparedStoreTests(unittest.TestCase):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an unexplained probe failure read dead")
 
+    def test_the_windows_probe_failure_semantics(self):
+        # The native wrapper's failure verdicts (the review's
+        # hardening tests): OpenProcess ERROR_INVALID_PARAMETER is
+        # provably dead; access-denied or any unknown OpenProcess
+        # failure and a GetExitCodeProcess failure are conservative
+        # alive. The Win32 calls are MOCKED — no host process state
+        # is fabricated.
+        from unittest.mock import patch
+        import ctypes
+        import plugins.PreparedStore as store_module
+
+        def verdict(open_handle, open_error, exit_ok, exit_code):
+            closed = []
+
+            def fake_open(*_args):
+                return open_handle
+
+            def fake_exit(handle, ref):
+                if ref is not None and hasattr(ref, "_obj"):
+                    ref._obj.value = exit_code
+                return exit_ok
+
+            def fake_close(handle):
+                closed.append(handle)
+
+            class FakeDll:
+                # Instance attributes keep the functions PLAIN (a
+                # class body would bind them, and bound methods
+                # refuse the argtypes/restype assignments the
+                # wrapper makes).
+                def __init__(self):
+                    self.OpenProcess = fake_open
+                    self.GetExitCodeProcess = fake_exit
+                    self.CloseHandle = fake_close
+
+            # The names ride create=True: the host's Python 3.14
+            # dropped the Windows helpers from ctypes' top level, and
+            # the production branch only runs on Windows anyway.
+            with patch.object(ctypes, "WinDLL", return_value=FakeDll(),
+                              create=True), \
+                    patch.object(ctypes, "get_last_error", return_value=open_error,
+                                 create=True):
+                result = store_module._windows_liveness(1234)
+            return result, closed
+
+        # OpenProcess ERROR_INVALID_PARAMETER -> provably dead.
+        self.assertFalse(verdict(0, 87, True, 259)[0],
+                         "a no-such-process verdict read alive")
+        # Access-denied and unknown OpenProcess failures -> alive.
+        self.assertTrue(verdict(0, 5, True, 259)[0],
+                         "an access-denied owner read dead")
+        self.assertTrue(verdict(0, 999, True, 259)[0],
+                         "an unknown native error read dead")
+        # A GetExitCodeProcess failure is indeterminate -> alive.
+        self.assertTrue(verdict(0x1234, None, False, 259)[0],
+                         "an exit-code read failure read dead")
+        # The full chain: STILL_ACTIVE alive, an exit code dead, and
+        # the handle always closes.
+        self.assertTrue(verdict(0x1234, None, True, 259)[0])
+        self.assertFalse(verdict(0x1234, None, True, 42)[0])
+        self.assertEqual(verdict(0x1234, None, True, 42)[1], [0x1234],
+                         "the handle never closed")
+
     def test_the_windows_branch_defers_to_the_native_probe(self):
         # The Windows branch's verdicts come from the NATIVE process
         # API, never os.kill: ALIVE and PROVABLY DEAD pass straight
