@@ -493,6 +493,18 @@ Item {
         return _partialPrefixReady() && !root._prefixShowHold;
     }
 
+    function _compositionReady() {
+        // The canvas-side half of the joint readiness, WITHOUT the
+        // live image's status: the retained frame's visibility reads
+        // this, never _partialPrefixReady — reading the live status
+        // there closes a binding cycle through the live image's own
+        // handlers (the engine's live loop warning disabled the
+        // visible binding and froze the face on the attach publish).
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return layer != null && split != null && root._textureReady && root._lastSplit === split && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
+    }
+
     function _partialPrefixReady() {
         // The compositor's side: the prefix may claim the printed
         // history only once its scene-graph Image has actually
@@ -518,7 +530,15 @@ Item {
         // on). No escape branch admits an older delivery: the
         // shown, the fresh-entry and the compatible-canvas cases
         // are all this one gate.
-        var delivered = root._textureReady && root._lastSplit === root.progress.split && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
+        // The FIRST show never stands over the canvas's full bitmap:
+        // a covers-0 delivery would double-render the whole history
+        // until the trim repaint lands. It waits for the delivered
+        // tail matching the prefix's own boundary — the trim paints
+        // first, the prefix swaps in over it. A re-show (the scrub
+        // through 100% and back) keeps the covers-0 acceptance: the
+        // standing picture is the complete one, and the trim follows
+        // in place.
+        var delivered = root._textureReady && root._lastSplit === root.progress.split && ((root._vectorCoversFrom === 0 && root._prefixWasShown) || root._vectorCoversFrom === layer.prefixSplit);
         return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
@@ -1299,7 +1319,7 @@ Item {
         Image {
             id: retainedPrefixImage
             anchors.fill: parent
-            visible: root._retainedPrefixSource !== "" && !root._partialPrefixReady() && root._retainedPrefixApplies()
+            visible: root._retainedPrefixSource !== "" && !root._compositionReady() && root._retainedPrefixApplies()
             source: root._retainedPrefixSource
             smooth: false
         }

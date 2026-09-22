@@ -1293,7 +1293,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             lookup_ms = getattr(snapshot, "plate_decode_ms", None)  # legacy test/snapshot
         progress = getattr(snapshot, "plate_progress", None)
         follower = getattr(snapshot, "plate_manual_progress", None)
-        popover = follower if follower is not None else progress
+        # The attached state must read the LIVE payload: the old
+        # order let a stale manual payload (a detach's residue)
+        # override the live print — the review's attach finding.
+        popover = (
+            progress if self._follower_attached
+            else follower if follower is not None else progress)
+        # The attach-diagnosis quartet (the review's isolation step):
+        # the mini's live anchor against the popover's, so a stale
+        # manual payload and an absent upstream progress separate at
+        # a glance in the live log.
+        if self._follower_popover_open:
+            live_anchor = progress["anchor"] if progress is not None else None
+            popover_anchor = popover["anchor"] if popover is not None else None
+            # warning-level so the quartet reaches the live cura.log
+            # (debug is filtered) — the review's isolation step.
+            logging.getLogger("MoonrakerPrintFollower").warning(
+                "plate follow: liveAnchor=%s popoverAnchor=%s "
+                "layerCount=%s split=%s",
+                live_anchor, popover_anchor,
+                self._values.get("plateLayerCount"),
+                popover["split"] if popover is not None else None)
         # The surfaces gate their payloads: a closed popover or a
         # collapsed section never re-wraps a fresh payload, so the
         # memo churn costs nothing while nothing renders (the live
