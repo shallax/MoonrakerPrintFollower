@@ -25,10 +25,6 @@ Item {
     // live layer, not the frozen one) and the payload arrives with no
     // split, so the layer draws as its whole base.
     property bool attached: true
-    // The centred-follow option (default OFF — the cheap render path
-    // is the default): every toolhead publish re-pans the view onto
-    // the dot, clamped so the bed always fills the view.
-    property bool keepCentred: false
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
@@ -650,7 +646,14 @@ Item {
         if (scene == null) {
             return null;
         }
-        return _clampPan(width / 2 - scene.x * root.viewScale, height / 2 - scene.y * root.viewScale);
+        // The jump centres the dot on the canvas, unclamped: the
+        // plate may show empty space beyond the bed edge (the live
+        // request — the jump must always put the toolhead at the
+        // middle, never pin the bed to the view's edge).
+        return {
+            "x": width / 2 - scene.x * root.viewScale,
+            "y": height / 2 - scene.y * root.viewScale
+        };
     }
 
     // The one-shot jump (the pop-over's button): the toolhead's bed
@@ -674,21 +677,8 @@ Item {
         return true;
     }
 
-    // The centred follow: every toolhead publish re-pans onto the dot —
-    // a scene-graph translation, never a raster (the pan-agnostic
-    // rasters make the follow cost-free per poll).
-    function _followToolhead() {
-        if (!root.keepCentred || !dotAvailable()) {
-            return;
-        }
-        var pan = _panOnToolhead();
-        if (pan != null && (pan.x !== root.viewPanX || pan.y !== root.viewPanY)) {
-            root.viewPanX = pan.x;
-            root.viewPanY = pan.y;
-            root.displayPanX = pan.x;
-            root.displayPanY = pan.y;
-        }
-    }
+    // The centred follow is retired (the live ruling: the per-poll
+    // re-pan was too slow). The one-shot Jump to toolhead stays.
 
     // The ONE physical stroke-width calculation, shared by the ghost,
     // pending, printed and travel painters: nominal bed mm through
@@ -999,12 +989,8 @@ Item {
         _retireRetainedView();
         root.settleTimer.restart();
     }
-    // The toolhead publish is the follow's clock: the model republishes
-    // the dot when it moves, and only then.
-    onDotChanged: root._followToolhead()
-    onKeepCentredChanged: root._followToolhead()
-    // Detaching hides the dot and, with it, the follow's subject.
-    onAttachedChanged: root._followToolhead()
+    // Detaching hides the dot (the one-shot jump reads it on demand).
+    onAttachedChanged: {}
     onCompactChanged: {
         // The product sets compact at construction and never flips
         // it; the repaint keeps the thumbnail honest wherever it is.

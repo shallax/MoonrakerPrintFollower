@@ -2756,7 +2756,6 @@ if QT_AVAILABLE:
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
-            self._keep_centred = False
             self._layer_anchor = -1
             self._show_base = True
             self.calls = []
@@ -2862,10 +2861,6 @@ if QT_AVAILABLE:
             self.plateDotChanged.emit()
 
         @pyqtProperty(bool, notify=followerViewChanged)
-        def followerKeepCentred(self):
-            return self._keep_centred
-
-        @pyqtProperty(bool, notify=followerViewChanged)
         def followerAttached(self):
             return self._attached
 
@@ -2888,14 +2883,6 @@ if QT_AVAILABLE:
         # The model's own slots, mirrored: the double's state follows
         # the same rules so the controls' surface is a real state
         # machine (the freeze, the rejoin, the manual anchor).
-        @pyqtSlot(bool)
-        def setFollowerKeepCentred(self, keep):
-            self.calls.append(("keepCentred", bool(keep)))
-            if self._keep_centred == bool(keep):
-                return
-            self._keep_centred = bool(keep)
-            self.followerViewChanged.emit()
-
         @pyqtSlot(bool)
         def setFollowerAttached(self, attached):
             self.calls.append(("attached", bool(attached)))
@@ -6146,55 +6133,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertEqual(face.property("_lastSplit"), -1,
                          "the settle never reset the stack")
 
-    def test_the_centred_follow_option_defaults_off_and_publishes(self):
-        monitor, window, face = self._follower_popover()
-        box = self.find(monitor, "moonrakerFollowerKeepCentred")
-        self.assertFalse(box.property("checked"), "the centred follow is on by default")
-        self.assertFalse(face.property("keepCentred"))
-        # The row is moot at the 100% fit and hides there (the live
-        # request); it appears with the zoom, where the option lives.
-        self.assertFalse(box.property("visible"),
-                         "the centred follow shows at the 100% fit")
-        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
-        self._fill_zoom(face, plot)
-        self.pump(30)
-        self.assertTrue(box.property("visible"),
-                        "the centred follow stayed hidden while zoomed")
-        self._click(window, box)
-        self.assertIn(("keepCentred", True), self._printer.calls)
-        self.assertTrue(face.property("keepCentred"), "the face never took the option")
-
-    def test_the_centred_follow_pans_onto_the_moving_toolhead(self):
-        monitor, window, face = self._follower_popover()
-        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
-        self._fill_zoom(face, plot)
-        self._printer.setFollowerKeepCentred(True)
-        self.pump(20)
-        self.assertTrue(face.property("keepCentred"))
-        dot = face.findChild(QQuickItem, "moonrakerPlateToolheadDot")
-        for x, y in ((100.0, 100.0), (150.0, 150.0)):
-            self._printer.setDot(x, y)
-            self.pump(30)
-            self.assertAlmostEqual(dot.x() + dot.width() / 2, face.width() / 2, delta=2.0,
-                                   msg="the follow did not centre the toolhead at x=%s" % x)
-            self.assertAlmostEqual(dot.y() + dot.height() / 2, face.height() / 2, delta=2.0,
-                                   msg="the follow did not centre the toolhead at y=%s" % y)
-        # A toolhead at the bed's edge cannot be centred without
-        # uncovering the view: the pan stops at the bed's own edge and
-        # the bed still fills the face.
-        self._printer.setDot(5.0, 5.0)
-        self.pump(30)
-        bed = plot.property("bed")
-        scale = face.property("viewScale")
-        left = bed.property("offsetX").toNumber() * scale + face.property("viewPanX")
-        top = bed.property("offsetY").toNumber() * scale + face.property("viewPanY")
-        self.assertLessEqual(left, 0.0)
-        self.assertGreaterEqual(left + bed.property("plotWidth").toNumber() * scale, face.width())
-        self.assertLessEqual(top, 0.0)
-        self.assertGreaterEqual(top + bed.property("plotHeight").toNumber() * scale, face.height())
-        self.assertGreater(abs(dot.x() + dot.width() / 2 - face.width() / 2), 2.0,
-                           "a clamped follow still claimed to be centred")
-
     def test_detaching_freezes_the_layer_and_hides_the_dot(self):
         monitor, window, face = self._follower_popover()
         self._printer.setAnchor(9)
@@ -6213,11 +6151,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertEqual(attach.property("text"), "Attach")
         self.assertFalse(face.property("attached"))
         self.assertFalse(dot.property("visible"), "the detached face kept its toolhead dot")
-        # The follow controls need a live dot: detached, the option is
-        # dead (the live request) and the preference stays whatever it
-        # was.
-        centred = self.find(monitor, "moonrakerFollowerKeepCentred")
-        self.assertFalse(centred.property("enabled"), "the centred follow stays live while detached")
         self.assertEqual(self._printer.followerLayerAnchor, 9,
                          "the detach did not hold the layer it showed")
         self.assertTrue(slider.property("enabled"), "the detached slider cannot seek")
@@ -6228,7 +6161,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(face.property("attached"))
         self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
         self.assertTrue(slider.property("enabled"))
-        self.assertTrue(centred.property("enabled"), "re-attaching kept the centred follow dead")
 
     def test_the_layer_ghost_stays_available_on_every_layer_detached(self):
         monitor, window, face = self._follower_popover()

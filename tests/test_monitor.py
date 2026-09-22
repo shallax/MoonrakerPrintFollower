@@ -2903,7 +2903,7 @@ class MonitorQtTests(unittest.TestCase):
                 # ruling) — the defaults ride the fresh document.
                 "followerView": {"showPrevious": True, "showNext": True,
                                  "showBase": True, "showTravels": False,
-                                 "lineScale": 0.7, "keepCentred": False},
+                                 "lineScale": 0.7},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.
@@ -2933,7 +2933,6 @@ class MonitorQtTests(unittest.TestCase):
     def test_the_follower_keys_publish_their_defaults_and_the_served_layer(self):
         model = self.monitor()
         self.assertTrue(model.followerAttached)
-        self.assertFalse(model.followerKeepCentred)
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertEqual(model.plateLayerCount, 0)
         self._with_layers(model, anchor=7, count=12)
@@ -3092,23 +3091,6 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(model.followerAttached, "the frozen layer survived into the next print")
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertIsNone(coordinator._plate_anchor)
-
-    def test_the_centred_follow_option_persists_across_model_instances(self):
-        model = self.monitor()
-        self.assertFalse(model.followerKeepCentred)
-        model.setFollowerKeepCentred(True)
-        section_path = self.follower.persistence.state_global_path
-        with open(section_path, "r", encoding="utf-8") as handle:
-            view = json.load(handle)["followerView"]
-        # The option rides the SAME bundle: the other view settings
-        # must survive the write.
-        self.assertEqual(view, {"showPrevious": True, "showNext": True, "showBase": True,
-                                "showTravels": False, "lineScale": 0.7, "keepCentred": True})
-        second = self.monitor()
-        self.assertTrue(second.followerKeepCentred, "a restart lost the option")
-        second.setFollowerKeepCentred(False)
-        with open(section_path, "r", encoding="utf-8") as handle:
-            self.assertFalse(json.load(handle)["followerView"]["keepCentred"])
 
     def test_section_layout_persists_across_model_instances(self):
         # 4.4.0: the configure popups' committed reorder and hidden

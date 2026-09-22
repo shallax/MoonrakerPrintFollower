@@ -100,9 +100,8 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerShowBase": "b11",
     "MoonrakerMonitorModel.setFollowerShowTravels": "b11",
     "MoonrakerMonitorModel.setFollowerLineScale": "b11",
-    # The follower's view and layer seeks (4.6.0): the centred-follow
-    # option, the attach/detach freeze, and the layer slider's anchor.
-    "MoonrakerMonitorModel.setFollowerKeepCentred": "b11",
+    # The follower's view and layer seeks (4.6.0): the attach/detach
+    # freeze and the layer slider's anchor.
     "MoonrakerMonitorModel.setFollowerAttached": "b11",
     "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
     # The slider's raw tick (the debounce's start for the seek trace).
@@ -149,10 +148,9 @@ SCENARIO_MAP = {
     "moonrakerPlateProgressFace": "b11",
     "moonrakerPlateToolheadDot": "b11",
     # The follower's own controls (4.6.0): the toolhead jump, the
-    # centred-follow option, the layer seek with its attach button and
-    # readout, and the display-only within-layer bar.
+    # layer seek with its attach button and readout, and the
+    # display-only within-layer bar.
     "moonrakerFollowerJump": "b11",
-    "moonrakerFollowerKeepCentred": "b11",
     "moonrakerFollowerLayerSlider": "b11",
     "moonrakerFollowerLayerReadout": "b11",
     "moonrakerFollowerAttach": "b11",
@@ -329,7 +327,6 @@ PREFIX_RULES = [
     ("key", "plateLayerCount", "b11"),
     ("key", "followerAttached", "b11"),
     ("key", "followerLayerAnchor", "b11"),
-    ("key", "followerKeepCentred", "b11"),
     ("key", "zOffset", "g4"),
     ("key", "homedAxes", "b8"),
     ("key", "positionMode", "g3"),
