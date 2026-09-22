@@ -101,6 +101,16 @@ Item {
     // exact scene is still reassembling toward the final target),
     // the warm navigation raster owns the heavy-scene presentation.
     property bool _interactionActive: false
+    // The raster source the CURRENT gesture entered with (the entry
+    // latch): set at _enterInteraction, irrelevant once the gesture
+    // ends (the idle binding reverts to the live eligible URL).
+    property string _gestureNavSource: ""
+    // The RETAINED previous prefix (the atomic handover): the last
+    // successfully uploaded prefix's source and boundary, frozen at
+    // its Ready — shown while the live replacement loads, so the old
+    // complete composition is never torn down early.
+    property string _retainedPrefixSource: ""
+    property int _retainedPrefixSplit: -1
     // The raster paints run on the threaded canvases' worker
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
@@ -355,8 +365,16 @@ Item {
         // presentation to the warm interaction raster immediately —
         // no synchronous work rides this call. With no ready
         // navigation raster the exact scene simply stays (the
-        // safe degraded path, same as before this feature).
+        // safe degraded path, same as before this feature). The
+        // entry LATCHES the source the gesture entered with: the
+        // model retires the published URL the moment the demand
+        // moves (a scrub, a toggle, a failed replacement), and a
+        // mid-gesture retirement must never unload the scene the
+        // gesture is already presenting — the camera transforms
+        // ride the QML side, so the latched raster stays coherent
+        // for the gesture's whole life.
         if (!root._interactionActive && navigationData() !== "") {
+            root._gestureNavSource = navigationData();
             root._interactionActive = true;
         }
     }
@@ -427,16 +445,31 @@ Item {
         return false;
     }
 
+    function _retainedPrefixApplies() {
+        // The retained pixels stand only while they are a complete
+        // committed composition for the current context: the same
+        // partial state, the demand split at or past the retained
+        // boundary, never at 0 or the full layer.
+        var progress = root.progress;
+        var layer = progress != null && progress.layers != null ? progress.layers.current : null;
+        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions;
+    }
+
     function _prefixApplies() {
         // The split arithmetic still names the prefix as the history
         // owner — PURE structural terms, no transient inputs (the
         // model's validity and the Image's status flicker through a
         // re-publish; a hide fired on a flicker drops the standing
-        // composition's memory). A full layer or a split below the
-        // prefix boundary hides it legitimately.
+        // composition's memory). The boundary is INCLUSIVE: a fresh
+        // prefix renders AT the requested split, and hiding it until
+        // the split passed it left the printed history ownerless for
+        // every scrub that landed exactly on the boundary (the
+        // disappearance). A full layer, a split at 0 (nothing has
+        // printed — the prefix owns nothing, ever) or a split below
+        // the boundary hides it legitimately.
         var progress = root.progress;
         var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && layer != null && layer.prefixSplit !== undefined && layer.prefixSplit >= 0 && progress.split > layer.prefixSplit && progress.split < _motionsOf(layer);
+        return progress != null && progress.split != null && progress.split > 0 && layer != null && layer.prefixSplit !== undefined && layer.prefixSplit >= 0 && progress.split >= layer.prefixSplit && progress.split < _motionsOf(layer);
     }
 
     function _leavingFull() {
@@ -668,7 +701,17 @@ Item {
         if (plot == null) {
             return 0;
         }
-        return root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root._view.scale) * root._view.lineScale * (root._view.compact ? root.compactStrokeBoost : 1.0);
+        // The SAME geometry-width policy the native renderer's pen
+        // applies (the parity contract): the nominal width scaled to
+        // the presentation, then the same device-coverage floor —
+        // min(2/dpr, 1) logical px — so a sub-floor stroke presents
+        // at the same full-intensity footprint on both renderers.
+        // Without the floor the native raster's backed downscale
+        // faded thin strokes while the canvas stroked them raw, and
+        // the two halves of ONE layer read as different inks.
+        var width = root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root._view.scale) * root._view.lineScale * (root._view.compact ? root.compactStrokeBoost : 1.0);
+        var dpr = root._view.dpr !== undefined ? Math.max(1.0, root._view.dpr) : 1.0;
+        return Math.max(width, Math.min(2.0 / dpr, 1.0));
     }
 
     function travelWidthPx() {
@@ -829,8 +872,12 @@ Item {
         // neither renderer owning the printed history. The repaint
         // must be FORCED here: the invalidation's publish can land
         // without a key change (the settle already consumed it),
-        // and an unrequested paint would never clear the hold.
-        if (!_prefixModelReady() && root._prefixWasShown) {
+        // and an unrequested paint would never clear the hold. The
+        // hold is structurally PARTIAL-only: at a full layer (or at
+        // 0%) no prefix owns the history, and a hold armed there
+        // could never release — a cached bake then stood forever
+        // over the valid full raster (the stale-zoom report).
+        if (!_prefixModelReady() && root._prefixWasShown && _leavingFull()) {
             holdExpiryTimer.stop();
             root._prefixHold = true;
             progressCanvas.requestPaint();
@@ -1018,8 +1065,16 @@ Item {
         y: root.displayPanY
         width: root.width * root.displayScale
         height: root.height * root.displayScale
-        visible: root._interactionActive && navigationData() !== ""
-        source: navigationData()
+        // The interaction source: the gesture LATCHES the raster it
+        // entered with (the model retires the published URL the
+        // moment the demand moves — a mid-gesture retirement must
+        // never unload the scene the gesture presents); idle binds
+        // the live eligible URL so the texture preloads. An
+        // interaction activated without an entry (the presentation
+        // fixtures drive the flag directly) falls back to the live
+        // eligible URL.
+        visible: root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
+        source: root._interactionActive ? (root._gestureNavSource !== "" ? root._gestureNavSource : navigationData()) : navigationData()
         smooth: true
     }
 
@@ -1160,8 +1215,8 @@ Item {
             // the printed history. The normal readiness gate governs
             // only once the delivered canvas IS the current demand's
             // picture.
-            visible: _partialPrefixReady() || root._prefixHold || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))
-            source: (_prefixModelReady() || root._prefixHold || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
+            visible: _partialPrefixReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._lastSplit === root.progress.split))
+            source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by
                 // the model's invalidation (prefixValid flipped false —
@@ -1182,7 +1237,13 @@ Item {
                     // here: the show can land after the key's paint
                     // already consumed itself.
                     progressCanvas.requestPaint();
-                } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false) {
+                } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false && _leavingFull()) {
+                    // The invalidation hold keeps the standing picture
+                    // while the canvas repaints the full interval. The
+                    // hold is structurally partial-only: at 0% nothing
+                    // has printed (the 0% picture IS the empty history)
+                    // and at a full layer the hold could never release
+                    // (the stale-zoom report's standing bake).
                     holdExpiryTimer.stop();
                     root._prefixHold = true;
                     progressCanvas.requestPaint();
@@ -1195,7 +1256,32 @@ Item {
                     root._prefixWasShown = false;
                 }
             }
-            onStatusChanged: progressCanvas.requestPaint()
+            onStatusChanged: {
+                progressCanvas.requestPaint();
+                if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null) {
+                    // The handover freeze: the pixels that JUST
+                    // uploaded become the retained previous — the
+                    // next source change (a replacement loading, a
+                    // backward invalidation) keeps THIS complete
+                    // picture presentable until the new composition
+                    // is jointly ready.
+                    root._retainedPrefixSource = source;
+                    root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
+                }
+            }
+        }
+
+        // The RETAINED previous prefix (the atomic handover): the
+        // pixels of the last successfully uploaded prefix stand
+        // while the live replacement loads and the canvas repaints
+        // the complementary tail — the old complete composition is
+        // never torn down before the new one is jointly present.
+        Image {
+            id: retainedPrefixImage
+            anchors.fill: parent
+            visible: root._retainedPrefixSource !== "" && progressPrefixImage.status !== Image.Ready && root._retainedPrefixApplies()
+            source: root._retainedPrefixSource
+            smooth: true
         }
 
         Canvas {
@@ -1321,7 +1407,7 @@ Item {
                 root._vectorSourceMotions = vectorMotions;
                 root._vectorSourceClasses = vectorClasses;
                 var prefixFrom = _prefixFrom();
-                if (prefixFrom <= 0 && root._prefixWasShown && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions) {
+                if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions) {
                     // The stale prefix is being REPLACED (a fresh URL is
                     // in flight): hold the complete old composition —
                     // the held prefix plus this bitmap's old tail — until

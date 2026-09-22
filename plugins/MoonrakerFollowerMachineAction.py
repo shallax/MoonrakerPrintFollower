@@ -654,12 +654,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
                          self._cache_root()):
                 try:
                     shutil.rmtree(path)
+                except FileNotFoundError:
+                    pass  # an absent generation is a successful clear
                 except OSError:
                     refused.append(path)
             if refused:
-                self._cache_status = ("Cache partially cleared — some files are still "
-                                      "in use. Restart Cura to also drop the session's "
-                                      "downloaded file.")
+                self._cache_status = ("Cache partially cleared — some files could not "
+                                      "be removed. Restart Cura to also drop the "
+                                      "session's downloaded file.")
             else:
                 self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
         except Exception as error:

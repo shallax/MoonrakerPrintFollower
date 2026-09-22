@@ -5067,8 +5067,15 @@ Item {
             # replacement is presentation-ready (zero blank frames).
             "visible: _fullPictureStanding()",
             # The interaction raster: the warm full-bed composite
-            # owns the heavy scene during a camera gesture.
-            "visible: root._interactionActive && navigationData() !== \"\"",
+            # owns the heavy scene during a camera gesture — the
+            # source latches at entry so a mid-gesture retirement
+            # never unloads the scene in hand (an interaction driven
+            # without an entry falls back to the live eligible URL).
+            "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
+            # The retained previous prefix (the atomic handover): the
+            # last uploaded prefix's pixels stand while the live
+            # replacement loads — never torn down early.
+            "visible: root._retainedPrefixSource !== \"\"",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

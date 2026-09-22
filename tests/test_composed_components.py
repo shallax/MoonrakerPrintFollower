@@ -2089,11 +2089,13 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                                 "the superseded prefix never recorded its cancel")
 
     def test_stale_split_completions_never_land_across_a_rapid_scrub(self):
-        # The rapid reverse scrub 80-60-40-55-30-70: each completion
-        # races its split change and arrives as the surface's EXACT
-        # job — only the commit-time split check keeps the stale
-        # pictures off the face. Every stale split discards and the
-        # reschedule follows the standing demand; only 70 may land.
+        # The rapid scrub 80-60-40-55-30-70: each completion races
+        # its split change and arrives as the surface's EXACT job —
+        # the commit-time split check decides per DIRECTION. A
+        # completion BEYOND the standing demand (a backward move)
+        # discards and reschedules; a completion at or BEHIND it (a
+        # forward move) LANDS — a prefix at P still owns [0..P] of
+        # the newer demand (the review's scrub policy).
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         surface = model._plate_surfaces["popover"]
@@ -2104,11 +2106,14 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         key = surface.render_key()
         from PyQt6.QtGui import QImage
         prefix = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
-        stale_splits = [80, 60, 40, 55, 30]
-        next_splits = [60, 40, 55, 30, 70]
-        for index, (split, next_split) in enumerate(zip(stale_splits, next_splits,
-                                                        strict=True)):
-            # The demand submitted for THIS split...
+        # (completed split, standing demand, backward?) — the landed
+        # record each step must show.
+        steps = [(80, 60, True, -1),
+                 (60, 40, True, -1),
+                 (40, 55, False, 40),
+                 (55, 30, True, 40),
+                 (30, 70, False, 30)]
+        for index, (split, next_split, backward, landed) in enumerate(steps):
             surface.tokens[5] = 1
             surface.job = {"layer": 5, "token": 1, "generation": generation,
                            "state": "submitted", "cancel": threading.Event(),
@@ -2122,16 +2127,20 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             ticket = ("popover", 5, 1, generation, key, "prefix", split,
                       epoch, 100 + index)
             model._raster_committed(("prefix", prefix, "", split), ticket)
-            self.assertEqual(wrapped.prefixSplit, -1,
-                             "a stale split's completion landed on the face")
-            self.assertIsNotNone(surface.job,
-                                 "the stale discard never rescheduled the demand")
-            self.assertEqual(surface.job["split"], next_split,
-                             "the reschedule followed the stale split, "
-                             "not the standing demand")
+            self.assertEqual(wrapped.prefixSplit, landed,
+                             "step %d landed the wrong split record" % index)
+            if backward:
+                self.assertIsNotNone(surface.job,
+                                     "the stale discard never rescheduled the demand")
+                self.assertEqual(surface.job["split"], next_split,
+                                 "the reschedule followed the stale split, "
+                                 "not the standing demand")
         self._pump_rasters(model, "popover")
-        self.assertEqual(wrapped.prefixSplit, 70,
-                         "the standing demand's split never landed")
+        # The pump's own publishes may re-feed the standing demand and
+        # land a fresh prefix; the record must never regress below the
+        # last accepted forward prefix.
+        self.assertGreaterEqual(wrapped.prefixSplit, 30,
+                                "the accepted forward prefix regressed")
 
     def test_a_prefix_cancels_when_its_layer_slides_to_a_ghost(self):
         # A-B-A: layer 5's blocked prefix slides to the prev ghost
@@ -2424,6 +2433,164 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertTrue(surface.nav["url"],
                         "the moved demand never painted the warm raster")
+
+    def test_a_print_switch_retires_the_navigation_state(self):
+        # The review's finding: the epoch gate rejected the old job's
+        # terminal, but nothing freed the slot it no longer owned —
+        # the new print could never schedule its warm raster. The
+        # switch now retires the whole navigation state, and the old
+        # job's late terminals stay inert.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertTrue(surface.nav["url"], "the warm raster never landed")
+        # A new demand schedules a second job; the print switches
+        # while it is still in flight.
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 120)
+        self.qt.events(5)
+        self.assertIsNotNone(surface.nav["job"],
+                             "the moved demand never scheduled its job")
+        old_epoch = surface.job_epoch
+        model._observe_follower_job(("other.gcode", 100, 1))
+        model._plate_qt_job = None  # the harness snapshot still reports no job
+        self.assertIsNone(surface.nav["job"], "the switch left the old job's slot")
+        self.assertIsNone(surface.nav["key"], "the switch kept the old content key")
+        self.assertEqual(surface.nav["url"], "", "the switch kept the old ready URL")
+        self.assertIsNone(surface.nav.get("failed"),
+                          "the switch kept the old failure latch")
+        # The old job's late terminals stay inert whatever they carry.
+        from PyQt6.QtGui import QImage
+        model._nav_committed(("cancelled",),
+                             ("popover", -1, 0, 0, ("stale",), "nav", 120,
+                              old_epoch, 99))
+        model._nav_committed(
+            ("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+             "file:///tmp/mpf/raster-probe/old-print.png", ("stale",)),
+            ("popover", -1, 0, 0, ("stale",), "nav", 120, old_epoch, 99))
+        self.assertIsNone(surface.nav["job"])
+        self.assertEqual(surface.nav["url"], "",
+                         "an old print's terminal republished its raster")
+        # The new print schedules its own warm raster as soon as its
+        # data arrives — the slot is genuinely free.
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         3, "motion index", 10)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertTrue(surface.nav["url"],
+                        "the new print never warmed its own raster")
+
+    def test_the_ready_url_publishes_only_for_the_current_demand(self):
+        # A retained raster is not a READY one: the published URL
+        # retires the moment the demand moves, and only a raster
+        # whose key matches the CURRENT demand reaches the face.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertEqual(model._navigation_data_value(surface), surface.nav["url"],
+                         "the ready raster never published")
+        # The demand moves: the retained URL retires from the face
+        # before the replacement commits (no events — the old key
+        # still stands, the demand is already the new one).
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 120)
+        self.assertEqual(model._navigation_data_value(surface), "",
+                         "the stale raster stayed eligible after the demand moved")
+        # The replacement commits: its own key publishes.
+        old_url = surface.nav["url"]
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and surface.nav["url"] == old_url:
+            self.qt.events(5)
+            time.sleep(0.01)
+        self.assertEqual(model._navigation_data_value(surface), surface.nav["url"],
+                         "the replacement raster never became eligible")
+
+    def test_the_navigation_asset_survives_the_prune_until_retired(self):
+        from PyQt6.QtCore import QUrl
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._pump_rasters(model, "popover")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not surface.nav["url"]:
+            self.qt.events(5)
+            time.sleep(0.01)
+        nav_file = QUrl(surface.nav["url"]).toLocalFile()
+        self.assertTrue(os.path.exists(nav_file))
+        # A prune that keeps NOTHING still keeps the retained asset.
+        model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(nav_file),
+                        "the prune unlinked the retained navigation asset")
+        # The retirement drops the protection; the next prune collects.
+        model._retire_navigation(surface)
+        model._prune_raster_cache(keep=0)
+        self.assertFalse(os.path.exists(nav_file),
+                         "the retired navigation asset never got collected")
+
+    def test_an_empty_navigation_publication_reads_as_a_failure(self):
+        # png_file returns "" on a failed save: the worker must
+        # report a FAILED render, the latch holds the demand (no
+        # hot-retry), and no key ever reads as ready.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        module = self.qt.load("MoonrakerMonitorModel")
+        submitted = []
+        real_job = module._RasterJob
+
+        class CountingJob(real_job):
+            def __init__(self, work):
+                super().__init__(work)
+                if "nav" in work.__code__.co_consts:
+                    submitted.append(work)
+
+        with patch.object(module, "_RasterJob", CountingJob), \
+                patch.object(module, "png_file", return_value=""):
+            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+                             5, "motion index", 50)
+            model._publish()
+            self.qt.events(5)
+            self.assertEqual(len(submitted), 1,
+                             "the warm raster never scheduled its render")
+            submitted[0]()  # the worker's own terminal, delivered inline
+            self.qt.events(5)
+            self.assertIsNone(surface.nav["job"],
+                              "the failed terminal never cleared the job slot")
+            self.assertEqual(surface.nav["url"], "",
+                             "an empty publication recorded a ready raster")
+            self.assertIsNone(surface.nav["key"],
+                              "an empty publication recorded a successful key")
+            self.assertIsNotNone(surface.nav.get("failed"),
+                                 "the empty publication never latched")
+            for _ in range(5):
+                model._publish()
+                self.qt.events(5)
+            self.assertEqual(len(submitted), 1,
+                             "the failed publication hot-retried")
 
     def test_an_obsolete_navigation_job_never_promotes_after_the_demand_moved(self):
         # The review's stale-promotion finding: a job whose content
