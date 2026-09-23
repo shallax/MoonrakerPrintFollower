@@ -971,11 +971,11 @@ CONFIGURE_CROSSTALK_PROBE = (
     "    order = list(effective.get(\"order\", []) or [])\n"
     "    result[\"order\"] = order\n"
     "    result[\"hidden\"] = list(effective.get(\"hidden\", []) or [])\n"
-    "    # The info pane's only two sections: the drag below moves\n"
-    "    # meshmap behind temphistory — and the controls popup's\n"
-    "    # reset must leave that order alone (the live report's\n"
-    "    # cross-talk).\n"
-    "    if order[:2] != [\"temphistory\", \"meshmap\"]:\n"
+    "    # The information pane's four sections, in the table order the\n"
+    "    # pop-over lists: the drag above takes the pane's FIRST row\n"
+    "    # (plateprogress) past the other three, so the layout the\n"
+    "    # controls popup's reset must leave alone ends plate-last.\n"
+    "    if order != [\"plate\", \"meshmap\", \"temphistory\", \"plateprogress\"]:\n"
     "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
@@ -2618,6 +2618,11 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The jog grid now sits below the controls pane's fold at the
+         # suite geometry: the preposition scrolls its Flickable so the
+         # press has a place to land (the driver refuses an aim outside
+         # the window's content).
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -2629,6 +2634,10 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "jogEnabled", "value": False, "budget": 15},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The same fold as z10: a refused press still has to reach the
+         # control, so the row is scrolled into the pane's viewport
+         # first.
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus", "expect": "not_accepted"},
      ]},
     {"id": "z1", "group": "probe",

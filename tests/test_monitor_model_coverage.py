@@ -1363,7 +1363,11 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface = self.model_now()._plate_surfaces[name]
         surface.view = {"width": width, "height": height, "scale": 1.0,
                         "lineScale": 0.7, "dpr": 1.0, "compact": False}
-        surface.plot = {"offsetX": 0.0, "offsetY": 0.0, "sx": 1.0, "sy": 1.0}
+        # The renderer reads the flat bed bounds directly: a plot
+        # without bedXMin/bedYMax raised mid-stroke and left a live
+        # painter on a dying frame (the reviewer's finding).
+        surface.plot = {"offsetX": 0.0, "offsetY": 0.0, "sx": 1.0, "sy": 1.0,
+                        "bedXMin": 0.0, "bedYMax": 300.0}
         return surface
 
     def wrapper(self, surface, layer, motions=20, payload=None):

@@ -311,6 +311,10 @@ class GCodeIndexService(QObject):
         self._swept_store = None
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
+        # The motion-array debt: compact layers whose GEOMETRY a
+        # lease-less demand already served but whose physical arrays
+        # the index still lacks.
+        self._hydrate_arrays = set()
         self._hydrating = None
         self._failed_hydrate = set()
         self._closed = False
@@ -450,6 +454,7 @@ class GCodeIndexService(QObject):
         self._error = ""
         self._progress = None
         self._hydrate.clear()
+        self._hydrate_arrays.clear()
         self._hydrating = None
         self._failed_hydrate.clear()
         self._prepared_table = None
@@ -1507,6 +1512,7 @@ class GCodeIndexService(QObject):
         self._visited_pending = frozenset()
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
+        self._hydrate_arrays.clear()
         self._hydrating = None
         self._failed_hydrate.clear()
         self._error = ""
@@ -1586,6 +1592,15 @@ class GCodeIndexService(QObject):
                                or index.followed_layer - 1 <= n <= index.followed_layer + 1)
                               or (manual is not None
                                   and manual - 1 <= n <= manual + 1))}
+        # The arrays debt is pruned on the same terms: a layer the
+        # retention window no longer holds is no debt at all (its
+        # arrays would evict again the moment another hydrate lands).
+        self._hydrate_arrays = {
+            n for n in self._hydrate_arrays
+            if 0 <= n < len(index.ranges) and n not in index.hydrated_layers
+            and ((index.followed_layer is None
+                  or index.followed_layer - 1 <= n <= index.followed_layer + 1)
+                 or (manual is not None and manual - 1 <= n <= manual + 1))}
         if self._hydrate:
             # CURRENT is a foreground presentation demand. Detached/manual
             # current outranks live current; live current outranks every
@@ -1602,25 +1617,27 @@ class GCodeIndexService(QObject):
                 submitted = window
                 self._hydrate.clear()
 
-            # Only RAW source needs the G-code lease for the
-            # PRESENTATION — packed RAM, prepared disk and
-            # already-hydrated index arrays are all independently
-            # sufficient presentation sources. But a compact layer
-            # served from packed or prepared data still needs the
-            # lease for its MOTION ARRAYS: without them the split
-            # rides the byte-fraction estimate (the live stall/jump
-            # saga) — the worker hydrates the arrays alongside the
-            # decode when the file is in hand.
+            # Only a layer with NO presentation source at all needs the
+            # G-code lease for the DECODE — packed RAM, prepared disk
+            # and already-hydrated index arrays are each sufficient on
+            # their own. A compact layer served from packed or prepared
+            # data therefore decodes NOW, and the file it still wants is
+            # the MOTION ARRAYS' alone: without them the split rides the
+            # byte-fraction estimate (the live stall/jump saga). That
+            # want is the debt recorded below when no lease is in hand,
+            # never a bar on the decode.
             needs_raw = any(self._presentation_source(layer) == "raw"
-                            for layer in submitted) \
-                or (index.compact and any(
-                    layer not in index.hydrated_layers
-                    for layer in submitted))
-            lease = self._files.lease() if needs_raw else None
+                            for layer in submitted)
+            arrays_owed = {layer for layer in submitted
+                           if index.compact and layer not in index.hydrated_layers}
+            lease = self._files.lease() if (needs_raw or arrays_owed) else None
             if needs_raw and lease is None:
                 self._hydrate.update(submitted)
                 self._files.request_file()
                 return
+            if arrays_owed and lease is None:
+                self._hydrate_arrays.update(arrays_owed)
+                self._files.request_file()
             self._hydrating = set(submitted)
             cache = self._full_cache
             # No anchor argument: the worker reads the index's
@@ -1703,6 +1720,8 @@ class GCodeIndexService(QObject):
                                     _decoded_charge(raw=encoded, payload=payload))
                 return failed, stash
             self._submit("hydrate", hydrate_and_prepare, lease)
+        elif self._drain_arrays_debt(index):
+            return
         elif self._save and strong \
                 and (self._last_save_at is None or time.monotonic() - self._last_save_at >= 30.0):
             # The index cache save is a one-shot and must not wait for
@@ -1883,6 +1902,43 @@ class GCodeIndexService(QObject):
                 return frontier, encoded, uncacheable
 
             self._submit("fullprep", full_prep_batch, lease)
+
+    def _drain_arrays_debt(self, index) -> bool:
+        """The motion-array debt's one drain attempt: hydrate the
+        physical arrays of layers whose geometry the prepared or packed
+        store already served.
+
+        The lease is the arrays' ONLY input, so while the file is
+        absent this submits nothing — it asks for the file (the
+        recovery's own trigger, the same request the raw presentation
+        path makes) and leaves the poll to its other work. True means a
+        worker was submitted. The attempt settles the debt either way:
+        a hydration that fails degrades the split exactly as the demand
+        path's own warning does, and the next lease-less demand
+        re-records it.
+        """
+        if not self._hydrate_arrays or self._view is None:
+            return False
+        lease = self._files.lease()
+        if lease is None:
+            self._files.request_file()
+            return False
+        owed = sorted(self._hydrate_arrays)
+        self._hydrate_arrays.clear()
+        # The window _finish reports on: the debt's own layers, so a
+        # failure list can never name a layer this worker never saw.
+        self._hydrating = set(owed)
+
+        def hydrate_arrays():
+            for layer in owed:
+                if index.compact and layer not in index.hydrated_layers \
+                        and not hydrate_layer_from_file(index, lease.path, layer):
+                    Logger.log("w", "layer %d arrays failed to hydrate from %s — "
+                               "the split rides the estimate", layer, lease.path)
+            return [], {}
+
+        self._submit("hydrate", hydrate_arrays, lease)
+        return True
 
     def _save_index(self, cache_store, generation, identity, index):
         """The index save's own gate (the clear's lifecycle): a save

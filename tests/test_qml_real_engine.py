@@ -3584,6 +3584,170 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_an_asynchronous_a_to_b_seek_never_stands_the_previous_layers_pixels(self):
+        # The retained handover is a promise about ONE layer: the
+        # pixels frozen for layer A bridge A's own prefix replacement
+        # and nothing else. A seek to layer B carries the same motions
+        # and the same split values, so the split-only predicate
+        # re-stands A's pixels over B — and while B's prefix is still
+        # loading the canvas' hold skips B's repaint, so A's picture
+        # stays up for the whole load. B's layer, not A's, owns the
+        # screen.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        plot = self._bed_point(face, 0.0, 0.0)
+        a_payload = {
+            "classes": {"WALL-OUTER": [[[20.0 + motion * 10.0, 40.0, float(motion)]
+                                        for motion in range(21)]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer_a = self._native_layer(a_payload, face, prefix_split=10)
+        self._printer.setScrub(a_payload)
+        self._printer.setLayers({"prev": None, "current": layer_a, "next": None})
+        self._printer.setSplit(18)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "layer A's picture never drew")
+        # The freeze arms while A's picture stands: that record is
+        # what the seek must not carry into B.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_retainedPrefixSource") == "":
+            self.pump(5)
+        self.assertNotEqual(face.property("_retainedPrefixSource"), "",
+                            "the retained freeze never armed")
+        # The seek: B's own geometry at its own bed position, the
+        # SAME motions and split arithmetic, and a prefix asset that
+        # never resolves — the asynchronous gap is the whole window.
+        from plugins.PlateQt import render_layer_prefix
+        b_payload = {
+            "classes": {"WALL-OUTER": [[[20.0 + motion * 10.0, 200.0, float(motion)]
+                                        for motion in range(21)]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21,
+        }
+        layer_b = self._native_layer(b_payload, face)
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0, "dpr": 1.0}
+        prefix_b = render_layer_prefix(b_payload, plot, view, 10)
+        layer_b.set_prefix(prefix_b, "file:///tmp/mpf/raster-probe/missing-%d.png"
+                           % time.monotonic_ns(), 10, "fixture-key")
+        self._printer.setScrub(b_payload)
+        self._printer.setLayers({"prev": None, "current": layer_b, "next": None})
+        self._printer.setAnchor(1)
+        self._printer.setSplit(18)
+        self.pump(30)
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        applies = QMetaObject.invokeMethod(face, "_retainedPrefixApplies",
+                                           Q_RETURN_ARG(QVariant))
+        self.assertFalse(bool(applies),
+                         "the retained predicate re-stands layer A's pixels for layer B")
+        # The picture, sampled across the whole load: A's ink must
+        # never appear at A's own bed position.
+        for _ in range(10):
+            self._pump_ms(40)
+            image = window.grabWindow()
+            self.assertEqual(
+                self._stroke_ink(image, face, window, plot, 75.0, 40.0), 0,
+                "layer A's retained pixels stood over layer B")
+        # The seek completes: B's asset lands and B's own history
+        # takes B's position — the assertions above are not a stuck
+        # blank.
+        from plugins.PlateQt import png_file
+        layer_b.set_prefix(prefix_b, png_file(prefix_b, "/tmp/mpf/raster-probe",
+                                              "fixture-ab-%d" % time.monotonic_ns()),
+                           10, "fixture-key")
+        self._printer.setLayers({"prev": None, "current": layer_b, "next": None})
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "layer B's prefix never landed after the seek")
+        self.assertGreater(self._stroke_ink(image, face, window, plot, 75.0, 200.0), 0,
+                           "layer B's prefix drew nothing at its own position")
+        self.assertEqual(self._stroke_ink(image, face, window, plot, 75.0, 40.0), 0,
+                         "layer A's pixels outlived the seek")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_overlapping_ghost_geometry_leaves_the_current_layer_on_top(self):
+        # The stack order at 100%: the ghost pair belongs BENEATH the
+        # full current raster and the travels, exactly as the
+        # navigation raster composites the scene (grid, ghosts, base,
+        # current layer, travels). A ghost drawn over the current
+        # raster dims the ink it overlaps.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showPrevious", True)
+        self.pump(10)
+        plot = self._bed_point(face, 0.0, 0.0)
+        run = [[20.0 + motion * 10.0, 125.0, float(motion)] for motion in range(21)]
+        current_payload = {"classes": {"WALL-OUTER": [run]}, "travels": [],
+                           "travelStarts": [], "travelEnds": [], "motions": 21}
+        # The ghost covers the SAME bed points (the overlap) plus a
+        # run of its own (the ghost-only band, so the overlap probe
+        # cannot pass on a ghost that never rendered).
+        ghost_payload = {"classes": {"FILL": [run, [[40.0, 60.0, 30.0], [200.0, 60.0, 30.0]]]},
+                         "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21}
+        ghost = self._native_layer(ghost_payload, face)
+        current = self._native_layer(current_payload, face)
+        self._printer.setLayers({"prev": ghost, "current": current, "next": None})
+        self._printer.setSplit(21)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the full current layer never drew")
+        self.assertTrue(self._band_changed(image, baseline, face, window, plot, 75.0, 60.0,
+                                          radius=6),
+                        "the ghost never rendered — the overlap probe would be vacuous")
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+
+        def face_point(bed_x, bed_y):
+            # The bed point in the face's own pixels: the grab reads it
+            # through the window origin, the navigation raster (backed
+            # 1:1) reads it directly.
+            return (int(plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"]),
+                    int(plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"]))
+
+        def red_excess(image, col, row, origin_x=0, origin_y=0, span=4):
+            # The red's excess over the blue at a bed point: pure
+            # current-layer ink reads ~164, the same ink dimmed by the
+            # ghost's 0.30 blue reads ~59.
+            best = -255
+            for dy in range(-span, span + 1):
+                for dx in range(-span, span + 1):
+                    pixel = image.pixel(origin_x + col + dx, origin_y + row + dy)
+                    best = max(best, ((pixel >> 16) & 0xFF) - (pixel & 0xFF))
+            return best
+
+        local_col, local_row = face_point(75.0, 125.0)
+        overlap = red_excess(image, local_col, local_row,
+                             int(origin.x()), int(origin.y()))
+        self.assertGreaterEqual(
+            overlap, 120,
+            "the ghost dimmed the current layer's ink at the same bed point "
+            "(red excess %d)" % overlap)
+        # Parity with the navigation raster's own composite order: the
+        # same window, plot and view, backed 1:1 so both rasters share
+        # one pixel grid.
+        from plugins.PlateQt import render_navigation_layer
+        nav_view = {"width": int(face.width()), "height": int(face.height()),
+                    "scale": 1.0, "lineScale": 8.0, "compact": False,
+                    "panX": 0.0, "panY": 0.0, "dpr": 1.0, "backing": 1.0,
+                    "showPrevious": True, "showNext": True, "showBase": True,
+                    "showTravels": False, "bedWidth": 250.0, "bedDepth": 250.0}
+        nav = render_navigation_layer({"prev": ghost_payload, "current": current_payload,
+                                       "next": None}, plot, nav_view, 21)
+        nav_overlap = red_excess(nav, local_col, local_row)
+        self.assertGreaterEqual(
+            nav_overlap, 120,
+            "the navigation raster composites the ghost over the current layer "
+            "(red excess %d)" % nav_overlap)
+        self.assertGreaterEqual(
+            overlap, nav_overlap - 20,
+            "the exact stack diverges from the navigation raster's layer order "
+            "(exact %d vs nav %d)" % (overlap, nav_overlap))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
     def test_the_grey_base_never_washes_the_printed_prefix(self):
         # The stack order contract: ghosts < base < prefix < tail.
         # With the base ON and the ghosts OFF, the native prefix and
@@ -7443,3 +7607,207 @@ class IntervalSliderGrabTests(SettingsPageCase):
         self.press_key(window, Qt.Key.Key_Left)
         self.assertEqual(anchor, slider.property("value"),
                          "the second arrow key never stepped back")
+
+
+# --------------------------------------------------------------------------
+# The follower-view feed's device-pixel contract: the popover's own QML
+# call passes the device-pixel-ratio as a NINTH argument, the mini's
+# compact feed stops at eight, and the ratio is a pixel input of the
+# navigation raster — a change must re-bake it. This block runs the REAL
+# MoonrakerMonitorModel in this process (the runtime() stubs) beside the
+# engine's documents: the model is the only thing that can answer for
+# its own slot arity.
+if QT_AVAILABLE:
+    class _DprMesh(QObject):
+        """The bed-mesh double the model wants: the navigation raster's
+        grid reads only the machine bounds off it."""
+
+        changed = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.snapshot = {}
+            self.visible = True
+
+        def set_thresholds(self, low, high):
+            pass
+
+        def set_visible(self, value):
+            self.visible = value
+            self.changed.emit()
+
+
+    @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+    class FollowerViewDprTests(RealEngineTestCase):
+        """The follower view feed's argument list and the DPR's ride
+        through the model's view dict into the navigation raster."""
+
+        # The two production call sites' argument lists verbatim
+        # (MoonrakerMonitor.qml's _feedRenderView and
+        # PlateProgressSection.qml's compact feed). The DPR expression
+        # around it is the production one; Screen.devicePixelRatio is
+        # read-only and 1.0 offscreen, so a property stands in for the
+        # screen.
+        CALLER = b'''
+import QtQuick 2.15
+QtObject {
+    property var printer: null
+    property real screenDpr: 1.0
+    property string failure: ""
+
+    function feedPopover() {
+        printer.setFollowerView("popover", 1.0, 0.7, 400, 300, false, 0.0, 0.0,
+                                Math.min(2.0, Math.max(1.0, screenDpr)));
+    }
+    function feedMini() {
+        printer.setFollowerView("mini", 1.0, 0.7, 120, 120, true, 0.0, 0.0);
+    }
+    function runPopover() {
+        try { feedPopover(); failure = ""; } catch (error) { failure = String(error); }
+    }
+    function runMini() {
+        try { feedMini(); failure = ""; } catch (error) { failure = String(error); }
+    }
+}
+'''
+
+        def setUp(self):
+            super().setUp()
+            stack = contextlib.ExitStack()
+            self.addCleanup(stack.close)
+            self.qt = stack.enter_context(runtime())
+            from qt_runtime_support import ScriptedTransport
+            client = self.qt.load("MoonrakerClient").MoonrakerClient(
+                transport=ScriptedTransport())
+            client.configure("http://printer-a", "test-key", 750)
+            client._poll_timer.stop()
+            self.addCleanup(client.stop)
+            print_state = self.qt.load("PrintState").PrintSnapshot()
+            config = self.qt.load("PrinterConfig").PrinterConfig(
+                url="http://printer-a", api_key="test-key")
+            self.model = self.qt.load("MoonrakerMonitorModel").MoonrakerMonitorModel(
+                None, 1,
+                client=client,
+                print_state=lambda: print_state,
+                config=lambda: config,
+                apply_config=lambda value: None,
+                bed_mesh=_DprMesh(),
+                identity=lambda: ("A", "Printer A"))
+            self.addCleanup(self.model.setMonitoringActive, False)
+            component = QQmlComponent(self.engine)
+            component.setData(self.CALLER, QUrl.fromLocalFile(
+                str(ROOT / "plugins" / "follower-view-caller.qml")))
+            self.caller = component.create()
+            self.assertIsNotNone(self.caller, [str(error) for error in component.errors()])
+            self.addCleanup(self.caller.deleteLater)
+            self.caller.setProperty("printer", self.model)
+
+        # ---- helpers --------------------------------------------------
+
+        def _call(self, name):
+            from PyQt6.QtCore import QMetaObject
+            QMetaObject.invokeMethod(self.caller, name)
+            self.assertEqual(self.caller.property("failure"), "",
+                             "the QML view call raised")
+            self.qt.events(10)
+
+        def _surface(self, name):
+            return self.model._plate_surfaces[name]
+
+        def _navigation_demand(self, surface, dpr):
+            """A navigation demand on a hand-set context: no scheduler
+            runs, so the key under test is the only thing moving."""
+            surface.plot = {"offsetX": 10.0, "offsetY": 10.0, "sx": 3.0,
+                            "sy": 3.0, "bedXMin": 0.0, "bedYMax": 250.0}
+            surface.view = {"scale": 1.0, "lineScale": 0.7, "width": 400,
+                            "height": 300, "compact": False,
+                            "panX": 0.0, "panY": 0.0, "dpr": dpr}
+            payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [250.0, 0.0, 3.0]]]},
+                       "travels": [], "travelStarts": [], "travelEnds": [],
+                       "motions": 4}
+            self.model._qt_layer(surface, payload, 5)
+            surface.desired = {"current": 5, "ghosts": {}, "split": 2}
+            return self.model._navigation_key(surface)
+
+        # ---- the slot's signatures ------------------------------------
+
+        def test_the_popovers_nine_argument_call_lands_at_dpr_two(self):
+            # The popover feeds the DPR ninth; a slot registered for
+            # eight arguments silently drops it (the engine's "Too many
+            # arguments" warning), and the workers then paint at DPR 1.
+            self.caller.setProperty("screenDpr", 2.0)
+            self._call("runPopover")
+            view = self._surface("popover").view
+            self.assertEqual(view.get("dpr"), 2.0,
+                             "the nine-argument view call dropped its DPR")
+            self.assertEqual(view.get("width"), 400)
+            self.assertFalse(view.get("compact"))
+
+        def test_the_minis_eight_argument_call_still_lands(self):
+            self.caller.setProperty("screenDpr", 2.0)
+            self._call("runMini")
+            view = self._surface("mini").view
+            self.assertEqual(view.get("width"), 120)
+            self.assertTrue(view.get("compact"))
+            self.assertEqual(view.get("dpr"), 1.0,
+                             "the eight-argument call invented a DPR")
+
+        def test_the_production_popover_call_reaches_the_slot_intact(self):
+            # The monitor's own face feeds the slot through its
+            # viewSettled connection: the arity mismatch is visible in
+            # the engine's diagnostics even where the dropped value
+            # (1.0 offscreen) is indistinguishable.
+            monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+            monitor.setProperty("printer", self.model)
+            monitor.setProperty("openPopOver", "plateprogress")
+            self.pump(30)
+            faces = [face for face in monitor.findChildren(QQuickItem, "moonrakerPlateProgressFace")
+                     if not face.property("compact")]
+            self.assertEqual(len(faces), 1)
+            face = faces[0]
+            from PyQt6.QtCore import QMetaObject
+            QMetaObject.invokeMethod(face, "viewSettled")
+            self.pump(20)
+            view = self._surface("popover").view
+            self.assertEqual(view.get("width"), int(face.width()),
+                             "the popover's view never reached the model")
+            self.assertFalse(view.get("compact"))
+            truncated = [message for message in
+                         _APPLICATION["messages"][self._message_start:]
+                         if "Too many arguments" in message]
+            self.assertEqual(truncated, [],
+                             "the popover's nine-argument view call was truncated")
+
+        # ---- the DPR's ride into the navigation raster -----------------
+
+        def test_a_qml_dpr_change_rebakes_the_navigation_raster(self):
+            surface = self._surface("popover")
+            before = self._navigation_demand(surface, 1.0)
+            self.assertIsNotNone(before, "the navigation demand never built")
+            self.caller.setProperty("screenDpr", 2.0)
+            self._call("runPopover")
+            self.assertEqual(surface.view.get("dpr"), 2.0)
+            after = self.model._navigation_key(surface)
+            self.assertNotEqual(before, after,
+                                "a DPR change never invalidated the navigation raster")
+            self.assertNotEqual(self.model._nav_key_hard(before),
+                                self.model._nav_key_hard(after),
+                                "the DPR change is not hard — the follow throttle "
+                                "would swallow the re-bake")
+
+        def test_a_dpr_stale_navigation_raster_leaves_the_face(self):
+            surface = self._surface("popover")
+            baked = self._navigation_demand(surface, 1.0)
+            surface.nav["url"] = "file:///tmp/mpf/raster-probe/nav-stub.png"
+            surface.nav["key"] = baked
+            self.assertEqual(self.model._navigation_data_value(surface),
+                             surface.nav["url"],
+                             "the warm raster never reached the face")
+            self.caller.setProperty("screenDpr", 2.0)
+            self._call("runPopover")
+            # The raster in hand was baked at the old ratio: at the new
+            # demand it is a stale picture of the same scene.
+            surface.nav["url"] = "file:///tmp/mpf/raster-probe/nav-stub.png"
+            surface.nav["key"] = baked
+            self.assertEqual(self.model._navigation_data_value(surface), "",
+                             "a DPR-stale navigation raster still reached the face")

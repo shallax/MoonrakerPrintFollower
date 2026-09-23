@@ -2193,6 +2193,110 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             self.assertIn(layer, self.service._decoded_lru,
                           "layer %d never decoded from the store" % layer)
 
+    def test_a_prepared_layer_decodes_without_a_lease_and_hydrates_its_arrays_later(self):
+        # F3: a reopened COMPLETE compact store's geometry is the
+        # prepared bytes' own work. The raw G-code lease gates only the
+        # physical MOTION ARRAYS — a demand with no file in hand must
+        # still decode and display, and the arrays then hydrate the
+        # moment the file arrives, with no second presentation demand.
+        path = _write_gcode(b"".join(
+            b";LAYER:%d\n;TYPE:WALL\nG1 X0 Y0 E0.1\nG1 X1 Y1 E0.2\nG1 X2 Y2 E0.3\n" % layer
+            for layer in range(3)))
+        self.addCleanup(os.remove, path)
+        index = self.qt.load("GCodeIndex").build_index_from_file(path, compact=True)
+        self.assertTrue(index.compact)
+        self.assertEqual(index.hydrated_layers, set(), "the compact scan hydrated a layer")
+        self.store.finalise("print-key", [self._payload(layer) for layer in range(3)])
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        self.service._adopt_prepared()
+        self.assertTrue(self.service._prepared_complete,
+                        "the complete store never took the fast path")
+        submitted = []
+        original_submit = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            submitted.append((kind, lease)) or original_submit(kind, work, lease))
+
+        # Phase one: no raw file at all. The prepared payload must reach
+        # the hot cache anyway — the arrays are the file's business.
+        self.files.lease = lambda: None
+        self.service.request_hydration(1)
+        for _ in range(300):
+            self.service._advance()
+            self.qt.events(5)
+            if 1 in self.service._decoded_lru:
+                break
+        self.assertIn(1, self.service._decoded_lru,
+                      "the prepared compact layer never decoded without a lease")
+        self.assertEqual(self.service._presentation_source(1), "decoded")
+        self.assertIsNotNone(self.service.plate_layers(1)["current"],
+                             "the decoded payload never reached the display bundle")
+        self.assertTrue([kind for kind, _lease in submitted if kind == "hydrate"],
+                        "the lease-less demand submitted no worker at all")
+        self.assertTrue(all(lease is None for kind, lease in submitted if kind == "hydrate"),
+                        "the presentation pass waited on a lease it does not need")
+        self.assertNotIn(1, index.hydrated_layers, "an absent file hydrated arrays")
+
+        # Phase two: the raw file arrives. The arrays hydrate off the
+        # recorded demand alone — the layer is already decoded, so
+        # nothing re-asks for its presentation.
+        class RawLease:
+            def __init__(self, source):
+                self.path = source
+
+            def close(self):
+                pass
+
+        self.files.lease = lambda: RawLease(path)
+        for _ in range(300):
+            self.service._advance()
+            self.qt.events(5)
+            if 1 in index.hydrated_layers:
+                break
+        self.assertIn(1, index.hydrated_layers,
+                      "the motion arrays never hydrated after the raw file arrived")
+        self.assertTrue(len(index.motion_offsets[1]) > 0,
+                        "the hydration landed no physical motion arrays")
+
+    def test_the_arrays_debt_prunes_and_waits_for_the_file(self):
+        # The debt's own contract: it holds only layers the retention
+        # window still covers and the index still lacks, and while no
+        # file is in hand it submits NOTHING — one request for the file
+        # is the whole poll. The file's arrival drains it once, through
+        # the arrays' own worker, carrying the lease the presentation
+        # never had.
+        index = self._compact_view(3, hydrated=(2,), followed=1)
+        self.service._hydrate_arrays = {0, 2, 9}
+        self.service._full_next = 3  # the pass is done: the poll is the debt's
+        self.files.lease = lambda: None
+        requested = []
+        self.files.request_file = lambda: requested.append(1)
+        captured = self._capture_submit()
+        self.service._advance()
+        self.assertEqual(captured, [], "a lease-less debt submitted a worker")
+        self.assertEqual(requested, [1], "the debt never asked for the file")
+        self.assertEqual(self.service._hydrate_arrays, {0},
+                         "the debt kept a hydrated or out-of-range layer")
+
+        class RawLease:
+            path = "/nonexistent/part.gcode"
+
+            def close(self):
+                pass
+
+        self.files.lease = lambda: RawLease()
+        captured = self._capture_submit()
+        self.service._advance()
+        self.assertEqual([kind for kind, _work, _lease in captured], ["hydrate"],
+                         "the arriving file submitted no arrays worker")
+        self.assertIsNotNone(captured[0][2], "the arrays worker took no lease")
+        self.assertEqual(captured[0][1](), ([], {}),
+                         "the arrays worker answers another contract than the hydrate")
+        self.assertEqual(self.service._hydrate_arrays, set(),
+                         "the settled debt stayed queued")
+        self.assertNotIn(0, index.hydrated_layers)
+
     def test_a_swept_store_never_receives_an_older_generations_save(self):
         # The clear's lifecycle: a save queued BEFORE the clear must
         # never recreate the swept directory; a rebind's store is a
@@ -2577,6 +2681,16 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.files.identity.uuid = "uB"
         index_b = make_index(layers=5, motions=40)
         self.service._view = module.IndexView(self.files.job_key, index_b)
+        # The rejection is read BEFORE the pass is submitted: the old
+        # file on disk holds five resolved layers, and the weak identity
+        # may seed neither the table nor the coverage from them. Read
+        # after _advance() the same assertion races the pass's own
+        # completions, which resolve layers into that very set.
+        self.service._prepared_open(self.files.identity)
+        self.assertIsNone(self.service._prepared_table,
+                          "the old prepared table was adopted")
+        self.assertEqual(self.service._prepared_coverage, set(),
+                         "the old prepared coverage leaked in")
         submitted = []
         original = self.service._submit
         self.service._submit = lambda kind, work, lease=None: (
@@ -2586,10 +2700,14 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                          "the weak re-extraction attempted the index restore")
         self.assertIsNone(self.service._prepared_table,
                           "the old prepared table was adopted")
-        self.assertEqual(self.service._prepared_coverage, set(),
-                         "the old prepared coverage leaked in")
         self._pump()
         self.assertTrue(self.service._prepared_saved)
+        # The pass ran to its own completion (the settle above waits for
+        # its terminal signal): every layer resolved is the FRESH view's,
+        # since a set carried over from the old table never reaches the
+        # count without the pass.
+        self.assertEqual(self.service._prepared_coverage, set(range(5)),
+                         "the fresh pass did not resolve the coverage")
         # The published store now holds the NEW geometry's exact
         # bytes — the old representation was replaced, never served.
         new_table = self.store.load_table("print-key")

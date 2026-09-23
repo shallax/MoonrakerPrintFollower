@@ -757,6 +757,41 @@ class NativeNavigationTravelTests(unittest.TestCase):
         self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 200.0)).alpha(), 0,
                          "a cancelled render drew its travels")
 
+    def test_a_render_that_raises_ends_every_painter_it_opened(self):
+        # The fourth early exit: an exception. A painter left active
+        # when its frame dies takes the canvas with it — the locals
+        # die in assignment order, the canvas first, so the device is
+        # destroyed under a live painter and the process dumps core
+        # (the worker's failure lane).
+        import plugins.PlateQt as plate
+
+        original = plate.QPainter
+        opened = []
+
+        class _RecordingPainter(original):
+            def __init__(self, image):
+                super().__init__(image)
+                self.ended = False
+                opened.append(self)
+
+            def end(self):
+                self.ended = True
+                return super().end()
+
+        # A plot without bed bounds: the transform's KeyError, raised
+        # with the painter already open on the canvas.
+        plate.QPainter = _RecordingPainter
+        try:
+            with self.assertRaises(KeyError):
+                render_navigation_layer({"current": _payload()},
+                                        {"offsetX": 0.0, "offsetY": 0.0, "sx": 1.0, "sy": 1.0},
+                                        _view())
+        finally:
+            plate.QPainter = original
+        self.assertTrue(opened, "the render opened no painter to check")
+        self.assertTrue(all(recorder.ended for recorder in opened),
+                        "a raised render left its painter active on the canvas")
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class NativeRasterCancelTests(unittest.TestCase):

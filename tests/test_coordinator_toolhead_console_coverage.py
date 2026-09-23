@@ -1592,7 +1592,7 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertEqual(commands.sent, [])
 
     def test_a_z_nudge_into_the_floor_is_reported_once_per_burst(self):
-        controller, _, commands = self._make(live=(10.0, 10.0, 0.0, 0.0))
+        controller, data, commands = self._make(live=(10.0, 10.0, 0.0, 0.0))
         notes = []
         controller.rejectedNote.connect(notes.append)
         controller.jog("z", -1)
@@ -1601,10 +1601,16 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertEqual(controller.values["jogStatus"],
                          "Z nudge rejected — the head would go below 0.00 Z")
         self.assertEqual(commands.sent, [])
-        # A successful Z move re-arms the note for the next burst.
+        # A successful Z move re-arms the note for the next burst — once
+        # the poll reports the moved level, so the head is measured where
+        # it really is.
+        controller.set_distance(5)
         controller.jog("z", 1)
         commands.complete()
-        controller.jog("z", -1)
+        data.set_state("paused", live=(10.0, 10.0, 5.0, 0.0))
+        self.assertAlmostEqual(controller._axis_estimate["z"], 5.0)
+        controller.jog("z", -1)  # lands exactly on the floor: allowed
+        controller.jog("z", -1)  # below it: the note fires again
         self.assertEqual(len(notes), 2)
 
     def test_a_configured_axis_floor_forbids_the_negative_side(self):
@@ -1652,7 +1658,82 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
         commands.complete()
         commands.complete()
-        self.assertAlmostEqual(controller._axis_estimate["z"], 10.0)
+        # Both moves have left the queue, but the poll still reads the
+        # pre-command level: the head has not been reported at 20 yet, so
+        # the projection is unreconciled, not stale — dropping it here
+        # would re-arm the estimate for the next tap (the dispatch seam).
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
+        self.assertAlmostEqual(controller._axis_up_pending["z"], 10.0)
+        # The poll reporting the commanded level is the head arriving:
+        # adopt it and lift the owed reflection.
+        data.set_state("paused", live=(0.0, 0.0, 20.0, 0.0))
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
+        self.assertAlmostEqual(controller._axis_up_pending["z"], 0.0)
+
+    def test_a_stale_poll_after_dispatch_keeps_the_upward_projection(self):
+        # Repeated +5 jogs from X=195 with the maximum at 200. Each send
+        # frees the lane while the poll still reads 195 — the level the
+        # move started from. Adopting it re-armed the projection, so one
+        # command left the plugin per tap and the burst walked the head
+        # past the maximum.
+        controller, data, commands = self._make(live=(195.0, 10.0, 10.0, 0.0),
+                                                maximum=(200, 200, 200))
+        controller.set_distance(5)
+        for _ in range(3):
+            controller.jog("x", 1)
+            commands.complete()  # the send frees the lane
+            data.set_state("paused", live=(195.0, 10.0, 10.0, 0.0),
+                           maximum=(200, 200, 200))  # the delayed poll
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+        self.assertAlmostEqual(controller._axis_estimate["x"], 200.0)
+
+    def test_the_upward_projection_holds_through_the_queue_drain(self):
+        # Two legal +5 taps from X=190 queue behind a held lane and cover
+        # the 200 maximum between them; the third is refused outright.
+        # The polls that land while the queue drains must not re-open the
+        # boundary, and a tap in the other direction still reads the
+        # projection rather than the stale poll.
+        controller, data, commands = self._make(live=(190.0, 10.0, 10.0, 0.0),
+                                                maximum=(200, 200, 200))
+        controller.set_distance(5)
+        commands.busy = True  # hold the lane: both taps queue
+        controller.jog("x", 1)
+        controller.jog("x", 1)
+        controller.jog("x", 1)  # no headroom is left: nothing is queued
+        self.assertAlmostEqual(controller._axis_estimate["x"], 200.0)
+        commands.busy = False
+        commands.changed.emit()  # the lane clears: the queue starts draining
+        self.assertEqual(len(self._scripts(commands)), 1)
+        data.set_state("paused", live=(190.0, 10.0, 10.0, 0.0),
+                       maximum=(200, 200, 200))
+        commands.complete()  # the last queued move goes out
+        self.assertEqual(len(self._scripts(commands)), 2)
+        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X5 F3000\nG90")
+        # The queue is drained and every poll so far is pre-move: the
+        # boundary tap stays refused.
+        data.set_state("paused", live=(190.0, 10.0, 10.0, 0.0),
+                       maximum=(200, 200, 200))
+        controller.jog("x", 1)
+        self.assertEqual(len(self._scripts(commands)), 2)
+        # The opposite direction still measures against the projection
+        # (200), not the stale poll (190).
+        commands.complete()  # the lane clears for the next move
+        controller.jog("x", -1)
+        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X-5 F3000\nG90")
+
+    def test_a_poll_below_the_pre_command_level_still_adopts(self):
+        # The reconciliation's other edge: an upward move's own reflection
+        # lags at the pre-command level, but a poll that drops BELOW it is
+        # the head genuinely moving down (an external macro, a home) and
+        # must be adopted — the projection may not freeze above the truth.
+        controller, data, _ = self._make(live=(10.0, 10.0, 10.0, 0.0))
+        controller.set_distance(5)
+        controller.jog("x", 1)  # projection 15
+        self.assertAlmostEqual(controller._axis_estimate["x"], 15.0)
+        data.set_state("paused", live=(10.0, 10.0, 10.0, 0.0))  # mid-flight
+        self.assertAlmostEqual(controller._axis_estimate["x"], 15.0)
+        data.set_state("paused", live=(4.0, 10.0, 10.0, 0.0))  # below the start
+        self.assertAlmostEqual(controller._axis_estimate["x"], 4.0)
 
     def test_polled_z_prefers_the_live_motion_report(self):
         controller, data, _ = self._make()

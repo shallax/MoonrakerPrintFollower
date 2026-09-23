@@ -122,9 +122,15 @@ Item {
     // The RETAINED previous prefix (the atomic handover): the last
     // successfully uploaded prefix's source and boundary, frozen at
     // its Ready — shown while the live replacement loads, so the old
-    // complete composition is never torn down early.
+    // complete composition is never torn down early. The pixels are
+    // evidence about ONE layer, so the record carries the anchor they
+    // were frozen for: the payload's anchor names the served layer
+    // (a print switch moves it), and a seek that lands on the same
+    // motions and the same split arithmetic must never re-stand this
+    // layer's pixels over that one.
     property string _retainedPrefixSource: ""
     property int _retainedPrefixSplit: -1
+    property int _retainedPrefixAnchor: -2
     // The raster paints run on the threaded canvases' worker
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
@@ -514,10 +520,24 @@ Item {
         // The retained pixels stand only while they are a complete
         // committed composition for the current context: the same
         // partial state, the demand split at or past the retained
-        // boundary, never at 0 or the full layer.
+        // boundary, never at 0 or the full layer. The split arithmetic
+        // alone is not identity — a seek between layers whose motions
+        // and demand coincide passes it — so the record's own anchor
+        // must still be the served one.
         var progress = root.progress;
         var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions;
+        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions && progress.anchor === root._retainedPrefixAnchor;
+    }
+
+    function _retireRetained() {
+        // The frozen pixels' identity is gone with the layer they
+        // were frozen for: a payload that names another layer (or no
+        // layer at all), the view transform they baked. Anything that
+        // leaves the record armed lets a later split-only match draw
+        // another layer's history.
+        root._retainedPrefixSource = "";
+        root._retainedPrefixSplit = -1;
+        root._retainedPrefixAnchor = -2;
     }
 
     function _prefixApplies() {
@@ -1022,10 +1042,25 @@ Item {
             root._anchor = -1;
             root._prefixHold = false;
             root._prefixWasShown = false;
+            _retireRetained();
             return;
+        }
+        // A payload that names no layer is a print switch's own frame
+        // (an unload, a fresh job): the frozen pixels belong to a
+        // layer this payload no longer names, and the next layer may
+        // wear the same anchor and the same split arithmetic.
+        if (root.progress.layers.current == null) {
+            _retireRetained();
         }
         if (root.progress.anchor !== root._anchor) {
             root._anchor = root.progress.anchor;
+            // A new layer's world: the standing composition — the
+            // retained record, the shown record and the canvas hold
+            // that reads them — belongs to the old one and must not
+            // stand over the new layer while ITS assets load (the
+            // A-to-B seek; a print switch rides the same branch).
+            _retireRetained();
+            root._prefixWasShown = false;
             _resetStack();
             return;
         }
@@ -1254,6 +1289,33 @@ Item {
         // paint, and a QImage variant segfaults — engine-proven), so
         // only the genuinely vector paths keep canvases. Transparency
         // does the blending between the layers.
+        // Declaration order IS the z-order, so the ghosts are declared
+        // FIRST: the navigation raster's own composite (grid, ghosts,
+        // grey base, current layer, travels) puts them beneath
+        // everything the current layer draws — a ghost over the full
+        // raster dims the geometry it overlaps at 100%, where the two
+        // pictures are pixel-for-pixel the same scene.
+        // The ghost layers: the worker's rasters at ghost opacity —
+        // role-free assets, the opacity applied at composition.
+        // Until a ghost's raster lands it draws nothing —
+        // the context layer appears a beat after the seek, never blocks
+        // it.
+        Image {
+            id: prevGhostImage
+            anchors.fill: parent
+            smooth: false
+            opacity: 0.30
+            visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
+            source: visible ? _ghost("prev").rasterData : ""
+        }
+        Image {
+            id: nextGhostImage
+            anchors.fill: parent
+            smooth: false
+            opacity: 0.30
+            visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
+            source: visible ? _ghost("next").rasterData : ""
+        }
 
         // The raster-only full state: the whole
         // layer and its travels blit from the native data URLs; the
@@ -1296,27 +1358,6 @@ Item {
             opacity: 0.8
             visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
             source: visible ? root.progress.layers.current.travelData : ""
-        }
-        // The ghost layers: the worker's rasters at ghost opacity —
-        // role-free assets, the opacity applied at composition.
-        // Until a ghost's raster lands it draws nothing —
-        // the context layer appears a beat after the seek, never blocks
-        // it.
-        Image {
-            id: prevGhostImage
-            anchors.fill: parent
-            smooth: false
-            opacity: 0.30
-            visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
-            source: visible ? _ghost("prev").rasterData : ""
-        }
-        Image {
-            id: nextGhostImage
-            anchors.fill: parent
-            smooth: false
-            opacity: 0.30
-            visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
-            source: visible ? _ghost("next").rasterData : ""
         }
 
         // The grey whole-layer base: the
@@ -1446,6 +1487,7 @@ Item {
                     // freeze waits; the delivery re-freezes below.
                     root._retainedPrefixSource = source;
                     root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
+                    root._retainedPrefixAnchor = root.progress.anchor;
                 }
             }
         }
@@ -1501,6 +1543,7 @@ Item {
                 if (root._partialPrefixReady() && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixData !== "") {
                     root._retainedPrefixSource = root.progress.layers.current.prefixData;
                     root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
+                    root._retainedPrefixAnchor = root.progress.anchor;
                 }
                 // The FIRST show's trim: a delivery whose paint beat
                 // the prefix's upload leaves the FULL bitmap under a
@@ -2295,8 +2338,7 @@ Item {
     // with it.
     function _retireRetainedView() {
         if (root._retainedPrefixSource !== "") {
-            root._retainedPrefixSource = "";
-            root._retainedPrefixSplit = -1;
+            _retireRetained();
         }
         root._heldFullSource = "";
     }

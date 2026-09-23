@@ -2364,10 +2364,16 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.controller.jog("z", -1)  # same burst: no second note
         self.assertEqual(len(notes), 1)
-        # An accepted move re-arms the note for the next burst.
+        # An accepted move re-arms the note for the next burst. The
+        # polls must report the head where it is: a poll still reading
+        # the pre-command level would be the accepted move's own
+        # reflection lagging (the dispatch seam), not the head the
+        # nudge is measured against.
         self.controller.jog("z", 1)
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 1.1
+        self.data.changed.emit()  # the head reported at the moved level
         self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
-        self.data.changed.emit()
+        self.data.changed.emit()  # ...and back one nudge above the floor
         self.controller.jog("z", -1)
         self.assertEqual(len(notes), 2)
 

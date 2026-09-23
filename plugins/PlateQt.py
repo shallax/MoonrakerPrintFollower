@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import os
+from contextlib import contextmanager
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QUrl, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
@@ -378,16 +379,31 @@ def _new_canvas(view: dict) -> QImage:
     return image
 
 
+@contextmanager
+def _painting(image: QImage):
+    """A QPainter that always ends with the block.
+
+    A raise between the begin and the end leaves the painter active,
+    and the frame's locals die in assignment order — the canvas
+    first — so the device is destroyed under a live painter
+    (QPaintDevice warns, then the process dumps core: the render
+    worker's failure lane)."""
+    painter = QPainter(image)
+    try:
+        yield painter
+    finally:
+        painter.end()
+
+
 def _derive_grey(coloured: QImage) -> QImage:
     """The grey whole-layer base, derived from the coloured raster —
     no second geometry walk ."""
     grey = QImage(coloured.size(), QImage.Format.Format_ARGB32_Premultiplied)
     grey.fill(QColor(0, 0, 0, 0))
-    painter = QPainter(grey)
-    painter.drawImage(0, 0, coloured)
-    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    painter.fillRect(0, 0, grey.width(), grey.height(), QColor(_PLATE_BASE_COLOUR))
-    painter.end()
+    with _painting(grey) as painter:
+        painter.drawImage(0, 0, coloured)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(0, 0, grey.width(), grey.height(), QColor(_PLATE_BASE_COLOUR))
     return grey
 
 
@@ -456,13 +472,12 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
         # would resurrect them (the backward-scrub ghost).
         image = _new_canvas(view)
         start = 0
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = _geometry_pen(plot, view)
-    painter.setPen(pen)
-    _paint_below_split(painter, pen, payload, plot, view, split,
-                       cancel=cancel, first=start)
-    painter.end()
+    with _painting(image) as painter:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = _geometry_pen(plot, view)
+        painter.setPen(pen)
+        _paint_below_split(painter, pen, payload, plot, view, split,
+                           cancel=cancel, first=start)
     return image
 
 
@@ -606,89 +621,83 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
     travels up to the live split. No screen-space chrome, no
     per-viewport intermediates."""
     image = _new_canvas(view)
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    _paint_grid(painter, plot, view)
-    pen = _geometry_pen(plot, view)
-    painter.setPen(pen)
-    # The legend checkboxes are part of the scene's CONTENT: the
-    # warm raster must mirror the exact view's toggles — a ghost the
-    # user hid, a base or the travels turned off, all stay off.
-    if view.get("showPrevious", True):
-        for payload in (window.get("prev"),):
-            if payload is None:
-                continue
-            painter.setOpacity(0.30)
-            _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
-            painter.setOpacity(1.0)
-            if cancel is not None and cancel.is_set():
-                painter.end()
-                return image
-    if view.get("showNext", True):
-        for payload in (window.get("next"),):
-            if payload is None:
-                continue
-            painter.setOpacity(0.30)
-            _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
-            painter.setOpacity(1.0)
-            if cancel is not None and cancel.is_set():
-                painter.end()
-                return image
-    current = window.get("current")
-    if current is None:
-        painter.end()
-        return image
-    motions = current.get("motions") or 0
-    if split is not None and 0 <= split < motions:
-        # The partial state: the grey whole-layer base, then the
-        # printed prefix (the vector tail beyond the live split is
-        # NOT printed — the boundary is the scene's truth).
-        if view.get("showBase", True):
-            grey_pen = QPen(pen)
-            grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
-            painter.setPen(grey_pen)
-            painter.setOpacity(0.55)
-            # The colour rides the CLASS unless forced: the base is
-            # the grey silhouette, never the feature colours (the
-            # live bug — the nav read as a 100%-complete layer).
-            _paint_segments(painter, grey_pen, current, plot, view,
-                            colour=_PLATE_BASE_COLOUR, cancel=cancel)
-            painter.setOpacity(1.0)
-            painter.setPen(pen)
-        _paint_below_split(painter, pen, current, plot, view, split, cancel=cancel)
-    else:
-        _paint_segments(painter, pen, current, plot, view, cancel=cancel)
-    if not view.get("showTravels", False) or not current.get("travels"):
-        painter.end()
-        return image
-    if current.get("travels"):
-        tpen = QPen(pen)
-        tpen.setWidthF(max(0.01, pen.widthF()
-                           * float(view.get("travelVisualRatio",
-                                            _PLATE_TRAVEL_VISUAL_RATIO))))
-        tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
-        painter.setPen(tpen)
-        tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
-        for points in current.get("travels") or []:
-            if cancel is not None and cancel.is_set():
-                painter.end()
-                return image
-            if len(points) < 2:
-                continue
-            path = QPainterPath()
-            drew = False
-            for i in range(1, len(points)):
-                if split is not None and split >= 0 and points[i][2] >= split:
-                    break
-                if not drew:
-                    path.moveTo(tx_ox + (points[i - 1][0] - tx_bx) * tx_sx,
-                                tx_oy + (tx_by - points[i - 1][1]) * tx_sy)
-                    drew = True
-                path.lineTo(tx_ox + (points[i][0] - tx_bx) * tx_sx,
-                            tx_oy + (tx_by - points[i][1]) * tx_sy)
-            if drew:
-                painter.drawPath(path)
-    painter.end()
+    with _painting(image) as painter:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        _paint_grid(painter, plot, view)
+        pen = _geometry_pen(plot, view)
+        painter.setPen(pen)
+        # The legend checkboxes are part of the scene's CONTENT: the
+        # warm raster must mirror the exact view's toggles — a ghost the
+        # user hid, a base or the travels turned off, all stay off.
+        if view.get("showPrevious", True):
+            for payload in (window.get("prev"),):
+                if payload is None:
+                    continue
+                painter.setOpacity(0.30)
+                _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
+                painter.setOpacity(1.0)
+                if cancel is not None and cancel.is_set():
+                    return image
+        if view.get("showNext", True):
+            for payload in (window.get("next"),):
+                if payload is None:
+                    continue
+                painter.setOpacity(0.30)
+                _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
+                painter.setOpacity(1.0)
+                if cancel is not None and cancel.is_set():
+                    return image
+        current = window.get("current")
+        if current is None:
+            return image
+        motions = current.get("motions") or 0
+        if split is not None and 0 <= split < motions:
+            # The partial state: the grey whole-layer base, then the
+            # printed prefix (the vector tail beyond the live split is
+            # NOT printed — the boundary is the scene's truth).
+            if view.get("showBase", True):
+                grey_pen = QPen(pen)
+                grey_pen.setColor(QColor(_PLATE_BASE_COLOUR))
+                painter.setPen(grey_pen)
+                painter.setOpacity(0.55)
+                # The colour rides the CLASS unless forced: the base is
+                # the grey silhouette, never the feature colours (the
+                # live bug — the nav read as a 100%-complete layer).
+                _paint_segments(painter, grey_pen, current, plot, view,
+                                colour=_PLATE_BASE_COLOUR, cancel=cancel)
+                painter.setOpacity(1.0)
+                painter.setPen(pen)
+            _paint_below_split(painter, pen, current, plot, view, split, cancel=cancel)
+        else:
+            _paint_segments(painter, pen, current, plot, view, cancel=cancel)
+        if not view.get("showTravels", False) or not current.get("travels"):
+            return image
+        if current.get("travels"):
+            tpen = QPen(pen)
+            tpen.setWidthF(max(0.01, pen.widthF()
+                               * float(view.get("travelVisualRatio",
+                                                _PLATE_TRAVEL_VISUAL_RATIO))))
+            tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
+            painter.setPen(tpen)
+            tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
+            for points in current.get("travels") or []:
+                if cancel is not None and cancel.is_set():
+                    return image
+                if len(points) < 2:
+                    continue
+                path = QPainterPath()
+                drew = False
+                for i in range(1, len(points)):
+                    if split is not None and split >= 0 and points[i][2] >= split:
+                        break
+                    if not drew:
+                        path.moveTo(tx_ox + (points[i - 1][0] - tx_bx) * tx_sx,
+                                    tx_oy + (tx_by - points[i - 1][1]) * tx_sy)
+                        drew = True
+                    path.lineTo(tx_ox + (points[i][0] - tx_bx) * tx_sx,
+                                tx_oy + (tx_by - points[i][1]) * tx_sy)
+                if drew:
+                    painter.drawPath(path)
     return image
 
 
@@ -700,37 +709,34 @@ def render_layer_raster(payload: dict, plot: dict, view: dict, cancel=None) -> t
     one configured geometry pen, so the prefix and the full layer
     can never disagree on stroke width."""
     coloured = _new_canvas(view)
-    painter = QPainter(coloured)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = _geometry_pen(plot, view)
-    painter.setPen(pen)
-    _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
-    painter.end()
+    with _painting(coloured) as painter:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = _geometry_pen(plot, view)
+        painter.setPen(pen)
+        _paint_segments(painter, pen, payload, plot, view, cancel=cancel)
     grey = _derive_grey(coloured)
     travels = _NULL_IMAGE
     if payload.get("travels"):
         travels = _new_canvas(view)
-        tpainter = QPainter(travels)
-        tpainter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        tpen = QPen(pen)
-        tpen.setWidthF(max(0.01, pen.widthF()
-                            * float(view.get("travelVisualRatio",
-                                             _PLATE_TRAVEL_VISUAL_RATIO))))
-        tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
-        tpainter.setPen(tpen)
-        tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
-        for points in payload.get("travels") or []:
-            if cancel is not None and cancel.is_set():
-                tpainter.end()
-                return coloured, grey, travels
-            if len(points) < 2:
-                continue
-            path = QPainterPath()
-            path.moveTo(tx_ox + (points[0][0] - tx_bx) * tx_sx,
-                        tx_oy + (tx_by - points[0][1]) * tx_sy)
-            for i in range(1, len(points)):
-                path.lineTo(tx_ox + (points[i][0] - tx_bx) * tx_sx,
-                            tx_oy + (tx_by - points[i][1]) * tx_sy)
-            tpainter.drawPath(path)
-        tpainter.end()
+        with _painting(travels) as tpainter:
+            tpainter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            tpen = QPen(pen)
+            tpen.setWidthF(max(0.01, pen.widthF()
+                                * float(view.get("travelVisualRatio",
+                                                 _PLATE_TRAVEL_VISUAL_RATIO))))
+            tpen.setColor(QColor(_PLATE_TRAVEL_COLOUR))
+            tpainter.setPen(tpen)
+            tx_sx, tx_sy, tx_ox, tx_oy, tx_bx, tx_by = _transform(plot, view)
+            for points in payload.get("travels") or []:
+                if cancel is not None and cancel.is_set():
+                    return coloured, grey, travels
+                if len(points) < 2:
+                    continue
+                path = QPainterPath()
+                path.moveTo(tx_ox + (points[0][0] - tx_bx) * tx_sx,
+                            tx_oy + (tx_by - points[0][1]) * tx_sy)
+                for i in range(1, len(points)):
+                    path.lineTo(tx_ox + (points[i][0] - tx_bx) * tx_sx,
+                                tx_oy + (tx_by - points[i][1]) * tx_sy)
+                tpainter.drawPath(path)
     return coloured, grey, travels

@@ -3323,7 +3323,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 round(float(self.bedMeshMachineWidth or 0.0), 6),
                 round(float(self.bedMeshMachineDepth or 0.0), 6),
                 tuple(sorted((k, round(float(v), 6))
-                             for k, v in (surface.plot or {}).items())))
+                             for k, v in (surface.plot or {}).items())),
+                # The DPR rides the key and APPENDS: the render view's
+                # stroke floor presents min(2/dpr, 1) logical px, so a
+                # window moving to another screen changes the baked
+                # pixels — and the appended slot keeps _nav_key_hard's
+                # split neutralisation on index 3 intact.
+                round(min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))), 6))
 
     @staticmethod
     def _nav_key_hard(key):
@@ -4068,6 +4074,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         raster — bake the current split once, outside the cadence."""
         self._nav_gesture_bake(self._plate_surfaces.get("popover"))
 
+    # Both feeds call this slot: the popover passes the DPR ninth,
+    # the mini's compact feed stops at eight. A single eight-argument
+    # registration silently drops the ninth (the engine's "Too many
+    # arguments, ignoring 1"), so the nine-argument form is
+    # registered as its own overload.
+    @pyqtSlot(str, float, float, int, int, bool, float, float, float)
     @pyqtSlot(str, float, float, int, int, bool, float, float)
     def setFollowerView(self, surface, scale, lineScale, width, height, compact,
                         panX, panY, dpr=1.0):

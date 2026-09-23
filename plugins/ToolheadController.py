@@ -76,10 +76,15 @@ class ToolheadController(QObject):
         # every queued move and re-syncs from the poll once the
         # queue drains.
         self._axis_estimate = {"x": None, "y": None, "z": None}
-        # The dispatched-but-unreflected DOWNWARD distance per axis:
-        # while it is nonzero, a poll between the pre-command level
-        # and the projection is mid-flight, not truth.
+        # The dispatched-but-unreflected distance per axis, by
+        # direction: while it is nonzero, a poll between the
+        # pre-command level and the projection is mid-flight, not
+        # truth. Upward moves need the same guard as downward ones —
+        # the pre-command level sits BELOW the projection there, so a
+        # stale poll re-armed the estimate and let repeated taps walk
+        # the head past the axis maximum.
         self._axis_down_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self._axis_up_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._pause_waiting = False
         self._pause_in_flight = False
         self._draining = False
@@ -141,24 +146,32 @@ class ToolheadController(QObject):
             # is mid-flight while downward distance is unreflected;
             # adopting it would re-arm the estimate and let repeated
             # stale polls accept downward distance beyond the real
-            # headroom (the 2026-09-19 review's B). A poll ABOVE the
-            # pre-command level is a genuine upward move (external
-            # G-code, a home) and adopts. No position data clears
-            # the estimate, as before (the no-data clamp fails closed
-            # anyway).
+            # headroom (the 2026-09-19 review's B). The upward mirror
+            # is the same seam with the sides swapped: a poll still
+            # reading between the pre-command level and the
+            # projection lags the dispatch, and adopting it re-armed
+            # an upward projection tap after tap until the head
+            # walked past the axis maximum. Above the projection, or
+            # past the level the move started from, the poll is a
+            # genuine move (external G-code, a home) and adopts. No
+            # position data clears the estimate, as before (the
+            # no-data clamp fails closed anyway).
             polled = self._polled_axis(axis)
-            if self._axis_estimate[axis] is None or polled is None:
-                self._axis_estimate[axis] = polled
-                self._axis_down_pending[axis] = 0.0
-            elif polled <= self._axis_estimate[axis] + 1e-9:
+            estimate = self._axis_estimate[axis]
+            if estimate is None or polled is None:
+                self._adopt_axis(axis, polled)
+            elif self._axis_up_pending[axis] > 0.0 \
+                    and estimate - self._axis_up_pending[axis] - 1e-9 < polled < estimate - 1e-9:
+                # Mid-flight upward — the projection stays
+                # conservative.
+                pass
+            elif polled <= estimate + 1e-9:
                 # The head reached the projection: adopt the truth.
-                self._axis_estimate[axis] = polled
-                self._axis_down_pending[axis] = 0.0
-            elif polled > self._axis_estimate[axis] + self._axis_down_pending[axis] + 1e-9:
+                self._adopt_axis(axis, polled)
+            elif polled > estimate + self._axis_down_pending[axis] + 1e-9:
                 # Higher than the level our downward move started
                 # from: the head genuinely moved up.
-                self._axis_estimate[axis] = polled
-                self._axis_down_pending[axis] = 0.0
+                self._adopt_axis(axis, polled)
             # else: mid-flight — the projection stays conservative.
         # The policy projection (4.2.0, A4): jogEnabled stays the
         # published property, now fed by the permissions table's
@@ -255,6 +268,13 @@ class ToolheadController(QObject):
         self.changed.emit()
         self._commands.send("Absolute mode" if absolute else "Relative mode",
                             "printer/gcode/script", {"script": "G90" if absolute else "G91"})
+
+    def _adopt_axis(self, axis, value):
+        """The poll has caught up with this axis: the projection becomes
+        the truth and no reflection is owed in either direction."""
+        self._axis_estimate[axis] = value
+        self._axis_down_pending[axis] = 0.0
+        self._axis_up_pending[axis] = 0.0
 
     def _polled_axis(self, axis):
         """The freshest axis value the poll knows: the live motion
@@ -378,10 +398,17 @@ class ToolheadController(QObject):
             if base is not None:
                 distance = getattr(op, "distance", 0.0)
                 self._axis_estimate[op_axis] = base + distance
+                # The reflection is owed in the direction the move
+                # travelled; a move the other way supersedes any owed
+                # one, since the head ends at the newer projection
+                # either way. A zero-distance op (a per-axis home) is
+                # no relative move: nothing is owed for it.
                 if distance < 0:
-                    # A downward command's reflection is now owed;
-                    # an upward command supersedes any owed one.
                     self._axis_down_pending[op_axis] += abs(distance)
+                    self._axis_up_pending[op_axis] = 0.0
+                elif distance > 0:
+                    self._axis_up_pending[op_axis] += distance
+                    self._axis_down_pending[op_axis] = 0.0
                 else:
                     self._axis_down_pending[op_axis] = 0.0
         if self._pending:
@@ -525,6 +552,7 @@ class ToolheadController(QObject):
         self._set_guard(False)
         self._axis_estimate = {"x": None, "y": None, "z": None}
         self._axis_down_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self._axis_up_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._set_status("")
         self.observe()
 
