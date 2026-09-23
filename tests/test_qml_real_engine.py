@@ -4117,6 +4117,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setSplit(18)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the picture never drew")
+        # The prefix's OWN ink is what the census below reads, and "some
+        # red is on screen" is satisfied by the tail alone — the two
+        # land a frame apart on macOS, which is how this failed with
+        # "0 not greater than 0" on a frame whose own shot showed an
+        # empty plate. A hang guard, not a budget.
+        deadline = time.monotonic() + 15.0
+        while (self._stroke_ink(image, face, window, census_plot, 75.0, 125.0) == 0
+               and time.monotonic() < deadline):
+            self.app.processEvents()
+            time.sleep(0.02)
+            image = window.grabWindow()
         # The grey base IS up: the unprinted suffix (motion 20, bed
         # x=215 — beyond the split's tail) shows the base's grey
         # where the empty baseline had none.
