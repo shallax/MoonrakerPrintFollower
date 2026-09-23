@@ -2026,6 +2026,12 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # advance or a backward move demands a fresh one.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # The motion threshold is the DETACHED scrub's policy: the
+        # follower now starts attached, whose checkpoint cadence would
+        # swallow the quarter-layer advance this pins. The manual
+        # seek is the detach (a bare detach is refused with no layer
+        # to hold).
+        model.setFollowerLayerAnchor(5)
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         model._qt_window(surface, {"prev": None, "current": payload, "next": None},
@@ -2272,15 +2278,11 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                               "lineScale")):
             setter()
             model._publish()  # the poll's publish (the harness has no tick)
-            print("PROBE NAV", name, "key-changed=", surface.nav["key"] != nav_key,
-                  "url=", surface.nav["url"], "job=", surface.nav["job"] is not None)
             self._pump_rasters(model, "popover")
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline and surface.nav["url"] == nav_url:
                 self.qt.events(5)
                 time.sleep(0.01)
-            print("PROBE NAV post", name, "url=", surface.nav["url"],
-                  "job=", surface.nav["job"], "serial=", surface.nav["serial"])
             self.assertNotEqual(surface.nav["url"], nav_url,
                                 "the %s change never updated the "
                                 "navigation raster" % name)
@@ -2387,6 +2389,10 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # coverage tracer's pool starvation would flake the latter).
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # The strict-demand scenarios run DETACHED: the follower now
+        # starts attached (the live-follow default), whose compatible
+        # gate and window throttle would mask the exact-match policy
+        # these tests pin.
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         module = self.qt.load("MoonrakerMonitorModel")
@@ -2428,6 +2434,9 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                              "the identical failing demand hot-retried")
         # The demand moves (the split): the fresh key re-arms, and
         # with the render healthy again the warm raster recovers.
+        # Detached now the anchor exists: the attached compatible
+        # gate and window throttle would mask the exact-match policy.
+        model.setFollowerAttached(False)
         model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
         self._pump_rasters(model, "popover")
@@ -2446,6 +2455,8 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # job's late terminals stay inert.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # Detached: the follower starts attached, and the attached
+        # throttle would defer the moved demand this test schedules.
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
@@ -2456,6 +2467,9 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             self.qt.events(5)
             time.sleep(0.01)
         self.assertTrue(surface.nav["url"], "the warm raster never landed")
+        # Detached now the anchor exists: the attached throttle would
+        # defer the moved demand this test schedules.
+        model.setFollowerAttached(False)
         # A new demand schedules a second job; the print switches
         # while it is still in flight.
         model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
@@ -2501,6 +2515,8 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # whose key matches the CURRENT demand reaches the face.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # Detached: the attached compatible-raster gate would keep the
+        # split-stale raster eligible.
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
@@ -2512,6 +2528,9 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(model._navigation_data_value(surface), surface.nav["url"],
                          "the ready raster never published")
+        # Detached now the anchor exists: the attached compatible
+        # gate would keep the split-stale raster eligible.
+        model.setFollowerAttached(False)
         # The demand moves: the retained URL retires from the face
         # before the replacement commits (no events — the old key
         # still stands, the demand is already the new one).
@@ -2603,10 +2622,15 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # slot and schedules the current content.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # Detached: the attached compatible-raster gate would let the
+        # obsolete split-only job promote.
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         model._qt_window(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
+        # Detached now the anchor exists: the attached compatible
+        # gate would let the obsolete split-only job promote.
+        model.setFollowerAttached(False)
         key_a = model._navigation_key(surface)
         self.assertIsNotNone(key_a, "the first demand never keyed")
         # The demand moves BEFORE A completes: the slot is busy, so B
@@ -3102,6 +3126,10 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         from PyQt6.QtCore import QUrl
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # The refresh rides the DETACHED threshold policy: the
+        # follower now starts attached, whose checkpoint cadence
+        # would leave the second split unrendered and its URL reused.
+        model.setFollowerLayerAnchor(5)
         surface = model._plate_surfaces["popover"]
         payload = self._payload(400)
         model._qt_window(surface, {"prev": None, "current": payload,
@@ -3224,8 +3252,11 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # fake clock's deadlines — a real singleShot would wait out
         # the (simulated) window.
         model._nav_arm_wake = lambda s: armed.append((s, s.nav.get("wake_at"))) or None
-        self.addCleanup(lambda: setattr(model, "_nav_arm_wake",
-                                        type(model)._nav_arm_wake))
+        # Drop the instance attribute on cleanup: re-attaching the
+        # class function here stored it UNBOUND on the instance, so
+        # every later call passed the surface as self and the arm
+        # died with a missing-surface TypeError.
+        self.addCleanup(lambda: model.__dict__.pop("_nav_arm_wake", None))
         return model, surface, clock, armed, starts
 
     @staticmethod
@@ -3367,6 +3398,13 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
             final_split = split
             self._poll(model, surface, payload, 5, split, clock, armed,
                        self.qt)
+        # The print stands still at the last split: the frozen split
+        # still crosses the cadence, and the next poll's checkpoint
+        # paints it — a window's lag is the cadence's design, a
+        # stranded prefix is not.
+        clock.t += 5.0
+        self._poll(model, surface, payload, 5, final_split, clock, armed,
+                   self.qt)
         self._drain_job(model, surface, self.qt)
         wrapped = surface.layers[5]
         self.assertGreater(wrapped.prefixSplit, 0,
@@ -3399,6 +3437,9 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # never stretch a manual seek.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
+        # The follower now starts attached; the manual seek is the
+        # detach (a bare detach is refused with no layer to hold).
+        model.setFollowerLayerAnchor(5)
         surface = model._plate_surfaces["popover"]
         payload = self._payload(600)
         self._window(model, "popover", 5, payload)

@@ -1400,7 +1400,8 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "assert_model", "prop": "actionStatus", "value": ""},
      ]},
-    {"id": "b11", "group": "status", "name": "the exclude-object surface stays stable when absent",
+    {"id": "b11", "group": "status",
+     "name": "the exclude-object surface: empty, then armed, then the follower over it",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "assert_model", "prop": "plateHasObjects", "value": False},
@@ -1408,6 +1409,77 @@ SCENARIOS = [
          # read-only surface. Read it explicitly so the coverage matrix
          # has execution evidence rather than a bookkeeping-only entry.
          {"op": "assert_model", "prop": "followerTravelVisualRatio", "value": 0.7},
+         # The armed half: Klipper's own exclude_object on the print's
+         # lane, in Klipper's shape (name, centre, polygon) — the map,
+         # the picker and the follower all read it. The resolved layer
+         # rides print_stats.info; the index the follower needs is
+         # built below from the picker's own download offer. The layer
+         # clock is off so the physical layer holds still through the
+         # run.
+         {"op": "sim_set_current_print"},
+         {"op": "sim_set", "state": {
+             "print_stats": {"state": "printing", "filename": "scenario1.gcode",
+                             "info": {"total_layer": 40, "current_layer": 20}},
+             "exclude_object": {
+                 "objects": [
+                     {"name": "cube_a", "center": [100.0, 100.0],
+                      "polygon": [[80.0, 80.0], [120.0, 80.0], [120.0, 120.0], [80.0, 120.0]]},
+                     {"name": "cube_b", "center": [140.0, 100.0],
+                      "polygon": [[120.0, 80.0], [160.0, 80.0], [160.0, 120.0], [120.0, 120.0]]}],
+                 "excluded_objects": [], "current_object": None}}},
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120, "layer_clock_interval_s": 0}},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "plateHasObjects", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPlateCanvas", "budget": 20},
+         # The 90 px thumbnail is the picker's only opener; the face
+         # the gestures live on is inside the card it opens.
+         {"op": "deliver_click", "objectName": "moonrakerPlateCanvas"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateExcludeFace", "budget": 20},
+         # The index the follower needs: the picker's own download row
+         # (download + index, no preview) — the path that carries no
+         # replace confirmation.
+         {"op": "click_text", "text": "Download and index the print to track the printed state."},
+         {"op": "wait_model", "prop": "plateLiveAvailable", "value": True, "budget": 90},
+         # A press that lands off the open card is swallowed by its
+         # outside-click layer, which closes it: the follower's own
+         # thumbnail is off the card's box, so its first press pays
+         # the dismissal and its second one opens the follower.
+         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateExcludeFace", "absent": True, "budget": 20},
+         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateProgressFace", "budget": 20},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerAttach", "budget": 20},
+         # The plate's own face over the live print: the toolhead dot is
+         # a physical position, and it stands while the follower follows
+         # the print (a detach hides it).
+         {"op": "wait_rect", "objectName": "moonrakerPlateToolheadDot", "budget": 20},
+         {"op": "wait_model", "prop": "followerAttached", "value": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerSlider", "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerReadout", "budget": 15},
+         {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerReadout", "contains": "/", "budget": 20},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerProgress", "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerProgressReadout", "budget": 15},
+         {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerProgressReadout", "contains": "%", "budget": 30},
+         # The face's three render switches and the stroke width are
+         # published state the checkboxes read back.
+         {"op": "wait_model", "prop": "followerShowPrevious", "value": True, "budget": 15},
+         {"op": "wait_model", "prop": "followerShowNext", "value": True, "budget": 15},
+         {"op": "wait_model", "prop": "followerShowBase", "value": True, "budget": 15},
+         {"op": "assert_model", "prop": "followerLineScale", "value": 0.7, "budget": 15},
+         # The checkbox row's real input: "Travels" is the one label the
+         # row does not share with the legend, so the press is
+         # unambiguous — toggled on, read back, and set back off.
+         {"op": "wait_model", "prop": "followerShowTravels", "value": False, "budget": 15},
+         {"op": "click_text", "text": "Travels"},
+         {"op": "wait_model", "prop": "followerShowTravels", "value": True, "budget": 15},
+         {"op": "click_text", "text": "Travels"},
+         {"op": "wait_model", "prop": "followerShowTravels", "value": False, "budget": 15},
+         # The jump rides a view scale only the picture's wheel and
+         # right-drag can raise, and the harness's input set carries
+         # neither: at the fit it must be absent while the row-mate that
+         # shares its visibility rules is present. Its zoomed half is
+         # driven by the Qt suite (test_qml_real_engine.py).
+         {"op": "wait_rect", "objectName": "moonrakerFollowerJump", "absent": True, "budget": 5},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────
@@ -1505,9 +1577,46 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "refreshWebcams", "args": []},
          {"op": "wait_exec", "code": CAM_FRAMES, "contains": '"width": 320', "budget": 60},
      ]},
-    {"id": "e2", "group": "webcams", "name": "the webcam selector lists the peer's cameras",
+    {"id": "e2", "group": "webcams",
+     "name": "the camera's picture carries its overlays, and the scale stands in for the bar",
      "steps": [
          {"op": "assert_model", "prop": "webcamNames", "contains": "sim-cam", "budget": 30},
+         # The monitor page holds the camera pane; the stream starts on
+         # its own there (e1) and the picture lands fitted to the
+         # viewport, so the frame and the gesture surface are the live
+         # picture's own box.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "cameraImage", "budget": 60},
+         {"op": "wait_rect", "objectName": "cameraFrame", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraGestureArea", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraLiveBadge", "budget": 15},
+         # At the baseline geometry the picture clears the bar's fit
+         # rule (200 px wide, and tall enough to keep the chip's band
+         # clear above and below), so the bar is the control on the
+         # picture — resting on its zoom face, the default one.
+         {"op": "wait_rect", "objectName": "cameraBar", "budget": 20},
+         {"op": "wait_rect", "objectName": "cameraZoomScale", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomReadout", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomBar", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomMarker", "budget": 15},
+         # One bar, two faces, and they never share the box: the rate's
+         # face arrives on a gesture (Shift+wheel, right-drag) the
+         # harness's input set does not carry, and its render is driven
+         # by the Qt suite (test_qml_real_engine.py). The zoom face
+         # standing where the rate's is not is this rule's live half.
+         {"op": "wait_rect", "objectName": "cameraFpsScale", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsReadout", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsBar", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsMarker", "absent": True, "budget": 5},
+         # The crush: the picture drops under the bar's fit rule and
+         # the compact chip takes the bar's place — the two stand-ins
+         # are mutually exclusive, so the chip's presence is the bar's
+         # absence proved from the other side.
+         {"op": "resize_window", "w": 1420, "h": 700},
+         {"op": "wait_rect", "objectName": "cameraBarChip", "budget": 20},
+         {"op": "wait_rect", "objectName": "cameraBarChipText", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomScale", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraBar", "absent": True, "budget": 20},
      ]},
 
     # ─── files & print start ──────────────────────────────────

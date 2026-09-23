@@ -2934,6 +2934,17 @@ if QT_AVAILABLE:
         def setPickerPopoverOpen(self, popover_open):
             self.calls.append(("pickerOpen", bool(popover_open)))
 
+        # The camera gesture's freeze pair: the face calls these on
+        # entry and on every exit, and an undefined slot aborts the
+        # calling handler (the slider's commit sat after endInteraction).
+        @pyqtSlot(bool)
+        def setFollowerInteracting(self, interacting):
+            self.calls.append(("interacting", bool(interacting)))
+
+        @pyqtSlot()
+        def setFollowerGestureBake(self):
+            self.calls.append(("gestureBake", None))
+
         @pyqtProperty("QVariant", notify=plateObjectsChanged)
         def plateObjects(self):
             return self._plate
@@ -3380,13 +3391,13 @@ class PlateFaceRenderTests(RealEngineTestCase):
         row = int(origin.y() + plot["offsetY"]
                   + (plot["bedYMax"] - 125.0) * plot["sy"])
 
-        def red_height(bed_x):
+        def red_height(bed_x, tolerance=20):
             col = int(origin.x() + plot["offsetX"]
                       + (bed_x - plot["bedXMin"]) * plot["sx"])
             return sum(
                 1 for py in range(max(0, row - 12), min(image.height(), row + 13))
                 if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F),
-                                 tolerance=20)
+                                 tolerance=tolerance)
             )
 
         # x=75 is native-prefix body, x=110 is the engine boundary,
@@ -3396,10 +3407,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # column legitimately add half-intensity antialiased fringes
         # there, and the grey base's wash over the prefix must not
         # read as the feature colour — tolerance 60 accepted both.
-        widths = [red_height(75.0), red_height(110.0), red_height(155.0)]
-        self.assertGreater(min(widths), 0, "one side of the partial stroke vanished")
-        self.assertLessEqual(max(widths) - min(widths), 1,
-                             "native prefix / Canvas tail stroke widths diverge: %r" % widths)
+        # The bodies are held to the core census; the boundary column
+        # takes the same 60 — the caps' overlap deepens its fringe into
+        # the core band (one column wide), so a core census there would
+        # count the joint, not the stroke. A Canvas half drawn at a
+        # different thickness diverges in both censuses.
+        bodies = [red_height(75.0), red_height(155.0)]
+        seam = [red_height(75.0, tolerance=60), red_height(110.0, tolerance=60),
+                red_height(155.0, tolerance=60)]
+        self.assertGreater(min(bodies), 0, "one side of the partial stroke vanished")
+        self.assertLessEqual(max(bodies) - min(bodies), 1,
+                             "native prefix / Canvas tail stroke widths diverge: %r" % bodies)
+        self.assertLessEqual(max(seam) - min(seam), 1,
+                             "the seam column's stroke diverges: %r" % seam)
         # The grab forces the scene's sync (the harness's window
         # doctrine): the threaded canvas's last frame drains here,
         # before the teardown.
@@ -3483,6 +3503,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 takeover = True
                 break
         self.assertTrue(takeover, "the ready prefix never took over")
+        # The handover's own beat: the takeover is read a sync before
+        # the scene presents the composed texture, and the strict
+        # census belongs to the composed frame — sampled a beat after
+        # it (the seam must not stay swollen, and the history must
+        # still be there).
+        self._pump_ms(30)
+        image = window.grabWindow()
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+            0, "the composed frame lost the printed history")
         self.assertLessEqual(
             max(self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
                 self._stroke_ink(image, face, window, census_plot, 155.0, 125.0)),
@@ -5350,16 +5380,27 @@ class PlateFaceRenderTests(RealEngineTestCase):
 
         # 5: a drag blocked by the soft clamp applies zero pan and
         # must not activate the raster. Push the camera to the
-        # boundary in one delivered drag — the press grabs at the
-        # face's right edge and the move sweeps to the window's
-        # left, which the clamp binds (the harness drops moves sent
-        # outside the window, so the pointer stays in bounds). A
-        # fresh drag attempt against the bound stays inert.
+        # boundary first — the press grabs at the face's right edge
+        # and the move sweeps to the window's left, which the clamp
+        # binds (the harness drops moves sent outside the window, so
+        # the pointer stays in bounds). The clamp binds each move's
+        # own delta, so that first sweep lands short of the bound:
+        # two sweeps from inside the face drive the pan onto it (the
+        # corner-pan leg's idiom below). A fresh drag attempt
+        # against the bound stays inert.
         mouse(QEvent.Type.MouseButtonPress, int(face.width()) - 10, cy,
               Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, 5, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseButtonRelease, 5, cy, Qt.MouseButton.NoButton)
         settle()
+        for _sweep in range(2):
+            mouse(QEvent.Type.MouseButtonPress, cx, cy,
+                  Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseMove, cx - 200, cy,
+                  Qt.MouseButton.LeftButton)
+            mouse(QEvent.Type.MouseButtonRelease, cx - 200, cy,
+                  Qt.MouseButton.NoButton)
+            settle()
         bound_pan = face.property("viewPanX")
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx - 200, cy, Qt.MouseButton.LeftButton)

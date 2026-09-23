@@ -5046,6 +5046,8 @@ Item {
             # ownership swap. The continuation lines ride the same
             # pin (the regex reads the visible line's first clause).
             "visible: _partialPrefixReady() || root._prefixHold",
+            "visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !root._retainedStanding",
+            "visible: root._interactionActive",
             # The full raster's standing: the full state OR the
             # 100% -> partial entry's transaction — the predicate
             # itself holds the previous composition until the

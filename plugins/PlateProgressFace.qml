@@ -101,6 +101,24 @@ Item {
     // latch): set at _enterInteraction, irrelevant once the gesture
     // ends (the idle binding reverts to the live eligible URL).
     property string _gestureNavSource: ""
+    // The retained frame's standing state, written by ITS handler —
+    // the live prefix's visible reads this one-way value instead of
+    // the retained ITEM's visible, whose mutual read the engine
+    // flagged as a binding loop (the live warning).
+    property bool _retainedStanding: false
+    // The prefix Image's Ready status as a one-way mirror: the
+    // visible binding reads THIS (written by the image's own status
+    // handler), never the status directly — reading the live status
+    // there closed a binding cycle through the same image's source
+    // and handlers (the engine's recurring live loop warning).
+    property bool _prefixStatusReady: false
+    // The zoom the carried tail last painted at: a mid-gesture
+    // settle repaints it only on a real scale change.
+    property real _carryZoom: 1.0
+    property real _pressX: 0.0
+    property real _pressY: 0.0
+    property real _pressPanX: 0.0
+    property real _pressPanY: 0.0
     // The RETAINED previous prefix (the atomic handover): the last
     // successfully uploaded prefix's source and boundary, frozen at
     // its Ready — shown while the live replacement loads, so the old
@@ -182,10 +200,21 @@ Item {
         id: panExitCheck
         interval: 80
         onTriggered: {
-            if (root._interactionActive && !zoomAnimator.running && _exactReady()) {
-                root._interactionActive = false;
-            } else if (root._interactionActive && !zoomAnimator.running) {
-                restart();  // the exact scene is still reassembling
+            // The release alone ends an interaction: a delayed exit
+            // check landing mid-second-press flipped the state under
+            // a live drag and froze the camera (the two-quick-pans
+            // wedge — the drags went dead).
+            if (root._interactionActive && !viewGesture.pressed && !zoomAnimator.running && _exactReady()) {
+                endInteraction();
+            } else if (root._interactionActive && !viewGesture.pressed) {
+                // The barrier is still pending: keep re-checking it,
+                // and land the repaint the hold deferred — a wheel
+                // never releases, so nothing else can complete it
+                // once the camera has settled.
+                if (!zoomAnimator.running && root._progressDirty) {
+                    progressCanvas.requestPaint();
+                }
+                restart();
             }
         }
     }
@@ -221,7 +250,7 @@ Item {
                     // The display stands at the target and the
                     // complete exact scene is presentation-ready:
                     // the soft-to-sharp swap.
-                    root._interactionActive = false;
+                    endInteraction();
                 }
             }
         }
@@ -342,6 +371,13 @@ Item {
         return root.progress != null && root.progress.navigationData !== undefined ? root.progress.navigationData : "";
     }
 
+    function _navBacking() {
+        // The warm raster's backing as the model baked it: the
+        // carried tail paints at the same factor so the two present
+        // pixel-equal through the same display transform.
+        return root.progress != null && root.progress.navigationBacking !== undefined && root.progress.navigationBacking > 0 ? root.progress.navigationBacking : 4.0;
+    }
+
     function _finishGesture() {
         // The gesture's end — a release OR a cancel (the grab died
         // outside the face, the live wedge: the scene never left the
@@ -353,6 +389,18 @@ Item {
         // presentation-ready.
         if (root._interactionActive) {
             panExitCheck.restart();
+        }
+        // The release's catch-up: the freeze deferred the progress
+        // repaints through the gesture — paint the accumulated
+        // advance NOW so the picture jumps to the current print
+        // position the moment the pan ends (the live request).
+        if (root._interactionActive) {
+            progressCanvas.requestPaint();
+        }
+        // The RELEASE is the single resume trigger for the model's
+        // publications too (the raster updates resume here).
+        if (root.printerModel != null) {
+            root.printerModel.setFollowerInteracting(false);
         }
     }
 
@@ -370,8 +418,29 @@ Item {
         // ride the QML side, so the latched raster stays coherent
         // for the gesture's whole life.
         if (!root._interactionActive && navigationData() !== "") {
+            // The IMMEDIATE entry: the pan starts on the first real
+            // movement with whatever raster is eligible. The carried
+            // tail completes the raster's picture — the lines since
+            // its split re-paint at its backing, so the entry drops
+            // nothing and no gated wait delays the drag.
             root._gestureNavSource = navigationData();
             root._interactionActive = true;
+            // The barrier's own re-check for the whole gesture: a
+            // wheel-only interaction has no release to drive it, and
+            // the demand's paint defers while the hold stands.
+            panExitCheck.restart();
+            root._carryZoom = root.viewScale;
+            // The carried tail's first paint: the gesture's frozen
+            // picture — the lines since the warm raster's split at
+            // its backing. The exact scene keeps rebuilding behind
+            // the raster (its own canvas, invisible while held).
+            carryCanvas.requestPaint();
+            // The freeze: the model holds the picture's publications
+            // while the gesture lives — the RELEASE resumes them (the
+            // live request). The toolhead dot stays exempt.
+            if (root.printerModel != null) {
+                root.printerModel.setFollowerInteracting(true);
+            }
         }
     }
 
@@ -537,7 +606,7 @@ Item {
         // never paints). Once shown, the prefix keeps its
         // ownership: the paints below it extend or re-derive from
         // its boundary, never leave a gap.
-        if (!_prefixModelReady() || progressPrefixImage.status !== Image.Ready) {
+        if (!_prefixModelReady() || !root._prefixStatusReady) {
             return false;
         }
         var layer = root.progress.layers.current;
@@ -557,8 +626,11 @@ Item {
         // first, the prefix swaps in over it. A re-show (the scrub
         // through 100% and back) keeps the covers-0 acceptance: the
         // standing picture is the complete one, and the trim follows
-        // in place.
-        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversFrom === 0 && root._prefixWasShown) || root._vectorCoversFrom === layer.prefixSplit);
+        // in place — but only for THIS demand's own delivery. A full
+        // bitmap painted at an older split is missing every motion
+        // the demand has passed since, and the attached follow's
+        // monotonic gate would admit it.
+        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversFrom === 0 && root._prefixWasShown && root._lastSplit === root.progress.split) || root._vectorCoversFrom === layer.prefixSplit);
         return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
@@ -910,7 +982,9 @@ Item {
         if (!_prefixModelReady() && root._prefixWasShown && _leavingFull()) {
             holdExpiryTimer.stop();
             root._prefixHold = true;
-            progressCanvas.requestPaint();
+            if (!root._interactionActive) {
+                progressCanvas.requestPaint();
+            }
         }
     }
 
@@ -932,6 +1006,13 @@ Item {
             root._progressDirty = true;
             progressCanvas.requestPaint();
             _holdPrefixThroughRepaint();
+        }
+        // A mid-gesture ZOOM re-bakes the carried tail at the new
+        // scale (the pan never repaints — the translation carries
+        // it); idle settles leave the hidden canvas alone.
+        if (root._interactionActive && root.viewScale !== root._carryZoom) {
+            root._carryZoom = root.viewScale;
+            carryCanvas.requestPaint();
         }
     }
 
@@ -960,25 +1041,68 @@ Item {
         }
         // The progress repaint follows its OWN key: an unchanged split/anchor/payload — a
         // raster or ghost arrival, a quiet poll — never wakes the
-        // painter, whose partial path walks dense geometry.
+        // painter, whose partial path walks dense geometry. While a
+        // gesture is live the repaint DEFERS (the key still records
+        // the demand): the pan presents one fixed picture — new
+        // lines mid-pan read as jank — and the exit's next poll
+        // paints the accumulated advance in one catch-up.
         var progressKey = _progressKeyOf();
         if (progressKey !== root._progressKey) {
             root._progressKey = progressKey;
-            progressCanvas.requestPaint();
+            if (!root._interactionActive) {
+                progressCanvas.requestPaint();
+            }
         }
         // The prefix's model-side validity may flip WITHOUT a key
         // change (the context invalidation's publish: the view key
         // was already consumed by the settle's reset): hold the old
         // picture until the canvas's repaint owns the interval.
         _holdPrefixThroughRepaint();
+        // The prefix's shown record derives from the publish cycle,
+        // never the image's own visible edge — a handler write
+        // feeding its own visible binding looped the engine's
+        // detector (the live warning). The set waits for the
+        // composition's own predicates, the clear waits for a
+        // terminal state (the retained no longer applies AND the
+        // model publishes no prefix for this anchor).
+        if (root._prefixWasShown) {
+            if (!root._prefixApplies() && !root._prefixHold && !_prefixModelReady()) {
+                root._prefixWasShown = false;
+            }
+        } else if (_partialPrefixReady() || (root._prefixHold && _leavingFull())) {
+            root._prefixWasShown = true;
+        }
         // The interaction's exit rides the exact scene's OWN commits
         // (a pan-only gesture never runs the zoom animator): the
         // settle's invalidation publish flips the assets stale, the
         // re-render's publish flips them fresh — the barrier's
         // verdict swaps the scene back exactly when the complete
         // exact scene is presentation-ready.
-        if (root._interactionActive && !zoomAnimator.running && _exactReady()) {
-            root._interactionActive = false;
+        // No mid-gesture raster swap: the gesture presents the
+        // ENTRY latch for its whole life — a fresher compatible
+        // raster landing mid-hold would jump the frozen picture
+        // forward (the snap-back's second half). The carried tail
+        // already completes the latched picture, and the RELEASE
+        // resumes the raster updates (the catch-up).
+        // The exit waits for the view to settle AND the release:
+        // a held-but-still pan stays on the warm raster (the
+        // mid-hold settle must not hand back — the snap between the
+        // two pictures), while the RELEASE returns the picture to
+        // normal through the panExitCheck path. The settle timer
+        // runs through every gesture (each view change restarts it),
+        // so the swap happens once, after the last camera input and
+        // the mouse-up.
+        if (root._interactionActive && !zoomAnimator.running && !root.settleTimer.running && _exactReady() && !viewGesture.pressed) {
+            endInteraction();
+        } else if (root._interactionActive && !zoomAnimator.running && !root.settleTimer.running && !viewGesture.pressed && root._progressDirty) {
+            // The wheel's own catch-up: a demand that lands mid-hold
+            // has its repaint deferred, and a wheel never releases —
+            // without this paint the barrier could never pass and the
+            // interaction would stick on the warm raster. The camera
+            // has settled, so nothing is left to jank; the delivery's
+            // re-check rides the release path's own panExitCheck.
+            progressCanvas.requestPaint();
+            panExitCheck.restart();
         }
     }
     onShowBaseChanged: {
@@ -1271,7 +1395,7 @@ Item {
             // its source: the source is written by this image's own
             // status/paint handlers, and reading it here looped the
             // binding (the live QML warning).
-            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !retainedPrefixImage.visible
+            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !root._retainedStanding
             source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by
@@ -1283,7 +1407,6 @@ Item {
                 // (a full layer, a backward move) are legitimate — the
                 // canvas owns the interval by then.
                 if (visible) {
-                    root._prefixWasShown = true;
                     // The settled single-owner trim: a canvas that
                     // painted the FULL history before this prefix
                     // showed must repaint to the tail alone — its
@@ -1305,14 +1428,13 @@ Item {
                     progressCanvas.requestPaint();
                 } else if (!root._prefixApplies()) {
                     // The hide is terminal (a full layer, a sub-prefix
-                    // split, a layer change): reset the shown record.
-                    // A transient hide keeps the memory — the standing
-                    // extension re-asserts the picture.
+                    // split, a layer change): the hold ends. The shown
+                    // record clears in the publish cycle, never here.
                     root._prefixHold = false;
-                    root._prefixWasShown = false;
                 }
             }
             onStatusChanged: {
+                root._prefixStatusReady = status === Image.Ready;
                 progressCanvas.requestPaint();
                 if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root._partialPrefixReady()) {
                     // The handover freeze: the pixels that JUST
@@ -1342,6 +1464,7 @@ Item {
             visible: root._retainedPrefixSource !== "" && !root._compositionReady() && root._retainedPrefixApplies()
             source: root._retainedPrefixSource
             smooth: false
+            onVisibleChanged: root._retainedStanding = visible
         }
 
         Canvas {
@@ -1379,15 +1502,37 @@ Item {
                     root._retainedPrefixSource = root.progress.layers.current.prefixData;
                     root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
                 }
+                // The FIRST show's trim: a delivery whose paint beat
+                // the prefix's upload leaves the FULL bitmap under a
+                // now-Ready prefix — the readiness gate refuses that
+                // overlap, and the prefix's own show cannot request
+                // the trim (its visible binding reads the predicate
+                // the trim feeds). Request it here, one paint after
+                // the delivery that completed the picture.
+                if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
+                    progressCanvas.requestPaint();
+                }
+                // The shown record's set edge, the publish cycle's own
+                // other half: the delivery that readied the prefix's
+                // composition IS the show, and a settled seek publishes
+                // no further state to notice it. The clear stays in the
+                // publish cycle; the predicate guarantees the canvas no
+                // longer owns the interval below the boundary.
+                if (_partialPrefixReady()) {
+                    root._prefixWasShown = true;
+                }
             }
             onPaint: {
                 var ctx = getContext("2d");
                 // The settled single-owner trim is a REFINEMENT of an
                 // already presentation-complete picture (the full
-                // bitmap under the prefix is invisible overlap): its
-                // repaint must not withdraw the standing readiness —
-                // the seek's ready commit waits for no trim.
-                var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && root._vectorCoversFrom === 0 && _prefixFrom() > 0;
+                // bitmap under the prefix, or the settled tail beside
+                // it — both invisible overlap): its repaint must not
+                // withdraw the standing readiness — the seek's ready
+                // commit waits for no trim, and a withdrawn flag hides
+                // the prefix, whose re-show requests yet another
+                // repaint (the settle's endless paint loop).
+                var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && _prefixFrom() > 0 && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === _prefixFrom());
                 // The committed texture is now one paint behind — the
                 // painted signal re-arms the confirmation when the
                 // bitmap is delivered.
@@ -1605,6 +1750,28 @@ Item {
         }
     }
 
+    Canvas {
+        id: carryCanvas
+        // The carried tail (the gesture's frozen picture): the
+        // printed lines since the warm raster's split, re-painted
+        // at its backing and presented through the DISPLAY
+        // transform exactly like navigationImage — the pan rides
+        // the item's translation, never a repaint. Hidden while
+        // idle: only the entry and a mid-gesture zoom re-bake
+        // request it, and a hidden canvas discards the buffer.
+        visible: root._interactionActive
+        width: visible ? root.width * root._navBacking() : 0
+        height: visible ? root.height * root._navBacking() : 0
+        x: visible ? root.displayPanX : 0
+        y: visible ? root.displayPanY : 0
+        scale: visible ? root.displayScale / root._navBacking() : 1.0
+        renderTarget: Canvas.Image
+        renderStrategy: Canvas.Threaded
+        onPaint: {
+            var ctx = getContext("2d");
+            root._paintCarry(ctx);
+        }
+    }
     // The painter's ONE rule, shared by the strokes and the glyphs: the
     // payload's vertices are the G-code's own motion edges (edge i runs
     // from points[i - 1] to points[i] and belongs to the motion
@@ -1645,7 +1812,39 @@ Item {
         return i < points.length && (split < 0 || points[i][2] < split);
     }
 
-    function _drawLayer(ctx, layer, alpha, split, base, from) {
+    function _paintCarry(ctx) {
+        // The gesture's carried tail: the printed lines since the
+        // warm raster's own split, re-painted as vectors at its
+        // backing so the entry drops nothing. The window is one
+        // follow interval of lines and the paint is pan-free — the
+        // canvas item's translation pans it with the raster.
+        ctx.reset();
+        var backing = root._navBacking();
+        ctx.clearRect(0, 0, root.width * backing, root.height * backing);
+        if (!root.available() || mapping._plot == null) {
+            return;
+        }
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        if (layer == null || split == null || split <= 0) {
+            return;
+        }
+        var current = _scrubVector();
+        if (current == null) {
+            return;
+        }
+        var navSplit = root.progress != null && root.progress.navigationSplit !== undefined && root.progress.navigationSplit !== null && root.progress.navigationSplit >= 0 ? root.progress.navigationSplit : 0;
+        if (navSplit >= split) {
+            return;
+        }
+        var scale = root.viewScale * backing;
+        _drawLayer(ctx, current, 1.0, split, false, navSplit, scale, backing);
+        if (root.showTravels) {
+            _drawTravels(ctx, current.travels, split, navSplit, scale, backing);
+        }
+    }
+
+    function _drawLayer(ctx, layer, alpha, split, base, from, scaleOverride, widthScale) {
         // The transform inlined: hundreds of thousands of
         // plateToScene calls per paint were the follower's cost.
         var plot = mapping._plot;
@@ -1655,12 +1854,15 @@ Item {
         var offsetY = plot.bed.offsetY;
         var bedXMin = plot.bed.bedXMin;
         var bedYMax = plot.bed.bedYMax;
-        var scale = root._view.scale;
-        var panX = root._view.panX;
-        var panY = root._view.panY;
+        // The carry override: painted at the warm raster's backing
+        // with the pan dropped (the item's translation carries it).
+        var backed = scaleOverride !== undefined && scaleOverride > 0;
+        var scale = backed ? scaleOverride : root._view.scale;
+        var panX = backed ? 0.0 : root._view.panX;
+        var panY = backed ? 0.0 : root._view.panY;
         // The physical stroke: one width for every channel (the
         // ghost/pending/printed parity rule), subpixel at 100%.
-        ctx.lineWidth = root.toolpathWidthPx();
+        ctx.lineWidth = root.toolpathWidthPx() * (widthScale !== undefined && widthScale > 0 ? widthScale : 1.0);
         // Round joins: the default miter spikes at acute corners with
         // a length that grows with the stroke width — thick lines
         // sprouted sharp edges at every text corner (the live report).
@@ -1698,13 +1900,17 @@ Item {
         }
     }
 
-    function _drawTravels(ctx, segments, split, from) {
+    function _drawTravels(ctx, segments, split, from, scaleOverride, widthScale) {
         if (segments == null) {
             return;
         }
+        var backed = scaleOverride !== undefined && scaleOverride > 0;
+        var scale = backed ? scaleOverride : root._view.scale;
+        var panX = backed ? 0.0 : root._view.panX;
+        var panY = backed ? 0.0 : root._view.panY;
         ctx.strokeStyle = MoonrakerTheme.plateTravel;
         ctx.globalAlpha = 0.8;
-        ctx.lineWidth = root.travelWidthPx();
+        ctx.lineWidth = root.travelWidthPx() * (widthScale !== undefined && widthScale > 0 ? widthScale : 1.0);
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
         for (var s = 0; s < segments.length; ++s) {
@@ -1721,11 +1927,11 @@ Item {
             if (scene == null) {
                 continue;
             }
-            ctx.moveTo(scene.x * root._view.scale + root._view.panX, scene.y * root._view.scale + root._view.panY);
+            ctx.moveTo(scene.x * scale + panX, scene.y * scale + panY);
             while (_edgePrinted(points, i, split)) {
                 scene = mapping.plateToScene(points[i][0], points[i][1]);
                 if (scene != null) {
-                    ctx.lineTo(scene.x * root._view.scale + root._view.panX, scene.y * root._view.scale + root._view.panY);
+                    ctx.lineTo(scene.x * scale + panX, scene.y * scale + panY);
                 }
                 ++i;
             }
@@ -1826,6 +2032,20 @@ Item {
             // ruling — a click at any zoom never flips the scene).
             root._dragX = mouse.x;
             root._dragY = mouse.y;
+            root._pressX = mouse.x;
+            root._pressY = mouse.y;
+            root._pressPanX = root.viewPanX;
+            root._pressPanY = root.viewPanY;
+            // The one-off drag snapshot: the press asks the model for
+            // an immediate warm-raster bake with the current split,
+            // so the first movement latches a raster that has caught
+            // up with the painted lines — the press-to-drag latency
+            // covers the bake, and the always-running follow window
+            // stays wide (the live report: a tight window chased the
+            // split per quarter-second and the perf hit followed).
+            if (root.printerModel != null && root.attached && root.viewScale > 1.0) {
+                root.printerModel.setFollowerGestureBake();
+            }
         }
         onPositionChanged: function (mouse) {
             if (!pressed || root.displayScale <= 1.0) {
@@ -1841,7 +2061,13 @@ Item {
             // there while the pointer keeps moving.
             var dx = mouse.x - root._dragX;
             var dy = mouse.y - root._dragY;
-            var clamped = root._softClampPan(root.viewPanX + dx, root.viewPanY + dy);
+            // The clamp works from the PRESS origin, not the live
+            // view: while the entry gate holds, the view itself stays
+            // frozen (its repaint pipeline is what smeared the lines
+            // — the canvas tail re-baked per tick while the prefix
+            // image content lagged), so the buffered drag must not
+            // accumulate through the frozen target.
+            var clamped = root._softClampPan(root._pressPanX + mouse.x - root._pressX, root._pressPanY + mouse.y - root._pressY);
             var appliedX = clamped.x - root.viewPanX;
             var appliedY = clamped.y - root.viewPanY;
             // The interaction raster flips in only when this
@@ -1851,10 +2077,20 @@ Item {
             if (appliedX !== 0.0 || appliedY !== 0.0) {
                 root._enterInteraction();
             }
-            root.viewPanX = clamped.x;
-            root.viewPanY = clamped.y;
-            root.displayPanX += appliedX;
-            root.displayPanY += appliedY;
+            // The whole camera (target, display AND the raster's
+            // presentation) moves only once the interaction has
+            // entered — then in one coherent jump to the clamped
+            // target. During the gate's hold nothing moves: no
+            // smear, no mixed-rate drag. With NO eligible raster at
+            // all the camera still follows the pointer directly —
+            // the degraded exact-scene path must keep working (the
+            // freeze is only the hold, never a dead drag).
+            if (root._interactionActive || navigationData() === "") {
+                root.viewPanX = clamped.x;
+                root.viewPanY = clamped.y;
+                root.displayPanX = clamped.x;
+                root.displayPanY = clamped.y;
+            }
             root._panDragDeltaX += appliedX;
             root._panDragDeltaY += appliedY;
             root._dragX = mouse.x;
@@ -2041,6 +2277,15 @@ Item {
     function endInteraction() {
         zoomAnimator.stop();
         root._interactionActive = false;
+        // Every exit — the pan release, the zoom snap, the scrub —
+        // resumes the model's publications. A wheel-only gesture has
+        // no press/release, so the release handler alone can never
+        // cover it: the frozen model withheld the fresh prefix and
+        // the exit barrier waited on it forever (the follower
+        // stopped painting after a zoom until a pan's release).
+        if (root.printerModel != null) {
+            root.printerModel.setFollowerInteracting(false);
+        }
     }
 
     // The retained handover's frozen pixels bake the view transform

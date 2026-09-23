@@ -53,7 +53,10 @@ WHATS_NEW: Tuple[dict, ...] = (
             "drag the Layer slider to any layer (that alone detaches the "
             "follow), scrub through the current layer, set the line "
             "thickness, jump the view onto the toolhead and keep it "
-            "centred — and detach or attach whenever you like.",
+            "centred — and detach or attach whenever you like. While you "
+            "pan, the picture freezes until you let go (the toolhead keeps "
+            "moving), and the view tracks the print's real position — the "
+            "drift that used to stall and jump the fill is gone.",
             "The temperature chart samples on its own steady one-second "
             "clock now. A fast auxiliary update setting used to cut the "
             "advertised 30-minute window down to minutes.",

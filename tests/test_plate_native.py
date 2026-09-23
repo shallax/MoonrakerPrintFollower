@@ -1,16 +1,27 @@
 """The native renderer's stroke semantics: ONE configured geometry
 pen shared by every asset, so the full layer, the prefix and the
-grey base can never disagree on physical width."""
+grey base can never disagree on physical width.
+
+Plus the rungs under that parity: the transport's publish rule, the
+cooperative cancel's own boundaries and the travels overlay the
+navigation raster carries."""
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+import threading
 import unittest
 
 from qt_runtime_support import QT_AVAILABLE
 
 if QT_AVAILABLE:
-    from PyQt6.QtGui import QImage
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QColor, QImage, QPainter, QPen
 
-    from plugins.PlateQt import render_layer_prefix, render_layer_raster
+    from plugins.PlateQt import (PlateLayer, _paint_segments, png_file,
+                                 render_layer_prefix, render_layer_raster,
+                                 render_navigation_layer)
 
 
 def _payload():
@@ -50,6 +61,89 @@ def _stroke_row(image: QImage) -> int:
             if image.pixelColor(col, row).alpha() > 0:
                 return row
     return -1
+
+
+def _device_pixel(plot: dict, view: dict, bed_x: float, bed_y: float) -> tuple:
+    """The bed point in the rendered device frame — the worker's own
+    transform, so the assertions read the pixels it actually painted."""
+    backing = float(view["backing"]) if view.get("backing") else min(
+        2.0, max(1.0, float(view.get("dpr", 1.0))))
+    scale = float(view.get("scale", 1.0)) * backing
+    col = int(float(plot["offsetX"]) * scale
+              + float(view.get("panX", 0.0)) * backing
+              + (bed_x - float(plot["bedXMin"])) * float(plot["sx"]) * scale)
+    row = int(float(plot["offsetY"]) * scale
+              + float(view.get("panY", 0.0)) * backing
+              + (float(plot["bedYMax"]) - bed_y) * float(plot["sy"]) * scale)
+    return col, row
+
+
+def _ink_weight(image: QImage, col: int, row: int, reach: int = 8) -> int:
+    """One stroke's total ink: the alphas summed over the rows its
+    spread can reach, so two strokes sharing a column stay apart."""
+    return sum(image.pixelColor(col, r).alpha()
+               for r in range(max(0, row - reach), min(image.height(), row + reach + 1)))
+
+
+def _inked_pixels(image: QImage, row: int) -> int:
+    return sum(1 for col in range(image.width())
+               if image.pixelColor(col, row).alpha() > 0)
+
+
+def _inked_total(image: QImage) -> int:
+    return sum(image.pixelColor(col, row).alpha()
+               for row in range(image.height())
+               for col in range(image.width()))
+
+
+def _travel_scene() -> dict:
+    """The travels scene: one run crossing the live split, one lying
+    entirely beyond it and one degenerate single point."""
+    run = [[10.0 + i * 5.0, 230.0, float(i)] for i in range(21)]
+    crossing = [[10.0 + i * 5.0, 200.0, float(i)] for i in range(20)]
+    beyond = [[10.0 + i * 5.0, 150.0, float(10 + i)] for i in range(10)]
+    return {"classes": {"WALL-OUTER": [run]},
+            "travels": [crossing, [[5.0, 150.0, 0.0]], beyond],
+            "travelStarts": [], "travelEnds": [], "motions": 20}
+
+
+def _travel_view(**overrides) -> dict:
+    # The legend toggles are part of the scene's content: an unset
+    # showTravels is the "turned off" state, never a default to ride.
+    view = _view(lineScale=20.0, showTravels=True)
+    view.update(overrides)
+    return view
+
+
+def _ghost(cls: str, bed_y: float, segments: int = 2) -> dict:
+    """A ghost layer: short runs of one class, stepped down the bed so
+    each ghost's own row stays separately readable."""
+    return {"classes": {cls: [[[10.0 + i * 5.0, bed_y - step * 15.0, float(i)]
+                               for i in range(6)]
+                              for step in range(segments)]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 6}
+
+
+class _CancelAfter(threading.Event):
+    """A cancel that trips on its Nth poll.
+
+    The production cancel is a threading.Event another thread sets,
+    and the renders only ever observe it at their own poll points —
+    a poll-counted event pins those points deterministically where a
+    real second thread would race the assertions. ``once`` trips for
+    a single poll: a sticky flag neutralises every later pass by
+    itself, so only a one-shot trip shows the render STOPPING at its
+    boundary rather than walking on and discarding the ink.
+    """
+
+    def __init__(self, polls: int, once: bool = False) -> None:
+        super().__init__()
+        self.remaining = polls
+        self.once = once
+
+    def is_set(self) -> bool:
+        self.remaining -= 1
+        return self.remaining == 0 if self.once else self.remaining <= 0
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -333,6 +427,373 @@ class NativeStrokeParityTests(unittest.TestCase):
         gc.collect()
         self.assertEqual([ref() for ref in refs], [None] * 4,
                          "an image survived the wrapper's drop")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeRasterTransportTests(unittest.TestCase):
+    """The PNG transport's publish rule: a URL exists only for a
+    raster that actually reached its immutable name."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp(prefix="plate-native-")
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.image = QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied)
+        self.image.fill(QColor(255, 0, 0, 255))
+
+    def test_a_failed_save_never_publishes_or_replaces_the_file(self):
+        # The write is atomic: the PNG lands under its final name only
+        # once the save returned True, so a temp path the writer cannot
+        # write must publish nothing, leave no debris behind AND leave
+        # the previously published file intact (the reader's immutable
+        # source).
+        first = png_file(self.image, self.directory, "raster")
+        self.assertTrue(first.startswith("file://"),
+                        "the transport published no URL for a good save")
+        published = QUrl(first).toLocalFile()
+        with open(published, "rb") as handle:
+            before = handle.read()
+        # The writer's own temp name as a symlink onto a directory:
+        # QImage cannot open it for writing and reports the failed
+        # save, while the clean-up can still remove the temp path.
+        temp = os.path.join(self.directory, "raster.png.tmp-%d" % os.getpid())
+        os.symlink(self.directory, temp)
+        self.assertEqual(png_file(self.image, self.directory, "raster"), "",
+                         "a failed save published a URL")
+        self.assertFalse(os.path.lexists(temp),
+                         "a failed save left its temp path behind")
+        with open(published, "rb") as handle:
+            self.assertEqual(handle.read(), before,
+                             "a failed save replaced the published file")
+
+    def test_a_failed_save_survives_an_uncleanable_temp(self):
+        # The clean-up itself can fail (a temp path that is a directory
+        # cannot be unlinked): the job still reports the empty
+        # transport rather than raising into the pool thread.
+        first = png_file(self.image, self.directory, "raster")
+        published = QUrl(first).toLocalFile()
+        with open(published, "rb") as handle:
+            before = handle.read()
+        temp = os.path.join(self.directory, "raster.png.tmp-%d" % os.getpid())
+        os.makedirs(temp)
+        self.assertEqual(png_file(self.image, self.directory, "raster"), "",
+                         "an uncleanable failed save published a URL")
+        with open(published, "rb") as handle:
+            self.assertEqual(handle.read(), before,
+                             "an uncleanable failed save replaced the published file")
+
+    def test_an_uncreatable_directory_never_publishes(self):
+        # The OSError leg: a directory path under a regular file cannot
+        # be created, and the failed encode's clean-up races that same
+        # impossibility — the job reports the empty transport instead
+        # of raising into the pool thread.
+        blocker = os.path.join(self.directory, "blocker")
+        with open(blocker, "w") as handle:
+            handle.write("x")
+        self.assertEqual(png_file(self.image, os.path.join(blocker, "sub"), "raster"), "",
+                         "an uncreatable directory published a URL")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeLayerFallbackTests(unittest.TestCase):
+    def test_an_unrendered_wrapper_hands_out_null_stand_ins(self):
+        # The typed properties are read by the face BEFORE a raster
+        # lands: a QImage-typed one must never hand QML None (the live
+        # crash) and the width gates must read 0, not raise.
+        layer = PlateLayer({"classes": {}, "travels": [], "motions": 0})
+        self.assertEqual(layer.travelWidth, 0, "an unrendered travels width read non-zero")
+        self.assertEqual(layer.prefixWidth, 0, "an unrendered prefix width read non-zero")
+        for name in ("raster", "baseRaster", "travelRaster", "prefixRaster"):
+            image = getattr(layer, name)
+            self.assertIsNotNone(image, name + " handed QML a None")
+            self.assertTrue(image.isNull(), name + " handed out a non-null stand-in")
+
+    def test_an_unrendered_wrapper_reads_invalid(self):
+        # The face gates every draw on these: a slot with no image (or
+        # no transport behind it) must read invalid, never a str-typed
+        # truthiness the engine's bool converter cannot digest.
+        layer = PlateLayer({"classes": {}, "travels": [], "motions": 0})
+        for name in ("rasterValid", "baseValid", "travelValid", "prefixValid"):
+            self.assertIs(getattr(layer, name), False, name + " read valid without a raster")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeSegmentPainterTests(unittest.TestCase):
+    """The shared segment walk's own contracts: the class filter, the
+    cooperative cancel's verdict and the degenerate segment."""
+
+    def _paint(self, payload: dict, **kwargs):
+        image = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(image)
+        pen = QPen()
+        pen.setWidthF(6.0)
+        landed = _paint_segments(painter, pen, payload, _plot(), _view(), **kwargs)
+        painter.end()
+        return landed, image
+
+    @staticmethod
+    def _scene() -> dict:
+        return {"classes": {"WALL-OUTER": [[[10.0 + i * 5.0, 100.0, float(i)]
+                                            for i in range(11)]],
+                            "FILL": [[[10.0 + i * 5.0, 200.0, float(i)]
+                                      for i in range(11)]]},
+                "travels": [], "motions": 11}
+
+    def test_the_class_filter_paints_only_the_named_classes(self):
+        plot, view = _plot(), _view()
+        wall = _device_pixel(plot, view, 30.0, 100.0)
+        fill = _device_pixel(plot, view, 30.0, 200.0)
+        landed, image = self._paint(self._scene(), class_names={"WALL-OUTER"})
+        self.assertTrue(landed, "the filtered walk reported a cancel")
+        self.assertGreater(image.pixelColor(*wall).alpha(), 0,
+                           "the named class was never walked")
+        self.assertEqual(image.pixelColor(*fill).alpha(), 0,
+                         "the walk painted a class outside its filter")
+        # The control: unfiltered, both classes reach the canvas.
+        _landed, both = self._paint(self._scene())
+        self.assertGreater(both.pixelColor(*fill).alpha(), 0,
+                           "the control walk never painted the second class")
+
+    def test_a_cooperative_cancel_paints_nothing_and_reports_it(self):
+        # The walk's verdict is the caller's cancellation signal: a
+        # superseded job must report False AND leave no ink behind.
+        cancel = threading.Event()
+        cancel.set()
+        landed, image = self._paint(self._scene(), cancel=cancel)
+        self.assertFalse(landed, "a cancelled walk reported a landing")
+        self.assertEqual(_inked_total(image), 0, "a cancelled walk painted ink")
+        landed, image = self._paint(self._scene())
+        self.assertTrue(landed, "an uncancelled walk reported a cancel")
+        self.assertGreater(_inked_total(image), 0, "the control walk painted nothing")
+
+    def test_a_degenerate_segment_paints_no_ink(self):
+        # A one-point run is a move, not a stroke: it must add nothing
+        # to the picture (the shortest path is a no-op here).
+        scene = self._scene()
+        scene["classes"]["SUPPORT"] = [[[10.0, 150.0, 0.0]]]
+        _landed, with_point = self._paint(scene)
+        _landed, without = self._paint(self._scene())
+        self.assertGreater(_inked_total(without), 0, "the control painted nothing")
+        self.assertEqual(with_point, without,
+                         "a one-point segment changed the painted picture")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeIncrementalPrefixTests(unittest.TestCase):
+    """The prefix's interval rule (first <= edge.motion < split) and
+    the cooperative cancel that rides it."""
+
+    @staticmethod
+    def _segments() -> dict:
+        return {"classes": {"WALL-OUTER": [[[10.0, 100.0, 0.0], [60.0, 100.0, 1.0]],
+                                           [[10.0, 80.0, 0.0], [60.0, 80.0, 1.0]]]},
+                "travels": [], "motions": 2}
+
+    def test_a_cancel_between_segments_keeps_the_completed_ones(self):
+        # The cancel is polled at each segment boundary: tripping at the
+        # second segment's gate keeps the first segment's strokes and
+        # drops the second, so a superseded job never merges a partial
+        # segment into the committed picture.
+        plot, view = _plot(), _view()
+        first = _device_pixel(plot, view, 30.0, 100.0)
+        second = _device_pixel(plot, view, 30.0, 80.0)
+        kept = render_layer_prefix(self._segments(), plot, view, 10, cancel=_CancelAfter(3))
+        self.assertGreater(kept.pixelColor(*first).alpha(), 0,
+                           "the completed segment was lost with the cancelled one")
+        self.assertEqual(kept.pixelColor(*second).alpha(), 0,
+                         "the cancelled segment still drew")
+        # One poll earlier the cancel lands on the FIRST segment's gate:
+        # nothing is painted at all.
+        dropped = render_layer_prefix(self._segments(), plot, view, 10, cancel=_CancelAfter(2))
+        self.assertEqual(_inked_total(dropped), 0,
+                         "a cancel at the first segment's gate still painted")
+
+    def test_a_degenerate_segment_leaves_no_ink(self):
+        scene = self._segments()
+        scene["classes"]["WALL-OUTER"].append([[40.0, 60.0, 0.0]])
+        plot, view = _plot(), _view()
+        with_point = render_layer_prefix(scene, plot, view, 10)
+        plain = render_layer_prefix(self._segments(), plot, view, 10)
+        self.assertGreater(_inked_total(plain), 0, "the control painted nothing")
+        self.assertEqual(with_point, plain,
+                         "a one-point segment changed the prefix's picture")
+
+    def test_an_edge_below_the_incremental_lower_bound_is_never_stroked(self):
+        # The incremental walk re-strokes nothing below its lower bound
+        # even where the segment's motion indices are not monotone: the
+        # edge INTO a below-bound motion stays out of the delta rather
+        # than re-compositing completed geometry.
+        payload = {"classes": {"WALL-OUTER": [[[10.0, 100.0, 7.0], [30.0, 100.0, 6.0],
+                                               [50.0, 100.0, 4.0]]]},
+                   "travels": [], "motions": 8}
+        plot, view = _plot(), _view()
+        blank = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
+        blank.fill(QColor(0, 0, 0, 0))
+        delta = render_layer_prefix(payload, plot, view, 10,
+                                    previous=blank, previous_split=5)
+        above = _device_pixel(plot, view, 20.0, 100.0)
+        below = _device_pixel(plot, view, 40.0, 100.0)
+        self.assertGreater(delta.pixelColor(*above).alpha(), 0,
+                           "the edge inside the lower bound was never stroked")
+        self.assertEqual(delta.pixelColor(*below).alpha(), 0,
+                         "an edge below the lower bound was re-stroked")
+        # The control: the full walk reaches both edges.
+        full = render_layer_prefix(payload, plot, view, 10)
+        self.assertGreater(full.pixelColor(*below).alpha(), 0,
+                           "the control walk never painted the second edge")
+
+    def test_a_long_segment_stops_at_the_cancel_poll(self):
+        # A segment longer than the poll interval is abandoned whole
+        # when the cancel trips inside it — the superseded job publishes
+        # no half-drawn run (the control proves the tail was reachable).
+        points = [[10.0 + i, 100.0, float(i)] for i in range(600)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [], "motions": 600}
+        plot, view = _plot(), _view(width=1300)
+        head = _device_pixel(plot, view, 450.0, 100.0)
+        tail = _device_pixel(plot, view, 590.0, 100.0)
+        fresh = render_layer_prefix(payload, plot, view, 1000)
+        self.assertGreater(fresh.pixelColor(*tail).alpha(), 0,
+                           "the control walk never reached the tail")
+        cancelled = render_layer_prefix(payload, plot, view, 1000,
+                                        cancel=_CancelAfter(3))
+        self.assertEqual(cancelled.pixelColor(*head).alpha(), 0,
+                         "the abandoned segment left its already-walked head")
+        self.assertEqual(cancelled.pixelColor(*tail).alpha(), 0,
+                         "the abandoned segment reached its tail")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeNavigationTravelTests(unittest.TestCase):
+    """The navigation scene's travels pass and its three early
+    exits."""
+
+    def test_the_travels_ride_the_visual_ratio_and_the_split(self):
+        plot, view = _plot(), _travel_view()
+        image = render_navigation_layer({"current": _travel_scene()}, plot, view, split=10)
+        # Below the live split the crossing travel draws its own token.
+        centre = image.pixelColor(*_device_pixel(plot, view, 40.0, 200.0))
+        self.assertEqual(centre.alpha(), 255, "the split-crossing travel drew no ink")
+        self.assertGreater(centre.blue(), centre.red() + 30,
+                           "the travel drew a foreign colour")
+        self.assertGreater(centre.red(), centre.green() + 20,
+                           "the travel drew a foreign colour")
+        # The motion at the split's boundary ends the travel: its edge
+        # into the next motion never draws.
+        self.assertEqual(
+            image.pixelColor(*_device_pixel(plot, view, 70.0, 200.0)).alpha(), 0,
+            "a travel drew past the live split")
+        # The beyond-split travel and the one-point travel draw nothing:
+        # their row stays empty while the full-layer render (no split)
+        # inks the same row.
+        row = _device_pixel(plot, view, 0.0, 150.0)[1]
+        self.assertEqual(_inked_pixels(image, row), 0,
+                         "a travel beyond the split reached the canvas")
+        full = render_navigation_layer({"current": _travel_scene()}, plot, _travel_view())
+        self.assertGreater(_inked_pixels(full, row), 0,
+                           "the control scene never drew the travel the split cut")
+        # The pen: the travel stroke carries the geometry pen's width
+        # times the shared visual ratio, and the ratio rides the view.
+        class_col, class_row = _device_pixel(plot, view, 30.0, 230.0)
+        class_ink = _ink_weight(image, class_col, class_row)
+        travel_col, travel_row = _device_pixel(plot, view, 30.0, 200.0)
+        travel_ink = _ink_weight(image, travel_col, travel_row)
+        self.assertGreater(class_ink, 0, "the printed layer drew no ink")
+        self.assertAlmostEqual(travel_ink, class_ink * 0.7, delta=0.15 * class_ink,
+                               msg="the travel stroke ignored the visual ratio")
+        forced = render_navigation_layer(
+            {"current": _travel_scene()}, plot, _travel_view(travelVisualRatio=1.0), split=10)
+        self.assertAlmostEqual(_ink_weight(forced, travel_col, travel_row), class_ink,
+                               delta=0.15 * class_ink,
+                               msg="a forced visual ratio never reached the travel pen")
+
+    def test_a_cancelled_ghost_pass_stops_before_the_next_ghost(self):
+        # The cancel is polled between the ghost passes: tripping after
+        # the previous ghost leaves that ghost's faint ink in place and
+        # returns before the next ghost or the current layer is walked.
+        plot, view = _plot(), _view()
+        cancel = _CancelAfter(3, once=True)
+        image = render_navigation_layer(
+            {"prev": _ghost("FILL", 180.0), "next": _ghost("SKIN", 130.0),
+             "current": _travel_scene()}, plot, view, split=10, cancel=cancel)
+        self.assertEqual(cancel.remaining, 0, "the cancel never reached the ghost boundary")
+        self.assertGreater(image.pixelColor(*_device_pixel(plot, view, 25.0, 180.0)).alpha(), 0,
+                           "the completed ghost pass was dropped with the render")
+        self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 130.0)).alpha(), 0,
+                         "the next ghost was walked after the cancel")
+        self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 230.0)).alpha(), 0,
+                         "the current layer was walked after the cancel")
+
+    def test_a_cancelled_next_pass_stops_before_the_current_layer(self):
+        plot, view = _plot(), _view()
+        cancel = _CancelAfter(3, once=True)
+        image = render_navigation_layer(
+            {"prev": None, "next": _ghost("SKIN", 130.0), "current": _travel_scene()},
+            plot, view, split=10, cancel=cancel)
+        self.assertEqual(cancel.remaining, 0, "the cancel never reached the ghost boundary")
+        self.assertGreater(image.pixelColor(*_device_pixel(plot, view, 25.0, 130.0)).alpha(), 0,
+                           "the completed next pass was dropped with the render")
+        self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 230.0)).alpha(), 0,
+                         "the current layer was walked after the cancel")
+
+    def test_a_navigation_scene_without_a_current_layer_returns_the_grid_alone(self):
+        # The interaction scene resolves before the layer exists: the
+        # render hands back its canvas, never a partially-walked one.
+        plot, view = _plot(), _travel_view()
+        image = render_navigation_layer({"prev": None, "next": None, "current": None},
+                                        plot, view, split=10)
+        self.assertEqual((image.width(), image.height()), (view["width"], view["height"]),
+                         "the empty scene returned a differently-sized raster")
+        self.assertEqual(_inked_total(image), 0,
+                         "a scene without a current layer painted toolpath")
+
+    def test_a_cancelled_render_keeps_the_printed_layer_and_drops_the_travels(self):
+        # The travels are the LAST pass: a cancel tripped at their own
+        # gate returns the printed layer with not one travel line on it.
+        plot, view = _plot(), _travel_view()
+        image = render_navigation_layer({"current": _travel_scene()}, plot, view,
+                                        cancel=_CancelAfter(2))
+        self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 230.0)).alpha(), 255,
+                         "the cancelled render lost the printed layer")
+        self.assertEqual(image.pixelColor(*_device_pixel(plot, view, 25.0, 200.0)).alpha(), 0,
+                         "a cancelled render drew its travels")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeRasterCancelTests(unittest.TestCase):
+    """The three-sibling job's travels pass: cancelled and degenerate."""
+
+    @staticmethod
+    def _scene() -> dict:
+        # The travel sits inside the canvas, so a job that published it
+        # is visibly distinct from one that dropped it.
+        payload = _payload()
+        payload["travels"] = [[[10.0, 150.0, 0.0], [60.0, 150.0, 1.0]]]
+        return payload
+
+    def test_a_cancelled_raster_job_publishes_no_travels(self):
+        # Every sibling answers to the same cancel: the coloured raster
+        # stops at its first segment and the travels pass returns the
+        # blank canvas it had just allocated.
+        cancel = threading.Event()
+        cancel.set()
+        coloured, _grey, travels = render_layer_raster(
+            self._scene(), _plot(), _view(), cancel=cancel)
+        self.assertEqual((travels.width(), travels.height()), (400, 300),
+                         "the cancelled travels pass published a foreign canvas")
+        self.assertEqual(_inked_total(travels), 0,
+                         "a cancelled job drew its travels")
+        self.assertEqual(_inked_total(coloured), 0,
+                         "a cancelled job drew its toolpath")
+
+    def test_a_degenerate_travel_leaves_the_travel_canvas_empty(self):
+        payload = _payload()
+        payload["travels"] = [[[10.0, 150.0, 0.0]]]
+        _coloured, _grey, travels = render_layer_raster(payload, _plot(), _view())
+        self.assertEqual(_inked_total(travels), 0,
+                         "a one-point travel drew ink into the travel raster")
+        _coloured, _grey, inked = render_layer_raster(self._scene(), _plot(), _view())
+        self.assertGreater(_inked_total(inked), 0,
+                           "the control travel never reached the travel raster")
 
 
 if __name__ == "__main__":

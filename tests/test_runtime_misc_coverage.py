@@ -239,7 +239,7 @@ class RecordingTarget:
 
 class DownloadTargetTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mpf-download-")
+        self.tmp = tempfile.mkdtemp(prefix="mpfxtest-download-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def test_a_target_that_never_opened_closes_without_a_handle(self):
@@ -285,7 +285,7 @@ class DownloadOperationTests(unittest.TestCase):
     latching and the retirement rules."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mpf-operation-")
+        self.tmp = tempfile.mkdtemp(prefix="mpfxtest-operation-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.operations = []
         self.addCleanup(self.retire)
@@ -835,14 +835,14 @@ class FileDownloadTests(unittest.TestCase):
     def streamed_file(self, payload="G1 X0\n", name="part.gcode"):
         """The streamed source in its temp directory, as the one-shot
         lane hands it to the terminal."""
-        directory = os.path.join(tempfile.mkdtemp(prefix="mpf-temp-"), "one-shot")
+        directory = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-temp-"), "one-shot")
         os.makedirs(directory)
         path = os.path.join(directory, name)
         pathlib.Path(path).write_text(payload, encoding="utf-8")
         return path
 
     def save_target(self, name="saved.gcode", payload=None):
-        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), name)
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), name)
         if payload is not None:
             pathlib.Path(target).write_text(payload, encoding="utf-8")
         return target
@@ -875,7 +875,7 @@ class FileDownloadTests(unittest.TestCase):
         on_ready = self.files.calls[0][1]
         self.assertEqual(len(download._active), 1)
 
-        root = tempfile.mkdtemp(prefix="mpf-lease-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-lease-")
         directory = os.path.join(root, "one-shot")
         os.makedirs(directory)
         path = os.path.join(directory, "part.gcode")
@@ -910,7 +910,7 @@ class FileDownloadTests(unittest.TestCase):
         download.failed.connect(failures.append)
         download.request("part.gcode")
         on_ready = self.files.calls[0][1]
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-stale-"), "part.gcode")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-stale-"), "part.gcode")
         pathlib.Path(path).write_text("G1 X0\n", encoding="utf-8")
 
         identity[0] = "B"
@@ -941,7 +941,7 @@ class FileDownloadTests(unittest.TestCase):
         # The live ruling: the file-manager Download is STRICTLY a file
         # transfer — the stream lands at the picked path and nothing
         # else observes it (no Cura load, no index, no state).
-        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (target, "")
@@ -951,7 +951,7 @@ class FileDownloadTests(unittest.TestCase):
             self.assertTrue(download.request_save("prints/part.gcode"))
         self.assertEqual(self.files.calls[0][0], "prints/part.gcode")
         on_ready = self.files.calls[0][1]
-        root = tempfile.mkdtemp(prefix="mpf-temp-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-temp-")
         directory = os.path.join(root, "one-shot")
         os.makedirs(directory)
         path = os.path.join(directory, "part.gcode")
@@ -975,7 +975,7 @@ class FileDownloadTests(unittest.TestCase):
     def test_request_save_opens_the_picker_in_downloads_or_home(self):
         # The picker's default lands in the OS Downloads directory
         # (or home when none is exposed), carrying the file's name.
-        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (target, "")
@@ -985,7 +985,7 @@ class FileDownloadTests(unittest.TestCase):
         self.assertTrue(os.path.dirname(initial), "the picker opened without a directory")
 
     def test_request_save_falls_back_to_home_without_downloads(self):
-        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (target, "")
@@ -998,7 +998,7 @@ class FileDownloadTests(unittest.TestCase):
         self.assertTrue(initial.startswith("/home/user"), initial)
 
     def test_request_save_failure_surfaces_without_a_file(self):
-        target = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode")
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (target, "")
@@ -1018,7 +1018,7 @@ class FileDownloadTests(unittest.TestCase):
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (
-                os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode"), "")
+                os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode"), "")
             download = self.download()
             self.assertIsNone(download.progress())
             download.request_save("prints/part.gcode")
@@ -1184,7 +1184,7 @@ class FileDownloadTests(unittest.TestCase):
     def test_a_save_replaces_the_file_the_picker_selected(self):
         # The reviewer's D: an existing destination is replaced by the
         # completed transfer, with no staging left beside it.
-        root = tempfile.mkdtemp(prefix="mpf-save-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
         target = os.path.join(root, "saved.gcode")
         pathlib.Path(target).write_text("OLD\n", encoding="utf-8")
         download = self.download()
@@ -1222,7 +1222,7 @@ class FileDownloadTests(unittest.TestCase):
         # raises for real (a directory where the file should go): the
         # staging file never survives a failed swap.
         module = self.qt.load("FileDownload")
-        root = tempfile.mkdtemp(prefix="mpf-save-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
         blocked = os.path.join(root, "saved.gcode")
         os.makedirs(blocked)
         source = self.streamed_file("NEW\n")
@@ -1238,7 +1238,7 @@ class FileDownloadTests(unittest.TestCase):
         # A file already sitting on the first staging name belongs to
         # whoever made it: the save steps over it, never through it.
         module = self.qt.load("FileDownload")
-        root = tempfile.mkdtemp(prefix="mpf-save-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
         target = os.path.join(root, "saved.gcode")
         blocker = os.path.join(root, ".saved.gcode.mpf-part-1")
         pathlib.Path(blocker).write_text("SOMEONE ELSE\n", encoding="utf-8")
@@ -1256,7 +1256,7 @@ class FileDownloadTests(unittest.TestCase):
         # storage error that caused the failure is the one that
         # surfaces.
         module = self.qt.load("FileDownload")
-        root = tempfile.mkdtemp(prefix="mpf-save-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
         blocked = os.path.join(root, "saved.gcode")
         os.makedirs(blocked)
         source = self.streamed_file("NEW\n")
@@ -1324,7 +1324,7 @@ class FileDownloadTests(unittest.TestCase):
         module = self.qt.load("FileDownload")
         with patch.object(module, "QFileDialog") as dialog:
             dialog.getSaveFileName.return_value = (
-                os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "saved.gcode"), "")
+                os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode"), "")
             download = self.download()
             download.request_save("one.gcode")
         self.files.fraction = 0.5
@@ -1444,7 +1444,7 @@ class FollowerRuntimeTests(unittest.TestCase):
 
     def test_the_injected_savefile_write_reports_a_host_that_refuses(self):
         root = self.qt.load("FollowerRuntime")
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "settings.json")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "settings.json")
         self.assertTrue(root._savefile_write(path, "{}\n"))
         self.assertEqual(pathlib.Path(path).read_text(encoding="utf-8"), "{}\n")
 
@@ -1454,7 +1454,7 @@ class FollowerRuntimeTests(unittest.TestCase):
 
     def test_the_state_lock_degrades_to_no_lock_when_the_host_lacks_one(self):
         root = self.qt.load("FollowerRuntime")
-        root_directory = tempfile.mkdtemp(prefix="mpf-lock-")
+        root_directory = tempfile.mkdtemp(prefix="mpfxtest-lock-")
         self.assertIsNotNone(root._state_lock(root_directory))
 
         lock_module = sys.modules["UM.LockFile"]

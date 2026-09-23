@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from copy import deepcopy
 from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
-from UM.Logger import Logger
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
@@ -128,7 +127,11 @@ CONSOLE_HEIGHT_MAX = 2000
 # window, measured from the JOB'S START (a commit-time stamp starves
 # the throttle whenever the split outruns the render — the
 # render/discard/retry loop). A hard scene change (layer, print,
-# zoom, dimensions, toggles) bypasses the window.
+# zoom, dimensions, toggles) bypasses the window, and a drag's PRESS
+# takes a one-off snapshot outside the cadence (the press-time bake
+# leads the first movement). The raster serves the HELD gesture; the
+# release returns the picture to the exact scene, so the window only
+# needs to keep the gesture entries fresh.
 _NAV_FOLLOW_BAKE_S = 3.0
 # The attached prefix checkpoint cadence: the native prefix advances
 # at most once per window, snapshotting the latest split — the QML
@@ -472,7 +475,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
-                                  "plateNavigationData")),
+                                  "plateNavigationData", "plateNavigationSplit",
+                                  "plateNavigationBacking")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -665,6 +669,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The plate surfaces' open states (the QML reports them): a
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
+        self._follower_interacting = False
         self._picker_popover_open = False
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
@@ -1314,27 +1319,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         popover = (
             progress if self._follower_attached
             else follower if follower is not None else progress)
-        # The attach-diagnosis quartet (the review's isolation step):
-        # the mini's live anchor against the popover's, so a stale
-        # manual payload and an absent upstream progress separate at
-        # a glance in the live log.
-        if self._follower_popover_open:
-            live_anchor = progress["anchor"] if progress is not None else None
-            popover_anchor = popover["anchor"] if popover is not None else None
-            # Cura's own logger (UM.Logger) is what reaches cura.log —
-            # the bare Python logger's warnings never did (the live
-            # "no logs" report). The review's isolation step.
-            Logger.log("w", "plate follow: liveAnchor=%s popoverAnchor=%s "
-                           "layerCount=%s split=%s",
-                       live_anchor, popover_anchor,
-                       self._values.get("plateLayerCount"),
-                       popover["split"] if popover is not None else None)
         # The surfaces gate their payloads: a closed popover or a
         # collapsed section never re-wraps a fresh payload, so the
         # memo churn costs nothing while nothing renders (the live
         # request). While gated the keys carry the last published
         # objects; opening or expanding resumes the live values.
-        if self._follower_popover_open:
+        if self._follower_popover_open and not self._follower_interacting:
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
                                                      popover["layers"], popover.get("anchor"),
                                                      popover.get("method"), popover.get("split"),
@@ -1372,6 +1362,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # serves the gesture instead (the review's lifecycle).
             surface = self._plate_surfaces["popover"]
             values["plateNavigationData"] = self._navigation_data_value(surface)
+            # The stored raster's painted split: the face's entry
+            # waits for a raster at or past the current split — the
+            # press-bake lands within the press-to-drag latency, and
+            # the next camera input enters on it instead of latching
+            # an older raster (the never-backward ruling).
+            stored = surface.nav.get("key")
+            values["plateNavigationSplit"] = (
+                stored[3] if stored is not None
+                and surface.nav["url"] else None)
+            # The backing the stored raster was baked at: the face's
+            # carried tail paints at the same factor so the two
+            # present pixel-equal through one display transform.
+            values["plateNavigationBacking"] = surface.nav.get("backing", 4.0)
             self._schedule_navigation(surface)
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
@@ -1382,6 +1385,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateProgressAvailable"] = self._values.get("plateProgressAvailable", False)
             values["plateProgressReason"] = self._values.get("plateProgressReason", "")
             values["plateNavigationData"] = self._values.get("plateNavigationData", "")
+            values["plateNavigationSplit"] = self._values.get("plateNavigationSplit")
+            values["plateNavigationBacking"] = self._values.get("plateNavigationBacking", 4.0)
         # The mini's own view: the live payload, always (the live
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
@@ -1676,6 +1681,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # (camera-independent; the pan/zoom presentation transforms
     # never re-render it).
     plateNavigationData = value_property(str, "plateNavigationData", plateProgressChanged, "")
+    plateNavigationSplit = value_property("QVariant", "plateNavigationSplit", plateProgressChanged, None)
+    plateNavigationBacking = value_property("QVariant", "plateNavigationBacking", plateProgressChanged, 4.0)
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
@@ -2752,6 +2759,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     @pyqtSlot(bool)
+    def setFollowerInteracting(self, interacting):
+        """The face's camera-gesture state: while a pan is live the
+        picture freezes — the per-poll publications (the layers'
+        rasters, the navigation raster) hold their last values, and
+        the RELEASE is the resume trigger (the live request: the
+        pan presents one fixed picture, then catches up)."""
+        interacting = bool(interacting)
+        if interacting == self._follower_interacting:
+            return
+        self._follower_interacting = interacting
+        self._publish()
+
+    @pyqtSlot(bool)
     def setPickerPopoverOpen(self, popover_open):
         """The picker popover's open state, the same gate."""
         popover_open = bool(popover_open)
@@ -3310,12 +3330,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The navigation key with the volatile split neutralised:
         everything that genuinely changes the scene (the window's
         payloads, the print epoch, the toggles, the style, the
-        dimensions, the zoom, the plot) rides here. A key differing
-        ONLY in the split presents the SAME scene — a compatible
-        raster serves it."""
+        dimensions, the zoom, the plot) rides here. The split itself
+        drops — but its None-ness rides on: a raster baked with NO
+        split painted the WHOLE layer as printed, and treating that
+        as compatible with a partial demand stood the complete
+        object as the warm scene for the layer's whole life (the
+        live report: the pan showed the print far ahead of itself).
+        Numeric-vs-numeric drift stays compatible; a None split is a
+        different scene."""
         if key is None:
             return None
-        return key[:3] + (None,) + key[4:]
+        if len(key) <= 3:
+            # A key without a split slot (a synthetic test ticket):
+            # there is no volatile split to neutralise — the whole
+            # key IS the hard key.
+            return key
+        return key[:3] + (key[3] is None,) + key[4:]
 
     def _nav_arm_wake(self, surface):
         """Arm the attached throttle's expiry wake: when the start-
@@ -3422,7 +3452,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         cancel = threading.Event()
         surface.nav["cancel"] = cancel
         surface.nav["job"] = {"key": key, "cancel": cancel, "epoch": epoch,
-                             "serial": serial}
+                             "serial": serial, "backing": backing}
         if self._follower_attached:
             # The throttle stamps at the START: the next bake is
             # permitted one window from now, whatever happens to this
@@ -3525,12 +3555,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         surface.nav["job"] = None
         surface.nav["failed"] = None
+        surface.nav["backing"] = job["backing"]
         if self._follower_attached:
-            # The next catch-up bake one window after this commit —
-            # the wake coalesces whatever the polls advance to.
             surface.nav["failed_hard"] = None
-            surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
-            self._nav_arm_wake(surface)
+            if surface.nav.get("wake_at") is None:
+                # The window expired while this render ran (the wake
+                # already cleared the throttle and found the slot
+                # busy): the LATEST demand schedules immediately —
+                # stamping a fresh window here would strand the
+                # demand the wake fired for (the stale-split bake).
+                self._schedule_navigation(surface)
+            else:
+                # The next catch-up bake one window after this
+                # commit — the wake coalesces whatever the polls
+                # advance to.
+                surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+                self._nav_arm_wake(surface)
         old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
@@ -3992,6 +4032,41 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._trace("T12 context committed", {"surface": surface.name,
                                               "generation": surface.generation})
         self._schedule_surface(surface)
+        # A view publish is the moment the warm raster is about to be
+        # latched — the one-off snapshot clears the follow throttle
+        # so the CURRENT split bakes immediately (tens of
+        # milliseconds at a live layer) instead of the window's older
+        # raster snapping the view back with a gap where the tail has
+        # since advanced (the live report).
+        if surface.name == "popover" and self._follower_attached:
+            self._nav_gesture_bake(surface)
+
+    def _nav_gesture_bake(self, surface):
+        """The one-off drag snapshot: clear the follow throttle and
+        schedule with the CURRENT split — the press-time bake leads
+        the first movement, so the latch catches a raster that has
+        caught up with the painted lines. An in-flight cadence job is
+        SUPERSEDED: the scheduler's one-job rule would otherwise
+        swallow the press's demand, the stale job's commit would
+        re-arm the window, and the gesture would latch a raster
+        behind the painted lines (the live snap-back report)."""
+        surface = self._surface_for(surface)
+        if surface is None or surface.name != "popover" \
+                or not self._follower_attached:
+            return
+        if surface.nav["job"] is not None:
+            surface.nav["cancel"].set()
+            surface.nav["job"] = None
+        surface.nav["wake_at"] = None
+        surface.nav["failed"] = None
+        surface.nav["failed_hard"] = None
+        self._schedule_navigation(surface)
+
+    @pyqtSlot()
+    def setFollowerGestureBake(self):
+        """The face's press hook: the drag is about to latch the warm
+        raster — bake the current split once, outside the cadence."""
+        self._nav_gesture_bake(self._plate_surfaces.get("popover"))
 
     @pyqtSlot(str, float, float, int, int, bool, float, float)
     def setFollowerView(self, surface, scale, lineScale, width, height, compact,
@@ -4112,6 +4187,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # stands, so that is what the detach holds on to.
                 frozen = _coerce_anchor(
                     self._values.get("plateProgressAnchor", -1))
+            if frozen < 0:
+                # The published anchor may lag the surface's demand
+                # (a direct feed before the coordinator's publish):
+                # the surface's own current layer is the same truth.
+                surface = self._plate_surfaces.get("popover")
+                desired = surface.desired if surface is not None else None
+                if desired is not None:
+                    frozen = _coerce_anchor(desired.get("current"))
             if frozen >= 0:
                 self._follower_layer_anchor = frozen
                 seed = self._values.get("plateSplit")

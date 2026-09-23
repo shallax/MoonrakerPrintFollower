@@ -366,6 +366,8 @@ class GCodeIndexService(QObject):
         self._split_floor = None
         self._split_refined = None
         self._split_floor_key = None
+        self._split_advance_max = 512
+        self._split_stall_polls = 0
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -471,6 +473,8 @@ class GCodeIndexService(QObject):
         self._split_floor = None
         self._split_refined = None
         self._split_floor_key = None
+        self._split_advance_max = 512
+        self._split_stall_polls = 0
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -732,6 +736,8 @@ class GCodeIndexService(QObject):
                 self._split_floor_key = (self._view.job_key, anchor)
                 self._split_floor = None
                 self._split_refined = None
+                self._split_advance_max = 512
+                self._split_stall_polls = 0
             floor = self._split_floor
             refined = None
             if live_position is not None:
@@ -750,51 +756,238 @@ class GCodeIndexService(QObject):
                     offsets = index.motion_offsets[anchor] \
                         if anchor < len(index.motion_offsets) else ()
                     if not len(offsets):
+                        # The floor's freshness bounds the ahead side:
+                        # a floor refined LAST poll means the nozzle is
+                        # within one poll's worth of motion past it —
+                        # the adaptive advance cap keeps repeated
+                        # geometry (an adjacent infill line) from
+                        # winning the match and overshooting the fill.
+                        fresh = floor is not None \
+                            and self._split_refined == floor
                         refined = self._refine_over_payload(
-                            memo[1].get("current"), coarse, live_position)
+                            memo[1].get("current"), coarse, live_position,
+                            floor,
+                            ahead=self._split_advance_max * 2
+                            if fresh else 4096,
+                            stall=self._split_stall_polls)
+                        if refined is not None and floor is not None \
+                                and refined > floor:
+                            self._split_advance_max = max(
+                                self._split_advance_max, refined - floor)
             if refined is None:
-                # The coarse anchor is the only estimate this layer has
-                # until a live position establishes one — on a machine
-                # that reports none, that is the whole story. Once a
-                # physical boundary exists, the parser's position is no
-                # improvement on it: hold.
-                split = coarse if self._split_refined is None else floor
+                # The layer's FIRST boundary must be a live-position
+                # refinement, never the coarse: the byte fraction can
+                # read ahead of the nozzle, and the floor would lock
+                # that overshoot in for the layer's whole life (the
+                # live report: fine for a few seconds, then the fill
+                # jumped ahead at the crossing and waited). With live
+                # telemetry the honest first value is zero — nothing
+                # has printed on the new layer yet — until the wide
+                # first search lands. A machine that reports no live
+                # position keeps the coarse — it is all that machine
+                # has — with the floor guarding it against walking
+                # back, never against the coarse's own advance (else
+                # the fill stalls on the first poll's boundary for the
+                # layer's whole life). Once a physical boundary has
+                # been observed for this layer, hold it.
+                if self._split_refined is not None and floor is not None:
+                    split = floor
+                elif live_position is None:
+                    split = coarse if floor is None else max(floor, coarse)
+                else:
+                    split = 0 if floor is None else floor
             else:
                 self._split_refined = refined
                 split = refined
-            self._split_floor = split if floor is None else max(floor, split)
+            # The stall counter: a result at or below the floor counts
+            # consecutive polls the floor did not advance — the next
+            # search's window expands with it. THREE consecutive
+            # below-floor matches are the overshoot-lock's evidence:
+            # the live position sits ON geometry behind the floor,
+            # the nozzle is genuinely there, and the monotonic floor
+            # must step back to the truth instead of stalling the
+            # fill until the nozzle catches up (the live replay: the
+            # refinement found the truth at distance 0 below an
+            # overshot floor every poll — the long stall, then the
+            # snap back to life).
+            corrected = False
+            if refined is not None and floor is not None \
+                    and refined <= floor:
+                self._split_stall_polls += 1
+                if self._split_stall_polls >= 3 and refined < floor:
+                    split = refined
+                    self._split_refined = refined
+                    corrected = True
+            else:
+                self._split_stall_polls = 0
+            if corrected:
+                self._split_floor = split
+            else:
+                self._split_floor = split if floor is None else max(floor, split)
             return split
 
     @staticmethod
-    def _refine_over_payload(payload, coarse, live_position,
-                             lag_window=1024, ahead_window=8,
-                             max_distance_mm=3.0):
+    def _refine_over_payload(payload, coarse, live_position, floor=None,
+                             ahead=4096, stall=0, max_distance_mm=3.0):
         """The live-position refinement over a PAYLOAD's geometry (the
         unhydrated compact layer): the index's own bounded search, run
         against the decoded polylines the plate already draws. Each
-        segment contributes only its points inside the coarse window —
-        bisected, never walked — so the per-poll cost matches the
-        hydrated path's. Returns the refined motion count, or None
-        when the geometry or the match is absent (the coarse estimate
-        then stands, exactly as the index's refined_split would hold
-        it)."""
+        segment contributes only its points inside the window —
+        bisected, never walked. The seed is the monotonic FLOOR, not
+        the byte-fraction coarse: the fraction drifts anywhere
+        relative to the true motion, and a window centred on it
+        missed the toolhead's geometry for stretches, stalling the
+        fill until the drift slid the window over it (the live
+        staircase report). The nozzle sits within a bounded advance
+        of the floor; only the floor-less first poll of a layer
+        searches wide around the coarse. Returns the RAW refined
+        motion count, or None when the geometry or the match is
+        absent (the caller holds the floor) — a below-floor result
+        is the caller's overshoot-lock evidence, never silently
+        clamped here."""
         if payload is None or live_position is None or len(live_position) < 3:
             return None
         try:
             px, py = float(live_position[0]), float(live_position[1])
         except (TypeError, ValueError):
             return None
-        lo = max(0, int(coarse) - int(lag_window) - 1)
-        hi = max(0, int(coarse) + int(ahead_window))
+        # The progressive windows: floor-seeded windows first (the
+        # ahead side capped by the observed per-poll advance — a
+        # fresh floor means the nozzle is a bounded step past it),
+        # a wider one when the floor held through a travel, and the
+        # coarse-centred wide pair for the layer's first observation.
+        # CONSECUTIVE STALLED polls expand the ahead exponentially:
+        # a clamped match (the earlier pass of repeated geometry)
+        # never advanced the floor, so the window must reach the
+        # true pass the nozzle has since moved on to — without the
+        # expansion the stall self-perpetuates (the live report: a
+        # 28 s stick that only a lucky tie-break ever ended).
+        if floor is not None:
+            ahead = max(512, int(ahead))
+            # The window ladder pairs the AHEAD and the BEHIND sides:
+            # the ahead side chases the nozzle past a held floor, and
+            # the behind side is the overshoot-lock's EVIDENCE — the
+            # truth behind an overshot floor sits hundreds of motions
+            # back, and a 64-motion behind reach never found it, so
+            # the correction never fired (the live report: huge
+            # overshoots that never corrected).
+            multipliers = [(1, 1), (8, 1)]
+            if stall >= 2:
+                multipliers += [(64, 16), (512, 128)]
+            motions = int(payload.get("motions") or 0)
+            windows = []
+            for ahead_mult, behind_mult in multipliers:
+                hi = int(floor) + ahead * ahead_mult
+                if motions > 0:
+                    hi = min(hi, motions)
+                windows.append((max(0, int(floor) - 64 * behind_mult), hi))
+        else:
+            windows = ((max(0, int(coarse) - 8192), int(coarse) + 8192),)
         best_distance_sq = float("inf")
         best_motion = None
-        for segments in (payload.get("classes") or {}).values():
-            for points in segments:
+
+        def offer(distance_sq, motion):
+            # The shared candidate comparison: strict distance wins,
+            # near-ties resolve to the pass the nozzle is on (see the
+            # comment below).
+            nonlocal best_distance_sq, best_motion
+            if distance_sq < best_distance_sq:
+                best_distance_sq = distance_sq
+                best_motion = motion
+            elif best_motion is not None \
+                    and distance_sq <= best_distance_sq * 1.02:
+                # The pass-seam tie: repeated toolpaths share
+                # positions across passes, so the live position ties
+                # its own pass with the earlier and the future ones.
+                # The nozzle is on the pass AT OR ABOVE the floor —
+                # prefer the SMALLEST such motion. An earlier pass
+                # clamps to the floor and stalls the fill for
+                # seconds until the tie breaks (the live log: 28 s
+                # stuck, then a +591 catch-up jump); a future pass
+                # paints ahead.
+                new_ok = floor is None or motion >= floor
+                old_ok = floor is None or best_motion >= floor
+                if new_ok and not old_ok:
+                    best_motion = motion
+                elif new_ok == old_ok and new_ok \
+                        and motion < best_motion:
+                    best_motion = motion
+                elif new_ok == old_ok and not new_ok \
+                        and motion > best_motion:
+                    best_motion = motion
+
+        for lo, hi in windows:
+            for segments in (payload.get("classes") or {}).values():
+                for points in segments:
+                    if len(points) == 1 and lo <= points[0][2] <= hi:
+                        # A travel split can leave an isolated vertex
+                        # — the motion's only geometry. Skipping it
+                        # made the TRUE motion invisible and the
+                        # search picked a future pass instead (the
+                        # replay's +403 overshoot on the live file).
+                        vertex = points[0]
+                        offer((px - vertex[0]) ** 2 + (py - vertex[1]) ** 2,
+                              float(vertex[2]))
+                    if len(points) < 2:
+                        continue
+                    # The manual bisect: the bundled engine's bisect
+                    # key compares the unkeyed needle, and an int <
+                    # list TypeError is what that yields (the live
+                    # traceback).
+                    low2, high2 = 0, len(points)
+                    while low2 < high2:
+                        mid2 = (low2 + high2) // 2
+                        if points[mid2][2] < lo:
+                            low2 = mid2 + 1
+                        else:
+                            high2 = mid2
+                    begin = low2
+                    if begin >= len(points):
+                        continue
+                    begin = max(0, begin - 1)
+                    for i in range(begin + 1, len(points)):
+                        if points[i][2] > hi:
+                            break
+                        ax, ay = points[i - 1][0], points[i - 1][1]
+                        bx, by = points[i][0], points[i][1]
+                        dx, dy = bx - ax, by - ay
+                        length_sq = dx * dx + dy * dy
+                        if length_sq <= 1e-12:
+                            t = 1.0
+                            qx, qy = bx, by
+                        else:
+                            t = ((px - ax) * dx + (py - ay) * dy) / length_sq
+                            t = max(0.0, min(1.0, t))
+                            qx, qy = ax + t * dx, ay + t * dy
+                        distance_sq = (px - qx) ** 2 + (py - qy) ** 2
+                        # The edge i spans points[i-1] -> points[i]
+                        # and belongs to motion points[i][2]: the
+                        # completed count is that motion, fraction t.
+                        offer(distance_sq, points[i][2] - 1 + t)
+            # A match below the floor is NOT satisfying: it clamps,
+            # stalls the fill, and — critically — must not stop the
+            # wider windows from running. Only a match AT OR ABOVE
+            # the floor (or any match on a floor-less first search)
+            # settles the window.
+            if best_motion is not None \
+                    and math.sqrt(best_distance_sq) <= max(0.1, max_distance_mm) \
+                    and (floor is None or best_motion >= floor):
+                break
+        if best_motion is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
+            return None
+        # The travel gate: the nozzle on a travel is off the
+        # extrusion geometry — the nearest extrusion line can be a
+        # FUTURE pass close enough to win the match, jumping the
+        # split ahead and locking the overshoot into the floor (the
+        # replay's +403 on the live file: the truth's own geometry
+        # was the travel, absent from the classes). Nothing prints
+        # during a travel: the honest answer is to HOLD, and the
+        # nearest travel segment at ~0 is the tell.
+        best_travel_sq = None
+        for lo, hi in windows:
+            for points in (payload.get("travels") or []):
                 if len(points) < 2:
                     continue
-                # The manual bisect: the bundled engine's bisect key
-                # compares the unkeyed needle, and an int < list
-                # TypeError is what that yields (the live traceback).
                 low2, high2 = 0, len(points)
                 while low2 < high2:
                     mid2 = (low2 + high2) // 2
@@ -809,8 +1002,8 @@ class GCodeIndexService(QObject):
                 for i in range(begin + 1, len(points)):
                     if points[i][2] > hi:
                         break
-                    ax, ay, _az = points[i - 1]
-                    bx, by, _bz = points[i]
+                    ax, ay = points[i - 1][0], points[i - 1][1]
+                    bx, by = points[i][0], points[i][1]
                     dx, dy = bx - ax, by - ay
                     length_sq = dx * dx + dy * dy
                     if length_sq <= 1e-12:
@@ -821,14 +1014,17 @@ class GCodeIndexService(QObject):
                         t = max(0.0, min(1.0, t))
                         qx, qy = ax + t * dx, ay + t * dy
                     distance_sq = (px - qx) ** 2 + (py - qy) ** 2
-                    if distance_sq < best_distance_sq:
-                        best_distance_sq = distance_sq
-                        # The edge i spans points[i-1] -> points[i] and
-                        # belongs to motion points[i][2]: the completed
-                        # count is that motion, fraction t.
-                        best_motion = points[i][2] - 1 + t
-        if best_motion is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
+                    if best_travel_sq is None or distance_sq < best_travel_sq:
+                        best_travel_sq = distance_sq
+        if best_travel_sq is not None and math.sqrt(best_travel_sq) + 0.2 \
+                < math.sqrt(best_distance_sq):
             return None
+        # The RAW result: the caller clamps for publication — a
+        # below-floor match is the overshoot-lock's evidence, and the
+        # caller's correction path needs it unclamped (the live
+        # replay: the refinement found the truth at distance 0 below
+        # an overshot floor every poll, and the clamp stalled the
+        # fill until the nozzle caught up).
         return int(best_motion)
 
     def plate_visited(self, anchor, split, rows):
@@ -1301,6 +1497,8 @@ class GCodeIndexService(QObject):
         self._split_floor = None
         self._split_refined = None
         self._split_floor_key = None
+        self._split_advance_max = 512
+        self._split_stall_polls = 0
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -1404,11 +1602,20 @@ class GCodeIndexService(QObject):
                 submitted = window
                 self._hydrate.clear()
 
-            # Only RAW source needs the G-code lease. Packed RAM,
-            # prepared disk and already-hydrated index arrays are all
-            # independently sufficient presentation sources.
+            # Only RAW source needs the G-code lease for the
+            # PRESENTATION — packed RAM, prepared disk and
+            # already-hydrated index arrays are all independently
+            # sufficient presentation sources. But a compact layer
+            # served from packed or prepared data still needs the
+            # lease for its MOTION ARRAYS: without them the split
+            # rides the byte-fraction estimate (the live stall/jump
+            # saga) — the worker hydrates the arrays alongside the
+            # decode when the file is in hand.
             needs_raw = any(self._presentation_source(layer) == "raw"
-                            for layer in submitted)
+                            for layer in submitted) \
+                or (index.compact and any(
+                    layer not in index.hydrated_layers
+                    for layer in submitted))
             lease = self._files.lease() if needs_raw else None
             if needs_raw and lease is None:
                 self._hydrate.update(submitted)
@@ -1441,6 +1648,28 @@ class GCodeIndexService(QObject):
                                             _decoded_charge(raw=raw, payload=decoded))
                         except Exception:
                             failed.append(layer)
+                            continue
+                        # The prepared/packed source serves the
+                        # PRESENTATION but never fills the index's
+                        # motion arrays — hydrating them here is what
+                        # gives the split its exact parser-anchored
+                        # mapping. A decode that succeeded stays
+                        # served even if the array hydration fails;
+                        # the failure only degrades the split and is
+                        # named, never latched.
+                        if index.compact and layer not in index.hydrated_layers:
+                            if lease is None:
+                                Logger.log(
+                                    "w",
+                                    "layer %d arrays stay unhydrated: "
+                                    "no gcode lease — the split rides "
+                                    "the estimate", layer)
+                            elif not hydrate_layer_from_file(index, lease.path, layer):
+                                Logger.log(
+                                    "w",
+                                    "layer %d arrays failed to hydrate "
+                                    "from %s — the split rides the "
+                                    "estimate", layer, lease.path)
                         continue
                     # Hydrated arrays are a complete source in their own
                     # right. Non-compact indexes always take this branch;

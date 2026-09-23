@@ -32,6 +32,7 @@ GCodeIndex.py
 """
 from __future__ import annotations
 
+from array import array
 import gzip
 import json
 import os
@@ -944,6 +945,273 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertEqual(
             self.service.plate_progress(0, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
 
+    @staticmethod
+    def _row_payload(motions, y=0.0, x0=0.0):
+        """A payload in the plate's own shape: one vertex per motion on
+        a straight run at height *y*."""
+        return {"classes": {"WALL-OUTER": [[[x0 + index, y, float(index)]
+                                            for index in range(motions)]]},
+                "travels": [], "travelStarts": [], "travelEnds": [],
+                "motions": motions}
+
+    def _bind_payload(self, motions=20, count=None):
+        """The UNHYDRATED compact layer: the motion count is known, the
+        motion arrays are not (they land with the file hydration), so the
+        boundary rides the payload geometry the plate already draws."""
+        index = make_index(layers=1, motions=motions)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._decoded_lru[0] = self._row_payload(motions)
+        index.layer_motion_counts = [motions if count is None else count]
+        index.motion_offsets = [array("Q")]
+        return index
+
+    def test_the_unhydrated_layer_splits_on_its_payload_geometry(self):
+        # The arrays are empty until the hydration lands, and the byte
+        # fraction that stands in for them is NOT proportional to motion
+        # — the live report's drifting fill. The payload's geometry is
+        # what the plate displays, so the search runs over THAT.
+        self._bind_payload()
+        payload = self.service.plate_progress(0, 50, (5.0, 0.0, 0.2))
+        self.assertEqual(payload["split"], 5, "the byte fraction won over the geometry")
+        self.assertEqual(payload["method"], "motion index")
+        self.assertIsNotNone(payload["layers"]["current"])
+
+    def test_a_payload_boundary_holds_when_the_head_leaves_the_path(self):
+        self._bind_payload()
+        self.assertEqual(self.service.plate_progress(0, 50, (5.0, 0.0, 0.2))["split"], 5)
+        # A park or a probe: the search finds nothing near, so the
+        # boundary already painted is what the fill keeps.
+        for _poll in range(2):
+            self.assertEqual(
+                self.service.plate_progress(0, 50, (140.0, 140.0, 10.0))["split"], 5)
+
+    def test_the_first_poll_of_an_unhydrated_layer_paints_nothing_off_path(self):
+        # The byte fraction can read ahead of the nozzle, so it is never
+        # the first boundary: with telemetry and no match yet, nothing
+        # has printed on the layer and nothing is painted.
+        self._bind_payload()
+        for _poll in range(2):
+            self.assertEqual(
+                self.service.plate_progress(0, 50, (140.0, 140.0, 10.0))["split"], 0)
+
+    def test_a_machine_without_live_telemetry_paints_the_payload_coarse(self):
+        # No live position anywhere: the coarse is all that machine has,
+        # and the floor keeps it monotonic across polls.
+        self._bind_payload()
+        self.assertEqual(self.service.plate_progress(0, 50)["split"], 10)
+        self.assertEqual(self.service.plate_progress(0, 20)["split"], 10,
+                         "the parser's earlier position walked the fill back")
+
+    def test_the_overshoot_lock_steps_the_floor_back_to_the_truth(self):
+        # The nozzle sitting ON geometry behind an overshot floor is the
+        # overshoot-lock's evidence: three polls of the same verdict step
+        # the floor back to the truth instead of stalling the fill until
+        # the nozzle catches up.
+        self._bind_payload()
+        self.assertEqual(self.service.plate_progress(0, 50, (15.0, 0.0, 0.2))["split"], 15)
+        for _poll in range(2):
+            self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
+            self.assertEqual(self.service._split_floor, 15,
+                             "the floor stepped back before the third below-floor verdict")
+        self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
+        self.assertEqual(self.service._split_floor, 6, "the overshoot lock never released")
+        # Resumed: the truth is the floor now, and the fill follows the
+        # nozzle forward from it again.
+        self.assertEqual(self.service.plate_progress(0, 50, (12.0, 0.0, 0.2))["split"], 12)
+
+    def test_the_observed_advance_widens_the_next_search(self):
+        # The ahead side is the advance the last poll actually observed
+        # (a fresh floor means the nozzle is a bounded step past it), so
+        # repeated geometry cannot win the match and overshoot the fill.
+        self._bind_payload(motions=6000)
+        self.assertEqual(self.service.plate_progress(0, 50, (1000.0, 0.0, 0.2))["split"], 1000)
+        self.assertEqual(self.service._split_advance_max, 512,
+                         "the floor-less first poll measured an advance")
+        self.assertEqual(self.service.plate_progress(0, 50, (2900.0, 0.0, 0.2))["split"], 2900)
+        self.assertEqual(self.service._split_advance_max, 1900,
+                         "the observed advance never widened the next window")
+
+    def test_a_layer_without_a_motion_count_reads_unavailable(self):
+        # Neither arrays nor a count: there is nothing to measure, so the
+        # face ghosts rather than colouring a boundary it cannot know.
+        self._bind_payload(count=0)
+        payload = self.service.plate_progress(0, 50, (5.0, 0.0, 0.2))
+        self.assertIsNone(payload["split"])
+        self.assertEqual(payload["method"], "unavailable")
+
+    def test_the_split_without_an_index_reads_unavailable(self):
+        self._bind_payload()
+        self.assertEqual(len(self.service.plate_layers(0)), 3)
+        self.service._view = None
+        self.assertEqual(self.service.plate_layers(0), {})
+        payload = self.service.plate_progress(0, 50, (5.0, 0.0, 0.2))
+        self.assertIsNone(payload["split"])
+        self.assertEqual(payload, {"layers": {}, "split": None, "method": "unavailable",
+                                   "motionTotal": 0, "anchor": 0})
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class PayloadRefinementTests(unittest.TestCase):
+    """The live-position refinement over a payload's geometry: the
+    unhydrated layer's own bounded search.
+
+    The index arrays are empty until the file hydration lands, so the
+    only geometry in hand is the polylines the plate already draws. The
+    search seeds on the monotonic floor (the coarse on the layer's first
+    poll), contributes only the points inside each window — bisected,
+    never walked — and holds rather than paints a future pass when the
+    nearest travel is closer than the nearest extrusion."""
+
+    def setUp(self):
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.service_class = self.qt.load("GCodeIndexService").GCodeIndexService
+
+    def _refine(self, payload, coarse, live, **kwargs):
+        return self.service_class._refine_over_payload(payload, coarse, live, **kwargs)
+
+    @staticmethod
+    def _row(y, first, count, x0=0.0, step=1.0):
+        """One drawn run: *count* vertices stepping *step* along x at
+        height *y*, motion index *first* + i — the payload's own triple."""
+        return [[x0 + index * step, y, float(first + index)] for index in range(count)]
+
+    @staticmethod
+    def _payload(classes, travels=(), motions=0):
+        return {"classes": classes, "travels": list(travels),
+                "travelStarts": [], "travelEnds": [], "motions": motions}
+
+    def test_a_payload_and_a_live_position_are_both_required(self):
+        payload = self._payload({"W": [self._row(0.0, 0, 20)]}, motions=20)
+        # No geometry, no telemetry, a position with no Z, or one that is
+        # not a number at all: there is nothing to search with.
+        self.assertIsNone(self._refine(None, 10, (5.0, 0.0, 0.2)))
+        self.assertIsNone(self._refine(payload, 10, None))
+        self.assertIsNone(self._refine(payload, 10, (5.0, 0.0)))
+        self.assertIsNone(self._refine(payload, 10, (None, 0.0, 0.2)))
+
+    def test_the_first_search_is_wide_around_the_coarse(self):
+        # The layer's first poll has no floor, so the window is centred on
+        # the parser's coarse position: the lookahead between the
+        # dispatcher and the nozzle can be thousands of motions.
+        payload = self._payload({"W": [self._row(0.0, 0, 20000)]}, motions=20000)
+        self.assertEqual(self._refine(payload, 10000, (5000.0, 0.0, 0.2)), 5000)
+        # Outside the window the nearest edge is hundreds of mm away: the
+        # refinement refuses rather than report that as the nozzle.
+        self.assertIsNone(self._refine(payload, 10000, (1000.0, 0.0, 0.2)))
+
+    def test_the_floor_seeds_the_window_and_the_motion_count_caps_it(self):
+        payload = self._payload({"W": [self._row(0.0, 0, 6000)]}, motions=6000)
+        # The seed is the FLOOR, not the coarse: the parser sits at 5900
+        # while the nozzle is 50 motions behind it. The window is capped
+        # by the layer's own motion count, never searched past it.
+        self.assertEqual(self._refine(payload, 5900, (5850.4, 0.0, 0.2), floor=5800), 5850)
+
+    def test_the_stall_expansion_reaches_a_pass_the_narrow_windows_miss(self):
+        payload = self._payload({"W": [self._row(0.0, 0, 20000)]}, motions=20000)
+        # 5,000 motions past the floor: neither the 1x nor the 8x window
+        # can see it. Consecutive stalled polls expand the ahead side,
+        # and only then does the search reach the pass the nozzle has
+        # since moved on to.
+        self.assertIsNone(
+            self._refine(payload, 100, (5000.0, 0.0, 0.2), floor=0, ahead=512))
+        self.assertEqual(
+            self._refine(payload, 100, (5000.0, 0.0, 0.2), floor=0, ahead=512, stall=2),
+            5000)
+
+    def test_an_isolated_vertex_is_a_candidate_of_its_own(self):
+        # A travel split can leave a motion carrying a single vertex: it
+        # is that motion's only geometry, so skipping it hides the truth
+        # and the search paints a future pass instead.
+        self.assertEqual(
+            self._refine(self._payload({"V": [[[7.0, 0.0, 12.0]]]}, motions=20),
+                         10, (7.0, 0.0, 0.2)), 12)
+        # A vertex outside the window is not a candidate — and it must not
+        # stop the segment beside it from being searched.
+        self.assertEqual(
+            self._refine(self._payload({"Far": [[[900.0, 0.0, 900.0]]],
+                                        "Near": [[[7.0, 0.0, 12.0]]]}, motions=1000),
+                         12, (7.0, 0.0, 0.2), floor=10), 12)
+
+    def test_a_segment_before_the_window_is_never_walked(self):
+        # The bisect skips a segment the window has already left behind:
+        # its motions are all below the window, so it contributes nothing
+        # and the live pass beside it is found instead.
+        payload = self._payload({"old": [self._row(0.0, 0, 100)],
+                                 "live": [self._row(0.0, 500, 100, x0=500.0)]},
+                                motions=600)
+        self.assertEqual(self._refine(payload, 550, (550.0, 0.0, 0.2), floor=550), 550)
+
+    def test_a_zero_length_edge_is_measured_at_its_own_endpoint(self):
+        # A doubled vertex has no direction to project onto: the point IS
+        # the geometry, and the projection would divide by zero.
+        payload = self._payload(
+            {"W": [[[5.0, 0.0, 10.0], [5.0, 0.0, 11.0], [9.0, 0.0, 12.0]]]}, motions=12)
+        self.assertEqual(self._refine(payload, 5, (5.0, 0.0, 0.2)), 11)
+
+    def test_the_near_tie_prefers_the_pass_at_or_above_the_floor(self):
+        # Repeated toolpaths put the nozzle's own position on an earlier
+        # and a later pass as well. Both runs below are 0.5 mm from the
+        # nozzle; the near one carries the earlier motions.
+        near = self._row(0.5, 11, 10, x0=-5.0)
+        far = self._row(-0.5, 41, 10, x0=-5.0)
+        low_first = self._payload({"low": [near], "high": [far]}, motions=60)
+        high_first = self._payload({"high": [far], "low": [near]}, motions=60)
+        # The seam resolves to the pass AT OR ABOVE the floor: an earlier
+        # pass clamps to the floor and stalls the fill for seconds.
+        self.assertEqual(self._refine(low_first, 10, (0.0, 0.0, 0.2), floor=30), 46)
+        self.assertEqual(self._refine(high_first, 10, (0.0, 0.0, 0.2), floor=30), 46)
+        # With no floor the smallest motion wins: the nozzle is on the
+        # first of the coincident passes.
+        self.assertEqual(self._refine(high_first, 10, (0.0, 0.0, 0.2)), 16)
+        # Both below the floor (a whole overshot stretch, not one pass):
+        # the closest to the floor wins, and the result is left for the
+        # caller's overshoot-lock evidence — never clamped here.
+        under = self._row(0.5, 40, 10, x0=-5.0)
+        over = self._row(-0.5, 90, 10, x0=-5.0)
+        self.assertEqual(
+            self._refine(self._payload({"low": [under], "high": [over]}, motions=900),
+                         10, (0.0, 0.0, 0.2), floor=100), 95)
+        self.assertEqual(
+            self._refine(self._payload({"high": [over], "low": [under]}, motions=900),
+                         10, (0.0, 0.0, 0.2), floor=100), 95)
+
+    def test_the_travel_gate_holds_the_split_while_the_nozzle_travels(self):
+        # Nothing prints during a travel. The only extrusion within reach
+        # is a FUTURE pass, and painting it jumps the fill ahead and locks
+        # the overshoot into the floor — the nearest travel's tell is what
+        # makes the honest answer "hold".
+        payload = self._payload({"W": [self._row(2.0, 101, 10, x0=-5.0)]},
+                                [self._row(0.05, 40, 10, x0=-5.0)], motions=200)
+        self.assertIsNone(self._refine(payload, 100, (0.0, 0.0, 0.2), floor=100))
+
+    def test_a_travel_further_than_the_match_leaves_the_edge_winning(self):
+        # The travel's tell is its proximity: a travel a clear margin away
+        # says nothing about the nozzle's own pass. The travel channel
+        # also carries a lone vertex, a stretch the window has left
+        # behind, a doubled vertex and one that runs past the window's
+        # far side — none of them is the tell.
+        payload = self._payload(
+            {"W": [self._row(0.5, 101, 10, x0=-5.0)]},
+            [[[0.0, 0.0, 5.0]],
+             self._row(0.6, 0, 20),
+             [[-5.0, 0.5, 40.0], [-5.0, 0.5, 41.0], [4.0, 0.5, 42.0]],
+             self._row(0.5, 600, 200, x0=-5.0)],
+            motions=900)
+        self.assertEqual(self._refine(payload, 100, (0.0, 0.0, 0.2), floor=100,
+                                      ahead=512), 106)
+
+    def test_a_head_off_the_geometry_returns_nothing(self):
+        payload = self._payload({"W": [self._row(0.0, 0, 20000)]}, motions=20000)
+        # A park, a Z-lift, a probe: no edge is within reach, so the
+        # caller holds its floor instead of jumping to the parser.
+        self.assertIsNone(self._refine(payload, 10000, (5000.0, 30.0, 0.2)))
+        # The tolerance belongs to the caller: a tight one refuses a hit
+        # the default would have taken.
+        self.assertIsNone(self._refine(payload, 10000, (5000.5, 0.5, 0.2),
+                                       max_distance_mm=0.1))
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class PlateVisitedTests(unittest.TestCase):
@@ -1038,6 +1306,15 @@ class PlateVisitedTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return walked
+
+    def test_a_walk_without_an_index_or_a_boundary_reads_empty(self):
+        # No index, no boundary, no anchor: nothing has been judged, and
+        # the empty set is the truth about the edges walked so far.
+        self.service._view = None
+        self.assertEqual(self.service.plate_visited(0, 5, self.ROWS), frozenset())
+        self._bind(b"M82\n;LAYER:0\nG0 X0 Y0\nG1 X1 Y0 E1\n")
+        self.assertEqual(self.service.plate_visited(0, None, self.ROWS), frozenset())
+        self.assertEqual(self.service.plate_visited(None, 5, self.ROWS), frozenset())
 
     def test_a_travel_across_a_polygon_deposits_nothing(self):
         # Motions: 1 the prime that starts the print, 2 and 3 the travels
@@ -1775,6 +2052,78 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertEqual(self.service._busy, "",
                          "the reopen re-walked the uncacheable layer")
 
+    def test_a_layer_is_not_served_without_a_table(self):
+        # No open table (a print whose pass never opened one, a cache
+        # clear): nothing is readable without the raw file.
+        self.assertFalse(self.service._prepared_served(0))
+        self.service._prepared_table = []
+        self.assertFalse(self.service._prepared_served(0))
+
+    def test_a_table_of_another_length_is_dropped(self):
+        # The file's layer count no longer matches this print's index: the
+        # table is unusable, and the fresh pass overwrites it rather than
+        # resume one print's geometry onto another's layers.
+        self._view(5)
+        self.store.finalise("print-key", [self._payload(i) for i in range(3)])
+        self.service._prepared_open(self.files.identity)
+        self.assertEqual(len(self.service._prepared_coverage), 3)
+        self.service._adopt_prepared()
+        self.assertIsNone(self.service._prepared_table, "a foreign-length table was adopted")
+        self.assertEqual(self.service._prepared_coverage, set())
+
+    def test_an_abandoned_writer_is_aborted(self):
+        # An unfinished writer on an abandon path: its temp file goes and
+        # the handle closes, so the store never publishes half a pass.
+        writer = self.store.open_for_write("print-key", 3)
+        self.service._prepared_writer = writer
+        self.service._abort_prepared_writer()
+        self.assertIsNone(self.service._prepared_writer)
+        self.assertTrue(writer["retired"], "the abandoned writer stayed writable")
+        self.assertFalse(os.path.exists(writer["temp"]), "the abandoned writer's file survived")
+
+    def test_writers_drop_even_when_the_store_is_already_gone(self):
+        # A cache clear or a rebind can take the store first: the writer
+        # reference still drops, and no later pass can finalise it.
+        self.service._abort_prepared_writer()          # nothing to abandon
+        self.service._suspend_prepared_writer()        # nothing to checkpoint
+        self.service._prepared = None
+        self.service._prepared_writer = {"table": [None]}
+        self.service._abort_prepared_writer()
+        self.assertIsNone(self.service._prepared_writer)
+        self.service._prepared_writer = {"table": [None]}
+        self.service._suspend_prepared_writer()
+        self.assertIsNone(self.service._prepared_writer)
+
+    def test_a_weak_identity_never_opens_the_prepared_table(self):
+        # The same strength gate the index restore obeys: a weak identity
+        # (no reliable timestamp) must never adopt the old prepared
+        # table, or a re-extracted file resurrects stale geometry.
+        self._view(5)
+        self.store.finalise("print-key", [self._payload(i) for i in range(5)])
+        self.files.identity.modified = 0.0
+        self.service._prepared_open(self.files.identity)
+        self.assertIsNone(self.service._prepared_table)
+        # And with no table at all there is nothing to adopt.
+        self.service._adopt_prepared()
+        self.assertFalse(self.service._prepared_saved)
+
+    def test_the_fraction_reads_the_ram_tier_when_nothing_persists(self):
+        # No persistence configured: the RAM tier's residency is the only
+        # prepared store there is — and no view is no fraction at all.
+        self._view(5)
+        self.service._prepared = None
+        self.service._full_cache.set(0, b"x" * 10, 10)
+        self.assertEqual(self.service.plate_pass_fraction(), 1 / 5)
+        self.service._view = None
+        self.assertIsNone(self.service.plate_pass_fraction())
+
+    def test_an_index_with_no_layers_has_no_fraction(self):
+        # No layers is no fraction: the pass bar reads empty, never a
+        # division by a zero total.
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, make_index(layers=0))
+        self.assertIsNone(self.service.plate_pass_fraction())
+
     def test_noncompact_hydrated_current_is_presented_first_without_a_file_lease(self):
         # The live regression: non-compact indexes report every layer as
         # hydrated immediately, while the decoded presentation cache is
@@ -2319,6 +2668,186 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.assertNotIn("a", decoded)
         self.assertIn("b", decoded)
 
+    def test_the_lru_surfaces_its_keys_and_accounts_for_a_rewrite(self):
+        # The inspection surface (keys, popitem) and a bulk update that
+        # rewrites an entry: the old size leaves the total before the new
+        # one is charged, or the budget drifts from the truth.
+        module = self.qt.load("GCodeIndexService")
+        lru = module._ByteBoundedLru(max_bytes=100000)
+        lru.set(0, b"x" * 100, 100)
+        lru.set(1, b"y" * 50, 50)
+        self.assertEqual(list(lru.keys()), [0, 1])
+        lru.update({0: b"z" * 300, 2: b"w" * 10})
+        self.assertEqual(lru.total_bytes(), 300 + 50 + 10)
+        key, value = lru.popitem()
+        self.assertEqual((key, len(value)), (2, 10), "the newest entry was not the one dropped")
+        self.assertEqual(lru.total_bytes(), 350)
+        self.assertEqual(len(lru), 2)
+
+    # --- the worker legs: what the demand's own workers serve and name ---
+
+    def _capture_submit(self):
+        """Hold the next submission on this thread: the worker runs where
+        the test can read its (failed, stash)/frontier result, and the
+        state under it can be posed exactly."""
+        captured = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: (
+            captured.append((kind, work, lease)) or None)
+        self.addCleanup(setattr, self.service, "_submit", original)
+        return captured
+
+    def _compact_view(self, layers, hydrated, followed=None):
+        index = make_index(layers=layers, motions=20, compact=True)
+        index.hydrated_layers = set(hydrated)
+        index.followed_layer = followed
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        return index
+
+    def test_the_hydrate_worker_names_the_layer_it_cannot_decode(self):
+        # The worker's own contract: a packed entry the codec refuses is
+        # NAMED failed — the latch is what stops every later poll
+        # re-reading the same bytes — while the window's other layers
+        # stay served. A decode that succeeded is presentation even when
+        # the file can no longer supply that layer's motion arrays.
+        self._compact_view(3, hydrated=())
+        self.service._full_cache.set(0, self._payload(0), 40)
+        self.service._full_cache.set(1, b"PPL1\xff", 5)  # truncated: the codec refuses it
+        self.service._full_cache.set(2, self._payload(2), 40)
+        self.service._hydrate = {0, 1, 2}
+        captured = self._capture_submit()
+        self.service._advance()
+        self.assertEqual([kind for kind, _, _ in captured], ["hydrate"],
+                         "the demand's window was not submitted as one task")
+        failed, stash = captured[0][1]()
+        self.assertEqual(failed, [1], "a refused entry was stashed or a served layer was failed")
+        self.assertEqual(sorted(stash), [0, 2], "a decodable payload was dropped with the refusal")
+        for layer in (0, 2):
+            self.assertIsNotNone(stash[layer][1], "layer %d stashed no payload" % layer)
+            self.assertNotIn(layer, failed)
+
+    def test_a_layer_evicted_after_its_submit_is_reported_failed(self):
+        # The retention window evicts a layer between the demand's own
+        # submit and its worker (the live print's eviction runs on the
+        # owner thread). The worker then has neither arrays nor a lease:
+        # the layer is named failed, so the latch — never a silent empty
+        # — decides whether the poll asks again.
+        index = self._compact_view(3, hydrated=(0, 1, 2), followed=1)
+        captured = self._capture_submit()
+        self.service.request_hydration(1)  # the arrays all still held: no lease is asked
+        self.assertEqual([kind for kind, _, _ in captured], ["hydrate"])
+        self.assertIsNone(captured[0][2], "an array-less layer demanded the raw file")
+        index.hydrated_layers.discard(1)
+        self.assertEqual(captured[0][1](), ([1], {}))
+
+    def test_an_evicted_layer_keeps_the_payload_the_cache_holds(self):
+        # The same eviction with the packed tier holding the layer: the
+        # decode is already paid for and the presentation stands — only
+        # the split's arrays are missing — so the worker keeps the
+        # payload instead of failing a layer it can still draw.
+        index = self._compact_view(3, hydrated=(0, 1, 2), followed=1)
+        self.service._full_cache.set(1, self._payload(1), 40)
+        captured = self._capture_submit()
+        self.service.request_hydration(1)
+        self.assertIsNone(captured[0][2], "a packed payload demanded the raw file")
+        index.hydrated_layers.discard(1)
+        failed, stash = captured[0][1]()
+        self.assertEqual(failed, [], "an unhydrated layer lost its decodable payload")
+        self.assertIn(1, stash)
+        self.assertIsNotNone(stash[1][1])
+
+    def test_a_refused_encode_never_costs_the_layer_its_display(self):
+        # The demand's own encode can fail (the codec's refusal): the
+        # decoded payload still lands in the stash for the hot cache —
+        # a refused encode is a compact-store miss, never a lost layer
+        # and never a failed hydrate that would latch the window.
+        self._view(3)
+        self.service._hydrate = {1}
+        captured = self._capture_submit()
+        module = self.qt.load("GCodeIndexService")
+
+        def refusing(payload):
+            raise ValueError("refused")
+
+        with patch.object(module, "_encode_layer", refusing):
+            self.service._advance()
+            self.assertEqual([kind for kind, _, _ in captured], ["hydrate"])
+            failed, stash = captured[0][1]()
+        self.assertEqual(failed, [], "a refused encode failed the layer")
+        self.assertEqual(sorted(stash), [1])
+        encoded, decoded, ram_hit, size = stash[1]
+        self.assertIsNone(encoded, "a refused encode was stashed as bytes")
+        self.assertIsNotNone(decoded, "the refusal cost the layer its decoded payload")
+        self.assertFalse(ram_hit)
+
+    def test_a_compact_pass_reads_the_file_only_for_the_layer_with_no_source(self):
+        # A compact index whose remaining layers are hydrated, RAM packed
+        # or already resolved in the prepared table rebuilds its store
+        # from what it holds — the walk asks for no lease at all. Only
+        # the layer with no other source sends it to the file, and a
+        # file that cannot serve that layer leaves the frontier ON it
+        # rather than publishing a hole for it.
+        self._compact_view(4, hydrated=(0,))
+        self.service._full_cache.set(1, self._payload(1), 40)
+        writer = self.store.open_for_write("print-key", 4)
+        self.store.append_uncacheable(writer, 2)
+        self.store.finish_write(writer)
+        self.service._prepared_open(self.files.identity)
+        self.assertEqual(self.service._prepared_table[2][0], 2, "the refusal never loaded")
+        captured = self._capture_submit()
+        self.service._advance()
+        self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
+        self.assertIsNotNone(captured[0][2], "the pass walked to the file with no lease")
+        frontier, encoded, uncacheable = captured[0][1]()
+        self.assertEqual(frontier, 3, "the pass walked past a layer it could not read")
+        self.assertEqual(uncacheable, {2}, "the resolved refusal was re-walked")
+        self.assertIn(0, encoded, "the hydrated layer was never prepared")
+        table = self.service._prepared_writer["table"]
+        self.assertEqual(table[1][0], self.state_cached,
+                         "the RAM-packed layer never rode into the rebuild")
+
+    def test_a_restore_reraises_the_followers_window(self):
+        # A demand that races the restore is dropped at the view-None
+        # guard, and the coordinator's re-assertion carries the SAME
+        # anchor the idempotency guard swallows — so the follower's own
+        # window is re-raised HERE, the moment the view exists (the live
+        # report: a future-layer scrub after a restore rendered nothing
+        # and the slider stayed disabled).
+        index = self.qt.load("GCodeIndex").build_index_from_bytes(
+            b"".join(b";LAYER:%d\nG1 X0 Y0 E0.1\n" % layer for layer in range(5)))
+        index.followed_layer = 3
+
+        class Cache:
+            def load(self, identity):
+                return index
+
+        self.service._cache = Cache()
+        self.service._restored = False
+        self.files.lease = lambda: None  # the raw lease is unavailable
+        submitted = []
+        demanded = []
+        original = self.service._submit
+
+        def capture(kind, work, lease=None):
+            submitted.append(kind)
+            if kind == "hydrate":
+                # The window at submission: the follower's own layer is
+                # the current demand, its two ghosts stay queued.
+                demanded.append((set(self.service._hydrating), set(self.service._hydrate)))
+            return original(kind, work, lease)
+        self.service._submit = capture
+        for _ in range(400):
+            self.service._advance()
+            self.qt.events(5)
+            if self.service._view is not None:
+                break
+        self.assertIn("restore", submitted)
+        self.assertEqual(self.service._view._index, index, "the restore never installed the view")
+        self.assertTrue(demanded, "the restore re-raised no demand at all")
+        self.assertEqual(demanded[0], ({3}, {2, 4}),
+                         "the restored follower's window was never re-raised")
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class DecodedBudgetTests(unittest.TestCase):
@@ -2455,3 +2984,55 @@ class DecodedBudgetTests(unittest.TestCase):
         print("decoded-tier RSS: early %d KB, late %d KB" % (early, late))
         self.assertLess(late, early + 30000,
                         "the decoded tier's RSS climbed across the cycles")
+
+    def test_an_encoding_failure_still_charges_the_decoded_tier(self):
+        # A layer whose encode failed has no bytes to measure: the charge
+        # comes from the payload's own motion count, so the byte budget
+        # stays bounded without a second geometry walk.
+        charge = self.module._decoded_charge
+        self.assertEqual(charge(payload={"motions": 100}), 100 * 256)
+        # A count that is absent, unusable or negative is no count at all:
+        # the floor is what keeps the accounting honest.
+        self.assertEqual(charge(payload={"motions": 0}), self.module._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload={"motions": -5}), self.module._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload={"motions": "many"}), self.module._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload=[1, 2]), self.module._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(), self.module._DECODED_CHARGE_FLOOR)
+        # A packed payload is charged by its expansion, not by a walk of
+        # the decoded points it stands for.
+        self.assertEqual(charge(raw=b"x" * 1000),
+                         1000 * self.module._DECODED_PACKED_EXPANSION)
+
+    def test_a_value_that_refuses_its_size_leaves_the_walk(self):
+        # A host object may refuse the size probe; the walk drops that one
+        # value and keeps accounting the rest rather than fail the charge.
+        class Unmeasurable:
+            def __sizeof__(self):
+                raise TypeError("no size")
+
+        lru = self.module._ByteBoundedLru(max_bytes=100000)
+        lru[0] = {"payload": {"motions": 3}, "extra": Unmeasurable()}
+        self.assertGreater(lru.total_bytes(), 0)
+
+    def test_the_combined_bound_never_evicts_a_protected_window(self):
+        # The demanded windows are protected: when the pins alone put the
+        # tier over budget, the reconcile yields to that floor rather than
+        # evict a layer the poll is about to read.
+        lru = self.service._decoded_lru
+        lru.set(0, object(), 90)
+        lru.set(1, object(), 90)
+        lru.protected = {0, 1}
+        self.service._decoded_sizes[2] = 5000
+        self.service.pin_decoded(2)
+        self.assertEqual(self.service.pinned_decoded_bytes(), 5000)
+        self.assertEqual(len(lru), 2, "a protected window was evicted")
+        self.assertIn(0, lru)
+        self.assertIn(1, lru)
+
+    def test_the_protection_set_needs_an_index(self):
+        # No index names the followed layers, so there is no window to
+        # protect and the set is left exactly as it was.
+        self.service._decoded_lru.protected = {7}
+        self.service._view = None
+        self.service._update_decoded_protection()
+        self.assertEqual(self.service._decoded_lru.protected, {7})

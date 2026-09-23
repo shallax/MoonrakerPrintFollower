@@ -7,6 +7,7 @@ semantics pinned here, nowhere else."""
 from __future__ import annotations
 
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,45 @@ import unittest
 
 from plugins.PlateProgress import decode_layer, encode_layer
 from plugins.PreparedStore import STATE_CACHED, STATE_EMPTY, PreparedCache
+
+# The on-disk layout the hand-built files below must match byte for
+# byte (the writer's own constants, restated here so the malformed
+# shapes can be laid out directly).
+_HDR_FMT = "<4sIHHB"
+_ENTRY_FMT = "<BQI"
+_HDR_SIZE = struct.calcsize(_HDR_FMT)
+_ENTRY_SIZE = struct.calcsize(_ENTRY_FMT)
+
+
+def _write_raw(path, magic=b"MPFP", version=3, identity=b"print-1", count=2,
+               complete=0, entries=(), table_bytes=None, payload=b""):
+    """A cache file laid out byte for byte: the malformed shapes the
+    writer itself never produces, so each reader's rejection reason
+    can be reached on its own."""
+    table = table_bytes if table_bytes is not None else b"".join(
+        struct.pack(_ENTRY_FMT, state, offset, length)
+        for state, offset, length in entries)
+    with open(path, "wb") as handle:
+        handle.write(struct.pack(_HDR_FMT, magic, version, len(identity),
+                                 count, complete))
+        handle.write(identity)
+        handle.write(table)
+        handle.write(payload)
+    return path
+
+
+def _park_dead_tmp(writer, complete=False):
+    """Park a writer's temp as a pid-99999 leftover: the crash seam
+    (the handle dropped before finish_write), or — with `complete` —
+    the window between the completion flag's fsync and the rename."""
+    if complete:
+        writer["handle"].seek(_HDR_SIZE - 1)
+        writer["handle"].write(b"\x01")
+        writer["handle"].flush()
+    writer["handle"].close()
+    dead = writer["temp"].rsplit(".tmp-", 1)[0] + ".tmp-99999-1"
+    os.replace(writer["temp"], dead)
+    return dead
 
 
 def _payload(layer):
@@ -720,3 +760,573 @@ class UnifiedEvictionPolicyTests(unittest.TestCase):
                         "the protected entry was evicted")
         self.assertFalse(self._folder_exists("bbb"),
                          "an unprotected entry survived the overage")
+
+
+class PreparedStoreRejectionTests(unittest.TestCase):
+    """Every rejection reason at the file boundary: a torn header, a
+    foreign identity, a half-written table, an out-of-range layer or a
+    vanished file must each read as a MISS — never as a partial table
+    the caller could act on."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+
+    def test_a_header_cut_short_reads_as_absent(self):
+        # The copy that died inside the header (or the file the volume
+        # truncated): no version, no count, no identity to trust.
+        path = self.cache._path("print-1")
+        with open(path, "wb") as handle:
+            handle.write(b"MPFP\x03")
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_a_foreign_magic_or_version_reads_as_absent(self):
+        # Another tool's file, or this format's own earlier generation:
+        # its offsets mean something else, so it must never parse.
+        for label, kwargs in (("magic", {"magic": b"XXXX"}),
+                              ("version", {"version": 2})):
+            _write_raw(self.cache._path("print-1"), count=2,
+                       entries=[(0, 0, 0), (0, 0, 0)], **kwargs)
+            self.assertIsNone(self.cache.load_table("print-1"),
+                              "the %s file parsed" % label)
+
+    def test_a_foreign_identity_reads_as_absent(self):
+        # The path digest is the ADDRESS, the stored identity is the
+        # truth: a file that landed under the wrong print (a copied
+        # folder) belongs to its own print only.
+        _write_raw(self.cache._path("print-1"), identity=b"print-9",
+                   count=2, entries=[(0, 0, 0), (0, 0, 0)])
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_a_half_written_table_reads_as_absent(self):
+        # The header promises two entries; the file carries five bytes
+        # of them (the pass died between the header and the table).
+        _write_raw(self.cache._path("print-1"), count=2,
+                   table_bytes=b"\x00" * 5)
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_a_candidate_header_that_does_not_parse_scores_nothing(self):
+        # The arbitration's scoring reader refuses the same shapes: a
+        # header cut short, a foreign magic, a foreign version, and an
+        # empty pass (no identity, no layer count).
+        refusing = {
+            "torn": b"MPFP\x03\x00",
+            "magic": struct.pack(_HDR_FMT, b"XXXX", 3, 7, 2, 0) + b"print-1",
+            "version": struct.pack(_HDR_FMT, b"MPFP", 2, 7, 2, 0) + b"print-1",
+            "no-layers": struct.pack(_HDR_FMT, b"MPFP", 3, 7, 0, 0) + b"print-1",
+        }
+        for label, raw in refusing.items():
+            path = os.path.join(self._dir.name, label + ".mpfp.tmp-99999-1")
+            with open(path, "wb") as handle:
+                handle.write(raw)
+            self.assertIsNone(self.cache._file_progress(path),
+                              "the %s candidate scored progress" % label)
+
+    def test_a_candidate_table_that_does_not_parse_scores_nothing(self):
+        # A count the file does not carry, a CACHED entry advertising
+        # bytes past the file's own end (a torn tail layer), and a state
+        # byte outside this format's vocabulary (a file from a future
+        # version) all read as corrupt — never as partial progress.
+        short_table = os.path.join(self._dir.name, "short.mpfp.tmp-99999-1")
+        _write_raw(short_table, count=2, table_bytes=b"\x00" * 5)
+        past_end = os.path.join(self._dir.name, "past-end.mpfp.tmp-99999-1")
+        _write_raw(past_end, count=1, entries=[(STATE_CACHED, 4096, 64)])
+        unknown = os.path.join(self._dir.name, "unknown.mpfp.tmp-99999-1")
+        _write_raw(unknown, count=1, entries=[(7, 0, 0)])
+        for label, path in (("short-table", short_table),
+                            ("past-end", past_end),
+                            ("unknown-state", unknown)):
+            self.assertIsNone(self.cache._file_progress(path),
+                              "the %s candidate scored progress" % label)
+
+    def test_an_unopenable_candidate_scores_nothing(self):
+        # The read itself fails (an I/O error, a name a directory took
+        # over): the scoring reports no progress rather than raising
+        # into the startup adoption.
+        path = os.path.join(self._dir.name, "unreadable.mpfp.tmp-99999-1")
+        os.makedirs(path)
+        self.assertIsNone(self.cache._file_progress(path))
+
+    def test_a_corrupt_candidate_is_dropped_at_startup(self):
+        # The adoption's verdict on a candidate that scores nothing and
+        # has no published sibling: it dies — the store never adopts a
+        # file it cannot read.
+        path = os.path.join(self.cache.directory, "stray.mpfp.tmp-99999-1")
+        _write_raw(path, count=1, entries=[(7, 0, 0)])
+        PreparedCache(self.cache.directory)
+        self.assertFalse(os.path.exists(path),
+                         "the corrupt candidate survived the startup")
+
+    def test_a_read_outside_the_table_reads_none(self):
+        # The caller may hold a table across a re-index: an index below
+        # zero or past the table's end is a miss, not a crash.
+        self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        table = self.cache.load_table("print-1")["table"]
+        self.assertIsNone(self.cache.read("print-1", table, -1))
+        self.assertIsNone(self.cache.read("print-1", table, len(table)))
+
+    def test_a_read_after_the_file_vanished_reads_none(self):
+        # The eviction may drop the print between a table load and the
+        # read: the layer reads as absent, never as an exception into
+        # the render path.
+        path = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        table = self.cache.load_table("print-1")["table"]
+        os.remove(path)
+        self.assertIsNone(self.cache.read("print-1", table, 0))
+
+    def test_finalising_no_layers_publishes_nothing(self):
+        self.assertIsNone(self.cache.finalise("print-1", []))
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_a_failed_publish_leaves_no_temp_file(self):
+        # The rename refused (a full or read-only volume): the temp must
+        # not survive as a half-written orphan for the startup to
+        # arbitrate over.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        with patch.object(store_module.os, "replace",
+                          side_effect=OSError(28, "No space left on device")):
+            self.assertIsNone(
+                self.cache.finalise("print-1", [encode_layer(_payload(0))]))
+        leftovers = [name for root, _dirs, names in os.walk(self.cache.directory)
+                     for name in names if ".tmp-" in name]
+        self.assertEqual(leftovers, [], "the failed publish left a temp file")
+
+    def test_a_failed_publish_whose_cleanup_also_fails_reports_none(self):
+        # The rename refused AND the temp unremovable (a read-only
+        # volume): nothing legal remains to do — the publish reports
+        # failure rather than raising out of the cleanup.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        with patch.object(store_module.os, "replace",
+                          side_effect=OSError(28, "No space left on device")), \
+                patch.object(store_module.os, "unlink",
+                             side_effect=OSError(30, "Read-only file system")):
+            self.assertIsNone(
+                self.cache.finalise("print-1", [encode_layer(_payload(0))]))
+
+    def test_opening_a_writer_without_layers_is_refused(self):
+        # A print with no layers has no table to open.
+        self.assertIsNone(self.cache.open_for_write("print-1", 0))
+        self.assertIsNone(self.cache.open_for_write("print-1", -3))
+
+    def test_a_refused_temp_creation_reads_as_no_writer(self):
+        # The temp cannot be created (a full or read-only volume): the
+        # caller reads "no writer" and skips the encode walk rather
+        # than crashing it.
+        from unittest.mock import patch
+        import builtins
+        real_open = builtins.open
+
+        def refusing(name, *args, **kwargs):
+            if ".tmp-" in str(name):
+                raise OSError(28, "No space left on device")
+            return real_open(name, *args, **kwargs)
+
+        with patch.object(builtins, "open", refusing):
+            self.assertIsNone(self.cache.open_for_write("print-1", 3))
+
+
+class PreparedStoreArbitrationTests(unittest.TestCase):
+    """The startup arbitration between a published file and an
+    interrupted candidate, at the verdict level: a corrupt file on
+    either side, a candidate that finished before the crash, and the
+    tie-break that cannot read its own stamps."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+
+    def test_a_corrupt_candidate_never_displaces_the_published_file(self):
+        # A candidate scoring no progress loses to whatever is
+        # published — never a filename preference.
+        self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        dead = self.cache._path("print-1").rsplit(".mpfp", 1)[0] + ".mpfp.tmp-99999-1"
+        with open(dead, "wb") as handle:
+            handle.write(b"garbage")
+        reloaded = PreparedCache(self.cache.directory)
+        self.assertFalse(os.path.exists(dead), "the corrupt candidate survived")
+        loaded = reloaded.load_table("print-1")
+        self.assertTrue(loaded["complete"], "the published file was displaced")
+        self.assertEqual(reloaded.read("print-1", loaded["table"], 0),
+                         encode_layer(_payload(0)))
+
+    def test_a_damaged_published_file_loses_to_a_valid_candidate(self):
+        # A published file the reader cannot parse is no progress at
+        # all: the interrupted candidate's layers are adopted over it.
+        path = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        with open(path, "wb") as handle:
+            handle.write(b"MPFP\x03\x00")  # a header torn by the crash
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(5)))
+        _park_dead_tmp(writer)
+        reloaded = PreparedCache(self.cache.directory)
+        loaded = reloaded.load_table("print-1")
+        self.assertIsNotNone(loaded, "the valid candidate was discarded")
+        self.assertFalse(loaded["complete"])
+        self.assertEqual(reloaded.read("print-1", loaded["table"], 0),
+                         encode_layer(_payload(5)),
+                         "the damaged published file kept the table")
+
+    def test_a_complete_candidate_wins_over_an_incomplete_published_file(self):
+        # The crash window between the completion flag's fsync and the
+        # rename leaves a COMPLETE, fully resolved candidate: it
+        # outranks a published partial outright.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.suspend_write(writer)  # the published 1/3 checkpoint
+        writer = self.cache.open_for_write("print-1", 3)
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(10 + layer)))
+        _park_dead_tmp(writer, complete=True)
+        reloaded = PreparedCache(self.cache.directory)
+        loaded = reloaded.load_table("print-1")
+        self.assertTrue(loaded["complete"], "the complete candidate lost")
+        self.assertEqual(reloaded.read("print-1", loaded["table"], 0),
+                         encode_layer(_payload(10)),
+                         "the published partial kept the table")
+
+    def test_a_tie_that_cannot_be_stamped_keeps_the_published_file(self):
+        # Equal coverage falls to the mtime tie-break, and the stat
+        # itself can fail (an I/O error on the volume): the published
+        # file wins — the adoption never crashes on an unreadable
+        # stamp.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        writer = self.cache.open_for_write("print-1", 4)
+        for layer in range(2):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.cache.suspend_write(writer)  # the published 2/4 partial
+        writer = self.cache.open_for_write("print-1", 4)
+        for layer in range(2):
+            self.cache.append(writer, layer, encode_layer(_payload(10 + layer)))
+        dead = _park_dead_tmp(writer)
+        final = self.cache._path("print-1")
+        with patch.object(store_module.os, "stat",
+                          side_effect=OSError(5, "Input/output error")):
+            verdict = self.cache._arbitrate(final, dead)
+        self.assertEqual(verdict, "final",
+                         "the unreadable tie-break chose the candidate")
+        self.assertEqual(
+            self.cache.read("print-1",
+                            self.cache.load_table("print-1")["table"], 0),
+            encode_layer(_payload(0)),
+            "the tie-break published the candidate it could not compare")
+
+    def test_a_superseding_candidate_logs_both_coverage_counts(self):
+        # The diagnostics ride the decision points: when a candidate
+        # supersedes a partial the log names both counts, so a restore
+        # that resumed from a crash is explained.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        calls = []
+
+        class Recorder:
+            @staticmethod
+            def log(level, message, *args):
+                calls.append((level, message, args))
+
+        writer = self.cache.open_for_write("print-1", 4)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.suspend_write(writer)  # the published 1/4 partial
+        writer = self.cache.open_for_write("print-1", 4)
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        _park_dead_tmp(writer)
+        with patch.object(store_module, "_Logger", Recorder):
+            reloaded = PreparedCache(self.cache.directory)
+        self.assertEqual(len(calls), 1,
+                         "the superseding decision was never logged")
+        level, message, args = calls[0]
+        self.assertEqual(level, "i")
+        self.assertEqual(args, (3, 1),
+                         "the log lost the coverage counts")
+        self.assertIn("superseded", message)
+        self.assertEqual(
+            sum(1 for entry in reloaded.load_table("print-1")["table"]
+                if entry[0] == STATE_CACHED), 3)
+
+
+class PreparedStoreWriterFailureTests(unittest.TestCase):
+    """The writer's own error paths: a refused sync, a refused publish,
+    a stale append and an abort over a handle that already bit it —
+    each one must leave the store consistent and the temp gone."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+
+    def test_a_duplicate_append_never_rewrites_a_layer(self):
+        # The first encoding of a layer is the one the pass resolved: a
+        # repeat for the same slot (or an index outside the table) is
+        # refused, so the table never advertises bytes since
+        # overwritten.
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.append(writer, 0, encode_layer(_payload(7)))
+        self.cache.append(writer, 5, encode_layer(_payload(5)))
+        self.cache.finish_write(writer)
+        table = self.cache.load_table("print-1")["table"]
+        self.assertEqual(self.cache.read("print-1", table, 0),
+                         encode_layer(_payload(0)),
+                         "a duplicate append rewrote the layer")
+
+    def test_a_retired_writer_refuses_every_later_write(self):
+        # The ownership rule at the append boundary: once the owner's
+        # suspend published the writer, a stale generation's append and
+        # uncacheable mark are refused outright — neither can touch the
+        # closed handle or the published table.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.assertTrue(self.cache.suspend_write(writer))
+        self.cache.append(writer, 1, encode_layer(_payload(1)))
+        self.cache.append_uncacheable(writer, 2)
+        loaded = self.cache.load_table("print-1")
+        self.assertEqual(loaded["table"][1], (0, 0, 0),
+                         "a retired append reached the published file")
+        self.assertEqual(loaded["table"][2], (0, 0, 0),
+                         "a retired mark reached the published file")
+
+    def test_an_uncacheable_mark_needs_a_live_slot(self):
+        # The latched hydrate reaches the mark with no writer at all,
+        # and a slot already carrying a layer — or one outside the
+        # table — must never be re-marked.
+        self.cache.append_uncacheable(None, 0)
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.cache.append_uncacheable(writer, 0)   # already CACHED
+        self.cache.append_uncacheable(writer, 9)   # past the table
+        self.cache.append_uncacheable(writer, -1)
+        self.cache.append_uncacheable(writer, 1)   # the real mark
+        self.cache.finish_write(writer)
+        table = self.cache.load_table("print-1")["table"]
+        self.assertEqual(table[0][0], STATE_CACHED,
+                         "the mark overwrote a cached layer")
+        self.assertEqual(self.cache.read("print-1", table, 0),
+                         encode_layer(_payload(0)))
+        self.assertEqual(table[1], (2, 0, 0))
+
+    def test_a_failed_checkpoint_sync_never_loses_a_layer(self):
+        # The periodic fsync (every 32 layers) may fail on a network
+        # volume or a full disk: the bytes are already in the page
+        # cache, the pass carries on, and every layer still round-trips
+        # once the writer finishes.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        writer = self.cache.open_for_write("print-1", 40)
+        with patch.object(store_module.os, "fsync",
+                          side_effect=OSError(5, "Input/output error")):
+            for layer in range(40):
+                self.cache.append(writer, layer, encode_layer(_payload(layer)))
+            path = self.cache.finish_write(writer)
+        self.assertIsNotNone(path, "a refused sync cost the pass its publish")
+        table = self.cache.load_table("print-1")["table"]
+        for layer in range(40):
+            self.assertEqual(self.cache.read("print-1", table, layer),
+                             encode_layer(_payload(layer)),
+                             "layer %d was lost to the sync failure" % layer)
+
+    def test_a_retired_writer_never_finishes(self):
+        # The suspend already published this writer's layers: a late
+        # finish from the stale generation must not publish a second
+        # time over it.
+        writer = self.cache.open_for_write("print-1", 3)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.assertTrue(self.cache.suspend_write(writer))
+        self.assertIsNone(self.cache.finish_write(writer))
+        loaded = self.cache.load_table("print-1")
+        self.assertFalse(loaded["complete"])
+        self.assertEqual(loaded["table"][0][0], STATE_CACHED,
+                         "the late finish overwrote the suspended table")
+
+    def test_a_failed_finish_publish_aborts_the_writer(self):
+        # The rename refused at the finish: no published file, no temp
+        # left behind, and the writer retired by the abort.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        temp = writer["temp"]
+        with patch.object(store_module.os, "replace",
+                          side_effect=OSError(28, "No space left on device")):
+            self.assertIsNone(self.cache.finish_write(writer))
+        self.assertFalse(os.path.exists(temp),
+                         "the failed finish left its temp behind")
+        self.assertTrue(writer["retired"], "the failed finish kept the writer")
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_a_suspend_without_a_writer_reports_failure(self):
+        self.assertFalse(self.cache.suspend_write(None))
+
+    def test_a_suspend_survives_a_failed_sync(self):
+        # The checkpoint's fsync hardens the publish but is not a
+        # precondition: a refused sync still publishes the layers.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        with patch.object(store_module.os, "fsync",
+                          side_effect=OSError(5, "Input/output error")):
+            self.assertTrue(self.cache.suspend_write(writer),
+                            "a refused sync cost the checkpoint its publish")
+        loaded = self.cache.load_table("print-1")
+        self.assertFalse(loaded["complete"])
+        self.assertEqual(self.cache.read("print-1", loaded["table"], 0),
+                         encode_layer(_payload(0)))
+
+    def test_a_failed_suspend_publish_aborts_the_writer(self):
+        # The rename refused at the checkpoint: the suspend reports
+        # failure and the abort owns the cleanup — no temp is left for
+        # the next startup to arbitrate over.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        temp = writer["temp"]
+        with patch.object(store_module.os, "replace",
+                          side_effect=OSError(28, "No space left on device")):
+            self.assertFalse(self.cache.suspend_write(writer))
+        self.assertFalse(os.path.exists(temp),
+                         "the failed suspend left its temp behind")
+        self.assertIsNone(self.cache.load_table("print-1"))
+
+    def test_an_abort_over_a_dead_handle_still_removes_the_temp(self):
+        # The abort's close can itself fail (the volume refuses the
+        # final flush): the exit path must swallow it and still remove
+        # the temp, so no crash on the way out leaves an orphan.
+        writer = self.cache.open_for_write("print-1", 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        temp = writer["temp"]
+        writer["handle"].close()
+
+        class RefusingHandle:
+            """The close whose final flush the volume refused."""
+
+            def close(self):
+                raise OSError(28, "No space left on device")
+
+        writer["handle"] = RefusingHandle()
+        self.cache.abort_write(writer)
+        self.assertFalse(os.path.exists(temp),
+                         "the failed close cost the abort its cleanup")
+
+
+class PreparedStoreStartupGuardTests(unittest.TestCase):
+    """The startup's own guards: the adoption of another writer's
+    temp, and the eviction walk — neither may block a print or
+    destroy a file it cannot account for."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+
+    def test_a_pid_beyond_the_platform_range_reads_dead(self):
+        # os.kill itself may refuse the pid (a narrow pid_t): an owner
+        # that cannot exist is dead, not an error.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        with patch.object(store_module.sys, "platform", "linux"), \
+                patch.object(store_module.os, "kill",
+                             side_effect=OverflowError()):
+            self.assertFalse(self.cache._tmp_liveness("print.mpfp.tmp-12345-1234"),
+                             "an out-of-range pid read alive")
+
+    def test_startup_never_touches_a_tmp_that_is_not_a_cache(self):
+        # Only a `.mpfp.tmp-` leftover belongs to this store: any other
+        # writer's temp keeps its name shape and dies by its owner's
+        # rules alone.
+        stray = os.path.join(self.cache.directory, "notes.txt.tmp-99999-1")
+        with open(stray, "wb") as handle:
+            handle.write(b"not a cache")
+        PreparedCache(self.cache.directory)
+        self.assertTrue(os.path.exists(stray),
+                        "the startup cleanup deleted a foreign temp file")
+
+    def test_a_temp_the_startup_could_not_remove_never_blocks_the_cache(self):
+        # The unlink refused (a read-only directory): the adoption
+        # keeps going — a leftover temp must never stop the print.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        stale = os.path.join(self.cache.directory, "stray.mpfp.tmp-99999-1")
+        with open(stale, "wb") as handle:
+            handle.write(b"partial")
+        with patch.object(store_module.os, "unlink",
+                          side_effect=OSError(30, "Read-only file system")) as unlink:
+            reloaded = PreparedCache(self.cache.directory)
+        self.assertTrue(unlink.called, "the unsound temp was never removed")
+        self.assertTrue(os.path.exists(stale))
+        self.assertIsNotNone(reloaded.load_table("print-1"),
+                             "the startup abandoned the published prints")
+
+    def test_an_unwalkable_directory_never_blocks_the_startup(self):
+        # The volume cannot be walked (an I/O error): the adoption
+        # finds nothing and the store still comes up with every
+        # published print intact.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        path = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        with patch.object(store_module.os, "walk",
+                          side_effect=OSError(5, "Input/output error")):
+            reloaded = PreparedCache(self._dir.name)
+        self.assertTrue(os.path.exists(path))
+        self.assertIsNotNone(reloaded.load_table("print-1"))
+
+    def test_a_folder_holding_no_cache_files_is_never_a_candidate(self):
+        # The policy accounts cache bytes: a folder with neither a
+        # prepared nor an index file contributes nothing, counts toward
+        # no budget and is never evicted.
+        stray = os.path.join(self.cache.directory, "p-stray")
+        os.makedirs(stray, exist_ok=True)
+        with open(os.path.join(stray, "notes.txt"), "w") as handle:
+            handle.write("x")
+        keep = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        self.cache.max_bytes = 1  # every ACCOUNTED folder must go
+        self.cache._evict(keep)
+        self.assertTrue(os.path.exists(stray),
+                        "the eviction removed a folder it never accounted")
+        self.assertTrue(os.path.exists(os.path.dirname(keep)))
+
+    def test_a_folder_the_eviction_cannot_measure_is_skipped(self):
+        # One print folder's files cannot be stat'ed (an I/O error on
+        # the volume): the walk skips that folder and still brings the
+        # rest of the directory back to budget.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        real_stat = store_module.os.stat
+        broken = os.path.join(self.cache.directory, "p-broken")
+        os.makedirs(broken, exist_ok=True)
+        with open(os.path.join(broken, "prepared.mpfp"), "wb") as handle:
+            handle.write(b"\0" * 64)
+        keep = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        victim = os.path.dirname(
+            self.cache.finalise("print-2", [encode_layer(_payload(0))]))
+
+        def refusing(path, *args, **kwargs):
+            if os.path.dirname(str(path)) == broken:
+                raise OSError(5, "Input/output error")
+            return real_stat(path, *args, **kwargs)
+
+        self.cache.max_bytes = 1
+        with patch.object(store_module.os, "stat", refusing):
+            self.cache._evict(keep)
+        self.assertTrue(os.path.exists(broken),
+                        "the unmeasurable folder was removed anyway")
+        self.assertFalse(os.path.exists(victim),
+                         "the eviction stopped at an unmeasurable folder")
+
+    def test_an_unwalkable_directory_never_blocks_a_publish(self):
+        # The eviction walk fails after a successful write: the print
+        # is already published — the size policy never costs a print
+        # its cache.
+        from unittest.mock import patch
+        import plugins.PreparedStore as store_module
+        with patch.object(store_module.os, "walk",
+                          side_effect=OSError(5, "Input/output error")):
+            path = self.cache.finalise("print-1", [encode_layer(_payload(0))])
+        self.assertTrue(os.path.exists(path))
+        self.assertIsNotNone(self.cache.load_table("print-1"))

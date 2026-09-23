@@ -123,6 +123,8 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel._trace": "b11",
     # The plate popovers' open states (the closed-surface freeze).
     "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
+    "MoonrakerMonitorModel.setFollowerInteracting": "b11",
+    "MoonrakerMonitorModel.setFollowerGestureBake": "b11",
     "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",
@@ -355,6 +357,8 @@ PREFIX_RULES = [
     ("key", "plateScrubVector", "h8"),
     ("key", "plateLiveScrubVector", "h8"),
     ("key", "plateNavigationData", "h8"),
+    ("key", "plateNavigationSplit", "h8"),
+    ("key", "plateNavigationBacking", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),

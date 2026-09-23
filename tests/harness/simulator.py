@@ -88,6 +88,12 @@ KICKOFF_STATE: Dict[str, Any] = {
                    "config": {"extruder": {"filament_diameter": "1.75"}},
                    "settings": {"extruder": {"filament_diameter": 1.75}}},
     "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
+    # The plate's own object: a real Klipper carries exclude_object on
+    # every print, and the plugin subscribes to it (CORE_OBJECTS). The
+    # shape is Klipper's — objects with a name, a centre and a polygon —
+    # empty until a scenario arms one, so the empty-plate surfaces stay
+    # the kickoff state they were.
+    "exclude_object": {"objects": [], "excluded_objects": [], "current_object": None},
 }
 
 
@@ -175,7 +181,7 @@ class PrinterState:
         # sim_arm/sim_set refuse on these.
         self.unknown_keys = []
         try:
-            directory = tempfile.mkdtemp(prefix="mpf-frames-")
+            directory = tempfile.mkdtemp(prefix="mpfxtest-frames-")
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=2",

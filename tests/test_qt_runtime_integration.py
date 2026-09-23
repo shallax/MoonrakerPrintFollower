@@ -2033,7 +2033,7 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         return module, download
 
     def _save_target(self, name="saved.gcode", payload=None):
-        directory = tempfile.mkdtemp(prefix="mpf-save-")
+        directory = tempfile.mkdtemp(prefix="mpfxtest-save-")
         target = os.path.join(directory, name)
         if payload is not None:
             with open(target, "w", encoding="utf-8") as handle:
@@ -2069,7 +2069,7 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         # End to end through the streamed lane: the temp file lands at
         # the picked path, an existing file is replaced, and nothing of
         # the transfer survives beside it.
-        directory = tempfile.mkdtemp(prefix="mpf-save-")
+        directory = tempfile.mkdtemp(prefix="mpfxtest-save-")
         target = os.path.join(directory, "saved.gcode")
         with open(target, "w", encoding="utf-8") as handle:
             handle.write("OLD\n")

@@ -72,7 +72,7 @@ def _chord_error(points, centre_x, centre_y, radius):
 
 
 def _write(gcode: str, suffix=".gcode") -> str:
-    handle = tempfile.NamedTemporaryFile(prefix="mpf-arc-", suffix=suffix, delete=False)
+    handle = tempfile.NamedTemporaryFile(prefix="mpfxtest-arc-", suffix=suffix, delete=False)
     handle.write(gcode.encode("ascii"))
     handle.close()
     return handle.name
@@ -551,7 +551,7 @@ class ArcCacheTests(unittest.TestCase):
     masquerade as one that does."""
 
     def setUp(self):
-        self.directory = tempfile.mkdtemp(prefix="mpf-arc-cache-")
+        self.directory = tempfile.mkdtemp(prefix="mpfxtest-arc-cache-")
         self.addCleanup(self._cleanup)
         self.identity = RemoteFileIdentity("arcs.gcode", 4096, 1.0, "id-arcs")
         self.cache = PersistentIndexCache(self.directory)

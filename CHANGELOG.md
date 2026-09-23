@@ -50,6 +50,28 @@ disk.
   **Keep toolhead centred** hold the live position at a zoom; and
   Detach/Attach is explicit. The view re-rasters once the interaction
   settles instead of on every tick.
+- **The follower tracks the print's real position.** The live layer's
+  motion arrays now hydrate for every layer the follower serves — a
+  cache-served layer used to keep them empty forever, and the live
+  progress fell back to a byte-count estimate that drifted, stalled,
+  jumped and overshot. The stall-and-snap cycles are gone: the fill
+  tracks the toolhead on the real geometry.
+- **The follower follows on cadences, not per poll.** While attached,
+  the warm navigation raster bakes at most once every three seconds —
+  stamped when the bake starts, so a slow render can never starve the
+  schedule — and the printed prefix checkpoints every five seconds
+  while the QML paints the tail between them. Attaching no longer
+  re-renders the plate on every update.
+- **Panning freezes the picture, not the toolhead.** While a drag is
+  held, new lines stop painting and the view stays on the warm
+  raster; the toolhead dot keeps moving — the one exception.
+  Releasing the drag is the single resume trigger: the picture catches
+  up with the print and the raster updates return. The lines printed
+  since the raster's last bake ride the pan as a carried tail painted
+  at the raster's own resolution, so the pan starts on the first
+  movement with the complete current picture — no snap-back, no
+  dead-start — and two quick pans in a row can no longer wedge the
+  drags.
 - **The prepared geometry gets its own home.** Each printer's
   prepared layers and G-code index share one folder per print under
   that machine's own cache namespace: a print reopened from the
@@ -69,9 +91,11 @@ disk.
   re-arms the window, and the Temps readouts still follow the slider —
   the chart can read fresher than the numbers above it.
 - **Fixes:** rapid X/Y jog taps can no longer overshoot their maxima
-  (the projections are per axis now), and the settings dialog's
-  sliders grab the handle from either side and keep the keyboard
-  while a save applies.
+  (the projections are per axis now), the settings dialog's sliders
+  grab the handle from either side and keep the keyboard while a save
+  applies, and zooming the follower no longer freezes its updates
+  after the zoom settles — a wheel-only gesture had no release to
+  resume the publications with.
 
 ## 4.5.0
 

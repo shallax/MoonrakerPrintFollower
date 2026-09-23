@@ -3168,7 +3168,9 @@ Component {
                             "split": root.printer.plateSplit,
                             "anchor": root.printer.plateProgressAnchor,
                             "method": "motion index",
-                            "navigationData": root.printer.plateNavigationData
+                            "navigationData": root.printer.plateNavigationData,
+                            "navigationSplit": root.printer.plateNavigationSplit,
+                            "navigationBacking": root.printer.plateNavigationBacking
                         }) : null
                     dot: root.printer != null ? root.printer.plateDot : null
                     // The persisted global view settings (the live
