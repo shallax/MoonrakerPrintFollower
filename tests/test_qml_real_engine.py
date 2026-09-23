@@ -4423,11 +4423,24 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(face.property("_textureReady"),
                         "the settled canvas never delivered")
         print("reverse-scrub settled diffs vs direct:", diffs)
+        # The bound is a FRACTION of the samples, not a fixed count. An
+        # antialiased fringe is the platform's rasteriser, and macOS
+        # shades these fringes further than this container does — 15
+        # sampled pixels against a fixed 8, on the same composition,
+        # which made this leg alternate red and green on an unchanged
+        # tree. Real composition drift is a different shape: a wrong
+        # split or an untrimmed canvas moves a REGION, orders of
+        # magnitude more samples than a fringe, so 0.2% still catches
+        # everything this census exists to catch.
+        sampled = (len(range(0, int(face.height()), 4))
+                   * len(range(0, int(face.width()), 4)))
+        allowed = max(8, sampled // 500)
         for name, diff in diffs.items():
-            self.assertLessEqual(diff, 8,
+            self.assertLessEqual(diff, allowed,
                                  "%s settled to a different picture "
-                                 "(%d sampled pixels differ beyond "
-                                 "the antialias tolerance)" % (name, diff))
+                                 "(%d of %d sampled pixels differ beyond "
+                                 "the antialias tolerance, limit %d)"
+                                 % (name, diff, sampled, allowed))
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])

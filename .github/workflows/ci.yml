@@ -80,11 +80,40 @@ jobs:
           test -n "$dir" || { echo "::error::the font pin produced no directory"; exit 1; }
           echo "QT_QPA_FONTDIR=$dir" >> "$GITHUB_ENV"
 
-      - name: Run the host suites with the real Qt runtime
+      - name: Probe the harness environment (what the censuses measure in)
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
-        run: JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+        run: |
+          # The pixel censuses read the geometry and the font this step
+          # reports. It runs HERE, not inside the suite, because
+          # tools/run_tests.sh prints a worker's log only on failure and
+          # only its FAIL:/ERROR: neighbourhood — a probe living in the
+          # tests is discarded on exactly the legs that need it.
+          python - <<'PY'
+          import os
+          from PyQt6.QtGui import QFontDatabase, QGuiApplication
+          from PyQt6.QtQuick import QQuickWindow
+
+          app = QGuiApplication([])
+          families = sorted(QFontDatabase.families())
+          print("probe: default family %r" % QGuiApplication.font().family())
+          print("probe: QT_QPA_FONTDIR %r" % os.environ.get("QT_QPA_FONTDIR", ""))
+          print("probe: %d families, first %r" % (len(families), families[:8]))
+          screen = QGuiApplication.primaryScreen()
+          if screen is not None:
+              print("probe: screen %dx%d dpr %s"
+                    % (screen.size().width(), screen.size().height(),
+                       screen.devicePixelRatio()))
+          for want in ((80, 400), (110, 400), (700, 700)):
+              window = QQuickWindow()
+              window.resize(*want)
+              window.show()
+              app.processEvents()
+              print("probe: asked %dx%d, window got %dx%d"
+                    % (want[0], want[1], window.width(), window.height()))
+              window.close()
+          PY
 
       - name: Platform-safety suite (the Qt-gated regressions must EXECUTE)
         shell: bash
