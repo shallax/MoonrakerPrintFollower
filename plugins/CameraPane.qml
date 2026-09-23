@@ -227,8 +227,11 @@ Cura.RoundedRectangle {
     // own floor, "0.50 fps" (44.5 px of small font on the capture theme),
     // is what sets it (the live report: the floor's value ran out of the
     // bar). One width for both faces, so the zoom scale's readout rides
-    // the same box.
-    readonly property real cameraBarWidth: 52 * screenScaleFactor
+    // the same box. The 6 is the bar's own 1px border each side plus the
+    // 4 the readout keeps clear; the 52 is the floor the graduations
+    // need, and it still wins on the capture font — a host whose font is
+    // wider takes the bar past it instead of clipping the readout.
+    readonly property real cameraBarWidth: Math.max(52 * screenScaleFactor, cameraFpsReadoutLabel.contentWidth + 6 * screenScaleFactor, cameraZoomReadoutLabel.contentWidth + 6 * screenScaleFactor)
     // The graduations' own baseline: the height the bar is worth showing
     // at, never under 90 either. The fallback rule is measured against
     // THIS, not against the bar's live height, so a taller pane grows the
@@ -1238,6 +1241,7 @@ Cura.RoundedRectangle {
                             anchors.right: parent.right
                             height: 16 * screenScaleFactor
                             UM.Label {
+                                id: cameraZoomReadoutLabel
                                 objectName: "cameraZoomReadout"
                                 anchors.centerIn: parent
                                 text: Math.round(root.cameraZoom * 100) + "%"
@@ -1360,6 +1364,7 @@ Cura.RoundedRectangle {
                             anchors.right: parent.right
                             height: 16 * screenScaleFactor
                             UM.Label {
+                                id: cameraFpsReadoutLabel
                                 objectName: "cameraFpsReadout"
                                 anchors.centerIn: parent
                                 text: root.fpsText(root.cameraFps)
