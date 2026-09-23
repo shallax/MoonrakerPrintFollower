@@ -315,6 +315,20 @@ if QT_AVAILABLE:
 _APPLICATION = {"app": None, "engine": None, "theme": None, "messages": []}
 
 
+def qml_error_report(component, tail=40):
+    """A component's errors, readable.
+
+    PyQt6's QQmlError has no usable __str__ — it falls back to the
+    object repr, so a leg we cannot re-run locally reports four
+    pointers instead of the message naming the offending file and
+    line. toString() carries it. The captured Qt messages ride along:
+    a component that returns None has usually logged its cause as a
+    warning first (the tail, since a long file accumulates them)."""
+    lines = [error.toString() for error in component.errors()]
+    lines.extend(_APPLICATION["messages"][-tail:])
+    return "\n".join(lines) or "<no errors reported>"
+
+
 def _start_application():
     """The application, engine and capture theme — built once for the
     whole file (the application cannot be replaced mid-process)."""
@@ -373,13 +387,13 @@ class RealEngineTestCase(unittest.TestCase):
         component = QQmlComponent(self.engine)
         component.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / filename)))
         document = component.create()
-        self.assertIsNotNone(document, [str(error) for error in component.errors()])
+        self.assertIsNotNone(document, qml_error_report(component))
         if isinstance(document, QQmlComponent):
             # A Component-rooted document (MoonrakerMonitor.qml) creates
             # the component; the instance is one more call away.
             component = document
             document = component.create()
-            self.assertIsNotNone(document, [str(error) for error in component.errors()])
+            self.assertIsNotNone(document, qml_error_report(component))
         self.addCleanup(document.deleteLater)
         return document
 
@@ -8176,7 +8190,7 @@ QtObject {
             component.setData(self.CALLER, QUrl.fromLocalFile(
                 str(ROOT / "plugins" / "follower-view-caller.qml")))
             self.caller = component.create()
-            self.assertIsNotNone(self.caller, [str(error) for error in component.errors()])
+            self.assertIsNotNone(self.caller, qml_error_report(component))
             self.addCleanup(self.caller.deleteLater)
             self.caller.setProperty("printer", self.model)
 

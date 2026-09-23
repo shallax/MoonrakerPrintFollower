@@ -4496,7 +4496,7 @@ Item {
     }
 }
 """.encode(), QUrl("sweep-pin.qml"))
-        self.assertFalse(component.isError(), [str(e) for e in component.errors()])
+        self.assertFalse(component.isError(), [e.toString() for e in component.errors()])
         item = component.create()
         self.assertIsNotNone(item)
         from PyQt6.QtCore import QObject

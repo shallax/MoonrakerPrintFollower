@@ -104,7 +104,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         comp = QQmlComponent(cls.engine)
         comp.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / "PlateProgressFace.qml")))
         cls.face = comp.create()
-        assert cls.face is not None, [str(e) for e in comp.errors()]
+        assert cls.face is not None, _parent.qml_error_report(comp)
         # The model must precede the sizing: PlateCanvas replots on
         # every resize and needs the bed dimensions at that moment.
         cls.face.setProperty("printerModel", cls._printer)
