@@ -934,7 +934,17 @@ class ReExpansionGuardTests(RealEngineTestCase):
                          freed < 220.0 or status_folded,
                          "the information pane's fold does not follow the camera's room")
         if status_folded:
-            self.assertLess(monitor.property("statusOpenWidth"), 220.0,
+            # The status pane's own room cannot be asserted as a value:
+            # statusOpenWidth credits THIS pane's fold back out of the
+            # camera, so it returns to the widened camera less the cost
+            # the moment the fold lands and reads ~430 wherever a fold
+            # is legitimate. Measured on this container's own crossing —
+            # 433 at 965, 428 at 960, 418 at 950, every one of them with
+            # the information pane folded and the fold correct. The lock
+            # this branch guards is the CASCADE: a status fold that
+            # stands with the information pane open is the click-twice
+            # hole (the rule's own `infoWasCollapsed || statusWasFolded`).
+            self.assertTrue(monitor.property("infoAutoCollapsed"),
                             "the status pane folded with the camera free")
         else:
             self.assertFalse(monitor.property("infoCollapsed"))
