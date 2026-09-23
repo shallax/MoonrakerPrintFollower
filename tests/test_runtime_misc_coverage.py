@@ -1305,7 +1305,13 @@ class FileDownloadTests(unittest.TestCase):
             payload = download.progress()
             self.assertIsNotNone(payload, "the progress window vanished before the copy finished")
             self.assertEqual(payload["percent"], 100)
-            deadline = time.monotonic() + 3.0
+            # A hang guard, not a budget: the invariant is that the
+            # owner thread CAN reach its loop while the copy is held,
+            # and on a starved runner a 3 s budget is a machine-speed
+            # assertion instead (the loaded 2-CPU rig's "the copy held
+            # the owner thread: the event loop never ran"). The loop
+            # gets scheduled when the machine gets round to it.
+            deadline = time.monotonic() + 15.0
             while not release.is_set() and time.monotonic() < deadline:
                 self.qt.events()
                 time.sleep(0.005)
