@@ -118,21 +118,32 @@ class RendererParityTests(_parent.RealEngineTestCase):
         face.setProperty("displayPanX", 300 - (ox + 4.0 * fx))
         face.setProperty("displayPanY", 300 - (oy + 4.0 * fy))
         face.setProperty("_interactionActive", True)
+        # Arrival BEFORE agreement. Two grabs of a canvas that has not
+        # painted yet agree perfectly, so a settle test on its own
+        # accepts the blank frame and the census then reads an empty
+        # scene — the CI's "drew nothing" under load. The band is the
+        # evidence: agreement counts only once the stroke is in it.
+        import time
+
+        def band(frame):
+            base = frame.pixel(ox + 8, oy + 8)
+            return [max(abs(((frame.pixel(300, r) >> s) & 0xFF)
+                            - ((base >> s) & 0xFF)) for s in (0, 8, 16))
+                    for r in range(292, 309)]
+
+        deadline = time.monotonic() + 3.0
         previous = None
         image = window.grabWindow()
-        for _ in range(30):
+        per_row = band(image)
+        while time.monotonic() < deadline:
             self._pump_ms(30)
             image = window.grabWindow()
-            if previous is not None and (_parent.PlateFaceRenderTests._sample(image)
-                                         == _parent.PlateFaceRenderTests._sample(previous)):
+            per_row = band(image)
+            if max(per_row) > 0 and previous is not None and (
+                    _parent.PlateFaceRenderTests._sample(image)
+                    == _parent.PlateFaceRenderTests._sample(previous)):
                 break
             previous = image
-        back = image.pixel(ox + 8, oy + 8)
-        per_row = []
-        for r in range(292, 309):
-            px = image.pixel(300, r)
-            per_row.append(max(abs(((px >> s) & 0xFF) - ((back >> s) & 0xFF))
-                               for s in (0, 8, 16)))
         peak = max(per_row)
         self.assertGreater(peak, 0, "the presented zoomed raster drew nothing")
         inked = [v for v in per_row if v > 0.05 * peak]
