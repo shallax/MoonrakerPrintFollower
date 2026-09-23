@@ -1519,7 +1519,17 @@ Item {
         Image {
             id: retainedPrefixImage
             anchors.fill: parent
-            visible: root._retainedPrefixSource !== "" && !root._compositionReady() && root._retainedPrefixApplies()
+            // The interior below the boundary is owned by the live
+            // prefix's PIXELS, not by its composition bookkeeping: the
+            // moment its Image has none (a source swap mid-load, a
+            // refresh at the same boundary) the record must stand in
+            // the SAME evaluation, so the readiness is read from the
+            // live image's own status — a one-way mirror, never a
+            // handler-fed flag that lands a beat late. A delivered
+            // FULL bitmap still owns everything itself: the record
+            // must not stack its pixels over it (the additive-AA
+            // doubling).
+            visible: root._retainedPrefixSource !== "" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversFrom === 0)
             source: root._retainedPrefixSource
             smooth: false
             onVisibleChanged: root._retainedStanding = visible
@@ -1780,6 +1790,22 @@ Item {
                 // read as a full one (the prefix would trust a hole).
                 if (fresh) {
                     root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
+                }
+                // The freeze rides the paint, not only the delivery: a
+                // bitmap starting exactly at the prefix's boundary is
+                // the composition formed, and the pixels it was built
+                // against must be held from HERE. A boundary advance
+                // published while this paint is in flight would
+                // otherwise replace the live image's source with a
+                // still-loading one under an EMPTY record — and the
+                // interior below the boundary belongs to that record
+                // the moment the live image blinks. The delivery's own
+                // freeze (the joint readiness) still covers the paints
+                // that land before the prefix's upload.
+                if (from > 0 && from === prefixFrom && layer.prefixData !== undefined && layer.prefixData !== "" && (root._retainedPrefixSource !== layer.prefixData || root._retainedPrefixSplit !== layer.prefixSplit || root._retainedPrefixAnchor !== root.progress.anchor)) {
+                    root._retainedPrefixSource = layer.prefixData;
+                    root._retainedPrefixSplit = layer.prefixSplit;
+                    root._retainedPrefixAnchor = root.progress.anchor;
                 }
                 // The travels: the lines only. CURRENT layer only, and
                 // only where the toolhead has already passed (the live

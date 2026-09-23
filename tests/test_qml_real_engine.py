@@ -5399,7 +5399,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
             # still overwrite the claim — re-assert it through the
             # handover so the transition completes.
             layer.set_expected_key("fixture-key")
-            self.pump(5)
+            # One pump per frame: the gap this census exists to catch
+            # is one evaluation wide (the source swap blanking the
+            # live prefix), so a coarser cadence samples straight past
+            # it. Every beat of the handover is examined.
+            self.pump(1)
             grab = window.grabWindow()
             self.assertGreater(
                 self._stroke_ink(grab, face, window, census_plot, 75.0, 125.0),

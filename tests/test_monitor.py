@@ -5061,8 +5061,11 @@ Item {
             "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
             # The retained previous prefix (the atomic handover): the
             # last uploaded prefix's pixels stand while the live
-            # replacement loads — never torn down early.
-            "visible: root._retainedPrefixSource !== \"\" && !root._compositionReady() && root._retainedPrefixApplies()",
+            # replacement loads — never torn down early. Its visibility
+            # reads the live image's OWN readiness, so the swap that
+            # blanks that image and the record's stand are one
+            # evaluation (never a beat apart).
+            "visible: root._retainedPrefixSource !== \"\" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversFrom === 0)",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

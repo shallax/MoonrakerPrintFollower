@@ -715,19 +715,36 @@ class DecodeThrottleTests(unittest.TestCase):
     def test_a_low_rate_throttles_the_decode_and_never_the_parse(self):
         # The saving is the decode. The buffer still drains at the
         # wire's pace (every frame parses), the tick is what follows
-        # the rate, and the newest frame is the one that decodes.
+        # the rate, and the newest frame is the one that decodes. The
+        # rate is read off the timer's own interval, "not yet" is read
+        # with no event loop run at all, and the single tick is driven
+        # through the timer's signal — a wall-clock wait would let a
+        # loaded runner land the tick inside it.
         self.item.setTargetFps(2.0)  # one render tick every 500 ms
         self._start()
+        self.assertEqual(self.item._render_timer.interval(), 500,
+                         "the render tick follows the requested rate")
+        self.assertTrue(self.item._render_timer.isActive(),
+                        "and the tick runs for as long as the stream does")
         frames = [_jpeg(40, 30, shade=40 + index) for index in range(9)]
         self._reply().deliver(b"".join(_multipart(frame) for frame in frames))
         self.assertEqual(self.item.framesParsed, 9, "the parse is never throttled")
-        self.qt.events(200)  # inside the throttle's own interval
+        # No event loop has run since the timer started, so no tick can
+        # have landed: this zero is the parser's own doing.
         self.assertEqual(self.item.framesDisplayed, 0,
-                         "the render tick follows the requested rate")
-        self.qt.events(500)  # one tick lands
-        self.assertEqual(self.item.framesDisplayed, 1, "and decodes one frame")
+                         "a parsed frame is not a decode")
         self.assertEqual(self.item.framesDropped, 8,
                          "the superseded eight are counted as dropped")
+        # The tick itself, through the timer's signal with the timer
+        # stopped by its first fire: exactly one lands, however loaded
+        # the machine is and however long this loop runs.
+        self.item._render_timer.timeout.connect(self.item._render_timer.stop)
+        self.item._render_timer.start(0)
+        self.qt.events(100)
+        self.assertEqual(self.item.framesDisplayed, 1, "and decodes one frame")
+        self.assertFalse(self.item._render_timer.isActive(),
+                         "the tick was driven, not waited out")
+        self.assertEqual(self.item.framesDropped, 8, "the tick drops nothing")
         self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
                          "the newest frame wins the display")
         self.assertEqual(self._reply()._aborted, 0, "no reconnect anywhere")
