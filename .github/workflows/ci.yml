@@ -39,6 +39,47 @@ jobs:
       - name: Install the pinned Qt runtime (Cura supplies Qt in production)
         run: python -m pip install PyQt6==6.11.0
 
+      - name: Pin the harness font (the dev container pins fonts-dejavu 2.37)
+        shell: bash
+        run: |
+          # The dev container pins fonts-dejavu-core=2.37 so text metrics
+          # are fixed. The runners carry no such pin, and their own fonts
+          # are wider — which moves every text-driven layout these suites
+          # measure (a frame laid out at the mount less its chrome, a
+          # fold crossing that shifts with the typeface). The suites run
+          # offscreen, where Qt's basic font database honours
+          # QT_QPA_FONTDIR, so the same version is pinned here.
+          #
+          # Python owns the path: RUNNER_TEMP is a Windows-style path on
+          # the Windows runner and bash would mangle its backslashes, so
+          # the directory is created in native form and printed back.
+          # stdlib only — unzip is not guaranteed on either runner.
+          dir="$(python - <<'PY'
+          import io, os, sys, tempfile, urllib.request, zipfile
+
+          url = ("https://github.com/dejavu-fonts/dejavu-fonts/releases/"
+                 "download/version_2_37/dejavu-fonts-ttf-2.37.zip")
+          target = os.path.join(tempfile.gettempdir(), "mpf-fonts")
+          os.makedirs(target, exist_ok=True)
+          blob = urllib.request.urlopen(url, timeout=60).read()
+          archive = zipfile.ZipFile(io.BytesIO(blob))
+          written = []
+          for name in archive.namelist():
+              base = os.path.basename(name)
+              if base.startswith("DejaVuSans") and base.endswith(".ttf"):
+                  with open(os.path.join(target, base), "wb") as handle:
+                      handle.write(archive.read(name))
+                  written.append(base)
+          if not written:
+              raise SystemExit("no DejaVuSans ttf in the release archive")
+          sys.stderr.write("pinned: %s\n" % ", ".join(sorted(written)))
+          sys.stdout.write(target)
+          PY
+          )"
+          echo "font dir: $dir"
+          test -n "$dir" || { echo "::error::the font pin produced no directory"; exit 1; }
+          echo "QT_QPA_FONTDIR=$dir" >> "$GITHUB_ENV"
+
       - name: Run the host suites with the real Qt runtime
         shell: bash
         env:
