@@ -1,5 +1,5 @@
 # Native-harness spike: a DISPOSABLE probe that
-# answers two questions the Linux-only UI harness (tools/ui_test.sh —
+# answers two questions the Linux-only UI harness (tools/ui_test.sh -
 # AppImage + Docker + Xvfb, all by construction) cannot answer on a dev
 # box, BEFORE any port of it to native runners is attempted:
 #
@@ -10,16 +10,16 @@
 #       and otherwise falls back to X64, which on an arm64 host executes
 #       only through Rosetta 2. The decision is taken from the release's
 #       own runtime asset list, because the published assets differ
-#       across the 5.7-5.13 sweep — the same rule the eventual fetch
+#       across the 5.7-5.13 sweep - the same rule the eventual fetch
 #       layer needs per version, so this is its seed, not a throwaway.
 #       Forcing x64 on arm64 is the deliberate Rosetta experiment.
-#   Q2  Can a running GUI app actually be SEEN on those runners — a
+#   Q2  Can a running GUI app actually be SEEN on those runners - a
 #       still AND a video of the session? The claim that the hosted
 #       runners have no usable GUI is being corrected here by evidence,
 #       not by assumption. Video is ffmpeg on every platform, replicating
-#       the harness's own capture (tests/harness/runner.py:247-250) —
+#       the harness's own capture (tests/harness/runner.py:247-250) -
 #       same flags, same 15 fps, same scenario.mp4 naming, started before
-#       the launch and killed at teardown — so a native run's artifacts
+#       the launch and killed at teardown - so a native run's artifacts
 #       stay comparable with the Linux runs. Only the INPUT DEVICE is
 #       per-platform: x11grab (Linux) / avfoundation (macOS) / gdigrab
 #       (Windows). Stills come both from the platform's own API and in
@@ -29,9 +29,9 @@
 #       present-with-version or absent, installed when the image lacks it,
 #       and written as a row of the dependency audit
 #       (spike-evidence/dependency-audit.txt). Anything that has to run
-#       inside Cura's process must use Cura's OWN bundled Python and Qt —
+#       inside Cura's process must use Cura's OWN bundled Python and Qt -
 #       located by searching the installed bundle, never by assuming a
-#       path — the same spirit as the Linux harness extracting Cura's
+#       path - the same spirit as the Linux harness extracting Cura's
 #       matching PyQt6 wheels rather than trusting the host Python. That
 #       table is the port's provisioning checklist per platform.
 #
@@ -42,16 +42,25 @@
 # artifact uploads under `if: always()` so a failed leg still ships the
 # log that says WHY.
 #
+# ASCII ONLY in this file, and the PowerShell steps are why: they run under
+# shell: powershell, which is Windows PowerShell 5.1, and it reads the
+# runner's temp .ps1 with the ANSI codepage rather than UTF-8. A UTF-8 em
+# dash decodes there to byte pairs whose second half IS a valid closing
+# double quote, so strings end early and the block dies at PARSE time -
+# before a line of it runs, and with no log to show for it. That is what
+# killed this file's first run: whole-file rule, one check, and a parse of
+# each extracted block before a push rather than after a red run.
+#
 # NON-GATING BY DESIGN. This workflow runs on ordinary CI events so the
 # answer arrives without anyone remembering to ask for it, but it must
 # NEVER be added to a required-check set or a merge gate: its expected
 # failure mode is "the installer would not run on a hosted runner", which
 # is a finding about the runner, not a broken branch. Do not promote it.
-# It stays its own file for the same reason — disposable, trivially
+# It stays its own file for the same reason - disposable, trivially
 # deleted, never a job inside ci.yml.
 #
 # Trigger scope: pull_request is unscoped, so a proposed change gets the
-# answer. push is scoped to main and the release branches on purpose —
+# answer. push is scoped to main and the release branches on purpose -
 # firing two full GUI legs from every branch tip would put real queue
 # pressure on the scarcest hosted runners for branches nobody is
 # waiting on.
@@ -159,7 +168,7 @@ jobs:
               echo "ROSETTA: OK (an x86_64 binary executed)"
               echo "SPIKE-Q1: rosetta=OK" | tee -a "$EVIDENCE/verdict.txt"
             else
-              echo "ROSETTA: FAILED — no x86_64 execution available"
+              echo "ROSETTA: FAILED - no x86_64 execution available"
               echo "SPIKE-Q1: rosetta=FAILED" | tee -a "$EVIDENCE/verdict.txt"
             fi
             echo
@@ -207,12 +216,12 @@ jobs:
           LOG="$EVIDENCE/rosetta-install.txt"
           {
             if arch -x86_64 /usr/bin/true 2>/dev/null; then
-              echo "Rosetta already works — nothing to install."
+              echo "Rosetta already works - nothing to install."
             else
               # If the arm64 image ships without Rosetta, the x64 dmg leg
               # is unanswerable until this runs. sudo is passwordless on
               # the hosted runners.
-              echo "Rosetta absent — attempting: softwareupdate --install-rosetta"
+              echo "Rosetta absent - attempting: softwareupdate --install-rosetta"
               sudo softwareupdate --install-rosetta --agree-to-license
               echo "softwareupdate exit: $?"
               if arch -x86_64 /usr/bin/true 2>&1; then
@@ -228,7 +237,7 @@ jobs:
           } 2>&1 | tee "$LOG"
           exit 0
 
-      - name: "Q3 evidence: dependency audit — check, then provision (macOS)"
+      - name: "Q3 evidence: dependency audit - check, then provision (macOS)"
         # The image is assumed to carry nothing: every external tool this
         # leg runs is probed, recorded as present-with-version or absent,
         # provisioned when absent, and written as a row of the audit. A
@@ -291,7 +300,7 @@ jobs:
                 fi
                 sleep 2
               done
-              echo "  ! '$*' exceeded ${limit}s — killing it"
+              echo "  ! '$*' exceeded ${limit}s - killing it"
               kill -9 "$pid" 2>/dev/null
               wait "$pid" 2>/dev/null
               return 124
@@ -324,7 +333,7 @@ jobs:
             if command -v unzip >/dev/null 2>&1; then
               have "unzip" "extracts .zip archives (the Linux fetch uses it for wheels)" unzip -v
             elif [ "$HAVE_BREW" = yes ]; then
-              echo "unzip: ABSENT — provisioning it (brew install unzip)"
+              echo "unzip: ABSENT - provisioning it (brew install unzip)"
               bounded "$INSTALL_BUDGET" brew install unzip
               echo "brew install unzip exit: $?"
               if command -v unzip >/dev/null 2>&1; then
@@ -358,12 +367,12 @@ jobs:
             echo "=== python (a native port drives an interpreter) ==="
             PY3="$(command -v python3 2>/dev/null)"
             if [ -z "$PY3" ]; then
-              echo "no python3 at all — provisioning one (brew install python3)"
+              echo "no python3 at all - provisioning one (brew install python3)"
               if [ "$HAVE_BREW" = yes ]; then
                 bounded "$INSTALL_BUDGET" brew install python3
                 echo "brew install python3 exit: $?"
               else
-                echo "brew: ABSENT too — there is no install path on this image"
+                echo "brew: ABSENT too - there is no install path on this image"
               fi
               PY3="$(command -v python3 2>/dev/null)"
               if [ -n "$PY3" ]; then
@@ -396,12 +405,12 @@ jobs:
                 "PREINSTALLED" "$(ffmpeg -version 2>&1 | head -1)" "$(command -v ffmpeg)"
             else
               FF_WAS_MISSING=yes
-              echo "ffmpeg: ABSENT — provisioning it (brew install ffmpeg)"
+              echo "ffmpeg: ABSENT - provisioning it (brew install ffmpeg)"
               if [ "$HAVE_BREW" = yes ]; then
                 bounded "$INSTALL_BUDGET" brew install ffmpeg
                 echo "brew install ffmpeg exit: $?"
               else
-                echo "brew: ABSENT too — there is no install path on this image"
+                echo "brew: ABSENT too - there is no install path on this image"
               fi
               if command -v ffmpeg >/dev/null 2>&1; then
                 ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
@@ -526,7 +535,7 @@ jobs:
           W "DISPLAY=$env:DISPLAY"
           exit 0
 
-      - name: "Q3 evidence: dependency audit — check, then provision (Windows)"
+      - name: "Q3 evidence: dependency audit - check, then provision (Windows)"
         # The same contract as the macOS audit: probe first, record
         # present-with-version or absent, provision what the image lacks,
         # one row per dependency. A dependency that cannot be installed is
@@ -715,7 +724,7 @@ jobs:
             echo "--- every asset the release actually publishes ---"
             curl -sSL --fail --max-time 60 "$API" >"$EVIDENCE/cura-release.json"
             if [ ! -s "$EVIDENCE/cura-release.json" ]; then
-              echo "release listing unavailable — the arch policy cannot be applied"
+              echo "release listing unavailable - the arch policy cannot be applied"
               echo "SPIKE-Q1: download=FAILED (release listing unavailable)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 1
@@ -724,7 +733,7 @@ jobs:
               "$EVIDENCE/cura-release.json" | sort | tee "$ASSETS"
             echo
             # The macOS arch policy, driven by the RUNTIME asset list of the
-            # requested version — never by a hardcoded per-version table.
+            # requested version - never by a hardcoded per-version table.
             # The sweep spans 5.7-5.13 and the published assets differ
             # across it, so this rule is exactly what the eventual fetch
             # layer needs per version: the spike is the seed of it, not a
@@ -769,11 +778,11 @@ jobs:
                 ;;
             esac
             if [ -z "$ARCH_TAG" ]; then
-              echo "SPIKE-Q1: macos-arch=FAILED (${REQUEST} is unpublished for ${VERSION} — see the list above)" \
+              echo "SPIKE-Q1: macos-arch=FAILED (${REQUEST} is unpublished for ${VERSION} - see the list above)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 1
             fi
-            echo "chosen: $ARCH_TAG — $WHY"
+            echo "chosen: $ARCH_TAG - $WHY"
             printf '%s\n' "$ARCH_TAG" >"$DECISION"
             printf 'SPIKE-Q1: macos-arch=%s (%s)\n' "$ARCH_TAG" "$WHY" \
               | tee -a "$EVIDENCE/verdict.txt"
@@ -784,16 +793,16 @@ jobs:
               echo "host arch: $HOST_ARCH"
               if [ "$HOST_ARCH" = arm64 ]; then
                 if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
-                  echo "Rosetta is not working — installing it: an x64 Cura cannot"
+                  echo "Rosetta is not working - installing it: an x64 Cura cannot"
                   echo "execute here without it"
                   sudo softwareupdate --install-rosetta --agree-to-license
                   echo "softwareupdate exit: $?"
                 fi
                 if arch -x86_64 /usr/bin/true 2>&1; then
-                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=OK — Rosetta is what makes this binary execute" \
+                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=OK - Rosetta is what makes this binary execute" \
                     | tee -a "$EVIDENCE/verdict.txt"
                 else
-                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=FAILED — this binary cannot execute here" \
+                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=FAILED - this binary cannot execute here" \
                     | tee -a "$EVIDENCE/verdict.txt"
                 fi
               else
@@ -889,7 +898,7 @@ jobs:
           V ("SPIKE-Q1: download=OK ({0:N1} MB)" -f ($f.Length / 1MB))
           exit 0
 
-      - name: "Q1 evidence: silent install (macOS — mount the dmg, copy the .app)"
+      - name: "Q1 evidence: silent install (macOS - mount the dmg, copy the .app)"
         if: runner.os == 'macOS'
         continue-on-error: true
         shell: bash
@@ -899,11 +908,11 @@ jobs:
           VERSION="${CURA_VERSION:-5.13.0}"
           LOG="$EVIDENCE/install-macos.txt"
           # The arch is the download step's decision (auto or forced, taken
-          # from the release's own asset list) — never re-derived here, so
+          # from the release's own asset list) - never re-derived here, so
           # the two steps cannot disagree about which dmg is on disk.
           ARCH_TAG="$(cat "$EVIDENCE/macos-arch.txt" 2>/dev/null)"
           if [ -z "$ARCH_TAG" ]; then
-            echo "the download step recorded no arch decision — nothing to install"
+            echo "the download step recorded no arch decision - nothing to install"
             echo "SPIKE-Q1: install=SKIPPED (no arch decision)" \
               | tee -a "$EVIDENCE/verdict.txt"
             exit 0
@@ -978,7 +987,7 @@ jobs:
               waited=$((waited + 2))
             done
             if [ "$waited" -ge 60 ]; then
-              echo "  ! still attaching after 60 s — killing it: a licence"
+              echo "  ! still attaching after 60 s - killing it: a licence"
               echo "    viewer waiting for a click looks exactly like this"
               kill -9 "$pid" 2>/dev/null
               pkill -9 -f 'hdiutil attac[h]' 2>/dev/null
@@ -1017,7 +1026,7 @@ jobs:
             sudo hdiutil detach "$MOUNTED"
             echo "detach exit: $?"
             if [ -n "$(ls -A "$MOUNTED" 2>/dev/null)" ]; then
-              echo "still attached — retrying with -force"
+              echo "still attached - retrying with -force"
               sudo hdiutil detach -force "$MOUNTED"
               echo "detach -force exit: $?"
             fi
@@ -1026,7 +1035,7 @@ jobs:
           {
             echo "installing the ${ARCH_TAG} dmg the download step selected"
             if [ ! -f "$DMG" ]; then
-              echo "no dmg downloaded — install cannot proceed"
+              echo "no dmg downloaded - install cannot proceed"
               echo "SPIKE-Q1: install=SKIPPED (no dmg)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 0
@@ -1043,7 +1052,7 @@ jobs:
             ACCEPT_FLAG=""
             if grep -q -- '-acceptlicense' "$EVIDENCE/hdiutil-attach-help.txt"; then
               ACCEPT_FLAG=-acceptlicense
-              echo "-acceptlicense: SUPPORTED here — used on the first attempt"
+              echo "-acceptlicense: SUPPORTED here - used on the first attempt"
             else
               echo "-acceptlicense: not documented by this hdiutil; the licence"
               echo "is answered by feeding the prompt, and skipped if that fails"
@@ -1082,11 +1091,11 @@ jobs:
                 attach licence-stripped "" "$CDR_FILE" -mountpoint "$MNT"
                 if [ -n "$MOUNTED" ] && [ "$ATTACH_SLA" = yes ]; then
                   echo "SPIKE-Q1: dmg-sla=YES (the agreement cancelled the direct"
-                  echo "attach and the stripped copy mounted — it WAS the cause)" \
+                  echo "attach and the stripped copy mounted - it WAS the cause)" \
                     | tee -a "$EVIDENCE/verdict.txt"
                 fi
               else
-                echo "convert produced no image — the pristine dmg is all there is"
+                echo "convert produced no image - the pristine dmg is all there is"
               fi
             fi
 
@@ -1189,7 +1198,7 @@ jobs:
               echo "[audit] $1 | $3 | $4 | $5"
             }
             if [ ! -d "$APP" ]; then
-              echo "no bundle at $APP — its bundled runtime cannot be located"
+              echo "no bundle at $APP - its bundled runtime cannot be located"
               ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
                 "ABSENT" "<none>" "no bundle to search: the install step reports why"
               ar "Cura's bundled Qt/PyQt6" "the Qt Cura itself is linked against" \
@@ -1261,7 +1270,7 @@ jobs:
           } 2>&1 | tee "$LOG"
           exit 0
 
-      - name: "Q1 evidence: silent install (Windows — NSIS /S, then the WiX MSI /qn)"
+      - name: "Q1 evidence: silent install (Windows - NSIS /S, then the WiX MSI /qn)"
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: powershell
@@ -1403,14 +1412,14 @@ jobs:
               0       { 'success' }
               3010    { 'success, a restart is required' }
               1641    { 'success, the installer asked for a restart' }
-              1603    { 'fatal error during installation — the msi log names it' }
+              1603    { 'fatal error during installation - the msi log names it' }
               1618    { 'another installation is already in progress' }
               1619    { 'the package could not be opened' }
               1620    { 'the package is not a valid installation package' }
               1622    { 'the log file could not be opened' }
               1625    { 'installation forbidden by system policy' }
               1638    { 'another version of this product is already installed' }
-              1925    { 'insufficient privileges — elevation is required' }
+              1925    { 'insufficient privileges - elevation is required' }
               default { 'not a code this mapping knows' }
             }
           }
@@ -1434,7 +1443,7 @@ jobs:
           W "msiexec: $((Get-Command msiexec.exe -ErrorAction SilentlyContinue).Source)"
 
           if (-not (Test-Path -LiteralPath $exePath) -and -not (Test-Path -LiteralPath $msiPath)) {
-            W "neither installer is on disk — install cannot proceed"
+            W "neither installer is on disk - install cannot proceed"
             V "SPIKE-Q1: install=SKIPPED (no installer on disk)"
             exit 0
           }
@@ -1467,7 +1476,7 @@ jobs:
               }
             } else {
               $exeResult = 'the process never started, so nothing was installed'
-              W "the installer process never started — /S installed nothing"
+              W "the installer process never started - /S installed nothing"
             }
             $budget = if ($code -in @(0, 1641, 3010)) { 240 } else { 30 }
             $binary = Wait-ForCura 'NSIS /S' $budget
@@ -1487,7 +1496,7 @@ jobs:
             }
             if (-not (Test-Path -LiteralPath $msiPath)) {
               $msiResult = 'not attempted: the MSI could not be obtained'
-              W "no MSI on disk — the MSI attempt is skipped (see the curl output above)"
+              W "no MSI on disk - the MSI attempt is skipped (see the curl output above)"
             } else {
               $msiAbs = (Resolve-Path -LiteralPath $msiPath).Path
               $mf = Get-Item -LiteralPath $msiAbs
@@ -1507,7 +1516,7 @@ jobs:
               }
               $sw.Stop()
               $mcode = if ($mp) { $mp.ExitCode } else { $null }
-              W "exit code: $mcode — $(Msiexec-Meaning $mcode) (elapsed $([int]$sw.Elapsed.TotalSeconds) s)"
+              W "exit code: $mcode - $(Msiexec-Meaning $mcode) (elapsed $([int]$sw.Elapsed.TotalSeconds) s)"
               if ($null -eq $mcode) {
                 $msiResult = 'the msiexec process never started'
               } else {
@@ -1525,7 +1534,7 @@ jobs:
                   $bad | ForEach-Object { W "  $($_.Line.Trim())" }
                 }
               } else {
-                W "no msi log at $msiLog — msiexec never reached the point of writing one"
+                W "no msi log at $msiLog - msiexec never reached the point of writing one"
               }
               $budget = if ($mcode -in @(0, 1641, 3010)) { 240 } else { 30 }
               $binary = Wait-ForCura 'MSI /qn' $budget
@@ -1563,8 +1572,8 @@ jobs:
         # Same contract as the macOS audit: locate, never assume. Cura's
         # Windows build embeds its interpreter differently from the .app,
         # so what is reported here is whatever the install dir actually
-        # contains — python*.exe, a python3*.dll, Qt6Core*.dll and any
-        # PyQt6 metadata — and the interpreter is made to import PyQt6 so
+        # contains - python*.exe, a python3*.dll, Qt6Core*.dll and any
+        # PyQt6 metadata - and the interpreter is made to import PyQt6 so
         # the finding is a result, not a guess.
         if: runner.os == 'Windows'
         continue-on-error: true
@@ -1674,6 +1683,172 @@ jobs:
           Get-Content $audit | ForEach-Object { W $_ }
           exit 0
 
+      - name: "Q2 evidence: stop Cura raising the macOS local-network prompt"
+        # macOS raises a TCC consent alert ("... to find devices on local
+        # networks") as soon as an app starts mDNS discovery, and nothing on
+        # a runner can answer it: it stays on top of the window, so a
+        # scenario click would land on the dialog instead of Cura. Cura
+        # raises it from UM3NetworkPrinting, the one plugin in the bundle
+        # that imports an mDNS stack, and its register() builds the
+        # discovery client on the spot. A plugin on the registry's disabled
+        # list is never registered (Uranium's PluginRegistry.loadPlugin
+        # returns before register() runs), so the prompt is prevented rather
+        # than answered - twice over: the id goes into the seeded
+        # cura.cfg's general/disabled_plugins, and the plugin directory
+        # leaves the bundle. Neither route is assumed to have worked: the
+        # launch step reads the registry's own plugins.json back and reports
+        # what Cura actually disabled.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/tcc-prevention.txt"
+          APP=/Applications/UltiMaker-Cura.app
+          STASH="${RUNNER_TEMP:-/tmp}/cura-disabled-plugins"
+          SEED_ID=UM3NetworkPrinting
+          STATE="$EVIDENCE/tcc-prevention-state.txt"
+          {
+            echo "=== why this step exists ==="
+            echo "Cura's LAN discovery is what makes macOS raise the local-network"
+            echo "TCC prompt. It cannot be answered on a runner and it stays on"
+            echo "top of the window, so the plugin that starts mDNS is disabled"
+            echo "BEFORE the launch; the launch step reports whether it stayed away."
+            if [ ! -d "$APP" ]; then
+              echo "no bundle at $APP - nothing can be disabled here"
+              echo "SPIKE-Q2: tcc-prevention=NONE (no bundle; the prompt is expected)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              printf 'NONE' >"$STATE"
+              exit 0
+            fi
+
+            # The plugin id IS its directory name, so renaming a directory
+            # in place would still load it (and it would still discover):
+            # only the registry's disabled list, or removal from the plugin
+            # tree, actually counts.
+            PLUGIN_DIRS="$(find "$APP/Contents" -maxdepth 4 -type d -name plugins 2>/dev/null)"
+            echo
+            echo "=== plugin trees in the bundle (searched, not assumed) ==="
+            printf '%s\n' "${PLUGIN_DIRS:-<none found>}"
+
+            echo
+            echo "=== which plugins start mDNS? ==="
+            # zeroconf and pybonjour are the mDNS stacks Cura has ever used.
+            # The content probe survives a version rename; the name seed
+            # keeps the id present even when nothing matches on this build.
+            MDNS_IDS=""
+            for tree in $PLUGIN_DIRS; do
+              for d in "$tree"/*/; do
+                [ -d "$d" ] || continue
+                id="$(basename "$d")"
+                hits="$(grep -rl -iE 'zeroconf|pybonjour' --include='*.py' "$d" 2>/dev/null | head -5)"
+                if [ -n "$hits" ]; then
+                  echo "$id:"
+                  printf '%s\n' "$hits" | sed 's|^|  mDNS stack referenced by |'
+                  MDNS_IDS="$MDNS_IDS $id"
+                fi
+              done
+            done
+            [ -n "$MDNS_IDS" ] || echo "no plugin in this bundle references an mDNS stack"
+            IDS=""
+            for id in $SEED_ID $MDNS_IDS; do
+              case " $IDS " in *" $id "*) ;; *) IDS="$IDS $id" ;; esac
+            done
+            IDS="${IDS# }"
+            echo "ids to disable: $IDS"
+
+            echo
+            echo "=== 1. the registry's own disabled list (cura.cfg) ==="
+            # Uranium reads general/disabled_plugins from cura.cfg and skips
+            # every plugin whose id is on it. The file is ignored outright
+            # unless it carries the preferences-format version of the
+            # Uranium inside this bundle, so that number is read out of the
+            # installed code rather than assumed - it is the one value that
+            # moves across 5.7-5.13.
+            BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+              "$APP/Contents/Info.plist" 2>/dev/null)"
+            [ -n "$BUNDLE_VER" ] || BUNDLE_VER="${CURA_VERSION:-5.13.0}"
+            MM="$(printf '%s' "$BUNDLE_VER" | awk -F. 'NF >= 2 && $2 != "" { print $1 "." $2; exit }')"
+            if [ -z "$MM" ]; then
+              MM="$(printf '%s' "${CURA_VERSION:-5.13.0}" | awk -F. '{ print $1 "." $2 }')"
+            fi
+            echo "bundle version $BUNDLE_VER -> config dir $MM"
+            PREF_PY="$(find "$APP/Contents" -path '*/UM/Preferences.py' -print -quit 2>/dev/null)"
+            PREF_VER=""
+            if [ -n "$PREF_PY" ]; then
+              PREF_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$PREF_PY" | head -1)"
+              echo "preferences format version ${PREF_VER:-<not found>} (read from $PREF_PY)"
+            else
+              echo "no UM/Preferences.py in the bundle - the format version is unknown"
+            fi
+            # The application name is a build-time constant ("cura", per the
+            # captured Linux config tree) and the macOS config root is
+            # ~/Library/Application Support; both spellings are seeded
+            # instead of one being assumed, and the launch step reads back
+            # which one Cura actually used.
+            CONFIG_FILES=""
+            PRE_EXISTED=""
+            for root in cura Cura; do
+              DIR="$HOME/Library/Application Support/$root/$MM"
+              CFG="$DIR/cura.cfg"
+              if [ -z "$PREF_VER" ]; then
+                echo "  $CFG: skipped - the preferences format version is unknown"
+                continue
+              fi
+              if [ -e "$CFG" ]; then
+                # Nothing runs Cura before this step, so a config that is
+                # already there is an anomaly. It is reported rather than
+                # rewritten: the keys already in it are what decide Cura's
+                # behaviour, and the bundle move covers this case anyway.
+                echo "  $CFG: ALREADY PRESENT before the launch - reported, not rewritten"
+                PRE_EXISTED="$PRE_EXISTED $CFG"
+                continue
+              fi
+              mkdir -p "$DIR" 2>/dev/null
+              printf '[general]\nversion = %s\ndisabled_plugins = %s\n' \
+                "$PREF_VER" "$IDS" >"$CFG"
+              if [ -s "$CFG" ]; then
+                echo "  $CFG: written (version = $PREF_VER, disabled_plugins = $IDS)"
+                CONFIG_FILES="$CONFIG_FILES $CFG"
+              else
+                echo "  $CFG: COULD NOT be written - the bundle move carries this alone"
+              fi
+            done
+            [ -n "$PRE_EXISTED" ] && echo "left alone (pre-existing):${PRE_EXISTED}"
+
+            echo
+            echo "=== 2. the plugin directory itself (the version-proof backstop) ==="
+            mkdir -p "$STASH" 2>/dev/null
+            MOVED=""
+            for tree in $PLUGIN_DIRS; do
+              for id in $IDS; do
+                d="$tree/$id"
+                [ -d "$d" ] || continue
+                if sudo mv "$d" "$STASH/$id" 2>&1; then
+                  echo "moved: $d -> $STASH/$id"
+                  MOVED="$MOVED $id"
+                else
+                  echo "could not move $d - the config seed is the only mechanism left"
+                fi
+              done
+            done
+            echo "moved out of the bundle:${MOVED:-<none>}"
+
+            MECH=""
+            [ -n "$CONFIG_FILES" ] && MECH="config"
+            [ -n "$MOVED" ] && MECH="${MECH:+$MECH+}bundle"
+            echo
+            echo "seeded ids : $IDS"
+            echo "config     :${CONFIG_FILES:- <none seeded>}"
+            echo "left alone :${PRE_EXISTED:- <none>}"
+            echo "bundle     :${MOVED:- <none moved>} -> $STASH"
+            printf '%s' "${MECH:-NONE}" >"$STATE"
+            echo "SPIKE-Q2: tcc-prevention=${MECH:-NONE} (ids=$IDS, config=${CONFIG_FILES:-none}, pre-existing=${PRE_EXISTED:-none}, bundle-moved=${MOVED:-none})" \
+              | tee -a "$EVIDENCE/verdict.txt"
+          } 2>&1 | tee "$LOG"
+          exit 0
+
       - name: "Q2 evidence: launch Cura and capture the screen (macOS)"
         if: runner.os == 'macOS'
         continue-on-error: true
@@ -1700,20 +1875,20 @@ jobs:
           SCREEN_INDEX=""
           {
             if [ ! -x "$BIN" ]; then
-              echo "Cura is not installed — launch not attempted (see the install step)"
+              echo "Cura is not installed - launch not attempted (see the install step)"
               echo "SPIKE-Q1: launch=NOT-ATTEMPTED (no install)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 0
             fi
             # The recorder is ffmpeg on every platform, matching
-            # tests/harness/runner.py:247-250 exactly — same flags, same
+            # tests/harness/runner.py:247-250 exactly - same flags, same
             # framerate, same scenario.mp4 naming, started with the app,
-            # killed at teardown — so the native artifacts stay
+            # killed at teardown - so the native artifacts stay
             # comparable with the Linux runs. Only the INPUT DEVICE
             # differs: x11grab on Linux, gdigrab on Windows,
             # avfoundation here.
             if [ -z "$FFMPEG" ]; then
-              echo "ffmpeg: ABSENT — attempting brew install (the images"
+              echo "ffmpeg: ABSENT - attempting brew install (the images"
               echo "usually ship it; the Windows leg does the same via choco)"
               if command -v brew >/dev/null; then
                 HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg
@@ -1730,7 +1905,7 @@ jobs:
                     "installed by the launch step: the audit step did not provision it" >>"$AU"
                 fi
               else
-                echo "brew: ABSENT too — no encoder path on this image"
+                echo "brew: ABSENT too - no encoder path on this image"
               fi
             fi
             if [ -z "$FFMPEG" ]; then
@@ -1743,12 +1918,12 @@ jobs:
                 >"$EVIDENCE/avfoundation-devices.txt" 2>&1
               cat "$EVIDENCE/avfoundation-devices.txt"
               # The index is taken from what the probe reported, not
-              # assumed — avfoundation ordering is not guaranteed.
+              # assumed - avfoundation ordering is not guaranteed.
               SCREEN_INDEX="$(sed -n \
                 's/.*\[\([0-9][0-9]*\)\] Capture screen.*/\1/p' \
                 "$EVIDENCE/avfoundation-devices.txt" | head -1)"
               if [ -z "$SCREEN_INDEX" ]; then
-                echo "no 'Capture screen' device in the probe output —"
+                echo "no 'Capture screen' device in the probe output -"
                 echo "falling back to index 1, the conventional screen device"
                 SCREEN_INDEX=1
               fi
@@ -1800,6 +1975,108 @@ jobs:
             else
               echo "process: NOT RUNNING"
             fi
+
+            echo
+            echo "=== the macOS local-network prompt (the port blocker) ==="
+            # The alert is presented by UserNotificationCenter and takes the
+            # focus, so it is looked for outright and named rather than left
+            # to ruin a scenario silently. The System Events queries may
+            # themselves need an Automation grant, so a refusal is recorded
+            # as the result instead of being assumed away.
+            TCC_SEEN=""
+            DISMISSED=""
+            if pgrep -x UserNotificationCenter >/dev/null 2>&1; then
+              echo "UserNotificationCenter: RUNNING (something is presenting an alert)"
+              TCC_SEEN=yes
+            else
+              echo "UserNotificationCenter: not running"
+            fi
+            pgrep -x tccd >/dev/null 2>&1 && echo "tccd: RUNNING"
+            FRONT="$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>&1)"
+            echo "frontmost: ${FRONT:-<unreadable>}"
+            case "$FRONT" in
+              ""|*rror*|*authorized*) echo "  the focus holder could not be read - see the text above" ;;
+              *[Cc]ura*) echo "  Cura holds the focus: no alert is sitting on top of it" ;;
+              *) echo "  the focus is NOT on Cura" ;;
+            esac
+            TCC_TEXT="$(osascript -e 'tell application "System Events" to tell process "UserNotificationCenter" to get value of every static text of every window' 2>&1 | tr '\n' ' ' | cut -c1-300)"
+            echo "alert text: ${TCC_TEXT:-<nothing readable>}"
+            TCC_KIND=other
+            case "$TCC_TEXT" in
+              ""|*rror*|*authorized*) ;;
+              *) TCC_SEEN=yes; echo "  an alert window is on screen" ;;
+            esac
+            # The two alerts this leg can produce read differently, and the
+            # probes above can raise the second one themselves - so which
+            # one it is belongs in the verdict, not left to be guessed.
+            case "$TCC_TEXT" in
+              *"local network"*|*"find devices"*) TCC_KIND=local-network ;;
+              *"System Events"*) TCC_KIND=automation-from-these-probes ;;
+            esac
+            if [ -n "$TCC_SEEN" ]; then
+              echo "SPIKE-Q2: tcc-prompt=PRESENT kind=$TCC_KIND (${TCC_TEXT:-text unreadable})" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              echo "--- attempting a dismissal (System Events click; no credentials are involved) ---"
+              # An answer here is good for the rest of THIS session and
+              # nothing else, so it is reported as a click that worked, not
+              # as the prompt being dealt with.
+              for b in "Allow" "Don't Allow"; do
+                R="$(osascript -e "tell application \"System Events\" to click button \"$b\" of window 1 of process \"UserNotificationCenter\"" 2>&1)"
+                echo "click \"$b\": ${R:-<no output>}"
+                sleep 2
+                if ! pgrep -x UserNotificationCenter >/dev/null 2>&1; then
+                  echo "the alert is gone"
+                  TCC_SEEN=""
+                  DISMISSED="$b"
+                  break
+                fi
+              done
+            fi
+            if [ -n "$DISMISSED" ]; then
+              echo "SPIKE-Q2: tcc-dismiss=OK (clicked \"$DISMISSED\"; answered for this run only)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            elif [ -n "$TCC_SEEN" ]; then
+              echo "SPIKE-Q2: tcc-dismiss=FAILED (the prompt is still up; every later click lands on it)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q2: tcc-prompt=ABSENT (no UserNotificationCenter alert; see the probes above)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+
+            echo
+            echo "--- did Cura's own registry record the disable? ---"
+            # Uranium's registry rewrites plugins.json from its disabled list
+            # on every start, so that file is the registry's own account of
+            # whether the seeded cura.cfg was read at all.
+            HONOURED=no
+            PJS="$(find "$HOME/Library/Application Support" -maxdepth 4 -name plugins.json 2>/dev/null | head -5)"
+            if [ -n "$PJS" ]; then
+              # read-into-while, not for-over-$PJS: the path has a space in
+              # it ("Application Support"), and a here-string keeps the loop
+              # in this shell so HONOURED survives it.
+              while IFS= read -r f; do
+                echo "$f: $(tr -d '\n' <"$f" | cut -c1-400)"
+                case "$(grep -o '"disabled": *\[[^]]*\]' "$f" 2>/dev/null | head -1)" in
+                  *UM3NetworkPrinting*) HONOURED=yes ;;
+                esac
+              done <<< "$PJS"
+            else
+              echo "no plugins.json anywhere under $HOME/Library/Application Support"
+            fi
+            PREV="$(cat "$EVIDENCE/tcc-prevention-state.txt" 2>/dev/null)"
+            echo "SPIKE-Q2: tcc-prevention-honoured=$HONOURED (registry read-back; prevention=${PREV:-unknown})" \
+              | tee -a "$EVIDENCE/verdict.txt"
+            if [ -n "$DISMISSED" ]; then
+              echo "SPIKE-Q2: tcc-outcome=PRESENT-DISMISSED kind=$TCC_KIND (prevention was ${PREV:-unknown}; the alert had to be clicked away)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            elif [ -n "$TCC_SEEN" ]; then
+              echo "SPIKE-Q2: tcc-outcome=PRESENT-NOT-DISMISSED kind=$TCC_KIND (prevention was ${PREV:-unknown}; the prompt sat over the session)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q2: tcc-outcome=ABSENT (prevention was ${PREV:-unknown}; no local-network prompt appeared)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+
             echo
             echo "=== still capture (inside the recording window) ==="
             screencapture -x "$SHOT"
@@ -1808,7 +2085,7 @@ jobs:
               ls -l "$SHOT"
               file "$SHOT"
               echo "note: a solid/empty frame compresses to a few KB, a real"
-              echo "      desktop to hundreds — the size IS the signal"
+              echo "      desktop to hundreds - the size IS the signal"
             fi
             echo
             echo "=== stopping the recorder (harness teardown kills ffmpeg) ==="
@@ -1818,7 +2095,7 @@ jobs:
               kill -INT "$REC_PID" 2>/dev/null
               sleep 3
               if kill -0 "$REC_PID" 2>/dev/null; then
-                echo "still running after SIGINT — SIGKILL, as ui_test.sh does"
+                echo "still running after SIGINT - SIGKILL, as ui_test.sh does"
                 kill -9 "$REC_PID" 2>/dev/null
                 sleep 2
               fi
@@ -1841,7 +2118,7 @@ jobs:
               echo "SPIKE-Q2: video=OK ($(du -h "$VIDEO" | cut -f1) mp4, avfoundation)" \
                 | tee -a "$EVIDENCE/verdict.txt"
             else
-              echo "SPIKE-Q2: video=FAILED (ffmpeg wrote no scenario.mp4 — see recorder.log and the device probe above)" \
+              echo "SPIKE-Q2: video=FAILED (ffmpeg wrote no scenario.mp4 - see recorder.log and the device probe above)" \
                 | tee -a "$EVIDENCE/verdict.txt"
             fi
             echo
@@ -1911,28 +2188,28 @@ jobs:
               Select-Object -First 1 -ExpandProperty FullName
           }
           if (-not $binary) {
-            W "Cura is not installed — launch not attempted (see the install step)"
+            W "Cura is not installed - launch not attempted (see the install step)"
             V "SPIKE-Q1: launch=NOT-ATTEMPTED (no install)"
             exit 0
           }
           # The recorder is ffmpeg on every platform, matching
-          # tests/harness/runner.py:247-250 exactly — same flags, same
+          # tests/harness/runner.py:247-250 exactly - same flags, same
           # framerate, same scenario.mp4 naming, started with the app and
-          # killed at teardown — so the native artifacts stay comparable
+          # killed at teardown - so the native artifacts stay comparable
           # with the Linux runs. Only the INPUT DEVICE differs: x11grab on
           # Linux, gdigrab here, avfoundation on macOS. It starts BEFORE
           # the launch so the recording spans launch and first paint.
           $video = Join-Path $EVIDENCE 'scenario.mp4'
           $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
           if (-not $ff) {
-            W "ffmpeg absent — attempting choco install (the runner ships none)"
+            W "ffmpeg absent - attempting choco install (the runner ships none)"
             if (Get-Command choco -ErrorAction SilentlyContinue) {
               & choco install ffmpeg -y --no-progress 2>&1 |
                 Select-Object -Last 8 | ForEach-Object { W $_ }
               W "choco exit: $LASTEXITCODE"
               $env:Path = "$([System.Environment]::GetEnvironmentVariable('Path','Machine'));$([System.Environment]::GetEnvironmentVariable('Path','User'))"
             } else {
-              W "choco absent too — this image has no encoder path"
+              W "choco absent too - this image has no encoder path"
             }
             $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
             if ($ff) {
@@ -1956,7 +2233,7 @@ jobs:
             W "recorder pid: $($rec.Id) (started BEFORE the launch)"
             Start-Sleep -Seconds 3
           } else {
-            W "no recorder available — the video leg cannot run on this image"
+            W "no recorder available - the video leg cannot run on this image"
           }
 
           W "=== launching $binary ==="
@@ -2016,7 +2293,7 @@ jobs:
             $len = (Get-Item $shot).Length
             W ("wrote {0}: {1:N1} KB" -f $shot, ($len / 1KB))
             W "note: a solid/empty frame compresses to a few KB, a real"
-            W "      desktop to hundreds — the size IS the signal"
+            W "      desktop to hundreds - the size IS the signal"
             V ("SPIKE-Q2: screenshot=OK ({0:N1} KB)" -f ($len / 1KB))
           } else {
             W "still capture wrote nothing"
@@ -2034,7 +2311,7 @@ jobs:
               Start-Sleep -Seconds 3
               $rec.Refresh()
               if (-not $rec.HasExited) {
-                W "still running — force, as ui_test.sh's pkill -9 does"
+                W "still running - force, as ui_test.sh's pkill -9 does"
                 Stop-Process -Id $rec.Id -Force -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds 2
               }
@@ -2058,7 +2335,7 @@ jobs:
             }
             V ("SPIKE-Q2: video=OK mp4 ({0:N1} KB, gdigrab)" -f ($vlen / 1KB))
           } else {
-            V "SPIKE-Q2: video=FAILED (no scenario.mp4 — see the recorder lines above)"
+            V "SPIKE-Q2: video=FAILED (no scenario.mp4 - see the recorder lines above)"
           }
 
           W ""
@@ -2093,7 +2370,7 @@ jobs:
       - name: "Q3 evidence: the dependency audit table"
         # The port's provisioning checklist: one row per external
         # dependency this leg touched, whether the image already had it,
-        # and the version — so the port knows what it must install on each
+        # and the version - so the port knows what it must install on each
         # OS instead of rediscovering the gaps. Runs under always() so a
         # failed leg still ships the table.
         if: always()
@@ -2106,7 +2383,7 @@ jobs:
           TXT="$EVIDENCE/dependency-audit.txt"
           PLATFORM="${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}"
           {
-            echo "dependency audit — $PLATFORM"
+            echo "dependency audit - $PLATFORM"
             echo "generated: $(date -u)"
             echo
             if [ -s "$TSV" ]; then
