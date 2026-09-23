@@ -911,6 +911,118 @@ jobs:
           DMG="$EVIDENCE/UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
           MNT="$(pwd)/$EVIDENCE/mnt"
           APP=/Applications/UltiMaker-Cura.app
+          # The licence-stripped copy is the last rung's mount path and lives
+          # in the runner's temp dir, so another 170 MB never rides the upload.
+          CDR="${RUNNER_TEMP:-/tmp}/cura-licence-stripped.cdr"
+          CDR_FILE=""
+          MOUNTED=""       # what hdiutil reports; never a mount point assumed
+          ATTACH_SLA=no    # this image presented a licence agreement
+          ATTACH_TRACE=""  # "label:rc=n " per rung, so a failure names its rung
+          ATTACH_WINNER=""
+
+          # mountpoints_of <attach-output-file>: the mount points hdiutil
+          # recorded. -plist is the reliable record, but a refused licence
+          # agreement interleaves the licence text with it on stdout, so the
+          # XML is cut out of that mixed stream before parsing.
+          mountpoints_of() {
+            local raw="$1" xml="$1.xml" i=0 mp
+            if ! /usr/libexec/PlistBuddy -c 'Print :system-entities' \
+                 "$raw" >/dev/null 2>&1; then
+              awk '/^[[:space:]]*<\?xml/{f=1} f' "$raw" >"$xml"
+              raw="$xml"
+            fi
+            while [ "$i" -lt 8 ]; do
+              mp="$(/usr/libexec/PlistBuddy \
+                -c "Print :system-entities:$i:mount-point" "$raw" 2>/dev/null)"
+              [ -n "$mp" ] && printf '%s\n' "$mp"
+              i=$((i + 1))
+            done
+          }
+
+          # attach <label> <stdin-payload> <image> [flags...]: ONE mount
+          # attempt, with its exact command line, exit code, both streams and
+          # the mount points it produced. Bounded, because a licence viewer
+          # waiting for a click would otherwise hang the job to its timeout.
+          attach() {
+            local label="$1" payload="$2" image="$3"
+            shift 3
+            local out="$EVIDENCE/attach-${label}.out.txt"
+            local err="$EVIDENCE/attach-${label}.err.txt"
+            local rc pid waited=0 state
+            local argv="sudo hdiutil attach -plist -nobrowse -noverify -noautoopen -readonly $* \"$image\""
+            local feed="" desc="<none: the stdin inherited, which is EOF>"
+            if [ -n "$payload" ]; then
+              feed="printf '%s' $(printf '%q' "$payload") | "
+              desc="$(printf '%q' "$payload")"
+            fi
+            echo
+            echo "=== mount attempt '$label' ==="
+            echo "cmd  : ${feed}${argv}"
+            echo "stdin: $desc"
+            (
+              if [ -n "$payload" ]; then
+                printf '%s' "$payload" | sudo hdiutil attach -plist -nobrowse \
+                  -noverify -noautoopen -readonly "$@" "$image"
+              else
+                sudo hdiutil attach -plist -nobrowse -noverify -noautoopen \
+                  -readonly "$@" "$image"
+              fi
+            ) >"$out" 2>"$err" &
+            pid=$!
+            while [ "$waited" -lt 60 ]; do
+              state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d ' \n')"
+              if [ -z "$state" ] || [ "${state#Z}" != "$state" ]; then
+                break
+              fi
+              sleep 2
+              waited=$((waited + 2))
+            done
+            if [ "$waited" -ge 60 ]; then
+              echo "  ! still attaching after 60 s — killing it: a licence"
+              echo "    viewer waiting for a click looks exactly like this"
+              kill -9 "$pid" 2>/dev/null
+              pkill -9 -f 'hdiutil attac[h]' 2>/dev/null
+            fi
+            wait "$pid" 2>/dev/null
+            rc=$?
+            ATTACH_TRACE="${ATTACH_TRACE}${label}:rc=${rc} "
+            echo "  exit code: $rc (after ${waited} s)"
+            echo "  stdout -> $out"
+            sed -n '1,40p' "$out" | sed 's/^/  | /'
+            echo "  stderr -> $err"
+            sed -n '1,20p' "$err" | sed 's/^/  ! /'
+            if grep -qiE 'licen[cs]e agreement|agree +y/n|licen[cs]ing' \
+                 "$out" "$err" 2>/dev/null; then
+              ATTACH_SLA=yes
+              echo "  ^ a licence agreement was presented by this image"
+            fi
+            MOUNTED="$(mountpoints_of "$out" | head -1)"
+            if [ -z "$MOUNTED" ] && mount | grep -qF " on $MNT "; then
+              # the plist said nothing but the mount happened: believe mount(8)
+              MOUNTED="$MNT"
+            fi
+            if [ -n "$MOUNTED" ]; then
+              ATTACH_WINNER="$label"
+              echo "  mounted at: $MOUNTED"
+              ls -la "$MOUNTED" | sed 's/^/  | /'
+            else
+              echo "  nothing was mounted by this attempt"
+            fi
+          }
+
+          detach_mounted() {
+            [ -z "$MOUNTED" ] && return 0
+            echo "=== detaching $MOUNTED ==="
+            echo "cmd: sudo hdiutil detach \"$MOUNTED\""
+            sudo hdiutil detach "$MOUNTED"
+            echo "detach exit: $?"
+            if [ -n "$(ls -A "$MOUNTED" 2>/dev/null)" ]; then
+              echo "still attached — retrying with -force"
+              sudo hdiutil detach -force "$MOUNTED"
+              echo "detach -force exit: $?"
+            fi
+          }
+
           {
             echo "installing the ${ARCH_TAG} dmg the download step selected"
             if [ ! -f "$DMG" ]; then
@@ -919,25 +1031,106 @@ jobs:
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 0
             fi
-            echo "=== attaching $DMG ==="
+            echo "dmg                  : $DMG ($(du -h "$DMG" | cut -f1))"
             mkdir -p "$MNT"
-            sudo hdiutil attach "$DMG" -nobrowse -mountpoint "$MNT"
-            echo "--- contents ---"
-            ls -la "$MNT"
-            APP_SRC="$(find "$MNT" -maxdepth 1 -name '*.app' -print -quit)"
+            echo "mount point requested: $MNT"
+
+            echo "=== does THIS macOS document a licence-acceptance flag? ==="
+            hdiutil help attach >"$EVIDENCE/hdiutil-attach-help.txt" 2>&1
+            echo "hdiutil help attach exit: $?"
+            hdiutil attach -help >>"$EVIDENCE/hdiutil-attach-help.txt" 2>&1
+            echo "hdiutil attach -help exit: $? (saved to hdiutil-attach-help.txt)"
+            ACCEPT_FLAG=""
+            if grep -q -- '-acceptlicense' "$EVIDENCE/hdiutil-attach-help.txt"; then
+              ACCEPT_FLAG=-acceptlicense
+              echo "-acceptlicense: SUPPORTED here — used on the first attempt"
+            else
+              echo "-acceptlicense: not documented by this hdiutil; the licence"
+              echo "is answered by feeding the prompt, and skipped if that fails"
+            fi
+
+            # Rung 1 takes the documented flag when there is one; rungs 2 and
+            # 3 answer the prompt on stdin (one line, then the pager form);
+            # rung 4 removes the agreement from the image altogether.
+            if [ -n "$ACCEPT_FLAG" ]; then
+              attach accept-flag $'y\n' "$DMG" "$ACCEPT_FLAG" -mountpoint "$MNT"
+            fi
+            [ -z "$MOUNTED" ] && \
+              attach piped-y $'y\ny\ny\n' "$DMG" -mountpoint "$MNT"
+            [ -z "$MOUNTED" ] && \
+              attach pager-form "$(yes qy 2>/dev/null | head -5)" "$DMG" \
+                -mountpoint "$MNT"
+
+            if [ -z "$MOUNTED" ]; then
+              echo
+              echo "=== last rung: strip the licence agreement out of the image ==="
+              echo "a UDTO (raw CD master) copy has no UDIF resource fork, so it"
+              echo "carries no agreement and mounts without a prompt"
+              echo "cmd: sudo hdiutil convert -quiet -format UDTO -o \"$CDR\" \"$DMG\""
+              rm -f "$CDR" "$CDR.cdr"
+              sudo hdiutil convert -quiet -format UDTO -o "$CDR" "$DMG" \
+                >"$EVIDENCE/hdiutil-convert.txt" 2>&1
+              echo "convert exit: $?"
+              sed -n '1,20p' "$EVIDENCE/hdiutil-convert.txt" | sed 's/^/  | /'
+              if [ -f "$CDR" ]; then
+                CDR_FILE="$CDR"
+              elif [ -f "$CDR.cdr" ]; then
+                CDR_FILE="$CDR.cdr"
+              fi
+              if [ -n "$CDR_FILE" ]; then
+                echo "licence-stripped image: $CDR_FILE ($(du -h "$CDR_FILE" | cut -f1))"
+                attach licence-stripped "" "$CDR_FILE" -mountpoint "$MNT"
+                if [ -n "$MOUNTED" ] && [ "$ATTACH_SLA" = yes ]; then
+                  echo "SPIKE-Q1: dmg-sla=YES (the agreement cancelled the direct"
+                  echo "attach and the stripped copy mounted — it WAS the cause)" \
+                    | tee -a "$EVIDENCE/verdict.txt"
+                fi
+              else
+                echo "convert produced no image — the pristine dmg is all there is"
+              fi
+            fi
+
+            if [ -z "$MOUNTED" ]; then
+              echo
+              echo "=== nothing mounted: the dmg would not attach here ==="
+              echo "attempts    : ${ATTACH_TRACE:-<none ran>}"
+              echo "licence seen: $ATTACH_SLA"
+              echo "the requested mount point:"
+              ls -la "$MNT"
+              echo "--- every image hdiutil knows about right now ---"
+              hdiutil info | sed -n '1,60p'
+              echo "SPIKE-Q1: dmg-sla=$ATTACH_SLA (attempts: ${ATTACH_TRACE:-none})" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              echo "SPIKE-Q1: install=FAILED (the dmg would not mount; see the attempts above)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 1
+            fi
+
+            echo
+            echo "=== mounted at $MOUNTED (via '$ATTACH_WINNER') ==="
+            ls -la "$MOUNTED"
+            APP_SRC="$(find "$MOUNTED" -maxdepth 1 -name '*.app' -print -quit 2>/dev/null)"
+            if [ -z "$APP_SRC" ]; then
+              echo "no .app at the top level; every bundle in the image:"
+              find "$MOUNTED" -maxdepth 3 -name '*.app' -print 2>/dev/null | sed 's/^/  | /'
+              APP_SRC="$(find "$MOUNTED" -maxdepth 3 -name '*.app' -print -quit 2>/dev/null)"
+            fi
             echo "app bundle in the dmg: ${APP_SRC:-<none>}"
             if [ -z "$APP_SRC" ]; then
               echo "SPIKE-Q1: install=FAILED (no .app inside the dmg)" \
                 | tee -a "$EVIDENCE/verdict.txt"
-              sudo hdiutil detach "$MNT"
+              detach_mounted
               exit 1
             fi
             echo "=== copying the bundle out ==="
             sudo rm -rf "$APP"
             sudo ditto "$APP_SRC" "$APP"
             echo "ditto exit: $?"
-            sudo hdiutil detach "$MNT"
-            echo "hdiutil detach exit: $?"
+            detach_mounted
+            if [ -n "$CDR_FILE" ]; then
+              rm -f "$CDR_FILE"
+              echo "removed the temporary licence-stripped image"
+            fi
             echo
             echo "=== installed app ==="
             du -sh "$APP"
@@ -957,9 +1150,12 @@ jobs:
             echo "--- quarantine xattr (empty = never quarantined) ---"
             QX="$(xattr -l "$APP" 2>&1 | head -5)"
             echo "${QX:-<none>}"
+            echo "mount attempts: ${ATTACH_TRACE:-<none ran>}"
             if [ -x "$BIN" ]; then
               echo "SPIKE-Q1: install=OK ($BIN, $(du -sh "$APP" | cut -f1))" \
                 | tee -a "$EVIDENCE/verdict.txt"
+              printf 'SPIKE-Q1: dmg-sla=%s (mounted via %s)\n' \
+                "$ATTACH_SLA" "$ATTACH_WINNER" | tee -a "$EVIDENCE/verdict.txt"
             else
               echo "SPIKE-Q1: install=FAILED (no executable at $BIN)" \
                 | tee -a "$EVIDENCE/verdict.txt"
@@ -1065,7 +1261,7 @@ jobs:
           } 2>&1 | tee "$LOG"
           exit 0
 
-      - name: "Q1 evidence: silent install (Windows — NSIS /S, MSI fallback)"
+      - name: "Q1 evidence: silent install (Windows — NSIS /S, then the WiX MSI /qn)"
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: powershell
@@ -1073,88 +1269,292 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $EVIDENCE = $env:EVIDENCE
           New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          # Absolute from here on: a relative installer path is resolved
+          # against the Windows Installer service's own directory, not ours.
+          $EVIDENCE = (Resolve-Path -LiteralPath $EVIDENCE).Path
           $log = Join-Path $EVIDENCE 'install-windows.txt'
           $verdict = Join-Path $EVIDENCE 'verdict.txt'
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
           $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
-          $exe = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.exe"
+          $exePath = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.exe"
+          $msiPath = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.msi"
+          $msiUrl = "https://github.com/Ultimaker/Cura/releases/download/$ver/UltiMaker-Cura-$ver-win64-X64.msi"
+          $msiLog = Join-Path $EVIDENCE 'msi-install.log'
+          $exeResult = 'not attempted'
+          $msiResult = 'not attempted'
+          $via = '<none>'
+          $binary = $null
+          $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          # Both installers are per-machine, so both Program Files roots are
+          # searched as well as the per-user one, and elevation is stated.
+          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+          $listRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, (Join-Path $env:LOCALAPPDATA 'Programs')) |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 
-          # The installer's own registry records are the authoritative
-          # answer to "where did it land"; the filesystem sweep backs up
-          # an installer that writes neither.
-          function Find-Cura {
-            # Loops collect their output rather than appending with +=,
-            # which keeps the accumulating out of any inner-scope question.
-            $registryHits = foreach ($k in @(
-              'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-              'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
-            )) {
-              Get-ItemProperty -Path $k -ErrorAction SilentlyContinue |
-                Where-Object { $_.DisplayName -like '*Cura*' } |
-                ForEach-Object { "registry: $($_.DisplayName) v$($_.DisplayVersion) -> $($_.InstallLocation)" }
+          function Get-CuraExe {
+            # UltiMaker-Cura.exe in a versioned Program Files folder is the
+            # canonical name, but the sweep is name-tolerant and reports every
+            # candidate: a rename must not read as "nothing was installed".
+            $found = foreach ($root in $roots) {
+              Get-ChildItem -LiteralPath $root -Filter '*cura*.exe' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue
             }
-            $fileHits = foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
-              if (-not $root) { continue }
-              Get-ChildItem -Path $root -Filter 'UltiMaker-Cura.exe' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue |
-                ForEach-Object { $_.FullName }
-            }
-            return @($registryHits) + @($fileHits)
+            @($found) |
+              Where-Object { $_.Name -notmatch '(?i)uninstall|curaengine' } |
+              Select-Object @{ n = 'Rank'; e = { if ($_.Name -eq 'UltiMaker-Cura.exe') { 0 } else { 1 } } },
+                            FullName, Name,
+                            @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } },
+                            @{ n = 'FileVersion'; e = { $_.VersionInfo.FileVersion } } |
+              Sort-Object Rank, FullName
           }
 
-          if (-not (Test-Path $exe)) {
-            W "no installer downloaded — install cannot proceed"
-            V "SPIKE-Q1: install=SKIPPED (no installer)"
+          function Get-CuraRegistry {
+            # Both hives and the WOW6432Node view: an installer records what it
+            # did here, so these keys are read as evidence, not as a lookup.
+            $views = [ordered]@{
+              'HKLM per-machine             ' = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+              'HKLM per-machine WOW6432Node ' = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+              'HKCU per-user                ' = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+            }
+            foreach ($label in $views.Keys) {
+              $all = @(Get-ItemProperty -Path $views[$label] -ErrorAction SilentlyContinue)
+              $mine = @($all | Where-Object { $_.DisplayName -like '*cura*' -or $_.Publisher -like '*ultimaker*' })
+              W ("  {0}: {1} uninstall entries, {2} naming Cura or UltiMaker" -f $label, $all.Count, $mine.Count)
+              foreach ($e in $mine) {
+                W "    registry key    : $($e.PSChildName)"
+                W "    DisplayName     : $($e.DisplayName)"
+                W "    DisplayVersion  : $($e.DisplayVersion)"
+                W "    Publisher       : $($e.Publisher)"
+                W "    InstallLocation : $($e.InstallLocation)"
+                W "    UninstallString : $($e.UninstallString)"
+                W "    WindowsInstaller: $($e.WindowsInstaller)"
+              }
+            }
+          }
+
+          function Show-CuraState($label) {
+            W ""
+            W "=== state after $label ==="
+            W "uninstall registry keys:"
+            Get-CuraRegistry
+            W "candidate binaries under every searched root (depth 4):"
+            $c = @(Get-CuraExe)
+            if ($c.Count -eq 0) {
+              W "  none"
+            } else {
+              foreach ($f in $c) { W ("  {0}  {1} MB  v{2}" -f $f.FullName, $f.MB, $f.FileVersion) }
+            }
+            $alive = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '(?i)cura|msiexec' })
+            if ($alive.Count -eq 0) {
+              W "installer or Cura processes still running: none"
+            } else {
+              foreach ($proc in $alive) { W "still running: $($proc.ProcessName) (pid $($proc.Id))" }
+            }
+          }
+
+          function Show-SearchedPaths {
+            # On failure the paths below have to speak for themselves.
+            W ""
+            W "=== what is actually in every path that was searched ==="
+            foreach ($root in $listRoots) {
+              W "[$root]"
+              $dirs = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '(?i)cura|ultimaker' })
+              if ($dirs.Count -eq 0) {
+                $top = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                  Select-Object -First 25 -ExpandProperty Name)
+                W "  no directory here is named Cura or UltiMaker; the first it holds:"
+                W "  $($top -join ', ')"
+              } else {
+                foreach ($d in $dirs) {
+                  W "  $($d.FullName)"
+                  $files = @(Get-ChildItem -LiteralPath $d.FullName -File -ErrorAction SilentlyContinue |
+                    Select-Object -First 20)
+                  if ($files.Count -eq 0) {
+                    W "    (no files)"
+                  } else {
+                    foreach ($f in $files) { W ("    {0}  {1} MB" -f $f.Name, [math]::Round($f.Length / 1MB, 1)) }
+                  }
+                }
+              }
+            }
+          }
+
+          function Wait-ForCura($label, $limitSecs) {
+            # Start-Process waits only for the process it started, and both
+            # installers finish writing through helpers that outlive it, so
+            # the wait polls for the outcome instead of trusting the handle.
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            while ($sw.Elapsed.TotalSeconds -lt $limitSecs) {
+              $f = @(Get-CuraExe)
+              if ($f.Count -gt 0) {
+                W "[$label] a binary appeared after $([int]$sw.Elapsed.TotalSeconds) s"
+                return $f[0]
+              }
+              Start-Sleep -Seconds 5
+            }
+            W "[$label] still no binary after $limitSecs s of waiting"
+            return $null
+          }
+
+          function Msiexec-Meaning($code) {
+            switch ($code) {
+              0       { 'success' }
+              3010    { 'success, a restart is required' }
+              1641    { 'success, the installer asked for a restart' }
+              1603    { 'fatal error during installation — the msi log names it' }
+              1618    { 'another installation is already in progress' }
+              1619    { 'the package could not be opened' }
+              1620    { 'the package is not a valid installation package' }
+              1622    { 'the log file could not be opened' }
+              1625    { 'installation forbidden by system policy' }
+              1638    { 'another version of this product is already installed' }
+              1925    { 'insufficient privileges — elevation is required' }
+              default { 'not a code this mapping knows' }
+            }
+          }
+
+          W "=== installer policy for Cura $ver ==="
+          W "the release publishes two Windows installers; both are attempted in a"
+          W "fixed order, and each one's exact command line, exit code and aftermath"
+          W "are recorded, so a failure names its own cause:"
+          W "  1. UltiMaker-Cura-$ver-win64-X64.exe  NSIS (nullsoft), silent switch /S"
+          W "  2. UltiMaker-Cura-$ver-win64-X64.msi  WiX/MSI, silent: msiexec /i <msi> /qn /norestart"
+          W "the MSI comes second because the .exe is already on disk, and is the"
+          W "authoritative install: a real ProductCode, plus an APPLICATIONFOLDER"
+          W "property that pins the target so the outcome is verifiable"
+          W "elevated: $admin   <- a per-machine install cannot succeed without it"
+          if (-not $admin) {
+            W "NOT ELEVATED: a per-machine NSIS or MSI install cannot succeed here,"
+            W "and that alone would explain a silent install that leaves nothing"
+          }
+          W "roots searched (depth 4): $($roots -join '; ')"
+          W "per-machine: both Program Files roots; per-user: LOCALAPPDATA"
+          W "msiexec: $((Get-Command msiexec.exe -ErrorAction SilentlyContinue).Source)"
+
+          if (-not (Test-Path -LiteralPath $exePath) -and -not (Test-Path -LiteralPath $msiPath)) {
+            W "neither installer is on disk — install cannot proceed"
+            V "SPIKE-Q1: install=SKIPPED (no installer on disk)"
             exit 0
           }
 
-          W "=== NSIS silent install: $exe /S ==="
-          $p = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
-          W "installer exit code: $($p.ExitCode)"
-          Start-Sleep -Seconds 10
-
-          W "=== where did it land (after /S) ==="
-          $hits = Find-Cura
-          $hits | ForEach-Object { W $_ }
-          $binary = $hits | Where-Object { $_ -like '*UltiMaker-Cura.exe' } | Select-Object -First 1
-
-          if (-not $binary) {
-            # /S is the documented NSIS silent switch, but Cura's script
-            # may not honour it; the release also publishes an MSI, whose
-            # /qn is unambiguous. The second 170 MB buys a real answer.
+          # 1. the NSIS .exe
+          if (-not (Test-Path -LiteralPath $exePath)) {
+            $exeResult = 'not attempted: no .exe on disk'
             W ""
-            W "=== no binary from /S — trying the MSI with msiexec /qn ==="
-            $msi = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.msi"
-            $msiUrl = "https://github.com/Ultimaker/Cura/releases/download/$ver/UltiMaker-Cura-$ver-win64-X64.msi"
-            & curl.exe -L --fail --retry 3 --connect-timeout 30 --max-time 900 -o "$msi" "$msiUrl" 2>&1 |
-              ForEach-Object { W $_ }
-            W "curl.exe exit: $LASTEXITCODE"
-            if ($LASTEXITCODE -eq 0) {
-              $msiLog = Join-Path $EVIDENCE 'msi-install.log'
-              $msiProc = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
-                '/i', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$msiLog`"")
-              W "msiexec exit code: $($msiProc.ExitCode)"
-              Start-Sleep -Seconds 10
-              W "=== where did it land (after msiexec) ==="
-              $hits = Find-Cura
-              $hits | ForEach-Object { W $_ }
-              $binary = $hits | Where-Object { $_ -like '*UltiMaker-Cura.exe' } | Select-Object -First 1
+            W "=== NSIS /S: skipped, no .exe on disk ==="
+          } else {
+            $exeAbs = (Resolve-Path -LiteralPath $exePath).Path
+            W ""
+            W "=== NSIS silent install ==="
+            W "cmd : & `"$exeAbs`" /S"
+            W "cwd : $EVIDENCE"
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $p = $null
+            try {
+              $p = Start-Process -FilePath $exeAbs -ArgumentList '/S' -WorkingDirectory $EVIDENCE -Wait -PassThru -ErrorAction Stop
+            } catch {
+              W "Start-Process threw: $($_.Exception.Message)"
+            }
+            $sw.Stop()
+            $code = if ($p) { $p.ExitCode } else { $null }
+            if ($p) {
+              $exeResult = "exit $code after $([int]$sw.Elapsed.TotalSeconds) s"
+              W "exit code: $code (elapsed $([int]$sw.Elapsed.TotalSeconds) s)"
+              if ($code -ne 0) {
+                W "a non-zero exit here means the silent install did not run to completion"
+              }
+            } else {
+              $exeResult = 'the process never started, so nothing was installed'
+              W "the installer process never started — /S installed nothing"
+            }
+            $budget = if ($code -in @(0, 1641, 3010)) { 240 } else { 30 }
+            $binary = Wait-ForCura 'NSIS /S' $budget
+            if ($binary) { $via = 'NSIS /S' }
+            Show-CuraState 'the NSIS /S attempt'
+          }
+
+          # 2. the WiX MSI
+          if (-not $binary) {
+            W ""
+            W "=== the WiX MSI (the release's second installer) ==="
+            if (-not (Test-Path -LiteralPath $msiPath)) {
+              W "downloading: $msiUrl"
+              & curl.exe -L --fail --retry 3 --connect-timeout 30 --max-time 900 -o "$msiPath" "$msiUrl" 2>&1 |
+                ForEach-Object { W $_ }
+              W "curl.exe exit: $LASTEXITCODE"
+            }
+            if (-not (Test-Path -LiteralPath $msiPath)) {
+              $msiResult = 'not attempted: the MSI could not be obtained'
+              W "no MSI on disk — the MSI attempt is skipped (see the curl output above)"
+            } else {
+              $msiAbs = (Resolve-Path -LiteralPath $msiPath).Path
+              $mf = Get-Item -LiteralPath $msiAbs
+              W ("msi : {0} ({1} MB)" -f $msiAbs, [math]::Round($mf.Length / 1MB, 1))
+              $sig = Get-AuthenticodeSignature -LiteralPath $msiAbs
+              W "signature: $($sig.Status) / signer $($sig.SignerCertificate.Subject)"
+              $target = Join-Path $env:ProgramFiles "UltiMaker Cura $ver"
+              $msiArgs = "/i `"$msiAbs`" /qn /norestart /L*v `"$msiLog`" APPLICATIONFOLDER=`"$target`""
+              W "cmd : msiexec.exe $msiArgs"
+              W "target (APPLICATIONFOLDER): $target"
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              $mp = $null
+              try {
+                $mp = Start-Process -FilePath msiexec.exe -ArgumentList $msiArgs -WorkingDirectory $EVIDENCE -Wait -PassThru -ErrorAction Stop
+              } catch {
+                W "Start-Process threw: $($_.Exception.Message)"
+              }
+              $sw.Stop()
+              $mcode = if ($mp) { $mp.ExitCode } else { $null }
+              W "exit code: $mcode — $(Msiexec-Meaning $mcode) (elapsed $([int]$sw.Elapsed.TotalSeconds) s)"
+              if ($null -eq $mcode) {
+                $msiResult = 'the msiexec process never started'
+              } else {
+                $msiResult = "exit $mcode ($(Msiexec-Meaning $mcode)) after $([int]$sw.Elapsed.TotalSeconds) s"
+              }
+              # The verbose log is the only place an MSI names its own cause.
+              if (Test-Path -LiteralPath $msiLog) {
+                W "--- msi log ($((Get-Item -LiteralPath $msiLog).Length) bytes): $msiLog ---"
+                Get-Content -LiteralPath $msiLog -Tail 12 | ForEach-Object { W "  $_" }
+                $bad = @(Select-String -LiteralPath $msiLog -ErrorAction SilentlyContinue -Pattern 'Return value 3|Error [0-9]+|Internal Error|MainEngineThread is returning|Note: 1: 2262' | Select-Object -Last 20)
+                W "--- the lines that name a failure (last $($bad.Count)) ---"
+                if ($bad.Count -eq 0) {
+                  W "  none matched: the tail above is the whole record"
+                } else {
+                  $bad | ForEach-Object { W "  $($_.Line.Trim())" }
+                }
+              } else {
+                W "no msi log at $msiLog — msiexec never reached the point of writing one"
+              }
+              $budget = if ($mcode -in @(0, 1641, 3010)) { 240 } else { 30 }
+              $binary = Wait-ForCura 'MSI /qn' $budget
+              if ($binary) { $via = 'MSI /qn' }
+              Show-CuraState 'the MSI /qn attempt'
             }
           }
 
           if ($binary) {
             W ""
             W "=== installed binary ==="
-            W "path: $binary"
-            $vi = (Get-Item $binary).VersionInfo
-            W "version: $($vi.FileVersion) / $($vi.ProductName)"
+            W "produced by: $via"
+            W "path       : $($binary.FullName)"
+            W "version    : $($binary.FileVersion)  ($($binary.Name))"
+            W "size       : $($binary.MB) MB"
             # The launch step reads this rather than repeating a slow
             # disk sweep, and it is the path this step verified.
-            $binary | Set-Content -Path (Join-Path $EVIDENCE 'binary-path.txt')
-            V "SPIKE-Q1: install=OK ($binary)"
+            $binary.FullName | Set-Content -LiteralPath (Join-Path $EVIDENCE 'binary-path.txt')
+            V "SPIKE-Q1: install=OK ($($binary.FullName))"
+            V "SPIKE-Q1: install-via=$via"
           } else {
-            V "SPIKE-Q1: install=FAILED (no UltiMaker-Cura.exe after /S and /qn)"
+            W ""
+            W "=== why this failed ==="
+            W "NSIS /S : $exeResult"
+            W "MSI /qn : $msiResult"
+            W "msi log : $(if (Test-Path -LiteralPath $msiLog) { $msiLog } else { 'never written' })"
+            W "elevated: $admin"
+            Show-SearchedPaths
+            V "SPIKE-Q1: install=FAILED (NSIS /S: $exeResult; MSI /qn: $msiResult; no *cura*.exe under any searched root)"
             exit 1
           }
           exit 0
