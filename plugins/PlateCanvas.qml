@@ -50,7 +50,13 @@ Item {
     // constant, never pixels (the popover resizes; the review's rule).
     property real hitRadiusMm: 18.0
 
-    property var _plot: null
+    // The mapping is a computed value, never a resize artefact: it
+    // re-maps where the canvas stands when the printer attaches, when
+    // any bed-geometry input moves, and when the item resizes. The
+    // imperative rebuild ran on completion and on resize alone, so a
+    // late attach — or a bed switch — left the map blank or on the
+    // previous machine's coordinates until the user resized the pane.
+    property var _plot: _plotValue()
 
     function _bedBounds() {
         // The BED-space mapping, mirroring the mesh map's contract:
@@ -102,14 +108,13 @@ Item {
         };
     }
 
-    function _replot() {
-        // Geometry once per resize, never per paint.
+    function _plotValue() {
+        // Geometry per input change, never per paint.
         var bed = _bedBounds();
         if (bed == null) {
-            root._plot = null;
-            return;
+            return null;
         }
-        root._plot = {
+        return {
             "bed": bed,
             "sx": bed.plotWidth / (bed.bedXMax - bed.bedXMin),
             // Screen y grows down; the bed's y maximum sits at the
@@ -253,16 +258,10 @@ Item {
         return bestDist <= radiusPx * radiusPx ? best : "";
     }
 
-    onWidthChanged: {
-        _replot();
-        plateCanvas.requestPaint();
-    }
-    onHeightChanged: {
-        _replot();
-        plateCanvas.requestPaint();
-    }
+    onWidthChanged: plateCanvas.requestPaint()
+    onHeightChanged: plateCanvas.requestPaint()
+    on_PlotChanged: plateCanvas.requestPaint()
     Component.onCompleted: {
-        _replot();
         _rebuildHitIndex();
         _publishView();
         plateCanvas.requestPaint();

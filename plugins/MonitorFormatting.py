@@ -949,3 +949,130 @@ def plate_values(exclude_object):
     objects.sort(key=lambda row: _natural_key(row["name"]))
     return {"objects": objects, "truncated": truncated, "excludedCount": len(excluded)}
 
+
+# A job no memo has projected yet. None is a real job value (the
+# monitor-only print's unresolved identity), so the fresh state needs
+# a sentinel of its own.
+_NO_PLATE_JOB = object()
+
+
+def _plate_points(value):
+    """A private copy of a raw point run, in the payload's own container
+    shape — the copy is what keeps the later comparison honest (a run
+    mutated in place after it was judged must not read as unchanged),
+    and matching shapes keep that comparison C-level. A flat run
+    (Klipper's own shape) copies in one pass, its elements being
+    immutable scalars; only a paired run rebuilds its points."""
+    if not isinstance(value, (list, tuple)):
+        return value
+    if value and isinstance(value[0], (list, tuple)):
+        copied = [list(point) if isinstance(point, (list, tuple)) else point
+                  for point in value]
+        return tuple(copied) if isinstance(value, tuple) else copied
+    return tuple(value) if isinstance(value, tuple) else list(value)
+
+
+def _plate_definition(source):
+    """The definition the projection reads, snapshotted away from the
+    payload: the object rows in DEFINE order (name, centre, ring), the
+    excluded names and the current one. None when the payload's
+    `objects` is not a sequence — then it cannot be judged cheaply and
+    is projected fresh every poll."""
+    objects = source.get("objects") or ()
+    if not isinstance(objects, (list, tuple)):
+        return None
+    rows = []
+    for item in objects:
+        rows.append((item.get("name"), _plate_points(item.get("center")),
+                     _plate_points(item.get("polygon")))
+                    if isinstance(item, Mapping) else None)
+    return (rows, frozenset(source.get("excluded_objects") or ()),
+            source.get("current_object"))
+
+
+def _canonical_points(value):
+    """The run as a tuple of tuples, for the fallback compare — never
+    cached, so it may alias the payload."""
+    if value and isinstance(value[0], (list, tuple)):
+        return tuple(tuple(point) if isinstance(point, (list, tuple)) else point
+                     for point in value)
+    return tuple(value)
+
+
+def _same_points(cached, fresh):
+    """Point-run equality: the cached side is a private copy in the
+    payload's own shape, so the steady state is ONE C-level compare of
+    like containers — this compare is the memo's own per-poll cost. A
+    payload that flips container types normalises both sides once
+    rather than re-walking the ring for a difference that is not
+    there."""
+    if cached is fresh or cached == fresh:
+        return True
+    if not isinstance(cached, (list, tuple)) or not isinstance(fresh, (list, tuple)):
+        return False
+    return _canonical_points(cached) == _canonical_points(fresh)
+
+
+def _same_definition(saved, source):
+    """Whether the payload still carries the definition the cached
+    projection was built from. The rings compare as whole runs at C
+    speed, so nothing is re-validated per vertex."""
+    rows, excluded, current = saved
+    if excluded != frozenset(source.get("excluded_objects") or ()) \
+            or current != source.get("current_object"):
+        return False
+    objects = source.get("objects") or ()
+    if not isinstance(objects, (list, tuple)) or len(objects) != len(rows):
+        return False
+    for saved_row, item in zip(rows, objects, strict=True):
+        if isinstance(item, Mapping) != (saved_row is not None):
+            return False
+        if saved_row is None:
+            continue
+        if saved_row[0] != item.get("name") \
+                or not _same_points(saved_row[1], item.get("center")) \
+                or not _same_points(saved_row[2], item.get("polygon")):
+            return False
+    return True
+
+
+class PlateProjectionMemo:
+    """The plate projection, memoised across polls.
+
+    A core poll carries virtual_sdcard's moving file position and
+    print_stats' advancing clock; the exclude_object definition rides
+    along unchanged, and the session boundary hands out a freshly
+    deep-copied status, so object identity can never tell a changed
+    definition from a moved one. This judges the DEFINITION instead —
+    names, centres, rings and the two flag fields — and reuses the
+    normalised rows while it matches, which keeps the per-vertex walk
+    (coordinate validation plus ring decimation, O(vertices) of Python
+    per object, on the owner thread) off the poll path. A late
+    EXCLUDE_OBJECT_DEFINE and a changed silhouette both arrive as a
+    changed row, and the job boundary drops a finished print's
+    geometry rather than carrying it into the next one.
+    """
+
+    def __init__(self):
+        self._job = _NO_PLATE_JOB
+        self._definition = None
+        self._value = None
+
+    def value(self, exclude_object, job=None):
+        """The normalised projection for this payload, re-walked only
+        when its definition or the job actually changed."""
+        source = exclude_object if isinstance(exclude_object, Mapping) else {}
+        try:
+            unchanged = self._definition is not None and self._value is not None \
+                and job == self._job and _same_definition(self._definition, source)
+        except Exception:
+            # A payload the cheap compare cannot judge (an exotic value
+            # type) is projected fresh — exactly what the caller did
+            # before the memo existed.
+            unchanged = False
+        if not unchanged:
+            self._value = plate_values(source)
+            self._job = job
+            self._definition = _plate_definition(source)
+        return self._value
+

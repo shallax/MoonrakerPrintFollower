@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
-from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, plate_values, preview_eta_text, result
+from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
 from .MoonrakerProtocol import live_position_in_gcode_space
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
@@ -48,6 +48,10 @@ class PrintCoordinator(QObject):
         # next-pause pipeline (the anchor, the merged rows, the target).
         self._loads = LoadStateTracker(files=files, index=index, cura=cura)
         self._next_pause = NextPausePipeline(preview=preview, pauses=pauses, index=index)
+        # The plate projection's memo: the definition rides on every
+        # core poll, and only the job boundary, a late DEFINE or
+        # changed geometry may invalidate it.
+        self._plate_memo = PlateProjectionMemo()
         self._snapshot = PrintSnapshot()
         self._status = {}
         self._detail = "Not connected"
@@ -364,7 +368,11 @@ class PrintCoordinator(QObject):
                 # green-printed report: the raw rows never matched).
                 exclude_status = (self._status.get("exclude_object") or {}) \
                     if isinstance(self._status, dict) else {}
-                exclude_rows = plate_values(exclude_status)["objects"]
+                # Memoised per job: a poll that only moved the position
+                # or advanced the clock re-delivers the same definition,
+                # and re-walking every ring here runs O(vertices) of
+                # Python per object on this thread, every poll.
+                exclude_rows = self._plate_memo.value(exclude_status, job)["objects"]
                 visited = getattr(self._index, "plate_visited", None)
                 if visited is not None and plate_progress_payload.get("split") is not None:
                     plate_visited = visited(physical.index,

@@ -574,7 +574,7 @@ Item {
         // picture must stand through that beat; nothing to paint
         // needs no beat).
         if (!_prefixModelReady()) {
-            return root._textureReady && root._vectorCoversFrom === 0 && root._lastSplit === root.progress.split && !root._prefixShowHold;
+            return root._textureReady && root._vectorCoversShown === 0 && root._lastSplit === root.progress.split && !root._prefixShowHold;
         }
         if (root._vectorCoversFrom === -1 && _vectorInkless()) {
             return true;
@@ -611,7 +611,7 @@ Item {
         // visible binding and froze the face on the attach publish).
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return layer != null && split != null && root._textureReady && root._splitGate() && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === layer.prefixSplit);
+        return layer != null && split != null && root._textureReady && root._splitGate() && (root._vectorCoversShown === 0 || root._vectorCoversShown === layer.prefixSplit);
     }
 
     function _partialPrefixReady() {
@@ -650,7 +650,7 @@ Item {
         // bitmap painted at an older split is missing every motion
         // the demand has passed since, and the attached follow's
         // monotonic gate would admit it.
-        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversFrom === 0 && root._prefixWasShown && root._lastSplit === root.progress.split) || root._vectorCoversFrom === layer.prefixSplit);
+        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversShown === 0 && root._prefixWasShown && root._lastSplit === root.progress.split) || root._vectorCoversShown === layer.prefixSplit);
         return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
@@ -872,6 +872,15 @@ Item {
     // interval the prefix used to own (the swap must be atomic:
     // never a frame with neither renderer owning the history).
     property int _vectorCoversFrom: -1
+    // The coverage of the last DELIVERED paint — what the scene has
+    // actually pulled. The committed record above runs a frame ahead
+    // of the display (the threaded canvas commits its bitmap before
+    // the sync that shows it), and every ownership decision that
+    // puts the prefix's pixels in the scene must read THIS one: a
+    // prefix admitted on the committed record stacks its ink over
+    // the not-yet-trimmed bitmap for one frame (the additive-AA
+    // doubling at the body columns).
+    property int _vectorCoversShown: -2
     property bool _prefixHold: false
     property bool _prefixWasShown: false
     // The 100% -> partial entry's transaction: the full raster's
@@ -1529,7 +1538,7 @@ Item {
             // FULL bitmap still owns everything itself: the record
             // must not stack its pixels over it (the additive-AA
             // doubling).
-            visible: root._retainedPrefixSource !== "" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversFrom === 0)
+            visible: root._retainedPrefixSource !== "" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)
             source: root._retainedPrefixSource
             smooth: false
             onVisibleChanged: root._retainedStanding = visible
@@ -1546,6 +1555,7 @@ Item {
                 // prefix over a delivered FULL bitmap can finally
                 // relinquesh — one frame later, after the scene pulls
                 // the texture (the expiry timer's beat).
+                root._vectorCoversShown = root._vectorCoversFrom;
                 root._textureReady = true;
                 if (root._entryPaintArmedHold) {
                     // The entry's delivery: the handover beat starts
@@ -1556,7 +1566,7 @@ Item {
                     root._beatPending = true;
                     holdExpiryTimer.restart();
                 }
-                if (root._prefixHold && root._vectorCoversFrom === 0) {
+                if (root._prefixHold && root._vectorCoversShown === 0) {
                     root._beatPending = true;
                     holdExpiryTimer.restart();
                 }
@@ -1578,7 +1588,7 @@ Item {
                 // the trim (its visible binding reads the predicate
                 // the trim feeds). Request it here, one paint after
                 // the delivery that completed the picture.
-                if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
+                if (root._vectorCoversShown === 0 && _prefixFrom() > 0 && !root._interactionActive) {
                     progressCanvas.requestPaint();
                 }
                 // The shown record's set edge, the publish cycle's own

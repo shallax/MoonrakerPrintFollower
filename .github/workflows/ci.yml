@@ -11,11 +11,17 @@ on:
 
 jobs:
   cross-platform-suites:
-    # The headless pure-Python suites on the OSes the plugin ships
-    # to: Windows and macOS defects (the no-O_NOFOLLOW write failure,
-    # the boot-storm crashers' siblings) must not wait for a manual
-    # pass. No display needed — the Qt-gated tests
-    # skip where PyQt6 is absent, and the container legs stay Linux.
+    # The host suites on the OSes the plugin ships to: Windows and
+    # macOS defects (the no-O_NOFOLLOW write failure, the Windows
+    # process-liveness sweep, the boot-storm crashers' siblings) must
+    # not wait for a manual pass. No display is needed with the
+    # offscreen platform plugin, which the pinned PyQt6 wheel ships on
+    # both runners.
+    #
+    # The Qt runtime is INSTALLED here on purpose: without it every
+    # Qt-gated test skips, the leg reports green having run the
+    # platform-relevant half of nothing, and the Windows behaviour
+    # (RC-01's sweep) is never executed on the OS it exists for.
     name: Suites (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -30,9 +36,47 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run the headless host suites
+      - name: Install the pinned Qt runtime (Cura supplies Qt in production)
+        run: python -m pip install PyQt6==6.11.0
+
+      - name: Run the host suites with the real Qt runtime
         shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+
+      - name: Platform-safety suite (the Qt-gated regressions must EXECUTE)
+        shell: bash
+        run: |
+          # A green leg that skipped its Qt-gated tests is the false
+          # pass this step exists to stop, and a leg that ran nothing
+          # at all still exits 0. Demand a positive test count and the
+          # skip-free verdict: `OK` alone, never `OK (skipped=n)`.
+          log="${RUNNER_TEMP:-/tmp}/platform-safety.log"
+          python -m unittest discover -s tests -p "test_platform_safety.py" -v >"$log" 2>&1 || {
+            cat "$log"
+            exit 1
+          }
+          cat "$log"
+          python - "$log" <<'PY'
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
+              report = handle.read()
+          # unittest colourises on a forced-colour environment as well as a
+          # tty, and an escape between the line start and `OK` would walk the
+          # verdicts past every pattern below.
+          report = re.sub(r"\x1b\[[0-9;]*m", "", report)
+          ran = re.search(r"^Ran (\d+) tests? in ", report, re.M)
+          if ran is None or int(ran.group(1)) < 1:
+              sys.exit("::error::the platform-safety suite executed no tests")
+          if re.search(r"^OK \(skipped=\d+\)", report, re.M):
+              sys.exit("::error::the platform-safety suite skipped: the Qt runtime is missing")
+          if not re.search(r"^OK", report, re.M):
+              sys.exit("::error::the platform-safety suite did not pass")
+          print("platform-safety: {} test(s) executed, none skipped".format(ran.group(1)))
+          PY
 
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against

@@ -82,7 +82,7 @@ from .MonitorFormatting import (
     file_row_payload,
     file_timestamp,
     peripheral_values,
-    plate_values,
+    PlateProjectionMemo,
 )
 from dataclasses import replace
 
@@ -703,7 +703,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             _store_write(self._store, {"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
-        self._plate_cache_key = None
+        self._plate_memo = PlateProjectionMemo()
+        self._plate_job_seen = None
         self._plate_geometry = None
         self._plate_payload = None
         self._history = TemperatureHistory()
@@ -970,23 +971,45 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         return getattr(layer_info, "index", None)
 
     def _plate_objects_value(self, visited):
-        """The plate geometry: polygons memoised per job on the lane
-        object's identity (the freeze fix keeps it stable across
-        ticks), the volatile flags and the verdicts overlaid per
-        publish."""
+        """The plate geometry, tied to the CURRENT job: the core lane
+        owns exclude_object (CORE_OBJECTS), so its report leads — even
+        a report naming no objects yet, which clears the plate rather
+        than re-showing the last print's. The auxiliary copy serves
+        the lane's first landing alone and never crosses a job
+        boundary: the finished print's polygons under the new job's
+        flags put an old object on the map at the old position, where
+        a tap then acted on the same-named object of the new print.
+
+        The projection is memoised on the definition, not on the lane
+        object's identity — the core lane re-freezes per poll, so
+        identity can never tell a changed polygon from a re-wrapped
+        one (the polygons re-walk O(vertices) of Python per poll)."""
         aux = self._data.snapshot.auxiliary.get("exclude_object") if self._data.snapshot.auxiliary else None
         core = self._data.snapshot.core.get("exclude_object") if self._data.snapshot.core else None
-        poly_source = aux if isinstance(aux, Mapping) and aux.get("objects") else \
-            core if isinstance(core, Mapping) and core.get("objects") else None
-        if poly_source is None:
-            self._plate_cache_key = None
+        stats = self._data.snapshot.core.get("print_stats") if self._data.snapshot.core else None
+        filename = stats.get("filename") if isinstance(stats, Mapping) else None
+        # None is a real job value (a monitor-only print resolves no
+        # file), never a "missing" one.
+        job = str(filename) if filename else None
+        core_plate = core if isinstance(core, Mapping) else None
+        aux_plate = aux if isinstance(aux, Mapping) else None
+        if core_plate is not None:
+            source = core_plate
+        elif aux_plate is not None and self._plate_job_seen in (None, job):
+            # First landing: only the auxiliary copy has arrived. It is
+            # the current plate only while the job has not moved since
+            # it was read.
+            source = aux_plate
+        else:
+            source = None
+        self._plate_job_seen = job
+        if source is None or not source.get("objects"):
             self._plate_geometry = None
             self._plate_payload = _EMPTY_PLATE
             return self._plate_payload
-        key = id(poly_source.get("objects"))
-        if self._plate_cache_key != key:
-            self._plate_geometry = plate_values(poly_source)
-            self._plate_cache_key = key
+        geometry = self._plate_memo.value(source, job)
+        if self._plate_geometry is not geometry:
+            self._plate_geometry = geometry
             self._plate_payload = None
         status = _exclude_status(self._data.snapshot)
         excluded = frozenset(status.get("excluded_objects") or ())
@@ -1033,7 +1056,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
-        self._plate_cache_key = None
+        # The session boundary drops the projection: a reconnect's
+        # first snapshot must never match a definition read for the
+        # previous session, and the job it was read under is gone.
+        self._plate_memo = PlateProjectionMemo()
+        self._plate_job_seen = None
         self._plate_geometry = None
         self._plate_payload = None
         # A printer switch must not ring for the previous machine's

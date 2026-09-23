@@ -11,11 +11,27 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 
 from PyQt6.QtCore import QObject, QStandardPaths, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog
 
 from .RemoteFileService import CANCELLED_BY_USER, FileLease
+
+# Top of the save lane's lifecycle: the stream is running, or its
+# finished bytes are being copied beside the destination and published.
+_STREAMING = "streaming"
+_PUBLISHING = "publishing"
+
+# The publication copy's step: small enough that a cancel is honoured
+# promptly, large enough that a 2 GiB print is not a million writes.
+_COPY_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+class _SaveCancelled(Exception):
+    """The user's Cancel arrived while the finished stream was being
+    published beside its destination: the staging file goes, the
+    destination the user already had stays."""
 
 
 def _staging_path(target):
@@ -31,19 +47,35 @@ def _staging_path(target):
     raise OSError("no free staging name beside {}".format(target))
 
 
-def _replace_saved_file(source, target):
+def _replace_saved_file(source, target, cancelled=None):
     """Land a finished stream at `target` with deliberate replace
     semantics: the bytes are copied to a staging sibling first and the
     destination only ever changes through one atomic `os.replace`. A
     failed save therefore leaves the file the user already had exactly
     as it was — `shutil.move` cannot promise that, since a rename onto
     an existing file raises on Windows and its copy fallback truncates
-    the destination in place before it knows the copy will succeed."""
+    the destination in place before it knows the copy will succeed.
+
+    The copy is CHUNKED and honours `cancelled` between chunks: the
+    callers run this off the owner thread, and this is what lets the
+    window's Cancel abandon a copy already in flight instead of
+    waiting the whole volume out."""
     staging = _staging_path(target)
     try:
-        shutil.copyfile(source, staging)
+        with open(source, "rb") as stream, open(staging, "wb") as staging_stream:
+            while True:
+                if cancelled is not None and cancelled.is_set():
+                    raise _SaveCancelled()
+                chunk = stream.read(_COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                staging_stream.write(chunk)
+        # Re-checked immediately before the swap: a cancel that landed
+        # while the last chunk was written must not publish.
+        if cancelled is not None and cancelled.is_set():
+            raise _SaveCancelled()
         os.replace(staging, target)
-    except OSError:
+    except BaseException:
         try:
             os.remove(staging)
         except OSError:
@@ -53,6 +85,10 @@ def _replace_saved_file(source, target):
 
 class FileDownload(QObject):
     failed = pyqtSignal(str)
+    # The publication terminal, emitted by the copy worker: the
+    # connection is queued, so the slot runs on the owner (GUI) thread
+    # that built this object.
+    publicationDone = pyqtSignal(object, object)
     # The save lane carries ONE user transfer at a time (the lifecycle
     # finding): the progress window is a single name, a single bar and
     # a single Cancel, so rather than let one name describe several
@@ -66,9 +102,12 @@ class FileDownload(QObject):
         self._active_identity = active_identity or (lambda: (None, None))
         self._session_generation = session_generation or (lambda: None)
         self._active = set()
-        self._save = None  # the single in-flight SAVE stream (the popup's own)
+        self._save = None  # the SAVE transfer the window describes (_STREAMING or _PUBLISHING)
         self._save_name = None
+        self._save_stage = None
+        self._save_cancel = None  # the publication copy's cancel event
         self._closing = False
+        self.publicationDone.connect(self._on_publication_done)
         # Load refusals (already loading, no printer yet, Cura never
         # confirming) surface through the same failure channel as
         # download errors — the model relays both into the popup's
@@ -76,7 +115,7 @@ class FileDownload(QObject):
         self._cura.loadFailed.connect(self.failed.emit)
 
     def progress(self):
-        """The in-flight SAVE stream's progress window payload, or None
+        """The in-flight SAVE transfer's progress window payload, or None
         when no save transfer runs (the popup's gate). It describes the
         save stream alone: the service's job-bound download_fraction
         tracks the FOLLOW lane, which a save download never joins, and a
@@ -85,12 +124,22 @@ class FileDownload(QObject):
         window open — `indeterminate`, with the received bytes standing
         in for the fraction — because the payload is also what keeps
         the user's Cancel reachable; the determinate percentage appears
-        the moment the headers declare a total."""
+        the moment the headers declare a total.
+
+        The finished stream keeps its window while it is being
+        published: the bytes are complete but not yet at the destination,
+        so the bar holds full instead of vanishing into the copy (which
+        is where it used to disappear)."""
         download = self._save
-        if download is None or getattr(download, "done", False):
+        if download is None:
             return None
         op = getattr(download, "_op", None)
-        if op is None:
+        if self._save_stage == _PUBLISHING:
+            received = int(getattr(op, "received", 0) or 0) if op is not None else 0
+            size = int(getattr(op, "size", 0) or 0) if op is not None else 0
+            return {"name": self._save_name or "", "received": received, "percent": 100,
+                    "total": size or received, "indeterminate": False}
+        if getattr(download, "done", False) or op is None:
             return None
         size = int(getattr(op, "size", 0) or 0)
         payload = {"name": self._save_name or "", "received": int(getattr(op, "received", 0) or 0),
@@ -101,16 +150,65 @@ class FileDownload(QObject):
         return payload
 
     def cancel(self):
-        """The progress window's Cancel, and the USER terminal: every
-        in-flight stream retires with the user-cancel message. A user
-        who presses Cancel did not lose a printer, so the
-        connection-change explanation belongs to the invalidation door
-        (the service's cancel_one_shots) alone."""
+        """The progress window's Cancel, and the USER terminal for the
+        transfer that window describes: the SAVE stream. A load opened
+        alongside into Cura carries its own UI and its own terminal, so
+        this Cancel leaves it streaming — retiring it silently killed a
+        transfer the user never cancelled. Shutdown (`close`) and the
+        session-invalidation door still retire everything.
+
+        A cancel that lands while the finished stream is being published
+        is honoured as well: the copy abandons and the destination the
+        user already had stays. A user who pressed Cancel did not lose a
+        printer, so the connection-change explanation belongs to the
+        invalidation door (the service's cancel_one_shots) alone."""
+        save, self._save = self._save, None
+        stage, self._save_stage = self._save_stage, None
+        cancelled, self._save_cancel = self._save_cancel, None
+        self._save_name = None
+        if cancelled is not None:
+            cancelled.set()
+        if save is None:
+            return
+        self._active.discard(save)
+        if stage != _PUBLISHING:
+            save.cancel(CANCELLED_BY_USER)
+
+    def _clear_save(self, download):
+        """Retire the save lane's own latch once `download` is the
+        transfer the window describes."""
+        if self._save is not download:
+            return
         self._save = None
         self._save_name = None
-        for download in list(self._active):
-            download.cancel(CANCELLED_BY_USER)
-        self._active.clear()
+        self._save_stage = None
+        self._save_cancel = None
+
+    def _publish_saved_file(self, download, source, target, cancelled):
+        """The publication worker: the whole-file copy of the finished
+        stream onto the destination's volume, OFF the owner thread. The
+        copy used to run on it, so a large file or a slow volume froze
+        Cura's repaints, the popup's Cancel and the window's close for
+        as long as the copy took. The staged source is retired here
+        too: its bytes now live at the destination or nowhere."""
+        try:
+            _replace_saved_file(source, target, cancelled)
+            error = None
+        except _SaveCancelled:
+            error = CANCELLED_BY_USER
+        except Exception as exc:
+            error = "The download could not be saved: {}".format(exc)
+        finally:
+            shutil.rmtree(os.path.dirname(source), ignore_errors=True)
+        self.publicationDone.emit(download, error)
+
+    def _on_publication_done(self, download, error):
+        """The publication's terminal, on the owner thread."""
+        self._clear_save(download)
+        if self._closing:
+            return  # shutdown: the terminal retires without a report
+        if error:
+            self.failed.emit(error)
 
     def request(self, relpath) -> bool:
         machine_id = self._active_identity()[0]
@@ -174,41 +272,52 @@ class FileDownload(QObject):
         def on_ready(path, error):
             if download is not None:
                 self._active.discard(download)
-                if self._save is download:
-                    self._save = None
-            self._save_name = None
             if self._closing:
+                self._clear_save(download)
                 return  # shutdown: the terminal retires without a report
             if error or not path:
+                self._clear_save(download)
                 self.failed.emit(error or "The download failed")
                 return
-            directory = os.path.dirname(path)
-            try:
-                if machine_id != self._active_identity()[0] or generation != self._session_generation():
-                    self.failed.emit("The printer connection changed; the download was discarded")
-                    return
-                _replace_saved_file(path, target)
-            except OSError as exc:
-                self.failed.emit("The download could not be saved: {}".format(exc))
-            finally:
-                # The streamed source is a temporary whatever happened:
-                # its bytes now live at the destination or nowhere.
-                shutil.rmtree(directory, ignore_errors=True)
+            if machine_id != self._active_identity()[0] or generation != self._session_generation():
+                self._clear_save(download)
+                # The streamed source is a temporary whatever happened.
+                shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+                self.failed.emit("The printer connection changed; the download was discarded")
+                return
+            # The transfer is done, the FILE is not there yet: it still
+            # has to be copied to the destination's volume. That whole-
+            # file copy runs on a worker (the owner thread cannot afford
+            # it), and the save latch stays SET until the atomic replace
+            # publishes — the window keeps its name, its bar and its
+            # Cancel the whole way instead of clearing into the stall.
+            self._save = download
+            self._save_stage = _PUBLISHING
+            self._save_cancel = threading.Event()
+            threading.Thread(target=self._publish_saved_file,
+                             args=(download, path, target, self._save_cancel),
+                             name="mpf-save-publish", daemon=True).start()
 
         download = self._files.download_once(str(relpath), on_ready=on_ready)
         if not download.done:
             self._active.add(download)
             self._save = download
+            self._save_stage = _STREAMING
         return True
 
     def close(self):
         # Shutdown ordering (the runtime closes this BEFORE the files
-        # service): retire the in-flight streams so no terminal lands
-        # after the temp root is gone, and report none of them — a
+        # service): retire the in-flight streams — a publication in
+        # flight included, so no copy keeps writing to a destination
+        # while the interpreter goes down — and report none of them: a
         # shutting-down model has no note line to read.
         self._closing = True
+        cancelled, self._save_cancel = self._save_cancel, None
         self._save = None
         self._save_name = None
+        self._save_stage = None
+        if cancelled is not None:
+            cancelled.set()
         for download in list(self._active):
             download.cancel(CANCELLED_BY_USER)
         self._active.clear()

@@ -105,7 +105,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
 
     def test_section_content_insets_pair_left_and_right(self):
-        # The 4.6.0 right inset (the author's item): every section
+        # The 4.6.0 right inset: every section
         # content column with the left inset carries the SAME
         # expression on the right — the pair pin, never one side.
         left = 'Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
@@ -5064,8 +5064,11 @@ Item {
             # replacement loads — never torn down early. Its visibility
             # reads the live image's OWN readiness, so the swap that
             # blanks that image and the record's stand are one
-            # evaluation (never a beat apart).
-            "visible: root._retainedPrefixSource !== \"\" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversFrom === 0)",
+            # evaluation (never a beat apart). The vector gate reads
+            # the DELIVERED coverage: the committed record runs a
+            # frame ahead of the scene, and a record admitted on it
+            # stacks its ink over the not-yet-trimmed bitmap.
+            "visible: root._retainedPrefixSource !== \"\" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

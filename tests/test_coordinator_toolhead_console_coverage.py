@@ -35,6 +35,9 @@ existing suites leave to the full follower runtime.
 """
 from __future__ import annotations
 
+import copy
+import json
+import math
 import os
 import sys
 import tempfile
@@ -84,6 +87,50 @@ if QT_AVAILABLE:
         return SimpleNamespace(job_key=job_key, ranges=list(ranges or _ranges()),
                                pause_layers=set(pause_layers), current_layer_map={},
                                layer_at=lambda position: 1)
+
+    def _plate_ring(name, vertices=300, offset=0.0):
+        """One ring in Klipper's DEFINE shape: a flat coordinate run,
+        past the plate's vertex budget, so the projection both validates
+        every point and decimates the ring."""
+        polygon = []
+        for step in range(vertices):
+            angle = 2.0 * math.pi * step / vertices
+            polygon.append(round(20.0 + offset + 10.0 * math.cos(angle), 3))
+            polygon.append(round(20.0 + 10.0 * math.sin(angle), 3))
+        return {"name": name, "center": [20.0 + offset, 20.0], "polygon": polygon}
+
+    def _plate_geometry(count=80, vertices=300):
+        """A DEFINE payload of `count` rings — the shape every core poll
+        carries along with the moving file position."""
+        return {"objects": [_plate_ring(f"OBJ_{index}", vertices, float(index))
+                            for index in range(count)],
+                "excluded_objects": [], "current_object": None}
+
+    def _normalisation_spy():
+        """A counter over the plate projection's ring walk — the
+        per-vertex work the memo exists to remove. Returns the call
+        list and the patch that installs it."""
+        from plugins import MonitorFormatting
+        calls = []
+        real_finite_polygon = MonitorFormatting._finite_polygon
+
+        def counted_finite_polygon(value):
+            calls.append(value)
+            return real_finite_polygon(value)
+
+        return calls, patch.object(MonitorFormatting, "_finite_polygon",
+                                   counted_finite_polygon)
+
+    class _AlwaysWalk:
+        """The pre-fix call site: every poll re-normalises the payload."""
+
+        def __init__(self):
+            self.walks = 0
+
+        def value(self, exclude_object, job=None):
+            from plugins.MonitorFormatting import plate_values
+            self.walks += 1
+            return plate_values(exclude_object)
 
     class _Client(QObject):
         statusReceived = pyqtSignal(object)
@@ -168,6 +215,8 @@ if QT_AVAILABLE:
             self.plate_anchors = []
             self.plate_positions = []
             self.plate_lives = []
+            self.plate_visited_rows = []
+            self.plate_split = None
             self.manual_anchor = None
             self.manual_split = None
 
@@ -195,7 +244,15 @@ if QT_AVAILABLE:
             self.plate_anchors.append(anchor)
             self.plate_positions.append(file_position)
             self.plate_lives.append(live_position)
-            return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
+            return {"layers": {}, "split": self.plate_split,
+                    "method": "unavailable", "anchor": anchor}
+
+        def plate_visited(self, anchor, split, rows):
+            # The rows the coordinator hands the printed-object walk —
+            # the projection's own output, shared with whatever it was
+            # built from.
+            self.plate_visited_rows.append((anchor, split, rows))
+            return frozenset(row["name"] for row in rows if row.get("polygon"))
 
         def plate_pass_fraction(self):
             return None
@@ -878,6 +935,172 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertIsNone(snapshot.plate_progress)
         self.assertEqual(parts.index.plate_anchors, [])
         self.assertEqual(parts.index.plate_positions, [])
+
+    def _plate_status(self, geometry, *, position=4500.0, duration=120.0,
+                      filename="cube.gcode", reparse=False):
+        """One core poll's payload as the session boundary delivers it:
+        the DEFINITION rides along with the moving file position and
+        the advancing clock, and the status is a fresh deep copy (what
+        SessionSnapshot.copy_status hands the coordinator), so object
+        identity never survives a poll. `reparse` goes further and
+        rebuilds the payload as a new JSON parse would — new containers
+        AND new float objects."""
+        payload = json.loads(json.dumps(geometry)) if reparse else copy.deepcopy(geometry)
+        status = _status("printing", filename=filename,
+                         virtual_sdcard={"file_position": position, "file_size": 100000,
+                                         "progress": 0.05},
+                         exclude_object=payload)
+        status["print_stats"]["print_duration"] = duration
+        return status
+
+    def _plate_poll(self, parts, geometry, **kwargs):
+        """The payload delivered through the client's own signal, so the
+        whole observe-then-refresh path runs."""
+        parts.client.statusReceived.emit(self._plate_status(geometry, **kwargs))
+
+    def _plate_parts(self, split=500):
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.index.plate_split = split
+        return parts
+
+    def test_an_unchanged_plate_definition_is_not_re_walked_by_a_position_poll(self):
+        # The coordinator's plate projection is per-vertex Python work
+        # (coordinate validation plus ring decimation) and it ran on
+        # EVERY core poll — 80 objects x 300 vertices is ~14 ms a poll,
+        # 128 x 1,000 ~80 ms, against a 750 ms cadence. The definition
+        # did not change between those polls; only the position and the
+        # clock did, and neither is the projection's input.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(80, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self.assertEqual(cold, 80, "the cold poll did not walk every ring")
+            for position in (4600.0, 4700.0, 4800.0):
+                self._plate_poll(parts, geometry, position=position, duration=300.0)
+            # Even a re-parsed payload (fresh containers and fresh
+            # floats) is the same definition: the judgement reads
+            # values, never identity.
+            self._plate_poll(parts, geometry, position=4900.0, duration=300.0,
+                             reparse=True)
+        self.assertEqual(len(calls), cold,
+                         "an unchanged definition was walked again by a later poll")
+        self.assertEqual(len(parts.index.plate_visited_rows), 5,
+                         "a poll served no plate walk at all")
+        self.assertEqual(parts.index.plate_visited_rows[-1][1], 500)
+        self.assertEqual(len(parts.index.plate_visited_rows[-1][2]), 80,
+                         "the walk was handed a shorter row set than the plate holds")
+
+    def test_a_late_define_arrival_is_walked_and_served(self):
+        # EXCLUDE_OBJECT_DEFINE runs mid-print on some machines, so a
+        # name the projection has never seen can arrive on any poll: a
+        # changed definition re-walks the whole payload (the natural
+        # sort and the cap are the projection's, not one row's), and
+        # the rows the printed-object walk is handed must carry the new
+        # object — a projection kept past its definition would leave it
+        # unpainted for the rest of the print.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(3, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold)
+            geometry["objects"].append(_plate_ring("LATE_OBJECT", 300, 40.0))
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold + 4,
+                             "a late DEFINE did not re-walk the definition")
+        names = {row["name"] for row in parts.index.plate_visited_rows[-1][2]}
+        self.assertIn("LATE_OBJECT", names)
+        self.assertEqual(len(names), 4)
+
+    def test_a_changed_ring_is_walked_and_served_fresh(self):
+        # The same names with a moved silhouette (a re-define, a
+        # re-slice): the walk must judge the NEW coordinates, never the
+        # memo's old projection.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(2, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold)
+            geometry["objects"][0]["polygon"][0] += 5.0
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold + 2,
+                             "a changed ring did not re-walk the definition")
+        rows = {row["name"]: row for row in parts.index.plate_visited_rows[-1][2]}
+        self.assertEqual(rows["OBJ_0"]["polygon"][0], [35.0, 20.0])
+
+    def test_a_same_file_restart_drops_the_previous_definition(self):
+        # A restart of the SAME file re-defines the same objects, so
+        # the geometry alone cannot separate the two runs: the job
+        # key's own serial is the signal (a file position that went
+        # backwards), and the memo drops the finished print's rows with
+        # it rather than carrying them — and their memory — into the
+        # next run.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(4, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry, position=4500.0)
+            cold = len(calls)
+            self._plate_poll(parts, geometry, position=4600.0)
+            self.assertEqual(len(calls), cold)
+            self._plate_poll(parts, geometry, position=120.0)
+            self.assertEqual(len(calls), cold + 4,
+                             "the restarted job reused the previous definition")
+
+    def _refresh_cost(self, geometry, *, passthrough=False, polls=4):
+        """The coordinator's own refresh path, timed in milliseconds:
+        the cold refresh (the one walk the memo cannot remove) and the
+        steady-state refreshes after it. The payloads are built outside
+        the clock — the status copy is the session boundary's cost, not
+        the refresh's, and it would otherwise dominate both numbers
+        equally."""
+        parts = self._plate_parts()
+        real_memo = getattr(parts.coordinator, "_plate_memo", None)
+        if passthrough:
+            parts.coordinator._plate_memo = _AlwaysWalk()
+        payloads = [self._plate_status(geometry, position=4500.0 + step * 100.0,
+                                       duration=120.0 + step)
+                    for step in range(polls + 1)]
+        started = time.perf_counter()
+        parts.client.statusReceived.emit(payloads[0])
+        cold = (time.perf_counter() - started) * 1000.0
+        started = time.perf_counter()
+        for payload in payloads[1:]:
+            parts.client.statusReceived.emit(payload)
+        steady = (time.perf_counter() - started) * 1000.0 / polls
+        if passthrough:
+            parts.coordinator._plate_memo = real_memo
+        return cold, steady
+
+    def test_the_memoised_refresh_costs_a_fraction_of_the_re_walk(self):
+        # The same refresh path both ways: with the pre-fix call site (a
+        # stand-in that normalises every poll) and with the memo. The
+        # structural assertion lives in the ring-walk spy above; this
+        # one pins the ORDER of the win, with a margin wide enough that
+        # no plausible machine inverts it. The pre-fix cost is the
+        # review's own: ~14 ms a poll at this geometry against a 750 ms
+        # cadence, paid on the owner thread.
+        geometry = _plate_geometry(80, 300)
+        raw_cold, raw_steady = self._refresh_cost(geometry, passthrough=True)
+        memo_cold, memo_steady = self._refresh_cost(geometry)
+        print("plate projection per refresh (80 x 300): "
+              "re-walk cold %.2f ms steady %.2f ms; "
+              "memoised cold %.2f ms steady %.2f ms"
+              % (raw_cold, raw_steady, memo_cold, memo_steady))
+        self.assertLess(memo_steady, raw_steady * 0.25,
+                        "the memoised refresh cost %.2f ms against the re-walk's %.2f ms"
+                        % (memo_steady, raw_steady))
+        self.assertLess(memo_cold, raw_cold * 2.0,
+                        "the memoised first refresh paid %.2f ms against the re-walk's %.2f ms"
+                        % (memo_cold, raw_cold))
 
     def test_a_missing_or_invalid_file_position_resolves_to_none(self):
         # Missing, null and non-numeric fields all resolve to None —

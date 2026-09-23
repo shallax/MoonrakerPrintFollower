@@ -3373,20 +3373,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # Do not let the native prefix alone satisfy the wait: x=155 is
         # beyond the prefix (which ends at x=110), so red ink there
         # proves the Canvas tail has actually landed.
-        deadline = time.monotonic() + 5.0
-        image = window.grabWindow()
-        while time.monotonic() < deadline:
-            if self._red_in_band(image, face, window, plot, 155.0, 125.0, radius=6):
-                self.pump(20)
-                image = window.grabWindow()
-                break
-            self.app.processEvents()
-            time.sleep(0.05)
-            image = window.grabWindow()
-        self.assertTrue(self._red_in_band(image, face, window, plot,
-                                          155.0, 125.0, radius=6),
-                        "the Canvas tail never landed")
-
         origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
         row = int(origin.y() + plot["offsetY"]
                   + (plot["bedYMax"] - 125.0) * plot["sy"])
@@ -3399,6 +3385,35 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 if self._matches(image.pixel(col, py), (0xD3, 0x2F, 0x2F),
                                  tolerance=tolerance)
             )
+
+        # The census holds in EVERY frame of the settle, not only in
+        # the settled one: the Canvas's trim commits a frame before the
+        # scene shows the trimmed texture, and a prefix admitted inside
+        # that beat stacks its ink over the bitmap it replaces — the
+        # prefix body then reads a full core row deeper than the Canvas
+        # body (the CI signature: [4, 2]). Both bodies are measured on
+        # every frame; x=155 also proves the Canvas tail landed.
+        tail_landed = False
+        frames = 0
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and frames < 30:
+            self.app.processEvents()
+            self.pump(1)
+            frames += 1
+            image = window.grabWindow()
+            bodies = [red_height(75.0), red_height(155.0)]
+            if min(bodies) > 0:
+                self.assertLessEqual(
+                    max(bodies) - min(bodies), 1,
+                    "native prefix / Canvas tail stroke widths diverge in "
+                    "frame %d: %r" % (frames, bodies))
+            if self._red_in_band(image, face, window, plot, 155.0, 125.0,
+                                 radius=6):
+                tail_landed = True
+        self.assertTrue(tail_landed, "the Canvas tail never landed")
+
+        self.pump(20)
+        image = window.grabWindow()
 
         # x=75 is native-prefix body, x=110 is the engine boundary,
         # x=155 is Canvas-tail body. One physical pixel is the maximum
@@ -4380,9 +4395,15 @@ class PlateFaceRenderTests(RealEngineTestCase):
             return result
 
         # The stale exact state: a delivered canvas whose recorded
-        # painted split trails the standing demand (split 18).
+        # painted split trails the standing demand (split 18). Both
+        # coverage records are forced — the ownership gates read the
+        # DELIVERED one (the committed record runs a beat ahead of
+        # the scene), and a fixture that forced only the committed
+        # record would leave the delivered record claiming a canvas
+        # state the test does not mean.
         face.setProperty("_textureReady", True)
         face.setProperty("_vectorCoversFrom", 0)
+        face.setProperty("_vectorCoversShown", 0)
         face.setProperty("_lastSplit", 5)
         self.assertFalse(predicate(),
                          "an older split's delivery readied the prefix")
@@ -6532,6 +6553,152 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         "the follower lost its toolhead dot")
 
 
+if QT_AVAILABLE:
+    from plugins.MonitorFormatting import PlateProjectionMemo
+
+    class PlateJobBoundaryTests(RealEngineTestCase):
+        """The picker's payload ties its GEOMETRY to the current job.
+        The core lane owns exclude_object (CORE_OBJECTS) and the
+        auxiliary copy is that lane's first landing alone: the finished
+        print's polygons decorated with the new job's flags put an old
+        object on the map, and a tap then acted on the same-named
+        object at the position it held in the previous print.
+
+        Projection-level — the method under test reads the snapshot's
+        two lanes and its own memo, nothing else of the model (the
+        monitor-level harness lives in the model's coverage file)."""
+
+        # The finished print's plate, still in the auxiliary copy while
+        # the new job's core report has already landed.
+        OLD = {
+            "objects": [{"name": "PART_A", "center": [10.0, 10.0],
+                         "polygon": [[5.0, 5.0], [5.0, 15.0], [15.0, 15.0], [15.0, 5.0]]}],
+            "excluded_objects": [], "current_object": None,
+        }
+        MOVED = {
+            "objects": [{"name": "PART_A", "center": [100.0, 100.0],
+                         "polygon": [[95.0, 95.0], [95.0, 105.0], [105.0, 105.0],
+                                     [105.0, 95.0]]}],
+            "excluded_objects": [], "current_object": "PART_A",
+        }
+
+        @classmethod
+        def setUpClass(cls):
+            super().setUpClass()
+            from qt_runtime_support import runtime
+
+            # The model module reads Uranium's UM.* at import, which
+            # only the harness supplies (this file's QGuiApplication is
+            # the same instance the harness reuses).
+            with runtime():
+                from plugins.MoonrakerMonitorModel import MoonrakerMonitorModel
+            # Bound as a plain function on the class: the unbound method
+            # called through the instance would take the test case as
+            # its `self`.
+            cls.projection = staticmethod(MoonrakerMonitorModel._plate_objects_value)
+
+        def _model(self, core, auxiliary):
+            """The projection bound to a model-shaped carrier: the
+            snapshot's lanes plus the projection's own state — the
+            memo, the job it last read, the cached geometry."""
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                _data=SimpleNamespace(snapshot=SimpleNamespace(core=core or {},
+                                                               auxiliary=auxiliary or {})),
+                _plate_memo=PlateProjectionMemo(),
+                _plate_job_seen=None,
+                _plate_geometry=None,
+                _plate_payload=None)
+
+        def _rows(self, model, visited=frozenset()):
+            plate = self.projection(model, visited)
+            return {row["name"]: row for row in plate["objects"]}
+
+        def test_a_new_jobs_geometry_replaces_the_finished_prints(self):
+            # Old and new jobs both carry PART_A; the new job's core
+            # report moves it from [10, 10] to [100, 100].
+            model = self._model(
+                core={"print_stats": {"filename": "next.gcode", "state": "printing"},
+                      "exclude_object": self.MOVED},
+                auxiliary={"exclude_object": self.OLD})
+            rows = self._rows(model)
+            self.assertEqual([100.0, 100.0], list(rows["PART_A"]["center"]),
+                             "the picker plotted the finished print's geometry")
+            self.assertTrue(rows["PART_A"]["current"],
+                            "the new job's current object never landed")
+
+        def test_a_new_print_with_no_objects_yet_shows_no_plate(self):
+            # The job boundary with nothing defined yet: the core report
+            # carries an empty object list, and the finished print's
+            # polygons must not stand in for it.
+            model = self._model(
+                core={"print_stats": {"filename": "next.gcode"},
+                      "exclude_object": {"objects": [], "excluded_objects": [],
+                                         "current_object": None}},
+                auxiliary={"exclude_object": self.OLD})
+            self.assertEqual({}, self._rows(model),
+                             "the finished print's objects stayed on the plate")
+
+        def test_a_stale_auxiliary_copy_never_crosses_a_job_boundary(self):
+            # Only the auxiliary copy has landed, and the job has moved
+            # since it was read: the plate is honestly empty until the
+            # core lane reports its own, never the finished print under
+            # the new job's flags.
+            model = self._model(core={"print_stats": {"filename": "old.gcode"}},
+                                auxiliary={"exclude_object": self.OLD})
+            self.assertEqual(["PART_A"], sorted(self._rows(model)),
+                             "the fixture no longer projects the first landing")
+            model._data.snapshot.core = {"print_stats": {"filename": "next.gcode"}}
+            self.assertEqual({}, self._rows(model),
+                             "the finished print's geometry survived the job boundary")
+
+        def test_the_core_report_leads_even_when_it_names_no_objects(self):
+            # The lane's own answer for the current job — an empty plate
+            # — outranks a populated copy from the other lane.
+            model = self._model(
+                core={"exclude_object": {"objects": [], "excluded_objects": [],
+                                         "current_object": None}},
+                auxiliary={"exclude_object": self.MOVED})
+            self.assertEqual({}, self._rows(model),
+                             "an empty core report fell back to the other lane")
+
+
+if QT_AVAILABLE:
+
+    class LateBedDouble(QObject):
+        """A printer whose bed geometry arrives late and can switch:
+        the attach the canvas must re-map without a resize. Module
+        level inside the guard (the house pattern)."""
+
+        bedChanged = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self._bed = (0.0, 0.0)
+            self._centre_is_zero = False
+
+        def setBed(self, width, depth):
+            self._bed = (float(width), float(depth))
+            self.bedChanged.emit()
+
+        def setCentreIsZero(self, value):
+            self._centre_is_zero = bool(value)
+            self.bedChanged.emit()
+
+        @pyqtProperty(float, notify=bedChanged)
+        def bedMeshMachineWidth(self):
+            return self._bed[0]
+
+        @pyqtProperty(float, notify=bedChanged)
+        def bedMeshMachineDepth(self):
+            return self._bed[1]
+
+        @pyqtProperty(bool, notify=bedChanged)
+        def bedMeshCenterIsZero(self):
+            return self._centre_is_zero
+
+
 class PlateCanvasHitTests(RealEngineTestCase):
     """The picker's hit test against real polygons: the click target is
     the object the user sees. Containment is authoritative (the Python
@@ -7012,6 +7179,76 @@ class PlateCanvasHitTests(RealEngineTestCase):
         self.assertEqual(QColor(label[0].property("color")).name(),
                          states["Long_Bracket"],
                          "the label's colour disagrees with the state ink")
+
+    def _bed_rect(self, canvas):
+        """The mapped bed rectangle as the painter holds it."""
+        bed = canvas.property("_plot").property("bed")
+        return tuple(bed.property(name).toNumber() for name in
+                     ("bedXMin", "bedXMax", "bedYMin", "bedYMax"))
+
+    @staticmethod
+    def _ink_count(image):
+        """Pixels off the window's clear colour (the corner) — the
+        grid's own ink, counted without assuming a palette."""
+        blank = image.pixelColor(0, 0)
+        return sum(1 for y in range(image.height())
+                   for x in range(image.width())
+                   if image.pixelColor(x, y) != blank)
+
+    def test_the_map_follows_a_late_attach_and_a_bed_switch(self):
+        """The mapping is computed from its own inputs, never from a
+        resize: a printer attached after the mount, dimensions that
+        arrive late and a bed switch all re-map the canvas where it
+        stands. The map that only rebuilt on completion and on resize
+        stayed blank — or on the previous machine's coordinate system —
+        until the user happened to resize the popover."""
+        document, window = self.mount_window("PlateCanvas.qml", 400, 400)
+        canvas = document
+        self.assertEqual(canvas.property("objectName"), "moonrakerPlateCanvas")
+        self.assertIsNone(canvas.property("_plot"),
+                          "the map plotted with no printer attached")
+
+        # The late attach, dimensions and all. The threaded raster
+        # needs wall-clock pumping before the grab can see it.
+        printer = LateBedDouble()
+        self._bed_printer = printer
+        printer.setBed(250.0, 250.0)
+        document.setProperty("printerModel", printer)
+        self._pump_ms(200)
+        plot = canvas.property("_plot")
+        self.assertIsNotNone(plot, "the late attach never built the mapping")
+        self.assertEqual(self._bed_rect(canvas), (0.0, 250.0, 0.0, 250.0))
+        plotted = window.grabWindow()
+        self.assertGreater(self._ink_count(plotted), 0,
+                           "the late attach never reached the canvas")
+
+        # A bed switch: the same canvas, the new machine's rectangle,
+        # and the raster repainted with it.
+        printer.setBed(300.0, 200.0)
+        self._pump_ms(200)
+        plot = canvas.property("_plot")
+        self.assertIsNotNone(plot, "the bed switch dropped the mapping")
+        self.assertEqual(self._bed_rect(canvas), (0.0, 300.0, 0.0, 200.0))
+        switched = window.grabWindow()
+        self.assertEqual(switched.size(), plotted.size())
+        self.assertNotEqual(switched, plotted,
+                            "the map never repainted for the bed switch")
+
+        # Zero dimensions are unknown geometry; the real ones that
+        # follow are the same no-resize path.
+        printer.setBed(0.0, 0.0)
+        self.pump(30)
+        self.assertIsNone(canvas.property("_plot"), "a 0 mm bed still plotted")
+        printer.setBed(220.0, 180.0)
+        self.pump(30)
+        self.assertIsNotNone(canvas.property("_plot"),
+                             "the late dimensions never built the mapping")
+
+        # The centre convention is the third bed input, on its own
+        # signal: the rectangle reflects about zero.
+        printer.setCentreIsZero(True)
+        self.pump(30)
+        self.assertEqual(self._bed_rect(canvas), (-110.0, 110.0, -90.0, 90.0))
 
 
 if QT_AVAILABLE:

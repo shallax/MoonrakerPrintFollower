@@ -790,6 +790,38 @@ if QT_AVAILABLE:
             if self._on_ready is not None:
                 self._on_ready(path, error)
 
+    class GatedSource:
+        """The copy's source handle, gated at its first read (RC-04):
+        `released_by_loop` is True only when the app's own event loop
+        ran the release — a timeout means the copy held the owner
+        thread for the whole wait, which is the defect."""
+
+        GATE_TIMEOUT = 5.0
+
+        def __init__(self, handle, entered, release):
+            self._handle = handle
+            self._entered = entered
+            self._release = release
+            self._gated = False
+            self.released_by_loop = False
+
+        def read(self, size=-1):
+            data = self._handle.read(size)
+            if not self._gated:
+                self._gated = True
+                self._entered.set()
+                self.released_by_loop = bool(self._release.wait(self.GATE_TIMEOUT))
+            return data
+
+        def close(self):
+            self._handle.close()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.close()
+
     class FilesDouble:
         def __init__(self):
             self.calls = []
@@ -846,6 +878,36 @@ class FileDownloadTests(unittest.TestCase):
         if payload is not None:
             pathlib.Path(target).write_text(payload, encoding="utf-8")
         return target
+
+    def publish(self, download, timeout=5.0):
+        """Drive the owner thread's loop until the save publication
+        lands: the finished stream is copied to the staging sibling on
+        a worker, and the terminal comes back through a queued signal,
+        so a test that called the stream's `finish` must pump."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.qt.events()
+            if download._save is None:
+                return True
+            time.sleep(0.005)
+        return download._save is None
+
+    def gated_copy(self, source, entered, release):
+        """Hold the copy open at its first source read: every opener in
+        the process (the chunk loop's own, or a copy helper's) is gated
+        on that one path, so the publication is inspectable while it
+        runs. The returned namespace carries the live gate."""
+        real_open = open
+        gate = SimpleNamespace(source=None)
+
+        def gated_open(path, mode="r", *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if str(path) == source and "r" in mode and "b" in mode:
+                gate.source = GatedSource(handle, entered, release)
+                return gate.source
+            return handle
+
+        return patch("builtins.open", gated_open), gate
 
     def test_a_synchronously_failed_download_does_not_accumulate(self):
         # The hardening pass: a constructor failure delivers its
@@ -957,6 +1019,7 @@ class FileDownloadTests(unittest.TestCase):
         path = os.path.join(directory, "part.gcode")
         pathlib.Path(path).write_text("G1 X0\n", encoding="utf-8")
         on_ready(path, None)
+        self.assertTrue(self.publish(download))
         self.assertEqual(failures, [])
         self.assertEqual(download._active, set())
         self.assertEqual(self.cura.loads, [])  # the save flow NEVER loads
@@ -1082,10 +1145,12 @@ class FileDownloadTests(unittest.TestCase):
         self.assertFalse(os.path.exists(target))
         self.assertEqual(download._active, set())
 
-    def test_a_load_stream_is_retired_by_the_same_user_cancel(self):
-        # Cancel retires every in-flight stream (the window's documented
-        # contract): a load opened before the save must not keep
-        # streaming behind a window the user just dismissed.
+    def test_a_load_stream_survives_the_save_windows_cancel(self):
+        # RC-05: the popup describes the SAVE transfer alone, so its
+        # Cancel retires that transfer alone. A load opened alongside
+        # was never cancelled by any UI the user touched, and killing
+        # it silently was the defect. Shutdown and the session door
+        # still retire everything (the two tests below).
         download = self.download()
         failures = []
         download.failed.connect(failures.append)
@@ -1093,8 +1158,17 @@ class FileDownloadTests(unittest.TestCase):
         self.assertTrue(self.request_save(download, self.save_target(), "save-me.gcode"))
         download.cancel()
 
+        self.assertEqual([handle.cancelled for handle in self.files.handles], [0, 1])
+        self.assertEqual([handle.reasons for handle in self.files.handles],
+                         [[], ["The download was cancelled"]])
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+        # The load is still streaming: only the save retired.
+        self.assertEqual(len(download._active), 1)
+
+        # The shutdown door still retires everything, load included.
+        download.close()
         self.assertEqual([handle.cancelled for handle in self.files.handles], [1, 1])
-        self.assertEqual(failures, ["The download was cancelled", "The download was cancelled"])
         self.assertEqual(download._active, set())
 
     def test_a_shutdown_cancel_retires_quietly(self):
@@ -1193,11 +1267,112 @@ class FileDownloadTests(unittest.TestCase):
         self.assertTrue(self.request_save(download, target))
         source = self.streamed_file("NEW\n")
         self.files.handles[0].finish(source, None)
+        self.assertTrue(self.publish(download))
 
         self.assertEqual(failures, [])
         self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "NEW\n")
         self.assertEqual(sorted(os.listdir(root)), ["saved.gcode"])
         self.assertFalse(os.path.exists(os.path.dirname(source)))
+
+    def test_the_save_copy_leaves_the_owner_thread_free(self):
+        # RC-04: the finished stream used to be copied to the staging
+        # sibling ON the owner thread, so a large save onto a slow
+        # volume froze Cura's repaints, its Cancel and its close. The
+        # copy now runs on a worker: the real chunk loop is held open
+        # at its first read, and only the app's own event loop can
+        # release it — a copy on the owner thread could never reach
+        # the loop at all.
+        target = self.save_target(payload="OLD\n")
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        payload_bytes = "NEW\n" * 4096
+        source = self.streamed_file(payload_bytes)
+        self.files.handles[0]._op = SimpleNamespace(received=len(payload_bytes), size=len(payload_bytes))
+        entered, release = threading.Event(), threading.Event()
+
+        timer = self.qt.QTimer()
+        timer.setInterval(0)
+        timer.timeout.connect(release.set)
+        self.addCleanup(timer.stop)
+        timer.start()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)  # the owner-thread terminal
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            payload = download.progress()
+            self.assertIsNotNone(payload, "the progress window vanished before the copy finished")
+            self.assertEqual(payload["percent"], 100)
+            deadline = time.monotonic() + 3.0
+            while not release.is_set() and time.monotonic() < deadline:
+                self.qt.events()
+                time.sleep(0.005)
+
+        self.assertTrue(gate.source is not None and gate.source.released_by_loop,
+                        "the copy held the owner thread: the event loop never ran")
+        self.assertTrue(self.publish(download), "the publication never completed")
+        self.assertEqual(failures, [])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), payload_bytes)
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+
+    def test_the_bar_holds_at_full_until_the_file_is_published(self):
+        # The payload across the publication edge: the stream is
+        # complete but the bytes are not at the destination yet, so the
+        # bar holds full and the window stays open (clearing the save
+        # latch first is what made it vanish mid-stall).
+        target = self.save_target()
+        download = self.download()
+        self.assertTrue(self.request_save(download, target))
+        handle = self.files.handles[0]
+        handle._op = SimpleNamespace(received=5, size=10)
+        self.assertEqual(download.progress()["percent"], 50)
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            handle._op = SimpleNamespace(received=10, size=10)
+            handle.finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            self.assertEqual(download.progress(),
+                             {"name": "part.gcode", "percent": 100, "received": 10,
+                              "total": 10, "indeterminate": False})
+            release.set()
+            self.assertTrue(self.publish(download))
+        self.assertIsNone(download.progress())
+
+    def test_a_cancel_while_publishing_abandons_the_copy(self):
+        # The Cancel stays reachable until publication: while the copy
+        # runs the window still describes the transfer, so pressing it
+        # retires the stream and leaves the destination the user
+        # already had exactly as it was — staging included.
+        target = self.save_target(payload="OLD\n")
+        directory = os.path.dirname(target)
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            download.cancel()
+            release.set()
+            deadline = time.monotonic() + 5.0
+            while not failures and time.monotonic() < deadline:
+                self.qt.events()
+                time.sleep(0.005)
+
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
 
     def test_a_failed_save_keeps_the_file_the_user_already_had(self):
         # A failed landing is reported, never half-written: the swap is
@@ -1212,6 +1387,7 @@ class FileDownloadTests(unittest.TestCase):
 
         with patch.object(module, "_replace_saved_file", side_effect=OSError("the disk is full")):
             self.files.handles[0].finish(source, None)
+            self.assertTrue(self.publish(download))
 
         self.assertEqual(failures, ["The download could not be saved: the disk is full"])
         self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
@@ -1290,6 +1466,7 @@ class FileDownloadTests(unittest.TestCase):
 
                 if label == "success":
                     handle.finish(source, None)
+                    self.assertTrue(self.publish(download), label)
                 elif label == "failure":
                     handle.finish(None, "The download failed")
                 elif label == "user cancel":
@@ -1315,6 +1492,7 @@ class FileDownloadTests(unittest.TestCase):
 
         with patch.object(module, "FileLease") as lease:
             self.files.handles[0].finish(source, None)
+            self.assertTrue(self.publish(download))
 
         self.assertFalse(lease.called)
         self.assertEqual(self.cura.loads, [])
