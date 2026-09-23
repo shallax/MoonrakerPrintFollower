@@ -2235,66 +2235,371 @@ jobs:
               Add-Content -Path $au -Value ("Windows/$env:RUNNER_ARCH`tffmpeg`tthe video recorder (runner.py:247-250)`tINSTALLED BY US`t$((& $ff.Source --version 2>&1 | Select-Object -First 1))`tinstalled by the launch step: the audit step did not provision it")
             }
           }
+          # --- starting a long-lived capture ---------------------------------
+          # Start-BgCapture is how THIS leg starts a background process that
+          # has to SEE the desktop, and it is the answer to the empty video of
+          # run 35929485153: there the recorder was started with Start-Process
+          # and its scenario.mp4 was 48 bytes (ftyp + free + an mdat of size
+          # 0) with an empty recorder.log, while the same argv run in the
+          # foreground by this same step wrote 180 KB containers. Same machine,
+          # same run, same argv - the difference was the launch, not the work.
+          # UseShellExecute = $false is CreateProcess called by THIS process,
+          # so the child gets this process's own token, session, window station
+          # and desktop: the very ones the foreground gdigrab probes and the
+          # still capture above see. Start-Process hands the child to
+          # ShellExecuteEx instead, a context of its own, which is the standing
+          # difference between the 48-byte file and the 180 KB ones.
+          # CreateNoWindow keeps a console out of the picture (a capture tool
+          # needs none) and says nothing about the desktop. Both streams are
+          # redirected because that is where ffmpeg's reason for an empty
+          # capture goes; .NET redirection is an anonymous pipe, so both are
+          # drained by reads started here and collected at teardown, and a pipe
+          # filling up can never block the encoder mid-recording.
+          function Start-BgCapture($exe, [string[]]$argList, $cwd) {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exe
+            $psi.Arguments = ($argList -join ' ')
+            $psi.WorkingDirectory = $cwd
+            $psi.UseShellExecute = $false
+            $psi.CreateNoWindow = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $proc = New-Object System.Diagnostics.Process
+            $proc.StartInfo = $psi
+            $null = $proc.Start()
+            $outTask = $null
+            $errTask = $null
+            try {
+              $outTask = $proc.StandardOutput.ReadToEndAsync()
+              $errTask = $proc.StandardError.ReadToEndAsync()
+            } catch {
+              # the capture runs regardless: losing its diagnostics must not
+              # cost the recording
+            }
+            [pscustomobject]@{ Process = $proc; OutTask = $outTask; ErrTask = $errTask }
+          }
+
+          # Bounded collection: a task that never completes means a stream that
+          # never closed, which is itself a finding rather than a hang.
+          function Get-CaptureText($task) {
+            if (-not $task) { return '(no stream was redirected for this process)' }
+            try {
+              if (-not $task.Wait(10000)) { return '(the redirected stream did not close within 10 s)' }
+              if ($task.IsFaulted) { return ('(the redirected stream broke: ' + $task.Exception.GetBaseException().Message + ')') }
+              return [string]$task.Result
+            } catch {
+              return ('(the redirected stream could not be collected: ' + $_.Exception.Message + ')')
+            }
+          }
+
+          function Save-CaptureText($capPath, $capText) {
+            if (-not $capPath) { return }
+            try { [System.IO.File]::WriteAllText($capPath, [string]$capText) } catch { }
+          }
+
           $rec = $null
+          $recOutTask = $null
+          $recErrTask = $null
+          $recSess = $null
+          $mySess = $null
+          $recExitedEarly = $false
+          $recGoneLogged = $false
           if ($ff) {
             W "ffmpeg: $($ff.Source)"
             # gdigrab takes no -video_size: it captures the whole desktop.
             $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
                         '-framerate', '15', '-i', 'desktop', "`"$video`"")
             W "recorder argv: ffmpeg $($ffArgs -join ' ')"
-            # Started with its streams redirected, not onto a console of its
-            # own: an unredirected Start-Process child gets a fresh hidden
-            # console, so ffmpeg's diagnostics - the only thing that says why
-            # a capture produced nothing - go where nobody reads them. The
-            # first run's empty video was exactly that: unexplained, because
-            # this file did not exist. Separate files, because PowerShell
-            # refuses the same path for stdout and stderr.
+            # THE CHOICE, logged because the next run has to be readable
+            # without re-deriving it: System.Diagnostics.Process with
+            # UseShellExecute=FALSE and CreateNoWindow=TRUE - a CreateProcess
+            # child of this step, so it shares the session, window station and
+            # desktop the working foreground probes capture through. Not
+            # Start-Process, whose ShellExecuteEx context is where the 48-byte
+            # scenario.mp4 came from. The recorder's streams are redirected to
+            # the evidence files the Linux leg names, and drained as above.
             $recErr = Join-Path $EVIDENCE 'recorder.log'
             $recOut = Join-Path $EVIDENCE 'recorder-stdout.txt'
-            $rec = Start-Process -FilePath $ff.Source -PassThru -ArgumentList $ffArgs `
-                     -RedirectStandardError $recErr -RedirectStandardOutput $recOut
-            W "recorder pid: $($rec.Id) (started BEFORE the launch)"
-            W "recorder stderr: $recErr (uploaded with the evidence)"
-            Start-Sleep -Seconds 3
+            W "recorder launch: System.Diagnostics.Process, UseShellExecute=FALSE, CreateNoWindow=TRUE - a CreateProcess child of this step, so it shares this step's session, window station and desktop (the context the foreground probes capture through); Start-Process was ShellExecuteEx, a context of its own"
+            try {
+              $rec = Start-BgCapture $ff.Source $ffArgs $EVIDENCE
+            } catch {
+              W "recorder launch FAILED: $($_.Exception.Message)"
+              $rec = $null
+            }
+            if ($rec) {
+              $recOutTask = $rec.OutTask
+              $recErrTask = $rec.ErrTask
+              W "recorder pid: $($rec.Process.Id) (started BEFORE the launch)"
+              W "recorder stderr: $recErr, stdout: $recOut (both uploaded with the evidence)"
+              # The session is the thing the hypothesis is about, so it is
+              # measured rather than assumed: equal session ids mean the
+              # recorder sits where the desktop lives.
+              $mySess = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+              $recSess = $rec.Process.SessionId
+              W "recorder session: $recSess (this step runs in $mySess)"
+              if ($recSess -ne $mySess) {
+                W "SESSION MISMATCH: the recorder is in session $recSess and the step in $mySess - another session is a desktop the recorder cannot see, which is exactly what an empty scenario.mp4 looks like"
+              }
+              Start-Sleep -Seconds 3
+              $rec.Process.Refresh()
+              if ($rec.Process.HasExited) {
+                $recExitedEarly = $true
+                W ("recorder already exited after 3 s, code {0} - no capture is running" -f $rec.Process.ExitCode)
+              } else {
+                W "recorder alive after 3 s (a capture is running)"
+              }
+              if (Test-Path $video) { W ("scenario.mp4 after 3 s: {0} bytes" -f (Get-Item $video).Length) }
+              else { W "scenario.mp4 not created after 3 s" }
+            }
           } else {
             W "no recorder available - the video leg cannot run on this image"
           }
 
-          # --- GL: force the software path, the Windows side of ui_test.sh ---
-          # This runner has no usable GL, and Cura answers with a modal
-          # "Failed to probe OpenGL" window instead of a main window - which
-          # is also what the still and the video would otherwise show. Linux
-          # solves the same runner in tools/ui_test.sh: LIBGL_ALWAYS_SOFTWARE=1
-          # always, and where GL must be skipped QT_XCB_GL_INTEGRATION=none
-          # with QSG_RHI_BACKEND=software. Qt on Windows does not go through
-          # Mesa, so the analogues are Qt's own variables:
-          #   QT_OPENGL=software        never probe the driver for GL, use the
-          #                             bundled rasteriser - the meaning
-          #                             LIBGL_ALWAYS_SOFTWARE=1 carries
-          #   QSG_RHI_BACKEND=software  Qt Quick's scene graph on the software
-          #                             renderer, mirroring MPF_QSG_RHI=software
-          #   QT_QUICK_BACKEND=software the same request under the name the
-          #                             pre-RHI Qt Quick code path reads, so
-          #                             the answer does not depend on which
-          #                             path Cura's Qt takes
+          # --- GL: hand Cura a renderer that exists on this runner --------
+          # WHY THE FIRST RUN ENDED IN A MODAL "Failed to probe OpenGL"
+          # (run 35929485153; read out of Qt 6.6's own sources - the Qt the
+          # pinned Cura build embeds, 6.6.0.0 as that run's evidence reports
+          # it, not guessed. Nothing below keys on a Cura version: every
+          # check reads Qt's own log lines and the module paths the running
+          # process actually loaded, so the same code covers the whole
+          # 5.7-and-up range this project supports):
+          #   * Cura's UM.Qt.QtApplication sets AA_UseDesktopOpenGL before any
+          #     window exists;
+          #   * QWindowsOpenGLTester::requestedRenderer() tests that attribute
+          #     BEFORE it looks at QT_OPENGL, so the QT_OPENGL=software this
+          #     step used to set was inert: the desktop path always ran;
+          #   * the desktop path loads opengl32 through QSystemLibrary, which
+          #     is LoadLibraryEx with LOAD_LIBRARY_SEARCH_SYSTEM32 - System32
+          #     only - so the opengl32sw.dll that IS in the bundle was never
+          #     asked to load, and no DLL placed beside the executable could
+          #     have been seen either;
+          #   * System32's opengl32.dll on this GPU-less runner is Microsoft's
+          #     GDI generic OpenGL 1.1, so Cura's context attempts (4.1 core,
+          #     then 2.0) both fail and the dialog is the whole UI - which is
+          #     also why no cura.log existed: the probe dies before Cura's own
+          #     loggers start.
+          # THE LEVER: QT_OPENGL_DLL. Qt 6.6 qwindowsglcontext.cpp reads it and
+          # then skips both the software/desktop choice and the system-directory
+          # search:
+          #     openglDll = qgetenv("QT_OPENGL_DLL"); if empty -> sw/opengl32
+          #     useSystemLib = !softwareRendering   (false when the var is set)
+          #     m_lib = useSystemLib ? QSystemLibrary::load(..) : LoadLibraryA(..)
+          # An absolute path there loads exactly that library, with Cura left
+          # untouched. This is the Windows side of ui_test.sh's
+          # LIBGL_ALWAYS_SOFTWARE=1 against the Mesa the container image has.
+          # DIAGNOSE FIRST, and cheap: qt.qpa.gl makes Qt print the library it
+          # chose ("Qt: Using WGL and OpenGL from ...") and why one was refused
+          # ("Failed to load ...", with the Win32 error), and
+          # QT_FORCE_STDERR_LOGGING puts those lines in the stderr file this
+          # step already redirects - Qt on Windows otherwise sends debug output
+          # to the debugger and a redirected file stays empty.
           # Set on this process: Start-Process has no -Environment before
           # PowerShell 7, and children inherit the parent's environment block.
           $glVars = [ordered]@{
-            'QT_OPENGL'        = 'software'
-            'QSG_RHI_BACKEND'  = 'software'
-            'QT_QUICK_BACKEND' = 'software'
+            'QT_OPENGL'               = 'software'
+            'QSG_RHI_BACKEND'         = 'software'
+            'QT_QUICK_BACKEND'        = 'software'
+            'QT_LOGGING_RULES'        = 'qt.qpa.gl=true'
+            'QT_FORCE_STDERR_LOGGING' = '1'
+            'GALLIUM_DRIVER'          = 'llvmpipe'
+            'LIBGL_ALWAYS_SOFTWARE'   = '1'
           }
           foreach ($k in $glVars.Keys) {
             Set-Item -Path ("env:" + $k) -Value $glVars[$k]
             W ("GL env: {0}={1}" -f $k, $glVars[$k])
           }
-          # QT_OPENGL=software only works if that rasteriser shipped with the
-          # bundle; report which case this runner is, rather than assuming.
+          W "FINDING: QT_OPENGL=software cannot take effect while Cura sets AA_UseDesktopOpenGL, and the desktop path only ever looks in System32; the renderer is therefore chosen through QT_OPENGL_DLL below, from a candidate that is load-tested before anything is launched"
+          # The probe dialog's own words. A window carrying any of them is the
+          # block, not the application, wherever it is found.
+          $markers = @('probe OpenGL', 'Could not probe', 'OpenGL 2.0', 'video card drivers')
+          function Test-ProbeTitle($t) {
+            foreach ($m in $markers) { if ($t -like ("*" + $m + "*")) { return $true } }
+            return $false
+          }
+          function Audit-Row($component, $role, $status, $version, $notes) {
+            # The audit table is owned by the audit step; this step adds rows
+            # for what it provisions itself, as the ffmpeg fallback above does,
+            # so the table can never under-report who installed what.
+            $auPath = Join-Path $EVIDENCE 'dependency-audit.tsv'
+            if (-not (Test-Path $auPath)) {
+              Add-Content -Path $auPath -Value "platform`tcomponent`trole`tstatus`tversion`tnotes"
+            }
+            Add-Content -Path $auPath -Value ("Windows/$env:RUNNER_ARCH`t$component`t$role`t$status`t$version`t$notes")
+            W "[audit] $component | $status | $version | $notes"
+          }
+
+          # --- provisioning: Mesa llvmpipe, pinned, the way Linux has it ----
+          # No third-party library is assumed to be present: this leg installs
+          # the software rasteriser it needs, at a pinned version and with the
+          # digest verified before anything uses it, and says in the audit table
+          # exactly what it installed, from where, and whether it loaded.
           $curaDir = Split-Path -Parent $binary
+          $MESA_VER = '26.1.8'
+          $MESA_ASSET = "mesa3d-$MESA_VER-release-msvc.7z"
+          $MESA_SHA256 = '4c6d32e653e0ff9ad07796e40c0bcfabf2764d849e3ce4f3b1590112c87e42f9'
+          $MESA_URL = "https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VER/$MESA_ASSET"
+          $mesaRoot = Join-Path $env:RUNNER_TEMP ("mesa-llvmpipe-" + $MESA_VER)
+          $mesaDir = Join-Path $mesaRoot 'x64'
+          $mesaArchive = Join-Path $mesaRoot $MESA_ASSET
+          # opengl32.dll is only a loader since Mesa 21.3; libgallium_wgl.dll
+          # beside it is the rasteriser; dxil.dll is the DirectX IL
+          # redistributable the D3D12 driver needs to load at all, carried so a
+          # missing redistributable cannot be what a failed run blames.
+          $MESA_FILES = @('opengl32.dll', 'libgallium_wgl.dll', 'dxil.dll')
+          New-Item -ItemType Directory -Force $mesaRoot | Out-Null
+          W "Mesa: $MESA_VER ($MESA_ASSET), sha256 pinned to $MESA_SHA256"
+          W "Mesa download: $MESA_URL"
+          try {
+            & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 -o "$mesaArchive" "$MESA_URL" 2>&1 |
+              Select-Object -Last 4 | ForEach-Object { W $_ }
+            W "curl.exe exit: $LASTEXITCODE"
+          } catch {
+            W "curl.exe threw: $($_.Exception.Message)"
+          }
+          $mesaHash = ''
+          if (Test-Path $mesaArchive) {
+            $mesaHash = (Get-FileHash -Path $mesaArchive -Algorithm SHA256).Hash.ToLower()
+            W ("Mesa archive on disk: {0:N0} bytes, sha256 {1}" -f (Get-Item $mesaArchive).Length, $mesaHash)
+          } else {
+            W "Mesa archive absent - the download did not produce a file"
+          }
+          $mesaOk = $false
+          $extractTool = 'none'
+          if ($mesaHash -eq $MESA_SHA256) {
+            # The image's own extractor, probed rather than assumed: 7-Zip
+            # first, then the libarchive tar.exe this image ships (it reads
+            # 7z), and the archive is only unpacked once.
+            $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+            if (-not $sevenZip) {
+              $sevenZipPath = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+              if (Test-Path $sevenZipPath) { $sevenZip = Get-Item $sevenZipPath }
+            }
+            if ($sevenZip) {
+              $extractTool = $sevenZip.Source
+              W "extractor: $extractTool (7z)"
+              & $sevenZip.Source x -y ("-o" + $mesaRoot) "$mesaArchive" 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
+                Select-Object -Last 6 | ForEach-Object { W $_ }
+              W "7z exit: $LASTEXITCODE"
+            }
+            $need = @('opengl32.dll', 'libgallium_wgl.dll')
+            $missing = @($need | Where-Object { -not (Test-Path (Join-Path $mesaDir $_)) })
+            if ($missing.Count -gt 0) {
+              # A filtered extraction that produced nothing is worth one retry
+              # without the filter, rather than a run lost to a naming rule.
+              $tarExe = Get-Command tar.exe -ErrorAction SilentlyContinue
+              if ($tarExe) {
+                $extractTool = $tarExe.Source
+                W "the filtered extraction left $($missing -join ', ') missing - retrying with tar.exe (libarchive reads 7z)"
+                & $tarExe.Source -xf "$mesaArchive" -C "$mesaRoot" 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
+                  Select-Object -Last 6 | ForEach-Object { W $_ }
+                W "tar.exe exit: $LASTEXITCODE"
+              }
+              $missing = @($need | Where-Object { -not (Test-Path (Join-Path $mesaDir $_)) })
+            }
+            foreach ($f in $MESA_FILES) {
+              $p = Join-Path $mesaDir $f
+              if (Test-Path $p) { W ("Mesa file: {0} ({1:N0} bytes)" -f $p, (Get-Item $p).Length) }
+              else { W "Mesa file: $p MISSING" }
+            }
+            if ($missing.Count -eq 0) { $mesaOk = $true }
+          } elseif ($mesaHash) {
+            W "Mesa archive hash does not match the pin - refusing to unpack it"
+          }
+          if ($mesaOk) {
+            # PATH, because Mesa's loader resolves libgallium_wgl.dll by bare
+            # name, and the search order reaches PATH after the executable's own
+            # directory, which the copy below also covers.
+            $env:Path = "$mesaDir;$env:Path"
+            W "Mesa staged: $mesaDir, and that directory is on PATH so the bare-name megadriver load finds it"
+            # Beside the executable as well: Mesa's documented per-app
+            # deployment, so the drop-in works even for a bare-name load.
+            foreach ($f in $MESA_FILES) {
+              $src = Join-Path $mesaDir $f
+              if (-not (Test-Path $src)) { continue }
+              try {
+                Copy-Item -Path $src -Destination (Join-Path $curaDir $f) -Force -ErrorAction Stop
+                W "placed beside the executable: $(Join-Path $curaDir $f)"
+              } catch {
+                W "could not place $f beside the executable ($($_.Exception.Message)); the absolute QT_OPENGL_DLL path and PATH cover the load anyway"
+              }
+            }
+            Audit-Row 'Mesa3D llvmpipe (Windows)' 'the software OpenGL Cura needs, the Windows side of LIBGL_ALWAYS_SOFTWARE=1' 'INSTALLED BY US' "llvmpipe in Mesa $MESA_VER (msvc x64)" "curl $MESA_URL; sha256 verified $MESA_SHA256; extracted with $extractTool to $mesaDir; GALLIUM_DRIVER=llvmpipe; handed to Cura via QT_OPENGL_DLL"
+          } else {
+            Audit-Row 'Mesa3D llvmpipe (Windows)' 'the software OpenGL Cura needs, the Windows side of LIBGL_ALWAYS_SOFTWARE=1' 'ABSENT' "wanted $MESA_VER (msvc x64)" "download/extract failed: curl exit above, archive hash '$mesaHash', extractor $extractTool; the bundled Qt rasteriser is used instead (see the candidates below)"
+          }
+          # The candidates, in order: the Mesa just provisioned, then the
+          # software rasteriser Cura's own Qt ships. Each is load-tested before
+          # anything is launched, so a library the OS refuses is reported here
+          # and not as a mystery window later.
           $swGl = Get-ChildItem -Path $curaDir -Filter 'opengl32sw.dll' -Recurse -File -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
           if ($swGl) { W "software GL present: $swGl" }
-          else { W "software GL absent: no opengl32sw.dll under $curaDir - QT_OPENGL=software may be refused" }
+          else { W "software GL absent: no opengl32sw.dll under $curaDir" }
+          $glCandidates = @()
+          if ($mesaOk) { $glCandidates += (Join-Path $mesaDir 'opengl32.dll') }
+          if ($swGl) { $glCandidates += $swGl }
+          # The load test is a plain LoadLibrary: it resolves the imports of
+          # the candidate, so a missing companion DLL or runtime is named here
+          # rather than guessed at later.
+          $loadProbe = $false
+          $csSrc = @(
+            'using System;',
+            'using System.Runtime.InteropServices;',
+            'public static class MpfNativeLoad {',
+            '  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]',
+            '  public static extern IntPtr LoadLibraryW(string path);',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern bool FreeLibrary(IntPtr module);',
+            '}'
+          ) -join "`n"
+          try {
+            Add-Type -TypeDefinition $csSrc -ErrorAction Stop
+            $loadProbe = $true
+          } catch {
+            W "the load test could not be compiled on this image ($($_.Exception.Message)); candidates are reported by size and version only"
+          }
+          $glLib = $null
+          $glWhy = 'no candidate was available'
+          foreach ($cand in $glCandidates) {
+            $res = 'not load-tested'
+            $h = [IntPtr]::Zero
+            if ($loadProbe) {
+              try {
+                $h = [MpfNativeLoad]::LoadLibraryW($cand)
+                if ($h -ne [IntPtr]::Zero) {
+                  $res = 'loads'
+                  $null = [MpfNativeLoad]::FreeLibrary($h)
+                } else {
+                  $res = ('REFUSED by the OS, Win32 error ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                }
+              } catch {
+                $res = ('load test failed: ' + $_.Exception.Message)
+              }
+            }
+            $candVer = ''
+            try { $candVer = "$((Get-Item $cand).VersionInfo.FileVersion)" } catch { }
+            W ("GL candidate: {0} ({1:N0} bytes{2}) - {3}" -f $cand, (Get-Item $cand).Length,
+               $(if ($candVer) { ', v' + $candVer } else { '' }), $res)
+            if ((-not $glLib) -and ($res -eq 'loads')) {
+              $glLib = $cand
+              $glWhy = 'the first candidate the OS would load'
+            }
+          }
+          if ((-not $glLib) -and ($glCandidates.Count -gt 0)) {
+            $glLib = $glCandidates[0]
+            $glWhy = 'no candidate could be load-tested, so this one is handed over untested'
+          }
+          if ($glLib) {
+            Set-Item -Path 'env:QT_OPENGL_DLL' -Value $glLib
+            W ("GL choice: QT_OPENGL_DLL={0} ({1})" -f $glLib, $glWhy)
+            W "  Qt loads exactly this file and skips the System32-only search; GALLIUM_DRIVER=llvmpipe picks the software driver inside it"
+            $glStatus = 'INSTALLED BY US'
+            if ($swGl -and ($glLib -eq $swGl)) { $glStatus = 'PREINSTALLED' }
+            Audit-Row 'OpenGL library handed to Cura' 'the GL implementation QT_OPENGL_DLL points Cura at' $glStatus "candidate $($glLib)" "$glWhy; load-tested with LoadLibrary before the launch"
+          } else {
+            W "GL choice: none - QT_OPENGL_DLL stays unset and Cura gets the system OpenGL this runner has already failed to probe"
+          }
 
           W "=== launching $binary ==="
           # Cura's own streams are captured, not left to a console of its own:
@@ -2313,17 +2618,41 @@ jobs:
           $WAIT_SECS = 35
           $deadline = (Get-Date).AddSeconds($WAIT_SECS)
           $died = $false
+          # Sampled so the verdict can name the fault instead of reporting the
+          # same word for both: while the container stays at its header size,
+          # no frame was ever muxed (the recorder had nothing to capture);
+          # once it grows, frames were muxed whatever the index says later.
+          # An empty mov is ftyp + free + an mdat of size 0, ~48 bytes, so
+          # 1 KB is the header and nothing above it.
+          $HEADER_MAX = 1024
+          $recGrew = $false
+          $recSamples = @()
+          $realTitle = ''
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 5
             $p.Refresh()
             if ($p.HasExited) { $died = $true; break }
-            # the recorder's progress, sampled: a container that never grows
-            # past its header means no frame was ever encoded, which is a
-            # different fault from a kill before the index was written
-            if ($rec -and (Test-Path $video)) {
-              W ("[{0}] scenario.mp4: {1} bytes" -f (Get-Date -Format 'HH:mm:ss'), (Get-Item $video).Length)
+            $t = "$($p.MainWindowTitle)"
+            if ($t -and -not (Test-ProbeTitle $t)) { $realTitle = $t }
+            if ($rec) {
+              $rec.Process.Refresh()
+              $recAlive = -not $rec.Process.HasExited
+              if (Test-Path $video) {
+                $s = (Get-Item $video).Length
+                if ($s -gt $HEADER_MAX) { $recGrew = $true }
+                $recSamples += $s
+                W ("[{0}] scenario.mp4: {1} bytes, recorder alive={2}" -f (Get-Date -Format 'HH:mm:ss'), $s, $recAlive)
+              } else {
+                W ("[{0}] scenario.mp4: not created yet, recorder alive={1}" -f (Get-Date -Format 'HH:mm:ss'), $recAlive)
+              }
+              if (-not $recAlive -and -not $recGoneLogged) {
+                $recGoneLogged = $true
+                $recExitedEarly = $true
+                W "recorder is gone - the recording ended without teardown being asked"
+              }
             }
           }
+          $BOOT_SECS = 90
           if ($died) {
             W "process exited early with code $($p.ExitCode)"
           } else {
@@ -2331,6 +2660,46 @@ jobs:
             W "process alive after the wait: Responding=$($p.Responding)"
             W "MainWindowTitle='$($p.MainWindowTitle)'  <- non-empty means a real window"
             W "MainWindowHandle=$($p.MainWindowHandle)"
+            # 35 s is a liveness wait, not a boot budget. The Linux harness
+            # gives a boot 300 s for exactly this reason ("the CI runners are
+            # 2-vCPU VMs and boot Cura far more slowly than a dev box"), and a
+            # software rasteriser makes a first boot slower still. So the wait
+            # above stays what it was, and this boot wait is what decides
+            # whether a real window ever appeared: alive is not launched, and
+            # this is the line that stops a windowless Cura counting as one.
+            $bootDeadline = (Get-Date).AddSeconds($BOOT_SECS)
+            $lastTitle = $null
+            while ((Get-Date) -lt $bootDeadline) {
+              $p.Refresh()
+              if ($p.HasExited) {
+                $died = $true
+                W "process exited during the boot wait with code $($p.ExitCode)"
+                break
+              }
+              $t = "$($p.MainWindowTitle)"
+              if ($t -ne $lastTitle) {
+                $lastTitle = $t
+                W ("[{0}] window title: '{1}'" -f (Get-Date -Format 'HH:mm:ss'), $t)
+              }
+              if ($t -and -not (Test-ProbeTitle $t)) { $realTitle = $t; break }
+              if ($rec) {
+                $rec.Process.Refresh()
+                $recAlive = -not $rec.Process.HasExited
+                if (Test-Path $video) {
+                  $s = (Get-Item $video).Length
+                  if ($s -gt $HEADER_MAX) { $recGrew = $true }
+                  $recSamples += $s
+                }
+                if (-not $recAlive -and -not $recGoneLogged) {
+                  $recGoneLogged = $true
+                  $recExitedEarly = $true
+                  W "recorder is gone - the recording ended without teardown being asked"
+                }
+              }
+              Start-Sleep -Seconds 5
+            }
+            if ($realTitle) { W "real window seen: '$realTitle' (boot wait up to ${BOOT_SECS} s)" }
+            else { W "no real window within the ${BOOT_SECS} s boot wait - the titles above are what the process put up" }
           }
 
           W ""
@@ -2340,10 +2709,11 @@ jobs:
           # Three places can carry the warning - the window title, Cura's own
           # streams, and Cura's log - and all three are checked, so "absent"
           # is a claim about the set rather than about the easiest one.
-          $markers = @('probe OpenGL', 'Could not probe', 'OpenGL 2.0', 'video card drivers')
           $glHits = @()
           $title = if ($died) { '' } else { "$($p.MainWindowTitle)" }
           W "window title at the wait: '$title'"
+          W "last real (non-probe) title seen: '$realTitle'"
+          if ($died) { W "the process had exited, so no window of its own can be inspected" }
           foreach ($m in $markers) {
             if ($title -like ("*" + $m + "*")) { $glHits += "window title: $m" }
           }
@@ -2398,16 +2768,97 @@ jobs:
             W "  tail:"
             Get-Content $lg -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { W ("  " + $_) }
           }
+          # The cheap diagnosis, read back: what Qt itself said about the GL
+          # library it loaded. "Qt: Using WGL and OpenGL from" names the file it
+          # chose, "Failed to load" carries the Win32 error when one is refused,
+          # "Falling back" says it went looking for another. These lines are
+          # evidence rather than failure markers - Cura's own words are the
+          # marker - so a GL warning that never became a dialog is reported
+          # rather than swallowed.
+          $glDiag = @()
+          $glDiagPat = 'Using WGL and OpenGL from|Failed to load|Falling back|WGL and OpenGL|llvmpipe|OpenGL renderer|OpenGL version|OpenGL context'
+          $glDiagErrPat = '(?i)(opengl|wgl|gallium|llvmpipe).*(fail|error|could not|cannot|unsupported|missing|refus)'
+          foreach ($f in @($curaOut, $curaErr)) {
+            if (-not (Test-Path $f)) { continue }
+            $dtxt = ''
+            try { $dtxt = (Get-Content $f -Raw -ErrorAction Stop) } catch { continue }
+            foreach ($ln in ($dtxt -split "`n")) {
+              $l = $ln.Trim()
+              if (-not $l) { continue }
+              if ($l -match $glDiagPat) {
+                if ($l -match $glDiagErrPat) { $glDiag += ("ERROR " + $l) }
+                else { $glDiag += ("info  " + $l) }
+              }
+            }
+          }
+          $glDiag = @($glDiag | Select-Object -Unique)
+          $glDiagErr = @($glDiag | Where-Object { $_ -like 'ERROR *' })
+          if ($glDiag.Count -gt 0) {
+            W "--- Qt GL diagnostics from Cura's streams ---"
+            foreach ($l in ($glDiag | Select-Object -First 12)) { W ("  " + $l) }
+          } else {
+            W "--- no Qt GL diagnostic line in Cura's streams (qt.qpa.gl was on; a GUI build can still print nothing) ---"
+          }
+          # Which GL library the process actually holds: the fact the verdict
+          # rests on. A path under the Mesa directory, or a gallium loader or
+          # Qt's own rasteriser in the module list, is the software renderer at
+          # work; the system32 opengl32 alone is the driver stack; no GL module
+          # at all is a process that never got that far.
+          $glModules = @()
+          $modProcs = @($p) + @(Get-Process -Name 'UltiMaker-Cura*' -ErrorAction SilentlyContinue)
+          foreach ($mp in $modProcs) {
+            if (-not $mp) { continue }
+            try {
+              foreach ($m in $mp.Modules) {
+                if ($m.ModuleName -match '(?i)^(opengl32|opengl32sw|libgallium_wgl|libglapi|dxil|libEGL|libGLESv2|nvoglv|atio6axx|ig[0-9]*icd|ig[0-9]*dumd|swiftshader)') {
+                  $glModules += ("{0} (pid {1}): {2}" -f $m.ModuleName, $mp.Id, $m.FileName)
+                }
+              }
+            } catch {
+              W "could not read the module list of pid $($mp.Id): $($_.Exception.Message)"
+            }
+          }
+          $glModules = @($glModules | Select-Object -Unique)
+          if ($glModules.Count -gt 0) {
+            W "--- GL libraries loaded in Cura's process ---"
+            foreach ($l in $glModules) { W ("  " + $l) }
+          } else {
+            W "--- no GL library is visible in Cura's module list ---"
+          }
+          $glSoftware = @($glModules | Where-Object {
+            ($_ -match '(?i)opengl32sw|libgallium_wgl|libglapi|swiftshader') -or
+            ($mesaDir -and ($_ -like ("*" + $mesaDir + "*"))) })
+          $glSystem = @($glModules | Where-Object { $_ -like '*System32\opengl32.dll*' })
           $glHits = @($glHits | Select-Object -Unique)
+          $glLibShown = '<unset>'
+          if ($glLib) { $glLibShown = $glLib }
+          $glErrShown = 'no error line from Qt'
+          if ($glDiagErr.Count -gt 0) { $glErrShown = ($glDiagErr -join ' | ') }
           W ""
+          # The verdict asks only what can be checked afterwards: Cura's own
+          # probe warning, and which GL library the process was holding. A GL
+          # error line without the dialog is reported alongside it rather than
+          # counted as success by omission.
           if ($glHits.Count -gt 0) {
             foreach ($h in $glHits) { W "probe warning found in $h" }
-            V "SPIKE-Q2: gl=unknown (probe warning: present - forcing the software backend did not remove it; the lines above say where it was found)"
+            V "SPIKE-Q2: gl=unknown (probe warning: present)"
+            W "  the probe dialog is still what Cura puts up; loaded GL modules: $($glModules -join '; ')"
+            W ("  diagnostics: QT_OPENGL_DLL={0}; {1}" -f $glLibShown, $glErrShown)
           } elseif ($died) {
-            V "SPIKE-Q2: gl=unknown (probe warning: absent, but the process had already exited - see the launch lines)"
+            V "SPIKE-Q2: gl=unknown (probe warning: absent)"
+            W "  the process had already exited, so its window and module list could not be read"
+          } elseif ($glSoftware.Count -gt 0) {
+            V "SPIKE-Q2: gl=software (probe warning: absent)"
+            W ("  software renderer loaded: " + ($glSoftware -join '; '))
+          } elseif ($glSystem.Count -gt 0) {
+            V "SPIKE-Q2: gl=hardware (probe warning: absent)"
+            W ("  only the system OpenGL library is loaded: " + ($glSystem -join '; '))
+            W "  (the runner is a GPU-less VM, so the module list is what says which implementation answered)"
           } else {
-            V "SPIKE-Q2: gl=software (probe warning: absent - QT_OPENGL, QSG_RHI_BACKEND and QT_QUICK_BACKEND were forced to software and Cura reached a window without complaining)"
+            V "SPIKE-Q2: gl=unknown (probe warning: absent)"
+            W "  no GL library is visible in the module list, so which implementation answered cannot be said"
           }
+          if ($glDiagErr.Count -gt 0) { W "  note: Qt reported GL errors without a probe dialog - see the error lines above" }
 
           W ""
           W "=== screen geometry ==="
@@ -2452,54 +2903,113 @@ jobs:
           W ""
           W "=== stopping the recorder (harness teardown kills ffmpeg) ==="
           if ($rec) {
-            if (-not $rec.HasExited) {
+            if (-not $rec.Process.HasExited) {
               # Polite first, as the macOS leg does with SIGINT, so ffmpeg can
               # finalise the mp4 index. On Windows that route is known to be
               # closed for this child: taskkill without /F posts WM_CLOSE, and
-              # a console process has no window to receive it - the first run
-              # replied "can only be terminated forcefully". PowerShell 5.1 has
-              # no SIGINT equivalent without P/Invoke, so the force below is
-              # the real stop. If a future run shows frames but no index, the
-              # answer is a fragment flag or a bounded -t recording, not a
-              # harder kill.
-              W "taskkill /PID $($rec.Id) (WM_CLOSE - expected to fail for a windowless child)"
-              & taskkill.exe /PID $rec.Id 2>&1 | ForEach-Object { W $_ }
+              # a process with no window cannot receive it. This launch is
+              # windowless by construction (CreateNoWindow), so expect the
+              # same reply the first run got: the force below is the real stop,
+              # and the index a force leaves unwritten is what the video
+              # verdict now reports as NO-INDEX instead of hiding.
+              W "taskkill /PID $($rec.Process.Id) (WM_CLOSE - expected to fail for a windowless child)"
+              & taskkill.exe /PID $rec.Process.Id 2>&1 | ForEach-Object { W $_ }
               Start-Sleep -Seconds 3
-              $rec.Refresh()
-              if (-not $rec.HasExited) {
+              $rec.Process.Refresh()
+              if (-not $rec.Process.HasExited) {
                 W "still running - force, as ui_test.sh's pkill -9 does"
-                Stop-Process -Id $rec.Id -Force -ErrorAction SilentlyContinue
+                Stop-Process -Id $rec.Process.Id -Force -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds 2
               }
+            } else {
+              $recExitedEarly = $true
+              W "the recorder had already exited on its own before teardown"
             }
-            $rec.Refresh()
-            if ($rec.HasExited) { W "recorder exit code: $($rec.ExitCode)" }
+            $rec.Process.Refresh()
+            if ($rec.Process.HasExited) { W "recorder exit code: $($rec.Process.ExitCode)" }
           }
           Get-Process ffmpeg -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           W "teardown sweep (all ffmpeg processes, as ui_test.sh) done"
           W ""
           W "--- the recording ---"
-          # The recorder's own diagnostics, printed here because this is where
-          # the question gets asked. The first run lost them to a console
-          # nobody reads, which is why its empty video explained nothing.
-          foreach ($f in @($recErr, $recOut)) {
-            if ($f -and (Test-Path $f)) {
-              $l = (Get-Item $f).Length
-              W "--- $f ($l bytes) ---"
-              if ($l -gt 0) { Get-Content $f -Tail 30 | ForEach-Object { W $_ } }
-              else { W "(empty - the recorder wrote no diagnostics at all)" }
+          # The recorder's own diagnostics, collected from the redirected pipes
+          # now that the process is gone and written out as the evidence files
+          # the Linux leg names. The first run lost them to a console nobody
+          # reads, which is why its empty video explained nothing; the second
+          # lost them to a child that had no desktop at all.
+          if ($rec) {
+            $recErrText = Get-CaptureText $recErrTask
+            $recOutText = Get-CaptureText $recOutTask
+            Save-CaptureText $recErr $recErrText
+            Save-CaptureText $recOut $recOutText
+            foreach ($pair in @(@($recErr, $recErrText), @($recOut, $recOutText))) {
+              W ("--- {0} ({1} bytes) ---" -f $pair[0], $pair[1].Length)
+              if ($pair[1].Length -gt 0) {
+                $pair[1] -split "`n" | Select-Object -Last 30 | ForEach-Object { W $_.TrimEnd() }
+              } else {
+                W "(empty - the recorder wrote no diagnostics at all)"
+              }
             }
+          } else {
+            W "no recorder process was started this session - no diagnostics to collect"
           }
-          # A file that exists is not a recording. ffmpeg's mov muxer writes
-          # ftyp and the mdat header from the start, so a capture that never
-          # encoded a frame still leaves a valid ~48-byte container - and the
-          # first run called exactly that "video=OK". 10 KB sits well above an
-          # empty container and well below a single frame of this size.
+          # A file that exists is not a recording, and the two ways it can fail
+          # are different faults wanting different fixes, so the verdict names
+          # which one this run was rather than reporting one word for both:
+          #   NO-FRAMES  the container never grew past its header (ftyp + free
+          #              + an mdat of size 0, ~48 bytes) while the recorder ran:
+          #              no frame was ever muxed, because the process had no
+          #              desktop to capture - a launch problem
+          #   NO-INDEX   the container holds frames, it grew, but no index can
+          #              be read from it: the capture worked and the stop did
+          #              not let ffmpeg finalise the mp4 - a shutdown problem
+          # 10 KB sits above an empty container and below a second of this
+          # desktop, and the index is checked whatever the size says, because a
+          # muxed-but-unfinalised mp4 is as unwatchable as an empty one; the
+          # first run called a 48-byte container "video=OK".
           $VIDEO_MIN = 10240
           $vlen = 0
           if (Test-Path $video) { $vlen = (Get-Item $video).Length }
-          if ($vlen -ge $VIDEO_MIN) {
+          $probe = Get-Command ffprobe -ErrorAction SilentlyContinue
+          $probeText = ''
+          $indexOk = $false
+          $indexWhy = 'there is nothing to read'
+          if ($vlen -gt 0) {
+            if ($probe) {
+              $probeText = (& $probe.Source -v error -show_entries 'format=duration,size:stream=codec_name,width,height,nb_frames' `
+                  -of default=noprint_wrappers=1 "$video" 2>&1 | Out-String)
+              $indexOk = (($LASTEXITCODE -eq 0) -and ($probeText -match 'codec_name'))
+              if ($indexOk) { $indexWhy = 'ffprobe read the container back' }
+              else { $indexWhy = 'ffprobe cannot read the container (no index in it)' }
+            } else {
+              # No ffprobe on this image: the index atom itself is the check.
+              try {
+                $raw = [System.IO.File]::ReadAllBytes($video)
+                $rawText = [System.Text.Encoding]::GetEncoding(28591).GetString($raw)
+                $indexOk = $rawText.IndexOf('moov') -ge 0
+              } catch { $indexOk = $false }
+              if ($indexOk) { $indexWhy = 'a moov atom is present in the bytes' }
+              else { $indexWhy = 'no moov atom in the bytes' }
+            }
+          }
+          # Where the recorder stood at teardown, and whether it shared this
+          # step's session: both are the difference between the faults.
+          $recEnd = ''
+          $sessNote = ''
+          if ($rec) {
+            if ($recExitedEarly) { $recEnd = '; the recorder had stopped on its own before teardown' }
+            else { $recEnd = '; it was still running until the teardown kill' }
+            if ($recSess -and $mySess -and ($recSess -ne $mySess)) {
+              $sessNote = ("; the recorder ran in session {0} and this step in {1}, so it had another desktop" -f $recSess, $mySess)
+            } elseif ($recSess) {
+              $sessNote = ("; it shared this step's session ({0}), where the desktop is" -f $recSess)
+            }
+          } else {
+            $sessNote = '; no recorder process was ever started this session'
+          }
+          $videoOk = (($vlen -ge $VIDEO_MIN) -and $indexOk)
+          if ($videoOk) {
             W ("wrote {0}: {1:N1} KB / {2:N1} MB" -f $video, ($vlen / 1KB), ($vlen / 1MB))
             # -i with no output exits non-zero on purpose: this is the
             # container/codec report, not a transcode.
@@ -2508,29 +3018,46 @@ jobs:
               & $ff.Source -hide_banner -i "$video" 2>&1 |
                 Select-Object -First 12 | ForEach-Object { W $_ }
             }
-            $probe = Get-Command ffprobe -ErrorAction SilentlyContinue
             if ($probe) {
               W "--- ffprobe's own reading of the container ---"
-              & $probe.Source -v error -show_entries 'format=duration,size:stream=codec_name,width,height,nb_frames' `
-                  -of default=noprint_wrappers=1 "$video" 2>&1 |
-                Select-Object -First 12 | ForEach-Object { W $_ }
+              W $probeText.TrimEnd()
             }
-            V ("SPIKE-Q2: video=OK ({0:N1} KB, mp4, gdigrab)" -f ($vlen / 1KB))
+            V ("SPIKE-Q2: video=OK ({0:N1} KB, mp4, gdigrab, index readable)" -f ($vlen / 1KB))
+          } elseif ($vlen -gt $HEADER_MAX) {
+            W ("wrote {0}: {1:N1} KB, but {2}" -f $video, ($vlen / 1KB), $indexWhy)
+            if ($probe) {
+              W "--- ffprobe on this container (the unreadable index, verbatim) ---"
+              W $probeText.TrimEnd()
+            }
+            V ("SPIKE-Q2: video=FAILED-NO-INDEX ({0} bytes of frames and no readable index: the capture worked and the stop did not let ffmpeg finalise the mp4{1})" -f $vlen, $recEnd)
+          } elseif ($indexOk) {
+            # Finalised, so the recorder ended cleanly - and captured nothing
+            # worth having. Not a green: the harness wants a session's worth.
+            V ("SPIKE-Q2: video=FAILED-SHORT (the container is readable but holds {0} bytes, under the 10 KB floor: the capture ended cleanly and captured nothing usable{1})" -f $vlen, $recEnd)
           } elseif ($vlen -gt 0) {
-            V ("SPIKE-Q2: video=FAILED ({0} bytes: a container with no frames - see the recorder log above)" -f $vlen)
+            W ("wrote {0}: {1} bytes - the container header alone" -f $video, $vlen)
+            if ($probe) {
+              W "--- ffprobe on this container (expected: it cannot read one) ---"
+              W $probeText.TrimEnd()
+            }
+            V ("SPIKE-Q2: video=FAILED-NO-FRAMES ({0} bytes, and the container never grew while the recorder ran: no frame was ever muxed into it, so the recorder had no desktop to capture through{1})" -f $vlen, $sessNote)
           } else {
-            V "SPIKE-Q2: video=FAILED (ffmpeg wrote no scenario.mp4 - see the recorder log above)"
+            V ("SPIKE-Q2: video=FAILED-NO-FILE (ffmpeg wrote no scenario.mp4 at all{0})" -f $sessNote)
+          }
+          if ($rec) {
+            W ("recorder samples (5 s apart): {0}" -f (($recSamples -join ', ') + ' bytes'))
+            W ("recorder container grew past its header: {0}" -f $recGrew)
           }
 
-          if ($vlen -lt $VIDEO_MIN) {
+          if (-not $videoOk) {
             W ""
-            W "=== why was the recording empty? (bounded foreground gdigrab probe) ==="
+            W "=== why is the recording not usable? (bounded gdigrab probes) ==="
             # The harness's own argv, bounded and in the foreground so the
             # diagnostics land in this log, next to the variant that skips the
             # mouse: gdigrab draws the cursor itself, and a screen it cannot
             # draw a cursor onto is one way this comes back empty. Finding an
-            # empty recording is the point - what the two runs say is the
-            # result, so it fails loudly here rather than diagnosing nothing.
+            # empty recording is the point - what the runs say is the result,
+            # so it fails loudly here rather than diagnosing nothing.
             if ($ff) {
               $probes = @(
                 @{ name = 'harness-argv'; extra = @() },
@@ -2545,6 +3072,44 @@ jobs:
                 $pl = 0
                 if (Test-Path $pf) { $pl = (Get-Item $pf).Length }
                 W ("probe ({0}): exit={1}, {2} bytes" -f $pv.name, $LASTEXITCODE, $pl)
+              }
+              # Those two say this machine can capture at all; neither says a
+              # BACKGROUND capture can, which is what the failing scenario.mp4
+              # is. This one is the control: the recorder's launch mechanism,
+              # the same argv shape, but bounded -t 5 so ffmpeg finalises
+              # itself and nothing here depends on the teardown kill. A file
+              # the size of the foreground probes means the launch keeps the
+              # desktop and the fault is the stop; empty again means the
+              # background context itself is what gdigrab cannot see, and the
+              # launch needs a different mechanism again.
+              $bgFile = Join-Path $EVIDENCE 'gdigrab-probe-background.mp4'
+              $bgArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
+                          '-framerate', '15', '-t', '5', '-i', 'desktop', "`"$bgFile`"")
+              W ("probe (background): ffmpeg {0}" -f ($bgArgs -join ' '))
+              $bg = $null
+              try {
+                $bg = Start-BgCapture $ff.Source $bgArgs $EVIDENCE
+              } catch {
+                W "probe (background): launch failed: $($_.Exception.Message)"
+              }
+              if ($bg) {
+                $null = $bg.Process.WaitForExit(20000)
+                $bg.Process.Refresh()
+                if (-not $bg.Process.HasExited) {
+                  W "probe (background): still running after 20 s - killing it"
+                  Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+                  Start-Sleep -Seconds 2
+                }
+                $bgText = Get-CaptureText $bg.ErrTask
+                if ($bgText) {
+                  $bgText -split "`n" | Select-Object -Last 10 | ForEach-Object { W $_ }
+                }
+                $bl = 0
+                if (Test-Path $bgFile) { $bl = (Get-Item $bgFile).Length }
+                $bgVerd = 'FAILED'
+                if ($bl -ge $VIDEO_MIN) { $bgVerd = 'OK' }
+                W ("probe (background): exited={0}, {1} bytes, session {2} (this step: {3})" -f $bg.Process.HasExited, $bl, $bg.Process.SessionId, $mySess)
+                V ("SPIKE-Q2: gdigrab-background-probe={0} ({1} bytes, -t 5, the recorder's own launch mechanism)" -f $bgVerd, $bl)
               }
             } else {
               W "no ffmpeg available to probe with"
@@ -2574,13 +3139,18 @@ jobs:
           Get-Process -Name 'UltiMaker-Cura' -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           if ($died) {
-            V "SPIKE-Q1: launch=FAILED (exited within the ${WAIT_SECS} s wait)"
+            V "SPIKE-Q1: launch=FAILED (the process exited during the waits - see the launch lines)"
           } elseif ($glHits.Count -gt 0) {
             # alive, but the only window was the probe dialog: calling that a
             # successful launch is the same false green the video verdict had
             V "SPIKE-Q1: launch=RUNNING-BUT-BLOCKED (alive, but its window is the OpenGL probe dialog - see gl= above)"
+          } elseif ($realTitle -and (-not (Test-ProbeTitle "$title"))) {
+            V "SPIKE-Q1: launch=OK (a real window was up: '$realTitle')"
           } else {
-            V "SPIKE-Q1: launch=OK (alive after the wait)"
+            # Being alive is not being launched: the first run's process was
+            # alive as well, and its only window was the block. OK now needs a
+            # window of its own, whatever else the process was doing.
+            V "SPIKE-Q1: launch=RUNNING-NO-WINDOW (alive after the ${WAIT_SECS} s wait and the ${BOOT_SECS} s boot wait, but no window of its own - see the title samples above)"
           }
           exit 0
 
@@ -2643,6 +3213,162 @@ jobs:
           find "$EVIDENCE" -type f 2>/dev/null | while read -r f; do
             echo "$(du -h "$f" | cut -f1)  $f"
           done
+          exit 0
+
+      - name: "Q2 evidence: keep Cura's own log (Windows)"
+        # Cura's own log is the single most diagnostic file it writes, and the
+        # run that fails is the run that needs it kept. A step of its own,
+        # under always(), so it still runs when the launch step above died
+        # outright - a step that dies takes its own harvest with it. The
+        # storage roots, the version segment under them and the root spelling
+        # are all searched rather than assumed, every version directory found
+        # and the rotated cura.log.1 are kept (the project sweeps 5.7 up, so
+        # nothing here may be written down for one version), and "there is no
+        # cura.log" is itself reported as a finding.
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'cura-log-harvest-windows.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          # The version this run pinned is read from the workflow's own input,
+          # never written down here. The storage root carries a version
+          # segment that moves with it (cura\5.7 ... cura\5.13) and the root
+          # spelling is not fixed across that range either, so both are
+          # discovered per file rather than assumed; the run's own version is
+          # the one whose log also lands under the plain cura.log.
+          $curaVer = $env:CURA_VERSION
+          $verSeg = ''
+          if ($curaVer -and ($curaVer -match '^([0-9]+\.[0-9]+)')) { $verSeg = $Matches[1] }
+          $verNote = if ($curaVer) { $curaVer } else { 'unset' }
+          $segNote = if ($verSeg) { $verSeg } else { 'unknown' }
+          W "cura_version input: $verNote (version segment: $segNote)"
+          # Cura builds its storage path from the per-user app data root
+          # (Resources.getStoragePath); the local app data root is the older
+          # spelling, and the directory name under it varies across the
+          # versions this spike ranges over (cura, Cura, UltiMaker Cura), so
+          # both roots are swept rather than one being picked and hoped for.
+          $bases = @()
+          foreach ($e in @('APPDATA', 'LOCALAPPDATA')) {
+            $v = [System.Environment]::GetEnvironmentVariable($e)
+            if ($v) { $bases += $v }
+          }
+          $found = @()
+          foreach ($base in $bases) {
+            W "searching: $base"
+            if (-not (Test-Path $base)) { W "  absent on this runner"; continue }
+            foreach ($name in @('cura', 'Cura', 'UltiMaker Cura', 'Ultimaker Cura')) {
+              $cand = Join-Path $base $name
+              if (Test-Path $cand) { W "  root spelling present: $cand" }
+            }
+            $hits = Get-ChildItem -Path $base -Recurse -Depth 4 -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like 'cura.log*' } |
+              Select-Object -First 50 -ExpandProperty FullName
+            foreach ($h in $hits) { $found += $h }
+          }
+          $found = @($found | Sort-Object -Unique)
+          if ($found.Count -eq 0) {
+            W "FINDING: no cura.log (rotated cura.log.1 included) under $($bases -join ', ') at depth 4, any root spelling - Cura's own loggers had not started, which is what a probe failure looks like (it dies before them), or Cura never ran at all"
+            exit 0
+          }
+          $i = 0
+          foreach ($f in $found) {
+            $i++
+            $seg = Split-Path -Leaf (Split-Path -Parent $f)
+            if ($seg -notmatch '^[0-9]+\.[0-9]+') { $seg = 'unversioned' }
+            $sfx = (Split-Path -Leaf $f).Substring(8)   # 'cura.log' is 8 chars: '' or '.1'
+            $dest = Join-Path $EVIDENCE ("cura-{0}.log{1}" -f $seg, $sfx)
+            if (Test-Path $dest) { $dest = Join-Path $EVIDENCE ("cura-{0}-{1}.log{2}" -f $seg, $i, $sfx) }
+            W ("found: {0} ({1:N0} bytes)" -f $f, (Get-Item $f).Length)
+            $ok = $false
+            try { Copy-Item -Path $f -Destination $dest -Force -ErrorAction Stop; $ok = $true }
+            catch { W "copy failed: $($_.Exception.Message)" }
+            if (-not $ok) {
+              # Cura can still hold the file open; a read-and-write copy keeps
+              # the log rather than losing it to a sharing violation.
+              try {
+                [System.IO.File]::WriteAllText($dest, (Get-Content $f -Raw -ErrorAction Stop))
+                $ok = $true
+              } catch { W "the read-and-write copy failed too: $($_.Exception.Message)" }
+            }
+            if ($ok) { W "kept: $dest" } else { W "NOT KEPT: $f" }
+            $alias = Join-Path $EVIDENCE 'cura.log'
+            if ($ok -and $verSeg -and ($seg -eq $verSeg) -and ($sfx -eq '') -and (-not (Test-Path $alias))) {
+              if (Copy-Item -Path $dest -Destination $alias -ErrorAction SilentlyContinue) {
+                W "  this run's version ($verSeg): the same log is also kept as cura.log (the first log found for it)"
+              }
+            }
+          }
+          W "cura.log harvest: $($found.Count) file(s) found, kept beside the rest of the evidence"
+          exit 0
+
+      - name: "Q2 evidence: keep Cura's own log (macOS)"
+        # The same requirement on the macOS leg, and the same placement: its
+        # own step under always(), so it runs whatever the launch step did.
+        if: always() && runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/cura-log-harvest-macos.txt"
+          {
+            echo "=== Cura's own log (the macOS storage roots) ==="
+            # Cura's storage path is ~/Library/Application Support/<root>/
+            # <version>/cura.log. Neither the root spelling nor the version
+            # segment is fixed across the versions this spike ranges over
+            # (5.7 up: cura, Cura and UltiMaker Cura all appear), so both are
+            # discovered rather than assumed; every version directory found
+            # is harvested rather than only the newest, since one tree can
+            # hold more than one; and the rotated cura.log.1 is kept too
+            # (FileLogger is a RotatingFileHandler, so it is a real file).
+            # The version this run pinned decides which log also lands under
+            # the plain cura.log - read from the workflow's input, never
+            # written down here.
+            VER_SEG=""
+            case "${CURA_VERSION:-}" in
+              [0-9]*.[0-9]*) VER_SEG="$(printf '%s' "${CURA_VERSION}" | cut -d. -f1,2)" ;;
+            esac
+            echo "cura_version input: ${CURA_VERSION:-unset} (version segment: ${VER_SEG:-unknown})"
+            ROOT="$HOME/Library/Application Support"
+            for name in cura Cura "UltiMaker Cura" "Ultimaker Cura"; do
+              if [ -d "$ROOT/$name" ]; then echo "root spelling present: $ROOT/$name"; fi
+            done
+            FOUND="$(find "$ROOT" -maxdepth 5 -type f -name 'cura.log*' 2>/dev/null | sort)"
+            if [ -z "$FOUND" ]; then
+              echo "FINDING: no cura.log (rotated cura.log.1 included) under $ROOT at depth 5, any root spelling - Cura's own loggers had not started, which is what a probe failure looks like (it dies before them), or Cura never ran at all"
+              exit 0
+            fi
+            i=0
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              i=$((i + 1))
+              seg="$(basename "$(dirname "$f")")"
+              case "$seg" in
+                [0-9]*.[0-9]*) : ;;
+                *) seg="unversioned" ;;
+              esac
+              sfx="${f##*/cura.log}"   # '' for cura.log, '.1' for cura.log.1
+              dest="$EVIDENCE/cura-$seg.log$sfx"
+              if [ -e "$dest" ]; then dest="$EVIDENCE/cura-$seg-$i.log$sfx"; fi
+              echo "found: $f ($(wc -c <"$f" | tr -d ' ') bytes)"
+              if cp "$f" "$dest" 2>/dev/null; then
+                echo "kept: $dest"
+                if [ -n "$VER_SEG" ] && [ "$seg" = "$VER_SEG" ] && [ -z "$sfx" ] &&
+                   [ ! -e "$EVIDENCE/cura.log" ]; then
+                  if cp "$f" "$EVIDENCE/cura.log" 2>/dev/null; then
+                    echo "  this run's version ($VER_SEG): the same log is also kept as cura.log (the first log found for it)"
+                  fi
+                fi
+              else
+                echo "NOT KEPT: $f"
+              fi
+            done <<< "$FOUND"
+            echo "cura.log harvest: $i file(s) found, kept beside the rest of the evidence"
+          } 2>&1 | tee "$LOG"
           exit 0
 
       - name: Upload the evidence
