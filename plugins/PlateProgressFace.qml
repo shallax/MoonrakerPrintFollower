@@ -1106,6 +1106,22 @@ Item {
             }
         } else if (_partialPrefixReady() || (root._prefixHold && _leavingFull())) {
             root._prefixWasShown = true;
+            // The set edge must carry the record with it. The shown
+            // flag is what keeps the canvas's old tail standing
+            // through a handover, so the interior below the boundary
+            // is owned by the RETAINED pixels — and the Image's own
+            // handlers are the only other place the record is frozen,
+            // so a set edge observed here (both of them already past,
+            // the readiness only now true) would leave the flag
+            // standing over an empty record: the replacement's source
+            // change blanks the live Image and the interior has no
+            // owner for the frames until the delivery. The condition
+            // is the freeze's own joint readiness, never a wider one.
+            if (_partialPrefixReady() && root.progress.layers.current.prefixData !== "") {
+                root._retainedPrefixSource = root.progress.layers.current.prefixData;
+                root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
+                root._retainedPrefixAnchor = root.progress.anchor;
+            }
         }
         // The interaction's exit rides the exact scene's OWN commits
         // (a pan-only gesture never runs the zoom animator): the
@@ -1665,7 +1681,7 @@ Item {
                 root._vectorSourceMotions = vectorMotions;
                 root._vectorSourceClasses = vectorClasses;
                 var prefixFrom = _prefixFrom();
-                if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions) {
+                if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions && Math.max(root._lastSplit, root._retainedPrefixSplit) >= split) {
                     // The stale prefix is being REPLACED (a fresh URL is
                     // in flight): hold the complete old composition —
                     // the held prefix plus this bitmap's old tail — until

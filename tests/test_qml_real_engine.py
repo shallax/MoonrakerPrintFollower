@@ -6608,6 +6608,15 @@ class PlateCanvasHitTests(RealEngineTestCase):
         and return the name the face published for the hover."""
         from PyQt6.QtTest import QTest
         scene_x, scene_y = self._scene(canvas, bed_x, bed_y)
+        # The face publishes on a POSITION CHANGE: a move onto the
+        # point the pointer already holds is no hover at all. The
+        # pointer outlives the window (see _park_pointer), so a test
+        # that ended on this very point starves the hover below.
+        # Lead with a step off the point so every hover is a real
+        # move.
+        QTest.mouseMove(window, canvas.mapToScene(
+            QPointF(scene_x + 8.0, scene_y + 8.0)).toPoint())
+        self.pump(5)
         QTest.mouseMove(window, canvas.mapToScene(QPointF(scene_x, scene_y)).toPoint())
         self.pump(20)
         return face.property("hoveredName")
