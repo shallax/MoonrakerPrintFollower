@@ -3469,6 +3469,25 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     return True
         return False
 
+    def _wait_until(self, window, predicate, timeout=15.0):
+        """The first grab the predicate holds on.
+
+        A wait that clears on one landmark while the caller asserts
+        another measures the second on a frame its own landmark had not
+        reached yet, so the predicate is the caller's assertions
+        themselves. The timeout is a hang guard, not a budget: the
+        caller's assertions are what fail when the ink never lands.
+        """
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            if predicate(image):
+                return image
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image
+
     def _wait_diff(self, window, face, baseline, want, timeout=2.5):
         """Wait until the grabbed picture differs from (want=True) or
         equals (want=False) the baseline."""
@@ -4001,10 +4020,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
                                               "fixture-ab-%d" % time.monotonic_ns()),
                            10, "fixture-key")
         self._printer.setLayers({"prev": None, "current": layer_b, "next": None})
-        image, count = self._wait_red(window, face, want=True)
-        self.assertGreater(count, 0, "layer B's prefix never landed after the seek")
+        # The test's own race: layer A's retained picture is still red
+        # here, so the red census cleared the wait on a frame before
+        # B's ink landed — the strict landmark the assertion reads.
+        image = self._wait_until(
+            window,
+            lambda shot: self._stroke_ink(shot, face, window, plot, 75.0, 200.0) > 0)
         self.assertGreater(self._stroke_ink(image, face, window, plot, 75.0, 200.0), 0,
-                           "layer B's prefix drew nothing at its own position")
+                           "layer B's prefix never landed after the seek")
         self.assertEqual(self._stroke_ink(image, face, window, plot, 75.0, 40.0), 0,
                          "layer A's pixels outlived the seek")
         window.grabWindow()
@@ -4035,8 +4058,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
         current = self._native_layer(current_payload, face)
         self._printer.setLayers({"prev": ghost, "current": current, "next": None})
         self._printer.setSplit(21)
-        image, count = self._wait_red(window, face, want=True)
-        self.assertGreater(count, 0, "the full current layer never drew")
+        # The ghost's band is its OWN landmark and the current layer
+        # is code-guaranteed to land first, so the red census alone
+        # cleared the wait a frame before the ghost blitted.
+        image = self._wait_until(
+            window,
+            lambda shot: self._band_changed(shot, baseline, face, window, plot,
+                                            75.0, 60.0, radius=6)
+            and self._red_pixels(shot, face, window) > 0)
+        self.assertGreater(self._red_pixels(image, face, window), 0,
+                           "the full current layer never drew")
         self.assertTrue(self._band_changed(image, baseline, face, window, plot, 75.0, 60.0,
                                           radius=6),
                         "the ghost never rendered — the overlap probe would be vacuous")
@@ -4115,19 +4146,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(18)
-        image, count = self._wait_red(window, face, want=True)
-        self.assertGreater(count, 0, "the picture never drew")
-        # The prefix's OWN ink is what the census below reads, and "some
-        # red is on screen" is satisfied by the tail alone — the two
-        # land a frame apart on macOS, which is how this failed with
-        # "0 not greater than 0" on a frame whose own shot showed an
-        # empty plate. A hang guard, not a budget.
-        deadline = time.monotonic() + 15.0
-        while (self._stroke_ink(image, face, window, census_plot, 75.0, 125.0) == 0
-               and time.monotonic() < deadline):
-            self.app.processEvents()
-            time.sleep(0.02)
-            image = window.grabWindow()
+        # The census reads three landmarks — the prefix's own ink, the
+        # tail's, and the base's band — and "some red is on screen" is
+        # satisfied by the tail alone; the three land a frame apart on
+        # macOS, which is how this failed with "0 not greater than 0"
+        # on a frame whose own shot showed an empty plate. A hang
+        # guard, not a budget.
+        def every_landmark(shot):
+            return (self._stroke_ink(shot, face, window, census_plot, 75.0, 125.0) > 0
+                    and self._stroke_ink(shot, face, window, census_plot, 155.0, 125.0) > 0
+                    and self._band_changed(shot, baseline, face, window,
+                                           census_plot, 215.0, 125.0))
+
+        image = self._wait_until(window, every_landmark)
         # The grey base IS up: the unprinted suffix (motion 20, bed
         # x=215 — beyond the split's tail) shows the base's grey
         # where the empty baseline had none.
@@ -4261,9 +4292,15 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(18)
-        image, count = self._wait_red(window, face, want=True)
-        self.assertGreater(count, 0, "the picture never drew")
         old_plot = self._bed_point(face, 0.0, 0.0)
+        # The strict core census, not the loose red one: the tail
+        # satisfies "some red is on screen" a frame before the prefix
+        # lands, and the loose tolerance takes fringes the strict
+        # census rejects.
+        image = self._wait_until(
+            window,
+            lambda shot: self._stroke_ink(shot, face, window, old_plot,
+                                          75.0, 125.0) > 0)
         self.assertGreater(
             self._stroke_ink(image, face, window, old_plot, 75.0, 125.0), 0,
             "the prefix side never drew before the context changes")
