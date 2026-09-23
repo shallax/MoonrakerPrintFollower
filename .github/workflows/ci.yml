@@ -115,6 +115,72 @@ jobs:
               window.close()
           PY
 
+      - name: Render the mounts the geometry censuses use (artefact)
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # A number in a log says the frame is 108 px; a picture says
+          # WHY. These are the exact mounts the pixel censuses create,
+          # rendered offscreen and published as an artefact, so a leg
+          # that disagrees about geometry can be LOOKED at instead of
+          # inferred from an assertion message.
+          mkdir -p "$RUNNER_TEMP/shots"
+          cat > "$RUNNER_TEMP/mount_shot.py" <<'PY'
+          import os
+          import sys
+          import unittest
+
+          sys.path.insert(0, os.path.join(os.environ["REPO"], "tests"))
+          sys.path.insert(0, os.environ["REPO"])
+
+          import test_qml_real_engine as _re
+
+
+          class MountShot(_re.CameraFpsControlTests):
+              def test_shot(self):
+                  out = os.environ["SHOT_DIR"]
+                  for width, height, tag in ((80, 400, "tiny"),
+                                             (110, 400, "narrow"),
+                                             (700, 700, "roomy")):
+                      _pane, window, _model, _image, frame = self._fps_pane(width, height)
+                      self._pump_ms(300)
+                      window.grabWindow().save(os.path.join(out, tag + ".png"))
+                      print("shot %s: asked %dx%d, window %dx%d, frame %.1fx%.1f"
+                            % (tag, width, height, window.width(), window.height(),
+                               frame.width(), frame.height()))
+                      sys.stdout.flush()
+
+
+          unittest.TextTestRunner(verbosity=0).run(
+              unittest.TestSuite([MountShot("test_shot")]))
+          PY
+          REPO="$PWD" SHOT_DIR="$RUNNER_TEMP/shots" PYTHONPATH="$PWD/tests" \
+              python "$RUNNER_TEMP/mount_shot.py" || true
+
+      - name: Run the host suites with the real Qt runtime
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          # Every failing real-engine test publishes the windows it had
+          # open into this directory, named for the test.
+          HARNESS_SHOT_DIR: ${{ runner.temp }}/shots
+        run: |
+          # The sentinel is the guard: this step being PRESENT is not
+          # something the step itself can check, and a leg that never
+          # ran the suites reports exactly the same green as a leg that
+          # passed them. The platform-safety step below requires it.
+          JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+          touch "$RUNNER_TEMP/host-suites-ran"
+
+      - name: Publish the rendered mounts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: harness-mounts-${{ matrix.os }}
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+
       - name: Platform-safety suite (the Qt-gated regressions must EXECUTE)
         shell: bash
         run: |
@@ -122,6 +188,16 @@ jobs:
           # pass this step exists to stop, and a leg that ran nothing
           # at all still exits 0. Demand a positive test count and the
           # skip-free verdict: `OK` alone, never `OK (skipped=n)`.
+          #
+          # The host-suites sentinel is the same guard one level up: a
+          # leg whose "Run the host suites" step is missing or renamed
+          # reports byte-identical green to one that passed them. Only
+          # the step that runs the suites can leave the marker, so its
+          # absence is the failure.
+          if [ ! -f "${RUNNER_TEMP:-/tmp}/host-suites-ran" ]; then
+            echo "::error::the host suites never ran in this leg (no sentinel)"
+            exit 1
+          fi
           log="${RUNNER_TEMP:-/tmp}/platform-safety.log"
           python -m unittest discover -s tests -p "test_platform_safety.py" -v >"$log" 2>&1 || {
             cat "$log"
