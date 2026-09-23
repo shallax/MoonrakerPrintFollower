@@ -990,6 +990,18 @@ class ClientAdmissionTests(_ClientCase):
                                  generation=self.client._generation)
         self.assertEqual(self.client.status["print_stats"]["state"], "printing")
 
+    def test_two_sync_frames_in_one_clock_tick_both_apply(self):
+        self.client.admit_status(self.status("printing"), origin="sync", stamp=10.0,
+                                 generation=self.client._generation)
+        # The stamp is a wall clock, not a sequence: the platform's own
+        # resolution decides whether two frames can share it, and
+        # Windows' monotonic tick (~16 ms) hands a fast pair the SAME
+        # stamp. Equality is unordered, and dropping the second there
+        # loses the update whole — the state never lands at all.
+        self.client.admit_status(self.status("paused"), origin="sync", stamp=10.0,
+                                 generation=self.client._generation)
+        self.assertEqual(self.client.status["print_stats"]["state"], "paused")
+
     def test_a_fragment_applies_inside_its_generation(self):
         self.client.admit_status(self.status("printing"), origin="sync", stamp=10.0,
                                  generation=self.client._generation)

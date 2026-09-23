@@ -2608,7 +2608,12 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         self.assertEqual(messages, [])
         self.assertTrue(self.cura.loading)  # the new load holds the stage
         self.assertIn(path, self.releases)  # the superseded lease released, never leaked
-        self.assertEqual(self.app.loaded, [path, second])  # both loads reached Cura
+        # QUrl spells a local file with '/' on every platform, so the
+        # recorded spelling and the temp dir's own differ on Windows
+        # only by separator and case: both loads reached Cura either way.
+        self.assertEqual([os.path.normcase(os.path.normpath(entry)) for entry in self.app.loaded],
+                         [os.path.normcase(os.path.normpath(path)),
+                          os.path.normcase(os.path.normpath(second))])
 
     def test_watchdog_unsticks_loading_and_keeps_the_file(self):
         path = self._make_file()

@@ -64,6 +64,31 @@ class ComposedComponentTests(unittest.TestCase):
         self.addCleanup(output.stop)
         return output._current.activePrinter
 
+    def plant_download(self, files, layers):
+        """A downloaded G-code file under the service's own root, torn
+        down once the service has let go of it.
+
+        The last assert is not the last READ: a worker lane can still be
+        walking the file (the reader holds the lease its lane took), and
+        Windows refuses a delete while any handle is open (WinError 32).
+        The teardown waits on the service's own release discipline — one
+        lane at a time, the reader's lease — so a real leak still fails
+        here rather than passing silently."""
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        service = self.parts.index
+
+        def drop_the_download():
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and (service._busy or files._leases):
+                self.qt.events(5)
+            os.remove(target)
+
+        self.addCleanup(drop_the_download)
+        return target
+
     def test_facade_has_no_legacy_private_state_or_mixin_bases(self):
         for name in ("_remote_job_service", "_preview_follower_service", "_simulation_view", "_apply_path_progress", "_config_store"):
             self.assertFalse(hasattr(self.follower, name), name)
@@ -195,11 +220,7 @@ class ComposedComponentTests(unittest.TestCase):
         layers = b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
             for layer in range(10))
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         # The previous session saved the index but never published a
@@ -258,11 +279,7 @@ class ComposedComponentTests(unittest.TestCase):
         layers = b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
             for layer in range(10))
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         service._cache.save(identity, index)
@@ -518,11 +535,7 @@ class ComposedComponentTests(unittest.TestCase):
         layers = b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
             for layer in range(10))
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         module = self.qt.load("GCodeIndexService")
@@ -595,11 +608,7 @@ class ComposedComponentTests(unittest.TestCase):
         layers = b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
             for layer in range(12))
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         module = self.qt.load("GCodeIndexService")
@@ -736,11 +745,7 @@ class ComposedComponentTests(unittest.TestCase):
             for layer in range(12))
         # The lease's own path holds the bytes the hydrator reads, and
         # the compact index builds from the same file.
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         module = self.qt.load("GCodeIndexService")
@@ -778,11 +783,7 @@ class ComposedComponentTests(unittest.TestCase):
         layers = b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
             for layer in range(12))
-        target = os.path.join(files._root, "job-1", "part.gcode")
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "wb") as handle:
-            handle.write(layers)
-        self.addCleanup(os.remove, target)
+        target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
         module = self.qt.load("GCodeIndexService")
@@ -3004,6 +3005,39 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # Quiesce the submitted job before the teardown deletes the
         # model: a straggler's commit on a deleted model is the
         # teardown segfault.
+        surface = model._plate_surfaces["popover"]
+        if surface.job is not None:
+            surface.job["cancel"].set()
+        for _ in range(200):
+            self.qt.events(5)
+            if surface.job is None:
+                break
+
+    def test_the_raster_prune_keys_the_reference_and_the_scan_together(self):
+        # The reference is a URL the wrapper displays and the scan is a
+        # directory path: the two spell one file differently — '/' versus
+        # the platform's own separator on Windows, a redundant segment
+        # wherever — so the set is keyed rather than compared raw. Raw,
+        # it matched nothing and the prune unlinked the live picture.
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        self._window(model, "popover", 5)
+        directory = model._raster_cache_dir
+        sub = os.path.join(directory, "sub")
+        os.makedirs(sub, exist_ok=True)
+        live = os.path.join(directory, "spelled-live.png")
+        with open(live, "wb") as handle:
+            handle.write(b"x")
+        from PyQt6.QtCore import QUrl
+        # The wrapper's own spelling of the file: QUrl keeps the '..'
+        # through the round trip, which is the shape the Windows leg's
+        # '/' spelling takes on this platform.
+        spelled = os.path.join(sub, "..", "spelled-live.png")
+        model._plate_surfaces["popover"].layers[5]._raster_data = \
+            QUrl.fromLocalFile(spelled).toString()
+        model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(live),
+                        "the reference's own spelling did not protect the file")
         surface = model._plate_surfaces["popover"]
         if surface.job is not None:
             surface.job["cancel"].set()

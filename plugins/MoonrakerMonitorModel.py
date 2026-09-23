@@ -3694,6 +3694,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "rasterDirFiles": dir_files, "rasterDirBytes": dir_bytes,
                 "backingScale": backing}
 
+    @staticmethod
+    def _raster_file_key(path):
+        """The raster assets' comparison spelling.
+
+        QUrl spells a local file with '/' on EVERY platform — Windows'
+        toLocalFile() included — while the directory scan builds the
+        native form, so the reference set and the scan only agree once
+        both are keyed this way. Compared raw on Windows, the set
+        matched nothing and the prune unlinked the live wrapper's own
+        picture."""
+        return os.path.normcase(os.path.normpath(path))
+
     def _referenced_raster_files(self):
         """The asset files the live wrappers still display, plus the
         retained navigation raster: the prune must never unlink a URL
@@ -3704,15 +3716,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for surface in self._plate_surfaces.values():
             nav_url = surface.nav.get("url") if surface.nav else None
             if nav_url:
-                referenced.add(QUrl(nav_url).toLocalFile())
+                referenced.add(self._raster_file_key(QUrl(nav_url).toLocalFile()))
             retained = getattr(surface, "retained_prefix", "")
             if retained:
-                referenced.add(QUrl(retained).toLocalFile())
+                referenced.add(self._raster_file_key(QUrl(retained).toLocalFile()))
             for wrapped in surface.layers.values():
                 for url in (wrapped.rasterData, wrapped.baseData,
                             wrapped.travelData, wrapped.prefixData):
                     if url:
-                        referenced.add(QUrl(url).toLocalFile())
+                        referenced.add(self._raster_file_key(QUrl(url).toLocalFile()))
         return referenced
 
     def _prune_raster_cache(self, keep=64):
@@ -3727,7 +3739,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             entries = []
             for name in os.listdir(self._raster_cache_dir):
                 path = os.path.join(self._raster_cache_dir, name)
-                if path in referenced or ".tmp-" in name:
+                if self._raster_file_key(path) in referenced or ".tmp-" in name:
                     continue
                 try:
                     entries.append((os.stat(path).st_mtime, path))

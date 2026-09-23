@@ -852,4 +852,20 @@ EXCLUSIONS = {
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
     },
+    # The prefix handover's two Images (the composition transaction):
+    # identity address points for the real-engine ownership read, which
+    # proves no beat of a boundary advance leaves the interior to the
+    # canvas's bitmap alone. No scenario presses an Image.
+    "moonrakerPlatePrefixImage": {
+        "reason": "the live replacement in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
+    "moonrakerPlateRetainedPrefixImage": {
+        "reason": "the retained record in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
 }

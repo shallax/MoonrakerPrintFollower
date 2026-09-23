@@ -350,7 +350,11 @@ class StoreWiringTests(MonitorModelCase):
             self.model.openMigrationBackupFolder()
         self.assertEqual(len(opened), 1)
         from UM.Resources import Resources
-        self.assertEqual(opened[0].toLocalFile(), Resources.getConfigStoragePath())
+        # QUrl.toLocalFile() spells a local file with '/' on every
+        # platform; the storage path carries the platform's own
+        # separators and case, so the two are compared as paths.
+        self.assertEqual(os.path.normcase(os.path.normpath(opened[0].toLocalFile())),
+                         os.path.normcase(os.path.normpath(Resources.getConfigStoragePath())))
 
 
 class PublishBranchTests(MonitorModelCase):

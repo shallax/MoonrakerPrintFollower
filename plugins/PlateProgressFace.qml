@@ -1438,6 +1438,7 @@ Item {
         // interval the prefix just relinquished.
         Image {
             id: progressPrefixImage
+            objectName: "moonrakerPlatePrefixImage"
             anchors.fill: parent
             // Nearest, like the retained frame it swaps with: any
             // filter difference across the handover is a whole-raster
@@ -1527,6 +1528,7 @@ Item {
         // in on the same evaluation.
         Image {
             id: retainedPrefixImage
+            objectName: "moonrakerPlateRetainedPrefixImage"
             anchors.fill: parent
             // The interior below the boundary is owned by the live
             // prefix's PIXELS, not by its composition bookkeeping: the
@@ -1537,7 +1539,10 @@ Item {
             // handler-fed flag that lands a beat late. A delivered
             // FULL bitmap still owns everything itself: the record
             // must not stack its pixels over it (the additive-AA
-            // doubling).
+            // doubling). That stand-down is also the interior's one
+            // bare frame on a host whose scene texture trails its own
+            // painted coverage — accepted, and pinned by the gap
+            // census.
             visible: root._retainedPrefixSource !== "" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)
             source: root._retainedPrefixSource
             smooth: false

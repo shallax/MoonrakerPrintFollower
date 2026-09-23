@@ -54,7 +54,11 @@ run_once() {
         return 0
     fi
     echo "FAILED — the full output is at $log"
-    grep -B2 -A12 "FAIL:\|ERROR:" "$log" || true
+    # 40 lines, not 12: a shared-helper traceback (mount_window ->
+    # mount, _probe_rig -> _mount_line) spends a dozen lines on frames
+    # alone, and the dropped tail is the exception line itself — the
+    # one thing a leg we cannot re-run locally is read for.
+    grep -B2 -A40 "FAIL:\|ERROR:" "$log" || true
     grep -E "^(Ran|FAILED)" "$log" || true
     return 1
 }

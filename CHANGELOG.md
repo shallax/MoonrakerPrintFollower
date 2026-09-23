@@ -96,6 +96,12 @@ disk.
   applies, and zooming the follower no longer freezes its updates
   after the zoom settles — a wheel-only gesture had no release to
   resume the publications with.
+- **Known limitations:** on macOS, a layer-boundary advance can show
+  one bare frame in the plate interior — the frame where the retained
+  prefix's own rule stands down because the canvas's texture has
+  committed while its painted coverage is still zero. Documented and
+  pinned by the gap census, not fixed: a fix needs the scene's
+  committed frame, not a flag.
 
 ## 4.5.0
 
