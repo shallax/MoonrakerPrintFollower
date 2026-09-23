@@ -236,19 +236,28 @@ class RendererParityTests(_parent.RealEngineTestCase):
 
         def grid_col(image, pan_x):
             # The 50 mm graduation at bed_x=150, on a row off the
-            # stroke's band; the scan follows THIS grab's pan.
+            # stroke's band; the scan follows THIS grab's pan. The
+            # window is ±8 because the NEXT landmark is 13 px away: at
+            # 4x the stroke's left edge (bed_x 152) sits 13 px right of
+            # this graduation, so a ±14 window holds two landmarks and
+            # answers with whichever reads first — the loaded rig's
+            # -55 against -40 is 12 px of stroke edge, measured.
             expected = ox + pan_x + 4.0 * (float(plot["offsetX"])
                                            + (150.0 - float(plot["bedXMin"])) * sx)
-            for c in range(int(expected) - 14, int(expected) + 15):
+            for c in range(int(expected) - 8, int(expected) + 9):
                 if inked(image, c, 310):
                     return c
             return None
 
         def stroke_right(image, pan_x):
-            # The stroke's rightmost ink at the bed centre's row.
+            # The stroke's rightmost ink at the bed centre's row. The
+            # scan starts 6 px out, not 30: the 60 mm graduation
+            # (bed_x 160) is 13 px right of this edge, so a wider start
+            # reaches it first and answers with the graduation instead
+            # of the stroke.
             expected = ox + pan_x + 4.0 * (float(plot["offsetX"])
                                            + (158.0 - float(plot["bedXMin"])) * sx)
-            for c in range(int(expected) + 30, int(expected) - 40, -1):
+            for c in range(int(expected) + 6, int(expected) - 40, -1):
                 if inked(image, c, 300):
                     return c
             return None
