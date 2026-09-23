@@ -2188,6 +2188,11 @@ jobs:
           Add-Type -AssemblyName System.Drawing
           $EVIDENCE = $env:EVIDENCE
           New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          # The directory this step runs in. Every foreground command here (the
+          # gdigrab probes, ffmpeg, the still capture) resolves its relative
+          # output path against it, so anything started in the background has
+          # to be handed the same directory explicitly - see Start-BgCapture.
+          $stepCwd = (Get-Location).Path
           $log = Join-Path $EVIDENCE 'launch-windows.txt'
           $verdict = Join-Path $EVIDENCE 'verdict.txt'
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
@@ -2237,29 +2242,49 @@ jobs:
           }
           # --- starting a long-lived capture ---------------------------------
           # Start-BgCapture is how THIS leg starts a background process that
-          # has to SEE the desktop, and it is the answer to the empty video of
-          # run 35929485153: there the recorder was started with Start-Process
-          # and its scenario.mp4 was 48 bytes (ftyp + free + an mdat of size
-          # 0) with an empty recorder.log, while the same argv run in the
-          # foreground by this same step wrote 180 KB containers. Same machine,
-          # same run, same argv - the difference was the launch, not the work.
+          # has to SEE the desktop. Run 35932140235 came back with no
+          # scenario.mp4 at all, and its recorder.log says why in ffmpeg's own
+          # words: "Error opening output spike-evidence\scenario.mp4: No such
+          # file or directory", exit code -2 - the recorder started and never
+          # got as far as grabbing a frame. The cause was the working
+          # directory, not the desktop and not the argv. WorkingDirectory here
+          # becomes CreateProcess's lpCurrentDirectory, and a RELATIVE one is
+          # resolved against the CALLING process's directory, not the child's:
+          # the call passed $EVIDENCE ('spike-evidence', relative to the
+          # workspace), so the recorder's directory became
+          # <workspace>\spike-evidence and the relative output path in the argv
+          # - the very string the foreground probes use - was resolved a second
+          # time from there, to
+          # <workspace>\spike-evidence\spike-evidence\scenario.mp4, which does
+          # not exist. The foreground probes are untouched by this because they
+          # run in this step's own directory. The recorder is therefore given
+          # that same directory as an ABSOLUTE path taken from this process:
+          # same argv, same flags, same relative output name as the 179,381-byte
+          # foreground probes, one directory.
           # UseShellExecute = $false is CreateProcess called by THIS process,
           # so the child gets this process's own token, session, window station
           # and desktop: the very ones the foreground gdigrab probes and the
-          # still capture above see. Start-Process hands the child to
-          # ShellExecuteEx instead, a context of its own, which is the standing
-          # difference between the 48-byte file and the 180 KB ones.
-          # CreateNoWindow keeps a console out of the picture (a capture tool
-          # needs none) and says nothing about the desktop. Both streams are
-          # redirected because that is where ffmpeg's reason for an empty
-          # capture goes; .NET redirection is an anonymous pipe, so both are
-          # drained by reads started here and collected at teardown, and a pipe
-          # filling up can never block the encoder mid-recording.
+          # still capture above see. CreateNoWindow keeps a console out of the
+          # picture (a capture tool needs none) and says nothing about the
+          # desktop. Both streams are redirected because that is where
+          # ffmpeg's reason for an empty capture goes; .NET redirection is an
+          # anonymous pipe, so both are drained by reads started here and
+          # collected at teardown, and a pipe filling up can never block the
+          # encoder mid-recording.
           function Start-BgCapture($exe, [string[]]$argList, $cwd) {
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $exe
             $psi.Arguments = ($argList -join ' ')
             $psi.WorkingDirectory = $cwd
+            # Logged and checked here rather than at the call sites: this is
+            # the value CreateProcess resolves, and a relative one is how the
+            # missing scenario.mp4 happened. Equal directories mean the child
+            # resolves the argv's relative output path exactly as the
+            # foreground probes do.
+            W ("background child: {0}, working directory '{1}' (this step: '{2}')" -f $exe, $cwd, $stepCwd)
+            if ($cwd -ne $stepCwd) {
+              W "NOTE: this child does not run in this step's own directory, so a relative output path in its argv does not resolve to the file a foreground command would write"
+            }
             $psi.UseShellExecute = $false
             $psi.CreateNoWindow = $true
             $psi.RedirectStandardOutput = $true
@@ -2304,6 +2329,11 @@ jobs:
           $mySess = $null
           $recExitedEarly = $false
           $recGoneLogged = $false
+          # Collected after teardown and reused by the video verdict, which
+          # quotes ffmpeg's own first line when no container was written: the
+          # recorder's words are the diagnosis, so they travel with the verdict.
+          $recErrText = ''
+          $recOutText = ''
           if ($ff) {
             W "ffmpeg: $($ff.Source)"
             # gdigrab takes no -video_size: it captures the whole desktop.
@@ -2314,15 +2344,22 @@ jobs:
             # without re-deriving it: System.Diagnostics.Process with
             # UseShellExecute=FALSE and CreateNoWindow=TRUE - a CreateProcess
             # child of this step, so it shares the session, window station and
-            # desktop the working foreground probes capture through. Not
-            # Start-Process, whose ShellExecuteEx context is where the 48-byte
-            # scenario.mp4 came from. The recorder's streams are redirected to
-            # the evidence files the Linux leg names, and drained as above.
+            # desktop the foreground probes capture through - started in this
+            # step's OWN directory, which is the one difference the previous
+            # run's missing recording turned out to be. The recorder's streams
+            # are redirected to the evidence files the Linux leg names, and
+            # drained as above.
             $recErr = Join-Path $EVIDENCE 'recorder.log'
             $recOut = Join-Path $EVIDENCE 'recorder-stdout.txt'
-            W "recorder launch: System.Diagnostics.Process, UseShellExecute=FALSE, CreateNoWindow=TRUE - a CreateProcess child of this step, so it shares this step's session, window station and desktop (the context the foreground probes capture through); Start-Process was ShellExecuteEx, a context of its own"
+            W "recorder launch: System.Diagnostics.Process, UseShellExecute=FALSE, CreateNoWindow=TRUE - CreateProcess called by this step, so the child gets this step's token, session, window station and desktop, in working directory $stepCwd (the directory the foreground probes resolve the same relative output path against)"
+            $videoAbs = $video
+            if (-not [System.IO.Path]::IsPathRooted($videoAbs)) { $videoAbs = Join-Path $stepCwd $videoAbs }
+            W "recorder output path: $videoAbs"
+            if (-not (Test-Path (Split-Path -Parent $videoAbs))) {
+              W "recorder output directory does not exist: $(Split-Path -Parent $videoAbs) - nothing can be written there"
+            }
             try {
-              $rec = Start-BgCapture $ff.Source $ffArgs $EVIDENCE
+              $rec = Start-BgCapture $ff.Source $ffArgs $stepCwd
             } catch {
               W "recorder launch FAILED: $($_.Exception.Message)"
               $rec = $null
@@ -2379,23 +2416,37 @@ jobs:
           #     then 2.0) both fail and the dialog is the whole UI - which is
           #     also why no cura.log existed: the probe dies before Cura's own
           #     loggers start.
-          # THE LEVER: QT_OPENGL_DLL. Qt 6.6 qwindowsglcontext.cpp reads it and
-          # then skips both the software/desktop choice and the system-directory
-          # search:
+          # THE REQUIRED LEVER, and what the runs say about it: QT_OPENGL_DLL.
+          # Qt 6.6 qwindowsglcontext.cpp reads it and then skips both the
+          # software/desktop choice and the system-directory search:
           #     openglDll = qgetenv("QT_OPENGL_DLL"); if empty -> sw/opengl32
           #     useSystemLib = !softwareRendering   (false when the var is set)
           #     m_lib = useSystemLib ? QSystemLibrary::load(..) : LoadLibraryA(..)
           # An absolute path there loads exactly that library, with Cura left
-          # untouched. This is the Windows side of ui_test.sh's
+          # untouched - the Windows side of ui_test.sh's
           # LIBGL_ALWAYS_SOFTWARE=1 against the Mesa the container image has.
+          # It is set below and read back from a launched child, because the
+          # run of 35932140235 shows the variable alone is not enough: this
+          # step had set it to an absolute Mesa path and Qt still logged
+          # 'Qt: Using WGL and OpenGL from "opengl32"' - a bare name, which
+          # only happens when the variable was EMPTY in that process. The
+          # reason is in Cura's own cura_app.py, which on every non-Linux
+          # platform runs os.environ["QT_OPENGL_DLL"] = "" before PyQt6 is
+          # imported (upstream Ultimaker/Cura 5.13.0; the security workaround
+          # that also blanks the plugin and QML search paths). Cura therefore
+          # deletes the variable before Qt can read it, whatever the launcher
+          # does, so the deployment below does not stop at it either.
           # DIAGNOSE FIRST, and cheap: qt.qpa.gl makes Qt print the library it
           # chose ("Qt: Using WGL and OpenGL from ...") and why one was refused
           # ("Failed to load ...", with the Win32 error), and
           # QT_FORCE_STDERR_LOGGING puts those lines in the stderr file this
           # step already redirects - Qt on Windows otherwise sends debug output
           # to the debugger and a redirected file stays empty.
-          # Set on this process: Start-Process has no -Environment before
-          # PowerShell 7, and children inherit the parent's environment block.
+          # Set on this process, and inherited by every process this step
+          # launches: Start-Process has no -Environment before PowerShell 7, so
+          # this process's own environment block IS the mechanism - and the
+          # child probe further down reads it back from a launched process
+          # rather than trusting this one's copy.
           $glVars = [ordered]@{
             'QT_OPENGL'               = 'software'
             'QSG_RHI_BACKEND'         = 'software'
@@ -2405,11 +2456,18 @@ jobs:
             'GALLIUM_DRIVER'          = 'llvmpipe'
             'LIBGL_ALWAYS_SOFTWARE'   = '1'
           }
-          foreach ($k in $glVars.Keys) {
-            Set-Item -Path ("env:" + $k) -Value $glVars[$k]
-            W ("GL env: {0}={1}" -f $k, $glVars[$k])
+          # One setter, so a value chosen later (QT_OPENGL_DLL, below) is
+          # printed in the same shape as the rest and cannot be set without
+          # being reported next to them.
+          function Set-GlVar($name, $value) {
+            Set-Item -Path ("env:" + $name) -Value $value
+            $glVars[$name] = $value
+            W ("GL env: {0}={1}" -f $name, $value)
           }
-          W "FINDING: QT_OPENGL=software cannot take effect while Cura sets AA_UseDesktopOpenGL, and the desktop path only ever looks in System32; the renderer is therefore chosen through QT_OPENGL_DLL below, from a candidate that is load-tested before anything is launched"
+          # The keys are copied out first: Set-GlVar writes back into the same
+          # table, and enumerating a collection that is being modified throws.
+          foreach ($k in @($glVars.Keys)) { Set-GlVar $k $glVars[$k] }
+          W "FINDING: QT_OPENGL=software cannot take effect while Cura sets AA_UseDesktopOpenGL, and the desktop path only ever looks in System32; QT_OPENGL_DLL is the variable meant to name a library directly, and whether it survives into Cura's own process is what the read-back and the deployment below measure"
           # The probe dialog's own words. A window carrying any of them is the
           # block, not the application, wherever it is found.
           $markers = @('probe OpenGL', 'Could not probe', 'OpenGL 2.0', 'video card drivers')
@@ -2521,10 +2579,10 @@ jobs:
                 Copy-Item -Path $src -Destination (Join-Path $curaDir $f) -Force -ErrorAction Stop
                 W "placed beside the executable: $(Join-Path $curaDir $f)"
               } catch {
-                W "could not place $f beside the executable ($($_.Exception.Message)); the absolute QT_OPENGL_DLL path and PATH cover the load anyway"
+                W "could not place $f beside the executable ($($_.Exception.Message)); PATH still reaches it, and the System32 deployment below is what the desktop path loads"
               }
             }
-            Audit-Row 'Mesa3D llvmpipe (Windows)' 'the software OpenGL Cura needs, the Windows side of LIBGL_ALWAYS_SOFTWARE=1' 'INSTALLED BY US' "llvmpipe in Mesa $MESA_VER (msvc x64)" "curl $MESA_URL; sha256 verified $MESA_SHA256; extracted with $extractTool to $mesaDir; GALLIUM_DRIVER=llvmpipe; handed to Cura via QT_OPENGL_DLL"
+            Audit-Row 'Mesa3D llvmpipe (Windows)' 'the software OpenGL Cura needs, the Windows side of LIBGL_ALWAYS_SOFTWARE=1' 'INSTALLED BY US' "llvmpipe in Mesa $MESA_VER (msvc x64)" "curl $MESA_URL; sha256 verified $MESA_SHA256; extracted with $extractTool to $mesaDir; GALLIUM_DRIVER=llvmpipe; placed on PATH and beside Cura's executable; the deployment that reaches Cura is reported below"
           } else {
             Audit-Row 'Mesa3D llvmpipe (Windows)' 'the software OpenGL Cura needs, the Windows side of LIBGL_ALWAYS_SOFTWARE=1' 'ABSENT' "wanted $MESA_VER (msvc x64)" "download/extract failed: curl exit above, archive hash '$mesaHash', extractor $extractTool; the bundled Qt rasteriser is used instead (see the candidates below)"
           }
@@ -2591,14 +2649,118 @@ jobs:
             $glWhy = 'no candidate could be load-tested, so this one is handed over untested'
           }
           if ($glLib) {
-            Set-Item -Path 'env:QT_OPENGL_DLL' -Value $glLib
+            Set-GlVar 'QT_OPENGL_DLL' $glLib
             W ("GL choice: QT_OPENGL_DLL={0} ({1})" -f $glLib, $glWhy)
-            W "  Qt loads exactly this file and skips the System32-only search; GALLIUM_DRIVER=llvmpipe picks the software driver inside it"
-            $glStatus = 'INSTALLED BY US'
-            if ($swGl -and ($glLib -eq $swGl)) { $glStatus = 'PREINSTALLED' }
-            Audit-Row 'OpenGL library handed to Cura' 'the GL implementation QT_OPENGL_DLL points Cura at' $glStatus "candidate $($glLib)" "$glWhy; load-tested with LoadLibrary before the launch"
+            W "  this is the variable that makes Qt load exactly this file and skip the System32-only search; whether Cura's own process still holds it when Qt reads it is measured below, not assumed"
           } else {
             W "GL choice: none - QT_OPENGL_DLL stays unset and Cura gets the system OpenGL this runner has already failed to probe"
+          }
+
+          # --- read-back: the variables in a LAUNCHED CHILD's environment ----
+          # The claim this step makes is about the environments of the
+          # processes it launches, not about its own copy of one, so it is read
+          # out of a process that was actually launched. cmd /c set prints the
+          # whole environment block of that child and the GL entries are
+          # quoted from the file it wrote; a variable that is set here and
+          # absent there would be the finding for this leg.
+          $envProbe = Join-Path $EVIDENCE 'gl-env-child.txt'
+          if (-not [System.IO.Path]::IsPathRooted($envProbe)) { $envProbe = Join-Path $stepCwd $envProbe }
+          Remove-Item -LiteralPath $envProbe -Force -ErrorAction SilentlyContinue
+          try {
+            $null = Start-Process -FilePath $env:ComSpec -ArgumentList '/c', 'set' -Wait -NoNewWindow `
+                      -RedirectStandardOutput $envProbe
+          } catch {
+            W "GL env read-back: the child probe could not be started ($($_.Exception.Message))"
+          }
+          if (Test-Path $envProbe) {
+            $childEnv = @(Get-Content -LiteralPath $envProbe | Where-Object {
+              $_ -match '^(QT_OPENGL|QSG_RHI_BACKEND|QT_QUICK_BACKEND|QT_LOGGING_RULES|QT_FORCE_STDERR_LOGGING|GALLIUM_DRIVER|LIBGL_ALWAYS_SOFTWARE)=' })
+            W ("GL env read-back (cmd /c set inside a process this step launched): {0} of the names above are present in the child" -f $childEnv.Count)
+            foreach ($l in $childEnv) { W ("  child env: " + $l.Trim()) }
+            $childHasDll = @($childEnv | Where-Object { $_ -like 'QT_OPENGL_DLL=*' }).Count -gt 0
+            if (-not $childHasDll) {
+              W "  child env: QT_OPENGL_DLL is ABSENT from the launched child - the variables are not reaching launched processes at all, which is the fault this read-back exists to catch"
+            }
+          } else {
+            W "GL env read-back: the child probe wrote no file, so no launched child's environment could be read"
+          }
+
+          # --- the deployment that reaches Cura ------------------------------
+          # QT_OPENGL_DLL is delivered (read-back above) and then deleted BY
+          # CURA before Qt reads it, so the renderer has to arrive as the file
+          # the desktop path loads anyway. That path is a System32-only search
+          # (proven above, by the run itself: the provisioned Mesa sitting
+          # beside Cura's executable was not the opengl32.DLL that got loaded -
+          # System32's was), and Cura's UM.Qt.QtApplication sets
+          # AA_UseDesktopOpenGL before any window exists, so every other lever
+          # in Qt is out of reach: QT_OPENGL is never consulted, and so is the
+          # windows platform option that would otherwise force the software
+          # rasteriser. What remains is C:\Windows\System32\opengl32.dll,
+          # which IS the OpenGL implementation on this image - Microsoft's GDI
+          # generic 1.1, the exact thing that failed to probe. Mesa's own
+          # system-wide deployment is therefore what this does, and the
+          # result is read back by hash rather than assumed: same own/ACL work
+          # as any system file, then the length and digest of the file that is
+          # on disk afterwards.
+          $sysGl = Join-Path $env:SystemRoot 'System32\opengl32.dll'
+          $mesaGl = Join-Path $mesaDir 'opengl32.dll'
+          $sysGlDeployed = $false
+          $sysGlWhy = 'not attempted'
+          if ($mesaOk -and (Test-Path $mesaGl) -and (Test-Path $sysGl)) {
+            $origSz = (Get-Item $sysGl).Length
+            $origVer = ''
+            try { $origVer = "$((Get-Item $sysGl).VersionInfo.FileVersion)" } catch { }
+            W ("system OpenGL before: {0} ({1:N0} bytes, v{2})" -f $sysGl, $origSz, $origVer)
+            $mesaGlHash = (Get-FileHash -Path $mesaGl -Algorithm SHA256).Hash.ToLower()
+            $nowHash = ''
+            try {
+              # System32's files are owned by TrustedInstaller and written by
+              # nothing else, so ownership and a write grant come first; both
+              # exits are reported, because a refusal here is the whole answer
+              # for this run rather than a detail.
+              & takeown.exe /f "$sysGl" 2>&1 | Select-Object -Last 2 | ForEach-Object { W $_ }
+              W "takeown exit: $LASTEXITCODE"
+              & icacls.exe "$sysGl" /grant '*S-1-5-32-544:F' 2>&1 | Select-Object -Last 2 | ForEach-Object { W $_ }
+              W "icacls exit: $LASTEXITCODE"
+              # The library itself first, because it is what decides the
+              # renderer; the companions after it, because they are optional:
+              # Mesa's loader resolves libgallium_wgl.dll by bare name and
+              # finds it beside Cura's executable and on this process's PATH
+              # as well, so only the failure of the library is fatal here.
+              Copy-Item -Path $mesaGl -Destination $sysGl -Force -ErrorAction Stop
+              W "placed system-wide: $sysGl"
+              foreach ($f in @('libgallium_wgl.dll', 'dxil.dll')) {
+                $src = Join-Path $mesaDir $f
+                if (-not (Test-Path $src)) { continue }
+                try {
+                  Copy-Item -Path $src -Destination (Join-Path $env:SystemRoot ('System32\' + $f)) -Force -ErrorAction Stop
+                  W "placed system-wide: $env:SystemRoot\System32\$f"
+                } catch {
+                  W "could not place System32\$f ($($_.Exception.Message)) - Mesa finds it beside Cura's executable or on PATH instead"
+                }
+              }
+              $nowHash = (Get-FileHash -Path $sysGl -Algorithm SHA256).Hash.ToLower()
+              if ($nowHash -eq $mesaGlHash) {
+                $sysGlDeployed = $true
+                $sysGlWhy = "sha256 matches the provisioned Mesa $MESA_VER"
+              } else {
+                $sysGlWhy = "the file on disk is not Mesa (sha256 $nowHash)"
+              }
+            } catch {
+              $sysGlWhy = "the replacement was refused: $($_.Exception.Message)"
+            }
+            if (Test-Path $sysGl) {
+              W ("system OpenGL after: {0:N0} bytes, sha256 {1} - {2}" -f (Get-Item $sysGl).Length, $nowHash, $sysGlWhy)
+            }
+          } else {
+            $sysGlWhy = 'Mesa or the system library is missing, so nothing was replaced'
+            W "system OpenGL: $sysGlWhy"
+          }
+          if ($sysGlDeployed) {
+            W "the renderer Cura's desktop path will load is Mesa llvmpipe: $sysGl ($sysGlWhy)"
+            Audit-Row 'OpenGL library handed to Cura' 'the GL implementation the Windows desktop path actually loads' 'INSTALLED BY US' "Mesa $MESA_VER llvmpipe as System32\opengl32.dll" "QT_OPENGL_DLL is emptied by Cura's own cura_app.py before Qt reads it, and AA_UseDesktopOpenGL makes the System32-only desktop path the only one, so Mesa is deployed there; $sysGlWhy"
+          } else {
+            Audit-Row 'OpenGL library handed to Cura' 'the GL implementation the Windows desktop path actually loads' 'ABSENT' "Mesa $MESA_VER llvmpipe wanted as System32\opengl32.dll" "QT_OPENGL_DLL cannot be used (Cura's cura_app.py empties it on non-Linux and AA_UseDesktopOpenGL makes the System32-only desktop path the only one) and the System32 deployment did not take: $sysGlWhy"
           }
 
           W "=== launching $binary ==="
@@ -2796,14 +2958,18 @@ jobs:
           if ($glDiag.Count -gt 0) {
             W "--- Qt GL diagnostics from Cura's streams ---"
             foreach ($l in ($glDiag | Select-Object -First 12)) { W ("  " + $l) }
+            W "note: a bare name on that line is what an emptied QT_OPENGL_DLL looks like in Qt's own words - the variable this step set pointed at an absolute path, so an absolute path there would mean Cura kept it"
           } else {
             W "--- no Qt GL diagnostic line in Cura's streams (qt.qpa.gl was on; a GUI build can still print nothing) ---"
           }
           # Which GL library the process actually holds: the fact the verdict
           # rests on. A path under the Mesa directory, or a gallium loader or
           # Qt's own rasteriser in the module list, is the software renderer at
-          # work; the system32 opengl32 alone is the driver stack; no GL module
-          # at all is a process that never got that far.
+          # work; so is a System32\opengl32.dll whose bytes are the provisioned
+          # Mesa's, which is the deployment above and the only way the desktop
+          # path can be given llvmpipe at all; the untouched system32 opengl32
+          # alone is the driver stack; no GL module at all is a process that
+          # never got that far.
           $glModules = @()
           $modProcs = @($p) + @(Get-Process -Name 'UltiMaker-Cura*' -ErrorAction SilentlyContinue)
           foreach ($mp in $modProcs) {
@@ -2828,6 +2994,14 @@ jobs:
           $glSoftware = @($glModules | Where-Object {
             ($_ -match '(?i)opengl32sw|libgallium_wgl|libglapi|swiftshader') -or
             ($mesaDir -and ($_ -like ("*" + $mesaDir + "*"))) })
+          # The System32 file is the same module path whether it is Mesa's or
+          # Microsoft's, so the hash of the deployed file is what separates
+          # llvmpipe from the GDI generic that failed to probe.
+          if ($sysGlDeployed) {
+            $glSoftware += ("System32\opengl32.dll is the provisioned Mesa llvmpipe (" + $sysGlWhy + ")")
+          }
+          $glMesaDiag = @($glDiag | Where-Object { $_ -match '(?i)llvmpipe' })
+          if ($glMesaDiag.Count -gt 0) { $glSoftware += ("Qt named the driver: " + $glMesaDiag[0]) }
           $glSystem = @($glModules | Where-Object { $_ -like '*System32\opengl32.dll*' })
           $glHits = @($glHits | Select-Object -Unique)
           $glLibShown = '<unset>'
@@ -2935,9 +3109,12 @@ jobs:
           W "--- the recording ---"
           # The recorder's own diagnostics, collected from the redirected pipes
           # now that the process is gone and written out as the evidence files
-          # the Linux leg names. The first run lost them to a console nobody
-          # reads, which is why its empty video explained nothing; the second
-          # lost them to a child that had no desktop at all.
+          # the Linux leg names. Run 35929485153 lost them to a console nobody
+          # reads, which is why its empty video explained nothing; run
+          # 35932140235 kept them, and they are the reason the fault is known
+          # rather than guessed - ffmpeg never reached the desktop because the
+          # child's working directory put the argv's relative output path one
+          # directory too deep, and it said so in its first line.
           if ($rec) {
             $recErrText = Get-CaptureText $recErrTask
             $recOutText = Get-CaptureText $recOutTask
@@ -3040,9 +3217,16 @@ jobs:
               W "--- ffprobe on this container (expected: it cannot read one) ---"
               W $probeText.TrimEnd()
             }
-            V ("SPIKE-Q2: video=FAILED-NO-FRAMES ({0} bytes, and the container never grew while the recorder ran: no frame was ever muxed into it, so the recorder had no desktop to capture through{1})" -f $vlen, $sessNote)
+            V ("SPIKE-Q2: video=FAILED-NO-FRAMES ({0} bytes, and the container never grew while the recorder ran: the recorder opened its output and muxed no frame past the header, so nothing arrived from the display{1})" -f $vlen, $sessNote)
           } else {
-            V ("SPIKE-Q2: video=FAILED-NO-FILE (ffmpeg wrote no scenario.mp4 at all{0})" -f $sessNote)
+            # No container at all: the recorder's own first line is quoted
+            # here, because that is what named this fault the last time - an
+            # output path it could not open rather than a desktop it could
+            # not see.
+            $recWhy = ''
+            $recFirst = @($recErrText -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+            if ($recFirst.Count -gt 0) { $recWhy = '; the recorder said: ' + $recFirst[0].Trim() }
+            V ("SPIKE-Q2: video=FAILED-NO-FILE (ffmpeg wrote no scenario.mp4 at all{0}{1})" -f $sessNote, $recWhy)
           }
           if ($rec) {
             W ("recorder samples (5 s apart): {0}" -f (($recSamples -join ', ') + ' bytes'))
@@ -3075,20 +3259,21 @@ jobs:
               }
               # Those two say this machine can capture at all; neither says a
               # BACKGROUND capture can, which is what the failing scenario.mp4
-              # is. This one is the control: the recorder's launch mechanism,
-              # the same argv shape, but bounded -t 5 so ffmpeg finalises
-              # itself and nothing here depends on the teardown kill. A file
-              # the size of the foreground probes means the launch keeps the
-              # desktop and the fault is the stop; empty again means the
-              # background context itself is what gdigrab cannot see, and the
-              # launch needs a different mechanism again.
+              # is about. This one varies the LAUNCH CONTEXT and nothing else:
+              # the recorder's own launch mechanism, the same argv shape, in
+              # the recorder's own directory, bounded by -t 5 only so ffmpeg
+              # finalises itself and nothing here depends on the teardown kill.
+              # A file the size of the foreground probes means the launch
+              # context is what the recorder was missing and the missing
+              # scenario.mp4 is fixed with it; no file again, with ffmpeg's
+              # reason printed above, means something else is.
               $bgFile = Join-Path $EVIDENCE 'gdigrab-probe-background.mp4'
               $bgArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
                           '-framerate', '15', '-t', '5', '-i', 'desktop', "`"$bgFile`"")
               W ("probe (background): ffmpeg {0}" -f ($bgArgs -join ' '))
               $bg = $null
               try {
-                $bg = Start-BgCapture $ff.Source $bgArgs $EVIDENCE
+                $bg = Start-BgCapture $ff.Source $bgArgs $stepCwd
               } catch {
                 W "probe (background): launch failed: $($_.Exception.Message)"
               }
