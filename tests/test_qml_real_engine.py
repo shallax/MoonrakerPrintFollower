@@ -438,6 +438,19 @@ class RealEngineTestCase(unittest.TestCase):
         # takes the safe teardown.
         self.addCleanup(self._settle_window, window)
         self.pump(30)
+        # A platform may lay the window out at a size it chose rather
+        # than the one asked for, and the document follows — so every
+        # census downstream measures a scene this helper never
+        # requested. Reports rather than asserts: the point is to name
+        # the actual geometry ONCE, in the leg that disagrees, instead
+        # of leaving six pixel assertions to fail confusingly.
+        got = (int(document.width()), int(document.height()),
+               int(window.width()), int(window.height()))
+        if got != (int(width), int(height), int(width), int(height)):
+            sys.stderr.write(
+                "mount_window: asked %dx%d, got document %dx%d window %dx%d\n"
+                % (int(width), int(height), got[0], got[1], got[2], got[3]))
+            sys.stderr.flush()
         return document, window
 
     def _settle_window(self, window):
