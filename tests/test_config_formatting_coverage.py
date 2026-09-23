@@ -3422,13 +3422,18 @@ class SettingsPageMigrationMirrorTests(unittest.TestCase):
         opened = []
 
         def fake_open(url):
+            # QUrl spells a local file with '/' on every platform, while the
+            # path Cura hands out is native ('\' on Windows): the comparison
+            # below normalizes both sides rather than pin one spelling.
             opened.append(url.toLocalFile())
 
         action = self._action(self._Follower(None))
         with patch.object(QDesktopServices, "openUrl", staticmethod(fake_open)):
             action.openMigrationBackupFolder()
         from UM.Resources import Resources
-        self.assertEqual(opened, [Resources.getConfigStoragePath()])
+        expected = Resources.getConfigStoragePath()
+        self.assertEqual([os.path.normcase(os.path.normpath(path)) for path in opened],
+                         [os.path.normcase(os.path.normpath(expected))])
 
 
 class PluginPackageCoverageTests(unittest.TestCase):

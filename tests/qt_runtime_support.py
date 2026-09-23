@@ -12,6 +12,7 @@ import importlib.util
 import os
 import pathlib
 import sys
+import shutil
 import tempfile
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
@@ -306,7 +307,9 @@ def runtime():
         def getMainWindow(self): return None
         def getPrintInformation(self): return SimpleNamespace(jobName="part", preSliced=False)
         def getPluginRegistry(self): return SimpleNamespace(getPluginObject=lambda name: self.writer)
-        def readLocalFile(self, url, add_to_recent_files=False): self.loaded_paths.append(url.toLocalFile())
+        # normpath: QUrl spells a local file with '/' on every platform, and
+        # the tests compare what Cura was handed against native paths.
+        def readLocalFile(self, url, add_to_recent_files=False): self.loaded_paths.append(os.path.normpath(url.toLocalFile()))
 
     modules = {}
     def module(name, **attrs):
@@ -319,7 +322,8 @@ def runtime():
         modules[name] = result
         return result
 
-    with tempfile.TemporaryDirectory(prefix="moonraker-test-cache-") as cache:
+    cache = tempfile.mkdtemp(prefix="moonraker-test-cache-")
+    try:
         module("UM.Logger", Logger=SimpleNamespace(log=Mock(), logException=Mock()))
 
         class _PreferencesStore:
@@ -412,5 +416,10 @@ def runtime():
         with patch.dict(sys.modules, modules):
             yield SimpleNamespace(load=load, app=app, Application=Application,
                 Machine=Machine, events=process_events, QObject=QObject, QTimer=QTimer)
+    finally:
+        # A plugin worker can still be writing into the cache when the
+        # context unwinds (a late prepared-store flush): the scratch
+        # dir's teardown must never fail the suite on it.
+        shutil.rmtree(cache, ignore_errors=True)
 
 

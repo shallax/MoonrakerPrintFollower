@@ -17,18 +17,25 @@ surface, and every assertion reads state the module itself produced — a
 published value block, a sent script, a queue's contents. Nothing here
 patches the modules under test.
 
-Lines that stay uncovered, and why — three statements out of 946:
+Lines that stay uncovered, and why (the running total moved with the
+modules; the references below are against the current files):
 
 * ConsoleController:45 — the body of the module-level
   ``_trim_transcript`` helper. Nothing in plugins/ or tests/ calls it;
   it is unreachable without invoking an unused private helper.
-* ToolheadController:312-313 — the ``except ValueError`` guard around
+* ToolheadController:410-411 — the ``except ValueError`` guard around
   ``make_extrude_op`` in ``extrude()``. Both arguments reach it only
   from ``set_extrude_distance``/``set_extrude_speed``, which already
   enforce the policy's own bounds, and the direction is normalised to
   +/-1 first: no public call can hand it an out-of-range value. Its
-  sibling in ``jog()`` (196-197) IS reachable and is covered — the
+  sibling in ``jog()`` (252-253) IS reachable and is covered — the
   clamp can return a positive move under the minimum distance.
+* ToolheadController:430 — the tap-side branch of the queue
+  reconciliation in ``_push``. A tap that survived ``push_op`` is never
+  the tail the re-clamp acts on: ``jog()`` clamped it against this same
+  estimate and snapshot moments earlier, so the re-clamp returns it
+  unchanged. The branch keeps the accounting exact for the tap the
+  queue actually gained if that ever stops holding.
 
 Everything else in the three modules runs here, including the paths the
 existing suites leave to the full follower runtime.
@@ -1098,9 +1105,11 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertLess(memo_steady, raw_steady * 0.25,
                         "the memoised refresh cost %.2f ms against the re-walk's %.2f ms"
                         % (memo_steady, raw_steady))
-        self.assertLess(memo_cold, raw_cold * 2.0,
-                        "the memoised first refresh paid %.2f ms against the re-walk's %.2f ms"
-                        % (memo_cold, raw_cold))
+        # The cold path is the same walk plus one definition snapshot —
+        # its equality is pinned STRUCTURALLY by the ring-walk spy
+        # above, not by a wall-clock ratio (the cold margin flipped
+        # under gate load; a stopwatch on the first call proves
+        # nothing the spy has not already proven).
 
     def test_a_missing_or_invalid_file_position_resolves_to_none(self):
         # Missing, null and non-numeric fields all resolve to None —
@@ -2147,6 +2156,152 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertEqual(len(controller._pending), 16)
         self.assertEqual(controller.values["jogStatus"],
                          "Too many queued moves — wait for the printer to catch up.")
+
+    def test_a_rejected_tap_at_the_queue_cap_never_advances_the_projection(self):
+        # Sixteen taps fill the queue; the seventeenth is refused by the
+        # depth cap. The projection tracks the QUEUE, so a refused entry
+        # must leave it — and the owed reflection — where the queue is.
+        controller, _, commands = self._make(state="paused")
+        commands.busy = True
+        controller.set_distance(5)
+        for _ in range(16):
+            controller.jog("x", 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 90.0)
+        controller.jog("x", 1)
+        self.assertEqual(len(controller._pending), 16)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 90.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 80.0)
+        self.assertEqual(controller.values["jogStatus"],
+                         "Too many queued moves — wait for the printer to catch up.")
+        # The refusal is about the queue's depth alone: the retained moves
+        # still run once the lane frees.
+        commands.busy = False
+        commands.changed.emit()
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+
+    def test_a_re_clamped_tail_that_is_refused_retreats_the_projection(self):
+        # The depth cap's refusal still re-clamps the tail it inherits.
+        # This queue walked the head down to the floor, so the tail's
+        # clamp no longer holds: it is dropped, and the distance it
+        # advanced leaves the projection with it — while the refused tap
+        # itself (3 mm) never reaches it.
+        controller, _, commands = self._make(live=(16.0, 10.0, 10.0, 0.0),
+                                             minimum=(0, 0, 0), maximum=(200, 200, 200))
+        commands.busy = True
+        controller.set_distance(1)
+        for _ in range(16):
+            controller.jog("x", -1)
+        self.assertEqual(len(controller._pending), 16)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 0.0)
+        controller.set_distance(3)
+        controller.jog("x", 1)
+        self.assertEqual(controller.values["jogStatus"],
+                         "Too many queued moves — wait for the printer to catch up.")
+        self.assertEqual(len(controller._pending), 15)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+        self.assertAlmostEqual(controller._axis_down_pending["x"], 15.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+
+    def test_a_dropped_queue_reconciles_the_projection(self):
+        # X=1: a queued +25 that never dispatches may not leave 25 mm of
+        # phantom headroom behind, or the next -25 is clamped against a
+        # position the head never reached and walks it below the floor.
+        controller, data, commands = self._make(live=(1.0, 10.0, 10.0, 0.0),
+                                                minimum=(0, 0, 0), maximum=(200, 200, 200))
+        commands.busy = True  # hold the lane: the tap has to stay queued
+        controller.jog("x", 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 25.0)
+        # The lock lands before the queued move dispatches: the drop
+        # withdraws the projection and the reflection owed for it.
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()
+        self.assertEqual(controller._pending, ())
+        self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+        # Unlocked: the -25 tap measures against the reconciled
+        # projection, so the floor refuses it.
+        data.observation = replace(data.observation, controls_locked=False)
+        controller.observe()
+        commands.busy = False
+        controller.jog("x", -1)
+        self.assertEqual(self._scripts(commands), [])
+        self.assertEqual(controller._pending, ())
+        # The other direction measures against the same reconciliation: a
+        # +25 from 1 is legal and lands where the projection says.
+        controller.jog("x", 1)
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+
+    def test_a_drop_leaves_a_projection_that_never_advanced_alone(self):
+        # The withdrawal's guards: a move queued with no position data
+        # advanced nothing, and a move that is not a relative axis move
+        # (extrude) projects nothing. A drop may not invent a retreat for
+        # either.
+        controller, data, commands = self._make()
+        data.snapshot = SimpleNamespace(core={}, auxiliary={})
+        data.changed.emit()
+        commands.busy = True
+        controller.jog("y", 1)  # no position data: nothing was advanced
+        controller.extrude(1)   # axis "e": no axis projection at all
+        self.assertEqual(len(controller._pending), 2)
+        self.assertIsNone(controller._axis_estimate["y"])
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()
+        self.assertEqual(controller._pending, ())
+        self.assertIsNone(controller._axis_estimate["y"])
+        self.assertEqual(controller._axis_up_pending["y"], 0.0)
+
+    def test_a_drop_keeps_the_dispatched_moves_in_the_projection(self):
+        # Only the moves that never dispatched are withdrawn: the one the
+        # lane already took still counts, and its reflection stays owed
+        # until the poll reports the head arriving.
+        controller, data, commands = self._make(live=(1.0, 10.0, 10.0, 0.0),
+                                                minimum=(0, 0, 0), maximum=(200, 200, 200))
+        controller.jog("x", 1)  # 1 -> 26, dispatched
+        self.assertEqual(len(self._scripts(commands)), 1)
+        controller.jog("x", 1)  # 26 -> 51, held in the queue
+        self.assertEqual(len(controller._pending), 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 51.0)
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()  # the lock drops the queued move, not the sent one
+        self.assertEqual(controller._pending, ())
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 25.0)
+        # The pre-command poll still cannot pull the projection back: the
+        # dispatched move is committed.
+        data.observation = replace(data.observation, controls_locked=False)
+        data.set_state("paused", live=(1.0, 10.0, 10.0, 0.0),
+                       minimum=(0, 0, 0), maximum=(200, 200, 200))
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+
+    def test_a_cancelled_pause_reconciles_away_the_queued_moves(self):
+        # The pause never lands, so the tap queued behind it is cancelled
+        # with it — and the projection may not keep the headroom that tap
+        # claimed (the failure and the deadline are two doors to the same
+        # drop).
+        for failed in (True, False):
+            controller, data, commands = self._make(state="printing",
+                                                   live=(1.0, 10.0, 10.0, 0.0),
+                                                   minimum=(0, 0, 0), maximum=(200, 200, 200))
+            controller.jog("x", 1)
+            self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+            if failed:
+                data.commandChanged.emit({"name": "Pause", "terminal": True,
+                                          "outcome": "failed"})
+            else:
+                controller._deadline.timeout.emit()
+            self.assertEqual(controller._pending, ())
+            self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+            self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+            # The next tap is measured against the truth: -25 from 1 is
+            # refused rather than queued behind a pause that will not come.
+            controller.jog("x", -1)
+            self.assertEqual(controller._pending, ())
+            self.assertNotIn("G1 X-25", self._scripts(commands))
 
     def test_the_guard_cooldown_releases_the_fast_poll_floor(self):
         controller, data, commands = self._make(state="paused")

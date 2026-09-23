@@ -70,6 +70,7 @@ BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text(encoding="utf-8")
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text(encoding="utf-8")
+CHART_COLOUR_DIALOG_QML = (PLUGINS / "MoonrakerChartColorDialog.qml").read_text(encoding="utf-8")
 FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text(encoding="utf-8")
 QMLDIR = (PLUGINS / "qmldir").read_text(encoding="utf-8")
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
@@ -1044,10 +1045,18 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.snap(root._hoverMouseX", BED_MESH_MAP_QML)
         self.assertIn('"Probe points"', MONITOR_QML)
         self.assertIn("showProbePoints", BED_MESH_MAP_QML)
-        # The colour row offers a full picker beside the quick swatches.
-        self.assertIn('import QtQuick.Dialogs', MONITOR_QML)
+        # The colour row offers a full picker beside the quick swatches,
+        # and the picker is a platform dialog: the monitor must not
+        # import the module itself, and must build the dialog from its
+        # own document on the click — a host whose platform builds no
+        # colour dialog still gets the whole monitor.
+        self.assertNotIn("import QtQuick.Dialogs", MONITOR_QML)
+        self.assertIn('Qt.createComponent("MoonrakerChartColorDialog.qml")', MONITOR_QML)
         self.assertIn("chartColorDialog", MONITOR_QML)
+        self.assertIn("applyChartColorChoice", MONITOR_QML)
         self.assertIn('text: "Custom…"', MONITOR_QML)
+        self.assertIn("import QtQuick.Dialogs", CHART_COLOUR_DIALOG_QML)
+        self.assertIn("ColorDialog {", CHART_COLOUR_DIALOG_QML)
         self.assertIn("setShowProbePoints", MONITOR_QML)
         # Terminal order: the history sits above the input row.
         self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
@@ -2136,6 +2145,7 @@ class MonitorQtTests(unittest.TestCase):
             self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
         self.addCleanup(self.qt.events)
         self.addCleanup(self.follower.deinitialize)
+        self._stamp = 0.0
         self.config_type = self.qt.load("PrinterConfig").PrinterConfig
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
 
@@ -2161,6 +2171,21 @@ class MonitorQtTests(unittest.TestCase):
         shard = self.follower.persistence.get_machine_state(machine_id) or {}
         return shard.get("consoleTranscript", [])
 
+    def status_stamp(self):
+        """A strictly increasing issue stamp for a delivered frame.
+
+        Production stamps a poll when it is ISSUED, and the client
+        drops a sync that is not strictly newer than the last applied
+        one (the out-of-order-reply guard). The double delivers whole
+        frames back to back, so the sequence must carry its own
+        increasing stamps: a platform clock that quantises — Windows'
+        GetTickCount64 ticks at ~15.6 ms — would otherwise hand two
+        frames the same stamp and the second would be dropped whole as
+        a stale reply.
+        """
+        self._stamp = max(time.monotonic(), self._stamp + 0.001)
+        return self._stamp
+
     def deliver(self):
         client = self.follower.client
         status = {
@@ -2169,7 +2194,7 @@ class MonitorQtTests(unittest.TestCase):
             "virtual_sdcard": {"file_size": 100, "file_position": 20},
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
     def deliver_state(self, state):
         client = self.follower.client
@@ -2181,8 +2206,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        import time
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
     def scripts(self):
         return [r for r in self.transport.requests if r.path == "printer/gcode/script"]
@@ -2595,12 +2619,11 @@ class MonitorQtTests(unittest.TestCase):
         model.jog("z", -1)  # projection 0.3
         self.qt.events(1)
         def deliver_z(z):
-            import time
             status = {"print_stats": {"state": "standby"},
                       "gcode_move": {"gcode_position": [0, 0, z, 0]},
                       "motion_report": {"live_position": [0, 0, z, 0]}}
             self.follower.client._handle_http_status({"result": {"status": status}}, None,
-                                                     self.follower.client._generation, time.monotonic())
+                                                     self.follower.client._generation, self.status_stamp())
         deliver_z(0.3)  # the head arrived: the poll adopts
         self.qt.events(1)
         self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.3)
@@ -3987,7 +4010,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         tick = [1000.0]
         fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
@@ -4042,7 +4065,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         with patch.object(module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1700000000.0)):
             deliver(30)
@@ -4116,7 +4139,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         with patch.object(module, "time", fake_time):
             deliver(30)
@@ -4165,7 +4188,7 @@ class MonitorQtTests(unittest.TestCase):
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
         with patch.object(module, "time", fake_time):
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
             self.qt.events(1)
             for step in range(coordinator.MR_META_CHECK_LIMIT):
                 meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
@@ -4178,7 +4201,7 @@ class MonitorQtTests(unittest.TestCase):
                 if step < coordinator.MR_META_CHECK_LIMIT - 1:
                     self.assertEqual(coordinator._mr_metadata_for(*key), {})
                     tick[0] += 31.0
-                    client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+                    client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
                     self.qt.events(1)
             # After the limit: the payload latched, flagged.
             self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)
@@ -4198,7 +4221,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
         self.qt.events(1)
         meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
@@ -4223,7 +4246,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
         self.qt.events(1)
         meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)

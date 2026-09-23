@@ -57,6 +57,52 @@ def _park_dead_tmp(writer, complete=False):
     return dead
 
 
+def _tmp_leftovers(directory):
+    """Every `.tmp-` name under a store directory: a failed writer's
+    temp must never be among them."""
+    return [name for _root, _dirs, names in os.walk(directory)
+            for name in names if ".tmp-" in name]
+
+
+class _WriteRefusingHandle:
+    """A volume that takes the temp and then stalls: the Nth write
+    onward refuses. `landed` records the bytes the real file held at
+    the refusal, so a test can prove exactly which seam it reached."""
+
+    def __init__(self, handle, fail_at):
+        self._handle = handle
+        self._fail_at = fail_at
+        self.writes = 0
+        self.landed = 0
+
+    def write(self, data):
+        self.writes += 1
+        if self.writes >= self._fail_at:
+            self.landed = self._handle.tell()
+            raise OSError(28, "No space left on device")
+        return self._handle.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+def _refuse_temp_write(fail_at, opened):
+    """Patch `open` so the writer's temp handle refuses its
+    `fail_at`-th write; the proxy lands in `opened` for assertions."""
+    import builtins
+    from unittest.mock import patch
+    real_open = builtins.open
+
+    def refusing(name, *args, **kwargs):
+        handle = real_open(name, *args, **kwargs)
+        if ".tmp-" in str(name):
+            handle = _WriteRefusingHandle(handle, fail_at)
+            opened.append(handle)
+        return handle
+
+    return patch.object(builtins, "open", refusing)
+
+
 def _payload(layer):
     return {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, float(layer), 1.0]]]},
             "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
@@ -1051,8 +1097,9 @@ class PreparedStoreArbitrationTests(unittest.TestCase):
 
 class PreparedStoreWriterFailureTests(unittest.TestCase):
     """The writer's own error paths: a refused sync, a refused publish,
-    a stale append and an abort over a handle that already bit it —
-    each one must leave the store consistent and the temp gone."""
+    a stale append, a refused header/table write and an abort over a
+    handle that already bit it — each one must leave the store
+    consistent and the temp gone."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -1212,6 +1259,115 @@ class PreparedStoreWriterFailureTests(unittest.TestCase):
         self.cache.abort_write(writer)
         self.assertFalse(os.path.exists(temp),
                          "the failed close cost the abort its cleanup")
+
+    def test_a_failed_header_write_leaves_no_temp_and_a_usable_store(self):
+        # The volume creates the temp and then refuses the header's own
+        # write: the containment the creation refusal already has must
+        # cover it — no exception into the pass, no orphan temp, and
+        # the next prepare opens a writer and publishes.
+        opened = []
+        with _refuse_temp_write(1, opened):
+            self.assertIsNone(self.cache.open_for_write("print-1", 3),
+                              "a failed header write escaped the writer")
+        self.assertEqual(opened[0].landed, 0,
+                         "the test never reached the header's own write")
+        self.assertTrue(opened[0].closed, "the failed temp handle stayed open")
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [],
+                         "the failed header write left its temp behind")
+
+        writer = self.cache.open_for_write("print-1", 3)
+        self.assertIsNotNone(writer, "the store latched after the failed open")
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.assertIsNotNone(self.cache.finish_write(writer),
+                             "the store never prepared again")
+        table = self.cache.load_table("print-1")["table"]
+        self.assertEqual(self.cache.read("print-1", table, 1),
+                         encode_layer(_payload(1)))
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [])
+
+    def test_a_failed_table_write_leaves_no_temp_and_a_usable_store(self):
+        # The header landed and the volume refuses the reserved table
+        # slots behind it: the half-written temp must go the same way,
+        # and the store must still prepare the print afterwards.
+        opened = []
+        with _refuse_temp_write(3, opened):
+            self.assertIsNone(self.cache.open_for_write("print-1", 3),
+                              "a failed table write escaped the writer")
+        self.assertEqual(opened[0].landed, _HDR_SIZE + len(b"print-1"),
+                         "the failure was not the table's own write")
+        self.assertTrue(opened[0].closed, "the failed temp handle stayed open")
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [],
+                         "the failed table write left its temp behind")
+
+        writer = self.cache.open_for_write("print-1", 2)
+        self.assertIsNotNone(writer, "the store latched after the failed open")
+        for layer in range(2):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.assertIsNotNone(self.cache.finish_write(writer),
+                             "the store never prepared again")
+        table = self.cache.load_table("print-1")["table"]
+        self.assertEqual(self.cache.read("print-1", table, 0),
+                         encode_layer(_payload(0)))
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [])
+
+    def test_a_failed_append_table_write_abandons_the_writer_cleanly(self):
+        # The pass is mid-flight and the volume refuses the in-place
+        # table slot (the payload already landed): the writer is
+        # abandoned outright — temp gone, retired against every later
+        # append and finish — and a fresh prepare still publishes.
+        writer = self.cache.open_for_write("print-1", 3)
+        temp = writer["temp"]
+        # fail_at 2 is the slot write: the payload write precedes it.
+        writer["handle"] = _WriteRefusingHandle(writer["handle"], 2)
+        self.cache.append(writer, 0, encode_layer(_payload(0)))
+        self.assertFalse(os.path.exists(temp),
+                         "the failed append left its temp behind")
+        self.assertTrue(writer["retired"], "the failed append kept the writer")
+        self.assertIsNone(self.cache.finish_write(writer),
+                          "the abandoned writer published")
+        self.cache.append(writer, 1, encode_layer(_payload(1)))
+        # The normal teardown (a close, a rebind) still reaches a dead
+        # writer: the checkpoint refuses it instead of raising on its
+        # closed handle, and leaves the store published files alone.
+        self.assertFalse(self.cache.suspend_write(writer),
+                         "the dead writer published on teardown")
+        self.assertIsNone(self.cache.load_table("print-1"),
+                          "the abandoned writer reached the store")
+
+        writer = self.cache.open_for_write("print-1", 3)
+        self.assertIsNotNone(writer, "the store latched after the failed append")
+        for layer in range(3):
+            self.cache.append(writer, layer, encode_layer(_payload(layer)))
+        self.assertIsNotNone(self.cache.finish_write(writer),
+                             "the store never prepared again")
+        table = self.cache.load_table("print-1")["table"]
+        self.assertEqual(self.cache.read("print-1", table, 2),
+                         encode_layer(_payload(2)))
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [])
+
+    def test_a_failed_uncacheable_mark_abandons_the_writer_cleanly(self):
+        # The codec's refusal mark rides the same in-place table slot:
+        # a volume that refuses it must abandon the writer and its
+        # temp, never raise into the pass that walked the layer.
+        writer = self.cache.open_for_write("print-1", 2)
+        temp = writer["temp"]
+        writer["handle"] = _WriteRefusingHandle(writer["handle"], 1)
+        self.cache.append_uncacheable(writer, 0)
+        self.assertFalse(os.path.exists(temp),
+                         "the failed mark left its temp behind")
+        self.assertTrue(writer["retired"], "the failed mark kept the writer")
+        self.assertIsNone(self.cache.load_table("print-1"),
+                          "the abandoned writer reached the store")
+
+        writer = self.cache.open_for_write("print-1", 2)
+        self.assertIsNotNone(writer, "the store latched after the failed mark")
+        self.cache.append_uncacheable(writer, 0)
+        self.assertIsNotNone(self.cache.finish_write(writer),
+                             "the store never prepared again")
+        self.assertEqual(self.cache.load_table("print-1")["table"][0],
+                         (2, 0, 0))
+        self.assertEqual(_tmp_leftovers(self.cache.directory), [])
 
 
 class PreparedStoreStartupGuardTests(unittest.TestCase):

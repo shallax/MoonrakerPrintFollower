@@ -18,6 +18,7 @@ release harness's job (tools/check_qml_engine.py, tools/capture_preview.py).
 """
 from __future__ import annotations
 
+import os
 import unittest
 from types import SimpleNamespace
 
@@ -130,7 +131,12 @@ if QT_AVAILABLE:
             self._platform = value
 
         def createQmlComponent(self, path):
-            name = path.rsplit("/", 1)[-1]
+            # The adapter hands Cura a native path (os.path.join of the
+            # plugin directory and the host's file name), backslash-
+            # spelled on Windows: key by the FILE NAME whichever
+            # separator the platform produced, or the whole path becomes
+            # the key and no host is ever found off POSIX.
+            name = os.path.basename(path.replace("\\", "/"))
             self.requested.append(name)
             outcome = self.components.get(name)
             if isinstance(outcome, Exception):
@@ -312,6 +318,18 @@ class PreviewPresentationTests(unittest.TestCase):
         self.assertEqual([host.lookups for host in (scene.panel_host, scene.overlay_host)],
                          [[QQuickItem], [QQuickItem]])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
+
+    def test_a_host_path_is_keyed_by_its_file_name_on_every_platform(self):
+        # The adapter hands Cura a native path (os.path.join of the
+        # plugin directory and the host's file name). On Windows that
+        # path is backslash-spelled, and a "/"-only split kept the whole
+        # path as the key: both hosts stayed unborn there and every
+        # host-born assertion in this file came up empty (the CI logs).
+        application = HostApplication(window=Window(QQuickItem()))
+        application.components[PANEL_HOST] = "the panel host"
+        self.assertEqual(application.createQmlComponent(r"D:\plugins" + "\\" + PANEL_HOST),
+                         "the panel host")
+        self.assertEqual(application.requested, [PANEL_HOST])
 
     def test_the_two_hostings_are_named_apart(self):
         scene = self.build()

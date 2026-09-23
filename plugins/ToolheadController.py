@@ -276,6 +276,39 @@ class ToolheadController(QObject):
         self._axis_down_pending[axis] = 0.0
         self._axis_up_pending[axis] = 0.0
 
+    def _disown_axis(self, axis, distance):
+        """Withdraw a queued move the queue no longer holds.
+
+        The head will never go where that move pointed, so the distance
+        comes off the estimate and off the reflection owed in its
+        direction (F2's ledger): leaving either behind would let the
+        next jog measure phantom headroom — the -25 tap that the
+        vanished +25 paid for walks the head below the floor it was
+        clamped against.
+        """
+        if axis not in ("x", "y", "z") or not distance:
+            return
+        if self._axis_estimate[axis] is None:
+            # No position data when it was queued: nothing was advanced.
+            return
+        self._axis_estimate[axis] -= distance
+        if distance > 0:
+            self._axis_up_pending[axis] = max(0.0, self._axis_up_pending[axis] - distance)
+        else:
+            self._axis_down_pending[axis] = max(0.0, self._axis_down_pending[axis] - abs(distance))
+
+    def _drop_queue(self):
+        """Empty the queue, reconciling the projection as it goes.
+
+        Every drop — a lock or permission change (the gate going
+        disabled), a failed or timed-out pause, a resume mid-drain —
+        cancels moves that never dispatched, and the projection may only
+        hold what is still committed.
+        """
+        for op in self._pending:
+            self._disown_axis(getattr(op, "axis", ""), getattr(op, "distance", 0.0))
+        self._pending = ()
+
     def _polled_axis(self, axis):
         """The freshest axis value the poll knows: the live motion
         report when present, else the gcode position (the Position
@@ -384,14 +417,30 @@ class ToolheadController(QObject):
             self._set_status(status)
         # The tail re-clamps BEFORE the estimate advances, so
         # the re-clamp sees the pre-tap position.
-        self._pending = self._clamp_tail(self._pending)
+        queued = self._pending
+        self._pending = self._clamp_tail(queued)
+        if self._pending != queued:
+            # The re-clamp refused or shrank a tail: the distance it took
+            # out of the queue will never run, so the projection retreats
+            # with it. A tail this push appended has advanced nothing yet
+            # (the advance below is still to come) — it counts only in
+            # the retained form the queue holds.
+            kept = self._pending[-1].distance if len(self._pending) == len(queued) else 0.0
+            if queued[-1] is op:
+                op = self._pending[-1] if kept else None
+            else:
+                self._disown_axis(queued[-1].axis, queued[-1].distance - kept)
         # The axis projection advances the moment the move is ACCEPTED
         # into the queue — a later tap clamps against the move its
         # predecessor already covers, never the stale polled value
         # (the live report: the head could still be nudged past a
-        # limit).
-        op_axis = getattr(op, "axis", None)
-        if op_axis in ("x", "y", "z"):
+        # limit). Only a move the queue actually HOLDS may advance it:
+        # the depth cap's refusal above is not a move (the report said
+        # too many are queued — the next tap must still measure against
+        # what those will do), and a tap the re-clamp dropped is not one
+        # either.
+        op_axis = getattr(op, "axis", None) if op is not None else None
+        if not status and op_axis in ("x", "y", "z"):
             base = self._axis_estimate[op_axis]
             if base is None:
                 base = self._polled_axis(op_axis)
@@ -475,7 +524,7 @@ class ToolheadController(QObject):
                 self._guard_cooldown.start()
             return
         if gate == "disabled":
-            self._pending = ()
+            self._drop_queue()
             self._pause_waiting = self._pause_in_flight = self._draining = False
             self._deadline.stop()
             self._set_status(STATUS_NOT_READY)
@@ -484,7 +533,7 @@ class ToolheadController(QObject):
             if self._draining and not self._pause_waiting:
                 # The pause had been granted and the print resumed mid-drain;
                 # remaining moves must never run while printing.
-                self._pending = ()
+                self._drop_queue()
                 self._draining = False
                 self._set_status(STATUS_RESUMED_DROP)
                 return
@@ -529,7 +578,7 @@ class ToolheadController(QObject):
             return
         self._pause_waiting = self._pause_in_flight = False
         self._deadline.stop()
-        self._pending = ()
+        self._drop_queue()
         self._draining = False
         self._set_status(STATUS_PAUSE_TIMED_OUT)
 
@@ -537,14 +586,14 @@ class ToolheadController(QObject):
         if not self._pause_waiting:
             return
         self._pause_waiting = False
-        self._pending = ()
+        self._drop_queue()
         self._draining = False
         self._set_status(STATUS_PAUSE_TIMED_OUT)
         # _pause_in_flight is left alone: if the pause does land later, a
         # later _pump simply finds an empty queue.
 
     def _reset(self):
-        self._pending = ()
+        self._drop_queue()
         self._pause_waiting = self._pause_in_flight = self._draining = False
         self._deadline.stop()
         self._guard_cooldown.stop()

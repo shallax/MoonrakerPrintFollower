@@ -242,12 +242,27 @@ class RendererParityTests(_parent.RealEngineTestCase):
                     return c
             return None
 
+        def painted(image, pan_x, timeout=3.0):
+            """The same frame once the raster's own ink is on it. The
+            warm raster is read off the file system, so a fixed pump is
+            a host assumption: the macOS CI's slower read handed the
+            censuses a scene with no raster at all. The stroke is the
+            landmark — it is in the fixture at either pan — and a raster
+            that never arrives still fails, on its own assertion."""
+            import time
+            deadline = time.monotonic() + timeout
+            while stroke_right(image, pan_x) is None and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.02)
+                image = window.grabWindow()
+            return image
+
         pan_a = 300 - (ox + 4.0 * fx)
-        first = grab(pan_a)
+        first = painted(grab(pan_a), pan_a)
         col_grid_a = grid_col(first, pan_a)
         col_stroke_a = stroke_right(first, pan_a)
         pan_b = pan_a - 40.0
-        second = grab(pan_b)
+        second = painted(grab(pan_b), pan_b)
         col_grid_b = grid_col(second, pan_b)
         col_stroke_b = stroke_right(second, pan_b)
         self.assertIsNotNone(col_grid_a, "the grid never painted")

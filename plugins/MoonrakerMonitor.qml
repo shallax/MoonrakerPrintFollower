@@ -1,6 +1,5 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
-import QtQuick.Dialogs
 import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
@@ -577,16 +576,40 @@ Component {
         readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
-        ColorDialog {
-            id: chartColorDialog
-            title: root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color"
-            onAccepted: {
-                var colour = selectedColor;
-                var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
-                if (root.printer != null && root.selectedChartSensor !== "") {
-                    root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
+        // The picker's dialog implementation is a platform module, so it
+        // is created on the first click rather than at construction: a
+        // host whose platform builds no colour dialog must still get a
+        // monitor, and the quick swatches work without it either way.
+        property var chartColorDialogComponent: null
+        property var chartColorDialog: null
+
+        function openChartColorDialog() {
+            if (chartColorDialog === null) {
+                if (chartColorDialogComponent === null) {
+                    chartColorDialogComponent = Qt.createComponent("MoonrakerChartColorDialog.qml");
                 }
+                if (chartColorDialogComponent.status !== Component.Ready) {
+                    console.log("Moonraker colour picker unavailable: " + chartColorDialogComponent.errorString());
+                    return;
+                }
+                chartColorDialog = chartColorDialogComponent.createObject(root);
+                if (chartColorDialog === null) {
+                    console.log("Moonraker colour picker failed to instantiate: " + chartColorDialogComponent.errorString());
+                    return;
+                }
+                chartColorDialog.title = root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color";
+                chartColorDialog.accepted.connect(root.applyChartColorChoice);
             }
+            chartColorDialog.open();
+        }
+
+        function applyChartColorChoice() {
+            if (chartColorDialog === null || root.printer == null || root.selectedChartSensor === "") {
+                return;
+            }
+            var colour = chartColorDialog.selectedColor;
+            var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
+            root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
         }
 
         Connections {
@@ -2743,7 +2766,7 @@ Component {
                     }
                     Cura.SecondaryButton {
                         text: "Custom…"
-                        onClicked: chartColorDialog.open()
+                        onClicked: root.openChartColorDialog()
                         UM.ToolTip {
                             visible: parent.hovered
                             targetPoint: Qt.point(parent.width / 2, 0)

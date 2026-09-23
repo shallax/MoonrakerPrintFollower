@@ -407,7 +407,10 @@ class WhatsNewOverlayTests(unittest.TestCase):
         component = instances[0]
         # Cura's stored engine is used, not a lookup for this window.
         self.assertIs(component.engine, engine)
-        self.assertEqual(component.url.toLocalFile(), os.path.join(str(PLUGINS), "WhatsNewOverlay.qml"))
+        # QUrl spells a local file with '/' on every platform; the pinned
+        # path is native, so both sides are normalized.
+        self.assertEqual(os.path.normcase(os.path.normpath(component.url.toLocalFile())),
+                         os.path.normcase(os.path.normpath(os.path.join(str(PLUGINS), "WhatsNewOverlay.qml"))))
         self.assertIn("Popup {", component.source.decode("utf-8"))
         # The monitor supplies the content through the initial property.
         self.assertIs(component.properties["model"], model)

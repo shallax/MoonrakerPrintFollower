@@ -1374,6 +1374,42 @@ class FileDownloadTests(unittest.TestCase):
         self.assertEqual(failures, ["The download was cancelled"])
         self.assertIsNone(download.progress())
 
+    def test_a_switch_during_the_publication_copy_never_lands(self):
+        # The reviewer's catch: the identity gate ran when the stream
+        # finished, BEFORE the copy to the destination's volume — and that
+        # copy can run for minutes. A printer switch landing mid-copy still
+        # published the retired printer's file over the user's destination
+        # with no note. The gate has to be re-read at publication time,
+        # immediately before the swap, so the same connection-change
+        # outcome the other stale terminals use is what the user sees.
+        identity = ["A"]
+        generation = [1]
+        target = self.save_target(payload="OLD\n")
+        directory = os.path.dirname(target)
+        download = self.download(active_identity=lambda: (identity[0], "Printer A"),
+                                 session_generation=lambda: generation[0])
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            # Mid-copy: the printer is switched away AND the session rolls.
+            identity[0] = "B"
+            generation[0] = 2
+            release.set()
+            self.assertTrue(self.publish(download))
+
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+        self.assertEqual(failures, ["The printer connection changed; the download was discarded"])
+        self.assertIsNone(download.progress())
+
     def test_a_failed_save_keeps_the_file_the_user_already_had(self):
         # A failed landing is reported, never half-written: the swap is
         # one atomic replace of a fully-copied staging file.

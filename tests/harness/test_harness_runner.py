@@ -12,13 +12,17 @@ import os
 import re
 import shutil
 import time
+import tempfile
 import unittest
 from pathlib import Path
 
 import runner
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-SCRATCH = "/tmp/mpf/test-harness-runner"
+# A per-run scratch, never a fixed path: a fixed dir under the shared
+# /tmp/mpf collects files owned by the harness container's root user,
+# which the host-side legs cannot then overwrite (the live gate error).
+SCRATCH = tempfile.mkdtemp(prefix="test-harness-runner-", dir="/tmp/mpf")
 
 
 def _png_bytes(width, height):

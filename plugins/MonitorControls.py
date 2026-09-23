@@ -22,9 +22,15 @@ PENDING_CEILING_SECONDS = 10.0
 
 def _exclude_status(snapshot):
     """The volatile plate fields live on the CORE lane (the 4.6.0 move);
-    the aux copy covers the lane's first landing."""
+    the aux copy covers the lane's first landing alone.
+
+    A core report that is PRESENT but names no objects is authoritative
+    too: it says this print has none, and falling back to the lane the
+    copy was meant to cover would act on the previous print's plate —
+    the stale copy still lists the objects the name-level gate then
+    accepts."""
     core = snapshot.core.get("exclude_object") if snapshot.core else None
-    if isinstance(core, Mapping) and core.get("objects"):
+    if isinstance(core, Mapping):
         return core
     aux = snapshot.auxiliary.get("exclude_object") if snapshot.auxiliary else None
     return aux if isinstance(aux, Mapping) else {}
@@ -39,10 +45,14 @@ def _escape_exclude_name(name):
 class MonitorControls(QObject):
     changed = pyqtSignal()
 
-    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None):
+    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None, *, job_identity=None):
         super().__init__(parent)
         self._data, self._commands, self._tuning = data, commands, tuning
         self._mesh, self._config = bed_mesh, config
+        # The print identity an object gesture binds to (the model's
+        # print state); None when the host has none to offer.
+        self._job_identity_source = job_identity
+        self._job_identity = None
         self._remembered_colors = {}
         # The brightness slider holds the USER'S GAIN, unlinked from
         # the channel peak (the ruling): a channel nudge
@@ -109,6 +119,7 @@ class MonitorControls(QObject):
 
     def observe(self):
         snapshot = self._data.snapshot
+        self._observe_job_boundary()
         self._release_settled_latches(snapshot)
         aux = snapshot.auxiliary
         configfile = aux.get("configfile") or {}
@@ -424,7 +435,7 @@ class MonitorControls(QObject):
         if not self._arm(key):
             return
         started = self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{_escape_exclude_name(name)}"',
-                                        rule=self._object_rule("exclude", name))
+                                        rule=self._object_rule("exclude", name, self._job_token()))
         if not started:
             # The lane never sent it (a dead transport, a full queue):
             # nothing is in flight, so the latch must not refuse the
@@ -453,7 +464,7 @@ class MonitorControls(QObject):
         # there is deliberately no no-name branch — a bare RESET=1
         # clears every exclusion on the plate (the review's blocker).
         started = self._commands.script("Restore " + name, f'EXCLUDE_OBJECT RESET=1 NAME="{_escape_exclude_name(name)}"',
-                                        rule=self._object_rule("restore", name))
+                                        rule=self._object_rule("restore", name, self._job_token()))
         if not started:
             self._pending.pop(key, None)
 
@@ -470,24 +481,50 @@ class MonitorControls(QObject):
             return "" if name in names else f"'{name}' is not on the plate"
         return "" if name in excluded else f"'{name}' is not excluded"
 
-    def _object_rule(self, direction, name):
+    def _object_rule(self, direction, name, token):
         """The dispatch-time rule for one object gesture: the mid-print
         permission row re-run (the lane's queued-entry revalidation)
         PLUS the name-level predicate, which the click-time gate could
         only check before the entry queued — the plate moves while the
-        lane is busy. A denial kills the entry, so its latch dies with
-        it: a dead gesture must not hold the retry, nor the other
-        direction, for the rest of the ceiling."""
+        lane is busy — PLUS the job identity the click bound to (token).
+
+        The identity is re-read HERE, against the print running at the
+        dispatch: a filename cannot carry it (the same file restarted
+        is a different print whose objects are the same names), so a
+        queued gesture may only land on the print that received the
+        click. A denial kills the entry, so its latch dies with it: a
+        dead gesture must not hold the retry, nor the other direction,
+        for the rest of the ceiling."""
         row = can_exclude if direction == "exclude" else can_restore
         def rule(observation):
             verdict = row(observation)
             if verdict.mode == "allowed":
-                refusal = self._object_refusal(direction, name, _exclude_status(self._data.snapshot))
-                if not refusal: return verdict
-                verdict = Verdict("disabled", refusal)
+                if self._job_token() != token:
+                    verdict = Verdict("disabled", "the print changed since the click")
+                else:
+                    refusal = self._object_refusal(direction, name, _exclude_status(self._data.snapshot))
+                    if not refusal: return verdict
+                    verdict = Verdict("disabled", refusal)
             self._pending.pop((direction, name), None)
             return verdict
         return rule
+
+    def _job_token(self):
+        """The print identity behind a gesture: the job key's
+        (filename, size, serial) triple, whose serial is what tells a
+        restarted same-name print from the one before it."""
+        source = self._job_identity_source
+        return source() if source is not None else None
+
+    def _observe_job_boundary(self):
+        """A pending latch claims a gesture on ONE print: at the next
+        print the claim is void, or the new print's own identical
+        gesture reads as already in flight for the rest of the
+        ceiling."""
+        token = self._job_token()
+        if token == self._job_identity: return
+        self._job_identity = token
+        self._pending.clear()
 
     def _release_settled_latches(self, snapshot):
         """A latch claims a gesture is still in flight; the plate that

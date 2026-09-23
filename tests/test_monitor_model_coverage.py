@@ -1044,7 +1044,8 @@ class PlatePayloadTests(MonitorModelCase):
 class QueuedObjectGestureTests(MonitorModelCase):
     """The object gestures ride the one-shot lane: a click while another
     command is in flight is QUEUED, so the plate predicate the click
-    checked has to be revalidated when the queue drains."""
+    checked has to be revalidated when the queue drains, and so does
+    the print the click was made on."""
 
     def plate(self, objects, excluded=(), state="printing"):
         """Land a plate with the state its gesture gate reads.
@@ -1064,6 +1065,23 @@ class QueuedObjectGestureTests(MonitorModelCase):
 
     def scripts(self):
         return [request.options["body"]["script"] for request in self.sent("printer/gcode/script")]
+
+    def job(self, filename="part.gcode", size=100, serial=1):
+        """The identity the gestures bind to: the coordinator's job key,
+        whose serial is what a same-name restart bumps."""
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            job_key=(filename, size, serial))
+
+    def next_print(self, key, objects=("PART_A",)):
+        """The next print with its plate already landed — the same-named
+        objects included, so nothing about the plate's shape can refuse
+        a queued entry and only the identity can."""
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(job_key=key)
+        self.connect({"print_stats": {"filename": key[0], "state": "printing"},
+                      "exclude_object": {
+                          "objects": [{"name": name, "center": [0.0, 0.0], "polygon": []} for name in objects],
+                          "excluded_objects": [], "current_object": None}})
+        self.qt.events(10)
 
     def test_a_queued_exclusion_is_revalidated_against_the_plate(self):
         self.model = self.model_now()
@@ -1142,6 +1160,117 @@ class QueuedObjectGestureTests(MonitorModelCase):
         self.model.excludeObject("PART_A")
         self.qt.events(10)
         self.assertEqual(self.scripts().count('EXCLUDE_OBJECT NAME="PART_A"'), 2)
+
+    def test_a_queued_exclusion_never_crosses_to_the_next_print(self):
+        # The click bound to the print it was made on (the filename
+        # alone cannot carry that: the next print's plate holds the
+        # same object NAMES). The old print's queued script must never
+        # reach the wire after the switch.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.next_print(("other.gcode", 200, 2))
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: the print changed since the click")
+
+    def test_a_same_name_restart_is_a_different_print(self):
+        # A restart of the SAME file reuses the name and the size: only
+        # the job key's serial tells the two prints apart, and the old
+        # print's queued exclusion must not land on the restarted one.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.next_print(("part.gcode", 100, 2))
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: the print changed since the click")
+
+    def test_a_job_boundary_releases_the_in_flight_latch(self):
+        # A pending latch claims a gesture on ONE print: the next
+        # print's own identical gesture must not read as the old one's
+        # still in flight for the rest of the ceiling.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.next_print(("other.gcode", 200, 2))
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertEqual(self.scripts().count('EXCLUDE_OBJECT NAME="PART_A"'), 2)
+
+    def test_a_queued_restore_never_crosses_to_the_next_print(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Restore PART_A queued")
+        # The restarted print's plate excludes the same-named object:
+        # the plate predicate alone would send the old print's RESET.
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(job_key=("part.gcode", 100, 2))
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {
+                          "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+                          "excluded_objects": ["PART_A"], "current_object": None}})
+        self.qt.events(10)
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Restore PART_A cancelled: the print changed since the click")
+
+    def test_a_present_but_empty_core_plate_outweighs_the_stale_auxiliary(self):
+        # The core lane owns the plate and reports it as naming no
+        # objects: that IS this print's plate. The auxiliary copy is
+        # the last print's, and it must not make a name clickable —
+        # the exclusion would go to a printer that has no such object.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.observe(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+            "excluded_objects": [], "current_object": None}})
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {"objects": []}})
+        self.qt.events(10)
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus, "Exclude refused: 'PART_A' is not on the plate")
+
+    def test_a_present_but_empty_core_plate_refuses_the_stale_restore(self):
+        # The mirror case: the stale copy still says the name is
+        # excluded, the core lane says nothing is — a RESET for it
+        # would be refused by the printer it actually reaches.
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.observe(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+            "excluded_objects": ["PART_A"], "current_object": None}})
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {"objects": [], "excluded_objects": [], "current_object": None}})
+        self.qt.events(10)
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus, "Restore refused: 'PART_A' is not excluded")
 
 
 class PlateSplitPublicationTests(MonitorModelCase):

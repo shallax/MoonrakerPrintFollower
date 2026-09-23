@@ -27,11 +27,23 @@ _PUBLISHING = "publishing"
 # promptly, large enough that a 2 GiB print is not a million writes.
 _COPY_CHUNK_BYTES = 4 * 1024 * 1024
 
+# The connection-change outcome, spelled once: the stream's own identity
+# gates and the publication-time one report the same words.
+_STALE_MESSAGE = "The printer connection changed; the download was discarded"
+
 
 class _SaveCancelled(Exception):
     """The user's Cancel arrived while the finished stream was being
     published beside its destination: the staging file goes, the
     destination the user already had stays."""
+
+
+class _SaveStale(Exception):
+    """The requesting printer or session was switched away from while
+    the finished stream was being copied beside its destination — the
+    copy deliberately runs for minutes, so the switch can land long
+    after the stream's own identity gate ran. The staging file goes and
+    the destination keeps exactly what it had."""
 
 
 def _staging_path(target):
@@ -47,7 +59,7 @@ def _staging_path(target):
     raise OSError("no free staging name beside {}".format(target))
 
 
-def _replace_saved_file(source, target, cancelled=None):
+def _replace_saved_file(source, target, cancelled=None, verify=None):
     """Land a finished stream at `target` with deliberate replace
     semantics: the bytes are copied to a staging sibling first and the
     destination only ever changes through one atomic `os.replace`. A
@@ -59,7 +71,12 @@ def _replace_saved_file(source, target, cancelled=None):
     The copy is CHUNKED and honours `cancelled` between chunks: the
     callers run this off the owner thread, and this is what lets the
     window's Cancel abandon a copy already in flight instead of
-    waiting the whole volume out."""
+    waiting the whole volume out.
+
+    `verify` is the last gate before the swap, re-read here rather than
+    when the copy started: the copy can outlast the printer/session it
+    belongs to, and a switch landing mid-copy must leave the retired
+    printer's file out of the user's destination."""
     staging = _staging_path(target)
     try:
         with open(source, "rb") as stream, open(staging, "wb") as staging_stream:
@@ -71,9 +88,13 @@ def _replace_saved_file(source, target, cancelled=None):
                     break
                 staging_stream.write(chunk)
         # Re-checked immediately before the swap: a cancel that landed
-        # while the last chunk was written must not publish.
+        # while the last chunk was written must not publish, and neither
+        # may a transfer whose printer or session was switched away from
+        # during the copy.
         if cancelled is not None and cancelled.is_set():
             raise _SaveCancelled()
+        if verify is not None and not verify():
+            raise _SaveStale()
         os.replace(staging, target)
     except BaseException:
         try:
@@ -184,7 +205,7 @@ class FileDownload(QObject):
         self._save_stage = None
         self._save_cancel = None
 
-    def _publish_saved_file(self, download, source, target, cancelled):
+    def _publish_saved_file(self, download, source, target, cancelled, verify):
         """The publication worker: the whole-file copy of the finished
         stream onto the destination's volume, OFF the owner thread. The
         copy used to run on it, so a large file or a slow volume froze
@@ -192,10 +213,12 @@ class FileDownload(QObject):
         as long as the copy took. The staged source is retired here
         too: its bytes now live at the destination or nowhere."""
         try:
-            _replace_saved_file(source, target, cancelled)
+            _replace_saved_file(source, target, cancelled, verify)
             error = None
         except _SaveCancelled:
             error = CANCELLED_BY_USER
+        except _SaveStale:
+            error = _STALE_MESSAGE
         except Exception as exc:
             error = "The download could not be saved: {}".format(exc)
         finally:
@@ -229,7 +252,7 @@ class FileDownload(QObject):
             # live one, or the file is discarded.
             if (intent != "load" or machine_id != self._active_identity()[0]
                     or generation != self._session_generation()):
-                self.failed.emit("The printer connection changed; the download was discarded")
+                self.failed.emit(_STALE_MESSAGE)
                 return
 
             def release(lease_path):
@@ -283,8 +306,18 @@ class FileDownload(QObject):
                 self._clear_save(download)
                 # The streamed source is a temporary whatever happened.
                 shutil.rmtree(os.path.dirname(path), ignore_errors=True)
-                self.failed.emit("The printer connection changed; the download was discarded")
+                self.failed.emit(_STALE_MESSAGE)
                 return
+
+            def still_current():
+                # The publication-time identity gate: the copy below runs
+                # for as long as the volume takes, so the check made here
+                # is only the first one — the copy re-reads it immediately
+                # before the swap. The accessors are plain identity reads,
+                # which is what lets the copy thread make them.
+                return (machine_id == self._active_identity()[0]
+                        and generation == self._session_generation())
+
             # The transfer is done, the FILE is not there yet: it still
             # has to be copied to the destination's volume. That whole-
             # file copy runs on a worker (the owner thread cannot afford
@@ -295,7 +328,7 @@ class FileDownload(QObject):
             self._save_stage = _PUBLISHING
             self._save_cancel = threading.Event()
             threading.Thread(target=self._publish_saved_file,
-                             args=(download, path, target, self._save_cancel),
+                             args=(download, path, target, self._save_cancel, still_current),
                              name="mpf-save-publish", daemon=True).start()
 
         download = self._files.download_once(str(relpath), on_ready=on_ready)

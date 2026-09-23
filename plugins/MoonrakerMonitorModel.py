@@ -729,7 +729,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.set_controls_locked(self._controls_locked)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
-        self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
+        # The object gestures bind to the print that received the
+        # click: the coordinator's job key is the only identity that
+        # tells a restarted same-name print from the one before it.
+        self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self,
+                                         job_identity=lambda: getattr(self._print_state(), "job_key", None))
         self._camera = MonitorCamera(self._data, config, apply_config, self)
         # The webcam watchdog: a dead bridge relay bumps the refresh
         # nonce (a URL change is the ONLY thing that restarts Cura's

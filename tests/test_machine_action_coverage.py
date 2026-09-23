@@ -955,7 +955,11 @@ class MachineActionCase(unittest.TestCase):
                           staticmethod(lambda url: opened.append(url.toLocalFile()))):
             action.openMigrationBackupFolder()
 
-        self.assertEqual(opened, [self.module.Resources.getConfigStoragePath()])
+        # QUrl spells a local file with '/' on every platform, while the path
+        # Cura hands out is native ('\' on Windows): normalize both sides.
+        expected = self.module.Resources.getConfigStoragePath()
+        self.assertEqual([os.path.normcase(os.path.normpath(path)) for path in opened],
+                         [os.path.normcase(os.path.normpath(expected))])
 
     # ---- the page's read-only relays ---------------------------------
 

@@ -1666,12 +1666,19 @@ class PlateVisitedTests(unittest.TestCase):
     def test_an_advancing_split_walks_only_the_new_range(self):
         # The cursor's own rule, with geometry still outstanding: the
         # delta draws the range since the last poll, never the layer.
+        # The first range is DRIVEN to its cursor instead of assumed to
+        # fit one poll: the walk's budget is wall-clock, so where a
+        # platform cuts it (Windows cut it at the very first check step
+        # — _VISITED_WALK_STEP — and the delta then resumed from there)
+        # is a scheduling detail of the machine, never of the rule
+        # under test. The edges the second range walks are counted
+        # whole, however many polls they take.
         self._bind_dense(5000)
         walked = self._counting_walk()
         part = ("Part", self._strip(4800))
-        self.service.plate_visited(0, 1000, self._rows(part))
+        self._drive(0, 1000, [part])
         walked.clear()
-        self.service.plate_visited(0, 2000, self._rows(part))
+        self._drive(0, 2000, [part])
         self.assertEqual([edge[0] for edge in walked], list(range(1000, 2000)),
                          "the delta re-walked the consumed range")
 
@@ -3066,6 +3073,8 @@ class DecodedBudgetTests(unittest.TestCase):
         self.service.unpin_decoded(4)
         self.assertEqual(self.service.pinned_decoded_bytes(), 0)
 
+    @unittest.skipUnless(os.path.isfile("/proc/self/status"),
+                         "the RSS budget reads procfs: macOS and Windows have none")
     def test_the_decoded_tier_plateaus_under_churn(self):
         # Seek-style churn must not climb: fresh payloads per cycle,
         # the byte bound evicting under pressure, and the process

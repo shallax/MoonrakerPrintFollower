@@ -367,6 +367,19 @@ class PreparedCache:
         self._evict(path)
         return path
 
+    def _discard_temp(self, handle, temp: str) -> None:
+        """A dead writer's exit: close the handle — however dead it
+        already is — and remove the temp, so no half-written file is
+        ever left for the next startup to arbitrate over."""
+        try:
+            handle.close()
+        except (OSError, ValueError):
+            pass
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+
     def open_for_write(self, identity: str, layer_count: int) -> Optional[dict]:
         """The incremental writer: a temp
         file accumulates the pass's encodings layer by layer, so the
@@ -387,10 +400,19 @@ class PreparedCache:
         # interrupted pass leaves a structurally valid table the next
         # session can adopt and resume. The table slots follow as
         # reserved zeros; the payloads append behind them.
-        handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
-                                 len(identity.encode("utf-8")), layer_count, 0))
-        handle.write(identity.encode("utf-8"))
-        handle.write(b"\0" * (layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
+        try:
+            handle.write(struct.pack(_HEADER_FMT, _MAGIC, _FORMAT_VERSION,
+                                     len(identity.encode("utf-8")), layer_count, 0))
+            handle.write(identity.encode("utf-8"))
+            handle.write(b"\0" * (layer_count * struct.calcsize(_TABLE_ENTRY_FMT)))
+        except (OSError, ValueError):
+            # The header and the reserved table land through the same
+            # volume as the creation: a part-way refusal leaves exactly
+            # the dead temp a refused creation does — discard it and
+            # report "no writer", never an orphan, never an exception
+            # into the pass.
+            self._discard_temp(handle, temp)
+            return None
         return {"identity": identity, "temp": temp, "handle": handle,
                 "layer_count": layer_count, "table": [None] * layer_count,
                 "checkpoint_layers": 0, "checkpoint_bytes": 0,
@@ -421,23 +443,32 @@ class PreparedCache:
                 return
             handle = writer["handle"]
             writer["table"][layer] = (STATE_CACHED, handle.tell(), len(payload))
-            handle.write(payload)
-            # The durability ordering (the review's checkpoint
-            # finding): a table entry advertised CACHED after a
-            # process crash must refer to bytes the page cache
-            # already holds — the payload flushes first, only then
-            # does the slot's write advertise it.
-            handle.flush()
-            # The in-place checkpoint (the review's
-            # resumable-persistence finding): the table slot writes
-            # NOW, so an interrupted pass keeps this layer's entry
-            # and the adoption resumes from the EMPTY slots.
-            end = handle.tell()
-            handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
-            handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
-                                     writer["table"][layer][1], len(payload)))
-            handle.flush()
-            handle.seek(end)
+            try:
+                handle.write(payload)
+                # The durability ordering (the review's checkpoint
+                # finding): a table entry advertised CACHED after a
+                # process crash must refer to bytes the page cache
+                # already holds — the payload flushes first, only then
+                # does the slot's write advertise it.
+                handle.flush()
+                # The in-place checkpoint (the review's
+                # resumable-persistence finding): the table slot writes
+                # NOW, so an interrupted pass keeps this layer's entry
+                # and the adoption resumes from the EMPTY slots.
+                end = handle.tell()
+                handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+                handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_CACHED,
+                                         writer["table"][layer][1], len(payload)))
+                handle.flush()
+                handle.seek(end)
+            except (OSError, ValueError):
+                # A disk filling mid-print: the writer and its temp
+                # go now, every later append and finish is refused,
+                # and the pass prepares on through a fresh writer
+                # instead of a handle that can never publish.
+                writer["table"][layer] = None
+                self.abort_write(writer)
+                return
             # The periodic durability checkpoint: an fsync every 32
             # layers or 4 MiB of payload — the periodic durability
             # guarantee at a cadence whose cost is invisible next to
@@ -464,10 +495,17 @@ class PreparedCache:
                 return
             writer["table"][layer] = (STATE_UNCACHEABLE, 0, 0)
             handle = writer["handle"]
-            end = handle.tell()
-            handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
-            handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_UNCACHEABLE, 0, 0))
-            handle.seek(end)
+            try:
+                end = handle.tell()
+                handle.seek(self._table_offset(writer) + layer * struct.calcsize(_TABLE_ENTRY_FMT))
+                handle.write(struct.pack(_TABLE_ENTRY_FMT, STATE_UNCACHEABLE, 0, 0))
+                handle.seek(end)
+            except (OSError, ValueError):
+                # Same containment as `append`: a refused table slot
+                # abandons the writer and its temp, never the pass.
+                writer["table"][layer] = None
+                self.abort_write(writer)
+                return
 
     def finish_write(self, writer: dict) -> Optional[str]:
         """Flip the completion flag, then atomically publish. The
@@ -496,7 +534,7 @@ class PreparedCache:
                     pass
                 handle.close()
                 os.replace(writer["temp"], self._path(identity))
-            except OSError:
+            except (OSError, ValueError):
                 self.abort_write(writer)
                 return None
         self._evict(self._path(identity))
@@ -529,7 +567,10 @@ class PreparedCache:
                 writer["handle"].close()
                 os.replace(writer["temp"], self._path(writer["identity"]))
                 return True
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError: the handle a failed write already closed
+                # — the abort then owns the cleanup, so a close or a
+                # rebind never crashes on a dead writer.
                 self.abort_write(writer)
                 return False
 
@@ -541,14 +582,7 @@ class PreparedCache:
         untouchable as a suspended one."""
         with self._lock:
             writer["retired"] = True
-            try:
-                writer["handle"].close()
-            except (OSError, ValueError):
-                pass
-            try:
-                os.unlink(writer["temp"])
-            except OSError:
-                pass
+            self._discard_temp(writer["handle"], writer["temp"])
 
     def _evict(self, keep: str) -> None:
         """The print-level size policy (the review's unified-lifecycle

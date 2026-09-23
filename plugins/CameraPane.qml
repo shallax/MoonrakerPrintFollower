@@ -51,7 +51,8 @@ Cura.RoundedRectangle {
     // start, no second HTTP connection. The latched URL is the
     // _stateKey identity: a rotated upstream nonce in the query is
     // still the same desired stream, while an mpf_reload bump (the
-    // model's explicit reload) still restarts.
+    // model's explicit reload) and a camera= selection change still
+    // restart.
     property string _appliedUrl: ""
     property bool _appliedVisible: false
     // The T0-T9 timing chain's T9 gate (the reviewer's cold-start
@@ -89,26 +90,41 @@ Cura.RoundedRectangle {
         }
     }
 
+    function _queryValue(query, name) {
+        // The parameter's value, or null when the query has no such
+        // parameter (an empty value is still a value).
+        var parts = query.split("&");
+        for (var i = 0; i < parts.length; i++) {
+            var part = parts[i];
+            var eq = part.indexOf("=");
+            if ((eq >= 0 ? part.slice(0, eq) : part) === name) {
+                return eq >= 0 ? part.slice(eq + 1) : "";
+            }
+        }
+        return null;
+    }
+
     function _stateKey(text) {
         // The stream identity: the query-stripped URL plus the
-        // plugin's own reload marker. Upstream query rotation is
-        // noise — the bridge's loopback URL is keyless (the key rides
-        // the bridge's own upstream fetch) — while the marker is the
-        // model's explicit reload request (manual refresh, watchdog
-        // recovery, reconnect) and must still restart the stream.
+        // parameters that name a DIFFERENT stream — the camera a
+        // direct URL selects, and the plugin's own reload marker
+        // (manual refresh, watchdog recovery, reconnect). Nothing else
+        // in the query counts: the rest is upstream rotation (a token
+        // or timestamp the camera service rewrites per poll), and a
+        // healthy connection must not be killed for it.
         var cut = text.indexOf("?");
-        var key = cut >= 0 ? text.slice(0, cut) : text;
-        if (cut >= 0) {
-            var query = text.slice(cut + 1);
-            var at = query.indexOf("mpf_reload=");
-            if (at >= 0) {
-                var value = query.slice(at + "mpf_reload=".length);
-                var amp = value.indexOf("&");
-                if (amp >= 0) {
-                    value = value.slice(0, amp);
-                }
-                key += "?mpf_reload=" + value;
-            }
+        if (cut < 0) {
+            return text;
+        }
+        var query = text.slice(cut + 1);
+        var key = text.slice(0, cut);
+        var camera = _queryValue(query, "camera");
+        if (camera !== null) {
+            key += "?camera=" + camera;
+        }
+        var reload = _queryValue(query, "mpf_reload");
+        if (reload !== null) {
+            key += (camera === null ? "?" : "&") + "mpf_reload=" + reload;
         }
         return key;
     }

@@ -949,7 +949,10 @@ class CuraIntegrationTests(unittest.TestCase):
                 def readLocalFile(self, url, add_to_recent_files=False):
                     if self.read_error is not None:
                         raise self.read_error
-                    self.loaded.append(url.toLocalFile())
+                    # normpath: QUrl spells a local file with '/' even on
+                    # Windows, and the loaded paths are compared against the
+                    # native ones the lease was built from.
+                    self.loaded.append(os.path.normpath(url.toLocalFile()))
 
             if activity:
                 def updatePlatformActivity(self):
