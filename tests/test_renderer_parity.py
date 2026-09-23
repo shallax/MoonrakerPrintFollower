@@ -266,12 +266,20 @@ class RendererParityTests(_parent.RealEngineTestCase):
             """The same frame once the raster's own ink is on it. The
             warm raster is read off the file system, so a fixed pump is
             a host assumption: the macOS CI's slower read handed the
-            censuses a scene with no raster at all. The stroke is the
-            landmark — it is in the fixture at either pan — and a raster
-            that never arrives still fails, on its own assertion."""
+            censuses a scene with no raster at all.
+
+            Both landmarks the censuses below read are waited for. This
+            only became correct once each scan window stopped holding a
+            NEIGHBOUR — while `grid_col`'s window still reached the
+            stroke's left edge, "ink in the grid's window" was not "the
+            grid has painted", and waiting on it handed back a frame
+            earlier rather than later (the Windows runner's "the grid
+            never painted" is the stroke-only wait). A raster that never
+            arrives still fails, on its own assertion."""
             import time
             deadline = time.monotonic() + timeout
-            while stroke_right(image, pan_x) is None and time.monotonic() < deadline:
+            while (stroke_right(image, pan_x) is None
+                   or grid_col(image, pan_x) is None) and time.monotonic() < deadline:
                 self.app.processEvents()
                 time.sleep(0.02)
                 image = window.grabWindow()
