@@ -459,6 +459,12 @@ class RealEngineTestCase(unittest.TestCase):
         document.setWidth(width)
         document.setHeight(height)
         window.show()
+        # Registered for the failure shots: the scene a failing test
+        # shows is the scene IT opened, not whatever else is on screen.
+        shot_windows = getattr(self, "_shot_windows", None)
+        if shot_windows is None:
+            shot_windows = self._shot_windows = []
+        shot_windows.append(window)
         self.addCleanup(window.deleteLater)
         # The multi-test crash (engine-proven in the probe): a loaded
         # raster texture's teardown races the next mount unless the
@@ -481,6 +487,66 @@ class RealEngineTestCase(unittest.TestCase):
             sys.stderr.flush()
         _report_environment()
         return document, window
+
+    def run(self, result=None):
+        """Every failing real-engine test publishes the windows it had
+        open, named for the test.
+
+        A leg that disagrees about geometry — the Windows and macOS
+        runners do — is diagnosable only by LOOKING at the scene, and
+        an assertion message cannot say what the layout actually was.
+        The count of failures before and after is the detection: it is
+        version-stable, where poking at unittest's private outcome
+        structures is not.
+
+        Off unless HARNESS_SHOT_DIR names a directory, so ordinary
+        local runs write nothing."""
+        if result is None:
+            result = self.defaultTestResult()
+        before = len(result.failures) + len(result.errors)
+        outcome = super().run(result)
+        if len(result.failures) + len(result.errors) > before:
+            self._capture_failure_shots()
+        return outcome
+
+    def _capture_failure_shots(self):
+        """The windows this test opened, as PNGs beside a manifest that
+        names the test each one belongs to. Never raises: evidence that
+        fails the run it is gathering evidence for is worse than none."""
+        folder = os.environ.get("HARNESS_SHOT_DIR")
+        if not folder:
+            return
+        try:
+            os.makedirs(folder, exist_ok=True)
+            from PyQt6.QtGui import QGuiApplication
+            candidates = list(getattr(self, "_shot_windows", []))
+            for window in QGuiApplication.topLevelWindows():
+                if window not in candidates:
+                    candidates.append(window)
+            stem = "%s.%s" % (type(self).__name__, self._testMethodName)
+            written = []
+            for index, window in enumerate(candidates):
+                grab = getattr(window, "grabWindow", None)
+                if grab is None:
+                    continue
+                try:
+                    image = grab()
+                except RuntimeError:
+                    continue  # a window the teardown already deleted
+                if image is None or image.isNull():
+                    continue
+                path = os.path.join(folder, "%s-%d.png" % (stem, index))
+                if image.save(path):
+                    written.append(os.path.basename(path))
+            if written:
+                with open(os.path.join(folder, "manifest.txt"), "a",
+                          encoding="utf-8") as handle:
+                    handle.write("%s: %s\n" % (stem, ", ".join(written)))
+                sys.stderr.write("harness shots: %s -> %s\n"
+                                 % (stem, ", ".join(written)))
+                sys.stderr.flush()
+        except Exception:  # noqa: BLE001 - see the docstring
+            pass
 
     def _settle_window(self, window):
         # The teardown's last binding evaluations must never wrap a
