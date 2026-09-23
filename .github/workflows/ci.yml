@@ -54,12 +54,23 @@ jobs:
           # the Windows runner and bash would mangle its backslashes, so
           # the directory is created in native form and printed back.
           # stdlib only — unzip is not guaranteed on either runner.
+          #
+          # RUNNER_TEMP, never tempfile.gettempdir(): on the Windows
+          # runner the latter answers with the 8.3 SHORT form
+          # (C:\Users\RUNNER~1\AppData\Local\Temp), and Qt's font loader
+          # then finds no usable font at all — the failing leg rendered
+          # every glyph as an empty box, which is what widened its
+          # layout (the frame census read 108 px against this
+          # container's 88). macOS is green with the same pin, so the
+          # mechanism is sound and the path is the fault.
           dir="$(python - <<'PY'
-          import io, os, sys, tempfile, urllib.request, zipfile
+          import io, os, sys, urllib.request, zipfile
 
           url = ("https://github.com/dejavu-fonts/dejavu-fonts/releases/"
                  "download/version_2_37/dejavu-fonts-ttf-2.37.zip")
-          target = os.path.join(tempfile.gettempdir(), "mpf-fonts")
+          target = os.path.join(
+              os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR") or "/tmp",
+              "mpf-fonts")
           os.makedirs(target, exist_ok=True)
           blob = urllib.request.urlopen(url, timeout=60).read()
           archive = zipfile.ZipFile(io.BytesIO(blob))
