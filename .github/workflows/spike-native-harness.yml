@@ -1,0 +1,1761 @@
+# Native-harness spike: a DISPOSABLE probe that
+# answers two questions the Linux-only UI harness (tools/ui_test.sh —
+# AppImage + Docker + Xvfb, all by construction) cannot answer on a dev
+# box, BEFORE any port of it to native runners is attempted:
+#
+#   Q1  Does a native Cura install and launch on macos-latest (arm64)
+#       and windows-latest? The macOS dmg arch follows a policy rather
+#       than a hardcoded choice (macos_arch: auto | arm64 | x64): auto
+#       prefers the ARM64 dmg when the requested version publishes one
+#       and otherwise falls back to X64, which on an arm64 host executes
+#       only through Rosetta 2. The decision is taken from the release's
+#       own runtime asset list, because the published assets differ
+#       across the 5.7-5.13 sweep — the same rule the eventual fetch
+#       layer needs per version, so this is its seed, not a throwaway.
+#       Forcing x64 on arm64 is the deliberate Rosetta experiment.
+#   Q2  Can a running GUI app actually be SEEN on those runners — a
+#       still AND a video of the session? The claim that the hosted
+#       runners have no usable GUI is being corrected here by evidence,
+#       not by assumption. Video is ffmpeg on every platform, replicating
+#       the harness's own capture (tests/harness/runner.py:247-250) —
+#       same flags, same 15 fps, same scenario.mp4 naming, started before
+#       the launch and killed at teardown — so a native run's artifacts
+#       stay comparable with the Linux runs. Only the INPUT DEVICE is
+#       per-platform: x11grab (Linux) / avfoundation (macOS) / gdigrab
+#       (Windows). Stills come both from the platform's own API and in
+#       the harness's ffmpeg -frames:v 1 form.
+#   Q3  What must each platform PROVISION? A runner image is trusted for
+#       nothing: every external tool a leg touches is probed, reported as
+#       present-with-version or absent, installed when the image lacks it,
+#       and written as a row of the dependency audit
+#       (spike-evidence/dependency-audit.txt). Anything that has to run
+#       inside Cura's process must use Cura's OWN bundled Python and Qt —
+#       located by searching the installed bundle, never by assuming a
+#       path — the same spirit as the Linux harness extracting Cura's
+#       matching PyQt6 wheels rather than trusting the host Python. That
+#       table is the port's provisioning checklist per platform.
+#
+# The stock Cura is installed with no plugin: the port's questions are
+# install, launch and capture, and nothing else. Every step tolerates
+# failure so the later diagnostics still report, all evidence is tee'd
+# into spike-evidence/ and appended to a running verdict file, and the
+# artifact uploads under `if: always()` so a failed leg still ships the
+# log that says WHY.
+#
+# NON-GATING BY DESIGN. This workflow runs on ordinary CI events so the
+# answer arrives without anyone remembering to ask for it, but it must
+# NEVER be added to a required-check set or a merge gate: its expected
+# failure mode is "the installer would not run on a hosted runner", which
+# is a finding about the runner, not a broken branch. Do not promote it.
+# It stays its own file for the same reason — disposable, trivially
+# deleted, never a job inside ci.yml.
+#
+# Trigger scope: pull_request is unscoped, so a proposed change gets the
+# answer. push is scoped to main and the release branches on purpose —
+# firing two full GUI legs from every branch tip would put real queue
+# pressure on the scarcest hosted runners for branches nobody is
+# waiting on.
+#
+#   gh workflow run "Native Harness Spike (disposable)" \
+#     -f cura_version=5.12.0 -f macos_arch=x64
+name: Native Harness Spike (disposable)
+
+on:
+  # Scoped so a branch tip push does not queue two GUI legs per commit.
+  push:
+    branches:
+      - main
+      - "release/**"
+  # Unscoped: every proposed change should get the answer.
+  pull_request:
+  # Kept for deliberate runs; the inputs exist only here, so push and
+  # pull_request need none and use the defaults below.
+  workflow_dispatch:
+    inputs:
+      cura_version:
+        description: "Cura release tag to install"
+        required: false
+        default: "5.13.0"
+        type: string
+      macos_arch:
+        description: "macOS dmg arch: auto prefers arm64 when published"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - arm64
+          - x64
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: Spike (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A 180 MB installer plus an install and a 60 s boot per OS sits far
+    # below this, but the bound keeps a hung boot from burning an hour.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    env:
+      CURA_VERSION: ${{ github.event.inputs.cura_version }}
+      CURA_MACOS_ARCH: ${{ github.event.inputs.macos_arch }}
+      EVIDENCE: spike-evidence
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v7
+
+      - name: Set up Python (a native port would need an interpreter)
+        # Nothing in this spike runs Python; the interpreter is here as the
+        # port's dependency and as a probe. A failure of this action must
+        # not cancel the diagnostics below it, which provision their own.
+        continue-on-error: true
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: "Q1 evidence: environment, arch, Rosetta, display (macOS)"
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # The runner's bash step runs with -e, which would truncate
+          # this report at the first probe missing from the image. The
+          # report IS the deliverable, so errexit goes.
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/env-macos.txt"
+          {
+            echo "=== macOS environment ==="
+            date -u
+            echo; echo "--- uname -a ---"; uname -a
+            echo; echo "--- sw_vers ---"; sw_vers
+            echo; echo "--- uname -m / arch ---"; uname -m; arch
+            echo; echo "--- runner ---"
+            echo "RUNNER_OS=$RUNNER_OS RUNNER_ARCH=$RUNNER_ARCH RUNNER_NAME=$RUNNER_NAME"
+            echo; echo "--- cpu ---"; sysctl -n machdep.cpu.brand_string
+            echo; echo "--- arm64 host? (hw.optional.arm64==1) ---"
+            sysctl -n hw.optional.arm64
+            echo; echo "--- am I translated? (sysctl.proc_translated==1 means yes) ---"
+            sysctl -n sysctl.proc_translated
+            echo; echo "--- python ---"; python3 --version
+            echo; echo "--- docker present? (the current harness needs it) ---"
+            command -v docker || echo "docker: ABSENT"
+            echo; echo "--- Xvfb present? ---"
+            command -v Xvfb || echo "Xvfb: ABSENT"
+            echo
+            echo "=== Rosetta 2 (the Q1 question for the x86_64 dmg) ==="
+            echo "--- /usr/libexec/rosetta ---"
+            ls -ld /usr/libexec/rosetta || echo "/usr/libexec/rosetta: ABSENT"
+            echo "--- RosettaUpdateAuto package receipt ---"
+            pkgutil --pkg-info=com.apple.pkg.RosettaUpdateAuto || \
+              echo "RosettaUpdateAuto receipt: ABSENT"
+            echo "--- the real test: arch -x86_64 /usr/bin/true ---"
+            if arch -x86_64 /usr/bin/true 2>&1; then
+              echo "ROSETTA: OK (an x86_64 binary executed)"
+              echo "SPIKE-Q1: rosetta=OK" | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "ROSETTA: FAILED — no x86_64 execution available"
+              echo "SPIKE-Q1: rosetta=FAILED" | tee -a "$EVIDENCE/verdict.txt"
+            fi
+            echo
+            echo "=== Display / session (the Q2 question) ==="
+            echo "--- DISPLAY / SSH ---"
+            echo "DISPLAY=${DISPLAY:-<unset>}"
+            echo "SSH_CONNECTION=${SSH_CONNECTION:-<unset>}"
+            echo "SSH_TTY=${SSH_TTY:-<unset>}"
+            echo "--- who is logged in / at the console ---"
+            who
+            echo "--- uid ---"; id -u
+            echo "--- console owner ---"; ls -l /dev/console
+            echo "--- WindowServer running? ---"
+            if pgrep -x WindowServer >/dev/null; then
+              echo "WindowServer: RUNNING (there is a GUI session)"
+            else
+              echo "WindowServer: ABSENT (no GUI session)"
+            fi
+            echo "--- my own GUI session (launchctl gui/<uid>) ---"
+            launchctl print "gui/$(id -u)" 2>&1 | head -20
+            echo "--- displays ---"
+            system_profiler SPDisplaysDataType 2>&1 | head -40
+            echo; echo "--- screencapture available? ---"
+            command -v screencapture || echo "screencapture: ABSENT"
+            echo "--- its flags on THIS macOS (what the still capture uses) ---"
+            man screencapture 2>/dev/null | col -b | head -45
+            echo "--- ffmpeg present? (THE video recorder on every platform) ---"
+            command -v ffmpeg || echo "ffmpeg: ABSENT"
+            echo "--- ffprobe (ships with ffmpeg) ---"
+            command -v ffprobe || echo "ffprobe: ABSENT"
+          } 2>&1 | tee "$LOG"
+          exit 0
+
+      - name: "Q1 evidence: install Rosetta if the probe failed (macOS)"
+        # Standing insurance, run before the arch policy is applied: if the
+        # policy later lands on the X64 dmg (auto with no arm64 asset
+        # published, or a forced x64), the download step re-checks this and
+        # retries the install, so the x64 path is covered either way.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/rosetta-install.txt"
+          {
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              echo "Rosetta already works — nothing to install."
+            else
+              # If the arm64 image ships without Rosetta, the x64 dmg leg
+              # is unanswerable until this runs. sudo is passwordless on
+              # the hosted runners.
+              echo "Rosetta absent — attempting: softwareupdate --install-rosetta"
+              sudo softwareupdate --install-rosetta --agree-to-license
+              echo "softwareupdate exit: $?"
+              if arch -x86_64 /usr/bin/true 2>&1; then
+                echo "ROSETTA after install: OK"
+                echo "SPIKE-Q1: rosetta-after-install=OK" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+              else
+                echo "ROSETTA after install: STILL FAILED"
+                echo "SPIKE-Q1: rosetta-after-install=FAILED" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+              fi
+            fi
+          } 2>&1 | tee "$LOG"
+          exit 0
+
+      - name: "Q3 evidence: dependency audit — check, then provision (macOS)"
+        # The image is assumed to carry nothing: every external tool this
+        # leg runs is probed, recorded as present-with-version or absent,
+        # provisioned when absent, and written as a row of the audit. A
+        # dependency that cannot be installed is a result to report, never
+        # a reason to skip the diagnostic. Installs are bounded, because a
+        # stalled network transfer would otherwise eat the job timeout.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/dependency-audit-macos.txt"
+          AUDIT="$EVIDENCE/dependency-audit.tsv"
+          PLATFORM="macOS/$RUNNER_ARCH"
+          INSTALL_BUDGET="${SPIKE_INSTALL_BUDGET:-900}"
+          HAVE_BREW=no
+          {
+            [ -s "$AUDIT" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AUDIT"
+            # ar <component> <role> <status> <version> <notes>
+            ar() {
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$PLATFORM" "$1" "$2" "$3" "$4" "$5" >>"$AUDIT"
+              echo "[audit] $1 | $3 | $4 | $5"
+            }
+            # have <component> <role> <cmd> <version-args...>
+            have() {
+              local comp="$1" role="$2" cmd="$3"
+              shift 3
+              if command -v "$cmd" >/dev/null 2>&1; then
+                local v
+                v="$("$cmd" "$@" 2>&1 | head -1)"
+                [ -n "$v" ] || v="<no version reported>"
+                ar "$comp" "$role" "PREINSTALLED" "$v" "$(command -v "$cmd")"
+              else
+                ar "$comp" "$role" "ABSENT" "<none>" "not on this image"
+              fi
+            }
+            # have_os <component> <role> <cmd> <note>: tools that ship with
+            # macOS and carry no version of their own.
+            have_os() {
+              if command -v "$3" >/dev/null 2>&1; then
+                ar "$1" "$2" "PREINSTALLED" \
+                  "tracks macOS $(sw_vers -productVersion 2>/dev/null)" \
+                  "$(command -v "$3")"
+              else
+                ar "$1" "$2" "ABSENT" "<none>" "$4"
+              fi
+            }
+            # bounded <seconds> <cmd...>: run it, kill it if it overruns
+            bounded() {
+              local limit="$1"
+              shift
+              "$@" &
+              local pid=$!
+              local end=$((SECONDS + limit))
+              while [ "$SECONDS" -lt "$end" ]; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                  wait "$pid"
+                  return $?
+                fi
+                sleep 2
+              done
+              echo "  ! '$*' exceeded ${limit}s — killing it"
+              kill -9 "$pid" 2>/dev/null
+              wait "$pid" 2>/dev/null
+              return 124
+            }
+            echo "=== the install path itself, before anything needs it ==="
+            if command -v brew >/dev/null 2>&1; then
+              HAVE_BREW=yes
+              have "brew" "the install path for anything this image lacks" brew --version
+            else
+              ar "brew" "the install path for anything this image lacks" \
+                "ABSENT" "<none>" "no Homebrew: nothing here can be provisioned from the network"
+            fi
+            echo
+            echo "=== external tools this leg runs ==="
+            have "bash" "the shell every macOS step runs in" bash --version
+            have "curl" "downloads the release asset" curl --version
+            have "sudo" "elevation for hdiutil/ditto (passwordless on runners)" sudo --version
+            have_os "arch" "the Rosetta probe (arch -x86_64)" arch \
+              "Rosetta cannot be verified or forced on this image"
+            have_os "softwareupdate" "installs Rosetta 2 when an x64 asset needs it" \
+              softwareupdate "an absent Rosetta cannot be provisioned at all"
+            echo "--- archive and image-mount tools ---"
+            # The port's fetch layer needs these per version; this leg uses
+            # hdiutil/ditto for the dmg and keeps unzip/tar in the ledger.
+            have_os "hdiutil" "mounts and detaches the dmg (image mount tool)" hdiutil \
+              "no dmg can be mounted: the install leg is unanswerable"
+            have_os "ditto" "copies the .app out of the mounted dmg" ditto \
+              "no bundle can be copied out of the dmg"
+            have "tar" "the archiver (tarballs)" tar --version
+            if command -v unzip >/dev/null 2>&1; then
+              have "unzip" "extracts .zip archives (the Linux fetch uses it for wheels)" unzip -v
+            elif [ "$HAVE_BREW" = yes ]; then
+              echo "unzip: ABSENT — provisioning it (brew install unzip)"
+              bounded "$INSTALL_BUDGET" brew install unzip
+              echo "brew install unzip exit: $?"
+              if command -v unzip >/dev/null 2>&1; then
+                ar "unzip" "extracts .zip archives (the Linux fetch uses it for wheels)" \
+                  "INSTALLED BY US" "$(unzip -v 2>&1 | head -1)" "brew install unzip -> $(command -v unzip)"
+              else
+                ar "unzip" "extracts .zip archives (the Linux fetch uses it for wheels)" \
+                  "ABSENT" "<none>" "brew install unzip produced no unzip"
+              fi
+            else
+              ar "unzip" "extracts .zip archives (the Linux fetch uses it for wheels)" \
+                "ABSENT" "<none>" "no install path: brew is not on the image"
+            fi
+            echo "--- tools the diagnostics read state through ---"
+            have_os "codesign" "reports the bundle signature (informational)" codesign \
+              "the signature report is unavailable"
+            have_os "xattr" "reports quarantine attributes on the copied bundle" xattr \
+              "the quarantine report is unavailable"
+            have_os "/usr/libexec/PlistBuddy" "reads CFBundleExecutable and framework versions" \
+              /usr/libexec/PlistBuddy "the launch step falls back to the conventional binary name"
+            have_os "pkgutil" "reads the Rosetta receipt" pkgutil "the receipt check is unavailable"
+            have_os "lsappinfo" "asks LaunchServices whether a GUI instance exists" lsappinfo \
+              "the GUI-instance check is unavailable"
+            have_os "pgrep" "process liveness" pgrep "liveness falls back to ps"
+            have_os "pkill" "teardown kill, as tools/ui_test.sh:190" pkill "teardown falls back to kill -9"
+            have_os "screencapture" "the platform-native still, kept beside the ffmpeg still" \
+              screencapture "no native still; the harness's ffmpeg still remains"
+            have_os "open" "the LaunchServices retry launch (open -n)" open \
+              "the retry launch is unavailable"
+            echo
+            echo "=== python (a native port drives an interpreter) ==="
+            PY3="$(command -v python3 2>/dev/null)"
+            if [ -z "$PY3" ]; then
+              echo "no python3 at all — provisioning one (brew install python3)"
+              if [ "$HAVE_BREW" = yes ]; then
+                bounded "$INSTALL_BUDGET" brew install python3
+                echo "brew install python3 exit: $?"
+              else
+                echo "brew: ABSENT too — there is no install path on this image"
+              fi
+              PY3="$(command -v python3 2>/dev/null)"
+              if [ -n "$PY3" ]; then
+                ar "python3" "the interpreter a native port drives" "INSTALLED BY US" \
+                  "$(python3 --version 2>&1)" "brew install python3 -> $PY3"
+              else
+                ar "python3" "the interpreter a native port drives" "ABSENT" "<none>" \
+                  "no python3 on the image and brew could not provide one"
+              fi
+            else
+              # setup-python puts its interpreter ahead of the image's on
+              # PATH, so the resolved path says who provided it.
+              case "$PY3" in
+                *hostedtoolcache*)
+                  ar "python3" "the interpreter a native port drives" "INSTALLED BY US" \
+                    "$(python3 --version 2>&1)" "actions/setup-python@v7 toolcache: $PY3"
+                  ;;
+                *)
+                  ar "python3" "the interpreter a native port drives" "PREINSTALLED" \
+                    "$(python3 --version 2>&1)" "$PY3"
+                  ;;
+              esac
+            fi
+            echo "python3 resolves to: ${PY3:-<none>}"
+            echo
+            echo "=== the capture toolchain (Q2 depends on these) ==="
+            FF_WAS_MISSING=no
+            if command -v ffmpeg >/dev/null 2>&1; then
+              ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+                "PREINSTALLED" "$(ffmpeg -version 2>&1 | head -1)" "$(command -v ffmpeg)"
+            else
+              FF_WAS_MISSING=yes
+              echo "ffmpeg: ABSENT — provisioning it (brew install ffmpeg)"
+              if [ "$HAVE_BREW" = yes ]; then
+                bounded "$INSTALL_BUDGET" brew install ffmpeg
+                echo "brew install ffmpeg exit: $?"
+              else
+                echo "brew: ABSENT too — there is no install path on this image"
+              fi
+              if command -v ffmpeg >/dev/null 2>&1; then
+                ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+                  "INSTALLED BY US" "$(ffmpeg -version 2>&1 | head -1)" \
+                  "brew install ffmpeg -> $(command -v ffmpeg)"
+              else
+                ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+                  "ABSENT" "<none>" "no ffmpeg and no install path: the video leg is a reported result"
+              fi
+            fi
+            if command -v ffprobe >/dev/null 2>&1; then
+              if [ "$FF_WAS_MISSING" = yes ]; then
+                ar "ffprobe" "reads the recorded container and codec back" "INSTALLED BY US" \
+                  "$(ffprobe -version 2>&1 | head -1)" "came with brew install ffmpeg"
+              else
+                ar "ffprobe" "reads the recorded container and codec back" "PREINSTALLED" \
+                  "$(ffprobe -version 2>&1 | head -1)" "$(command -v ffprobe)"
+              fi
+            else
+              ar "ffprobe" "reads the recorded container and codec back" "ABSENT" "<none>" \
+                "the container report falls back to file(1)"
+            fi
+            echo
+            echo "=== Rosetta 2 (the x64-on-arm64 dependency) ==="
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              if grep -q 'Rosetta absent' "$EVIDENCE/rosetta-install.txt" 2>/dev/null; then
+                ar "Rosetta 2" "executes an x64 Cura on an arm64 host" "INSTALLED BY US" \
+                  "softwareupdate --install-rosetta" \
+                  "probe arch -x86_64 /usr/bin/true = OK; see rosetta-install.txt"
+              else
+                ar "Rosetta 2" "executes an x64 Cura on an arm64 host" "PREINSTALLED" \
+                  "shipped with the image" "probe arch -x86_64 /usr/bin/true = OK"
+              fi
+            else
+              ar "Rosetta 2" "executes an x64 Cura on an arm64 host" "ABSENT" "<none>" \
+                "arch -x86_64 /usr/bin/true fails: an x64 build cannot run here (arm64 assets are unaffected)"
+            fi
+            echo
+            echo "--- rows so far ---"
+            cat "$AUDIT"
+          } 2>&1 | tee "$LOG"
+          exit 0
+
+      - name: "Q1 evidence: environment, session and desktop (Windows)"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          # The runner sets ErrorActionPreference=Stop for PowerShell
+          # steps, which would abort this report at the first probe the
+          # image lacks. The report is the deliverable: tolerate.
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'env-windows.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+
+          W "=== Windows environment ==="
+          W (Get-Date).ToUniversalTime().ToString('u')
+          W "--- OS ---"
+          W ([System.Environment]::OSVersion.VersionString)
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version, BuildNumber, OSArchitecture |
+            Format-List | Out-String | ForEach-Object { W $_ }
+          # systeminfo is the canonical dump but costs ~20 s per call on a
+          # runner; the WMI/CIM queries here are its equivalent, faster.
+          W "--- cpu ---"
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, AddressWidth, Architecture |
+            Format-List | Out-String | ForEach-Object { W $_ }
+          W "--- runner ---"
+          W "RUNNER_OS=$env:RUNNER_OS RUNNER_ARCH=$env:RUNNER_ARCH RUNNER_NAME=$env:RUNNER_NAME"
+          W "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          W "OSArchitecture=$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+          W "PSVersion=$($PSVersionTable.PSVersion)"
+          # An installer that needs elevation fails silently without it.
+          W "elevated: $(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          W "--- python ---"
+          # try/catch, not just ErrorActionPreference: a command that is
+          # missing outright must not truncate the report.
+          try { W ((& python --version 2>&1) -join ' ') } catch { W "python: NOT FOUND" }
+          W "--- curl.exe ---"
+          try { W ((& curl.exe --version 2>&1 | Select-Object -First 1) -join ' ') } catch { W "curl.exe: NOT FOUND" }
+          W "--- screen recorders (video capture depends on these) ---"
+          $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if ($ff) { W "ffmpeg: $($ff.Source)" } else { W "ffmpeg: ABSENT (choco install attempted later)" }
+          $choco = Get-Command choco -ErrorAction SilentlyContinue
+          if ($choco) { W "choco: $($choco.Source)" } else { W "choco: ABSENT" }
+          W "--- docker present? (the current harness needs it) ---"
+          $docker = Get-Command docker -ErrorAction SilentlyContinue
+          if ($docker) { W "docker: $($docker.Source)" } else { W "docker: ABSENT" }
+
+          W ""
+          W "=== Session / desktop (the Q2 question) ==="
+          W "--- interactive session? SessionId 0 is the services session ---"
+          W "my process SessionId: $((Get-Process -Id $PID).SessionId)"
+          W "SESSIONNAME=$env:SESSIONNAME"
+          W "--- desktop shell (explorer) running? ---"
+          $exp = Get-Process explorer -ErrorAction SilentlyContinue
+          if ($exp) {
+            W "explorer: RUNNING, SessionId $(($exp | Select-Object -First 1).SessionId)"
+          } else {
+            W "explorer: ABSENT (no interactive desktop shell)"
+          }
+          W "--- logged-on sessions ---"
+          try { W ((& query session 2>&1) -join "`n") } catch { W "query session: NOT FOUND" }
+          W "--- video adapter (a desktop needs one) ---"
+          Get-CimInstance Win32_VideoController |
+            Select-Object Name, DriverVersion |
+            Format-List | Out-String | ForEach-Object { W $_ }
+          W "--- screen bounds as Windows itself reports them ---"
+          try {
+            Add-Type -AssemblyName System.Windows.Forms
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            W "VirtualScreen: x=$($vs.X) y=$($vs.Y) w=$($vs.Width) h=$($vs.Height)"
+            W "SPIKE-Q2: desktop=$($vs.Width)x$($vs.Height)"
+          } catch {
+            W "SystemInformation failed: $($_.Exception.Message)"
+            W "SPIKE-Q2: desktop=UNAVAILABLE"
+          }
+          W "--- DISPLAY (how Linux does it; expected empty here) ---"
+          W "DISPLAY=$env:DISPLAY"
+          exit 0
+
+      - name: "Q3 evidence: dependency audit — check, then provision (Windows)"
+        # The same contract as the macOS audit: probe first, record
+        # present-with-version or absent, provision what the image lacks,
+        # one row per dependency. A dependency that cannot be installed is
+        # a result to report, never a reason to skip the diagnostic.
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'dependency-audit-windows.txt'
+          $audit = Join-Path $EVIDENCE 'dependency-audit.tsv'
+          $PLATFORM = "Windows/$env:RUNNER_ARCH"
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          if (-not (Test-Path $audit)) {
+            Add-Content -Path $audit -Value "platform`tcomponent`trole`tstatus`tversion`tnotes"
+          }
+          function AR($component, $role, $status, $version, $notes) {
+            Add-Content -Path $audit -Value ("$PLATFORM`t$component`t$role`t$status`t$version`t$notes")
+            W "[audit] $component | $status | $version | $notes"
+          }
+          function Ver($cmd) {
+            try {
+              $o = & $cmd --version 2>&1 | Select-Object -First 1
+              if ($o) { return ($o -join ' ').Trim() }
+            } catch {
+              return "<version probe failed: $($_.Exception.Message)>"
+            }
+            return '<no --version>'
+          }
+          function Have($component, $role, $cmd) {
+            $c = Get-Command $cmd -ErrorAction SilentlyContinue
+            if (-not $c) { AR $component $role 'ABSENT' '<none>' 'not on this image'; return $null }
+            AR $component $role 'PREINSTALLED' (Ver $cmd) $c.Source
+            return $c
+          }
+          # Tools that ship with Windows and carry no version of their own.
+          function HaveOS($component, $role, $cmd, $note) {
+            $c = Get-Command $cmd -ErrorAction SilentlyContinue
+            if (-not $c) { AR $component $role 'ABSENT' '<none>' $note; return $null }
+            AR $component $role 'PREINSTALLED' "tracks Windows $([System.Environment]::OSVersion.Version)" $c.Source
+            return $c
+          }
+          function Refresh-Path {
+            # choco writes the machine PATH for later steps, not this one
+            $env:Path = "$([System.Environment]::GetEnvironmentVariable('Path','Machine'));$([System.Environment]::GetEnvironmentVariable('Path','User'))"
+          }
+          function Install-WithChoco($component, $role, $cmd, $pkg) {
+            $c = Get-Command $cmd -ErrorAction SilentlyContinue
+            if ($c) { AR $component $role 'PREINSTALLED' (Ver $cmd) $c.Source; return $c }
+            W "$component : ABSENT - provisioning it (choco install $pkg)"
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              AR $component $role 'ABSENT' '<none>' 'no install path: choco is not on this image'
+              return $null
+            }
+            & choco install $pkg -y --no-progress 2>&1 | Select-Object -Last 6 | ForEach-Object { W $_ }
+            W "choco install $pkg exit: $LASTEXITCODE"
+            Refresh-Path
+            $c = Get-Command $cmd -ErrorAction SilentlyContinue
+            if ($c) {
+              AR $component $role 'INSTALLED BY US' (Ver $cmd) "choco install $pkg -> $($c.Source)"
+              return $c
+            }
+            AR $component $role 'ABSENT' '<none>' "choco install $pkg did not put $cmd on PATH (exit $LASTEXITCODE)"
+            return $null
+          }
+          # python needs a probe of its own: a WindowsApps alias stub answers
+          # Get-Command but no --version, and must not count as present.
+          function Provision-Python {
+            $c = Get-Command python -ErrorAction SilentlyContinue
+            $v = ''
+            if ($c) { $v = ((& python --version 2>&1) -join ' ').Trim() }
+            if ($c -and $v) {
+              if ($c.Source -like '*hostedtoolcache*') {
+                AR 'python' 'the interpreter a native port drives' 'INSTALLED BY US' $v "actions/setup-python@v7 toolcache: $($c.Source)"
+              } else {
+                AR 'python' 'the interpreter a native port drives' 'PREINSTALLED' $v $c.Source
+              }
+              return $c
+            }
+            if ($c) {
+              W "python at $($c.Source) answers no --version (a WindowsApps alias stub?) - provisioning a real one"
+            } else {
+              W "python: ABSENT - provisioning it (choco install python3)"
+            }
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              AR 'python' 'the interpreter a native port drives' 'ABSENT' '<none>' 'no install path: choco is not on this image'
+              return $null
+            }
+            & choco install python3 -y --no-progress 2>&1 | Select-Object -Last 6 | ForEach-Object { W $_ }
+            W "choco install python3 exit: $LASTEXITCODE"
+            Refresh-Path
+            $c = Get-Command python -ErrorAction SilentlyContinue
+            $v = ''
+            if ($c) { $v = ((& python --version 2>&1) -join ' ').Trim() }
+            if ($c -and $v) {
+              AR 'python' 'the interpreter a native port drives' 'INSTALLED BY US' $v "choco install python3 -> $($c.Source)"
+              return $c
+            }
+            AR 'python' 'the interpreter a native port drives' 'ABSENT' '<none>' "choco install python3 produced no working python (exit $LASTEXITCODE)"
+            return $null
+          }
+
+          W "=== the install path itself, before anything needs it ==="
+          $null = Have 'choco' 'the install path for anything this image lacks' choco
+          W ""
+          W "=== external tools this leg runs ==="
+          AR 'powershell' 'the shell every Windows step runs in' 'PREINSTALLED' ($PSVersionTable.PSVersion.ToString()) "$PSHOME\powershell.exe"
+          $null = Provision-Python
+          $null = Have 'curl.exe' 'downloads the release asset' curl.exe
+          $null = Have 'tar.exe' 'extracts zip/tar archives (libarchive bsdtar is the zip extractor here)' tar.exe
+          W "--- install/archive tools for the installer path ---"
+          $null = HaveOS 'msiexec.exe' 'installs the .msi fallback' msiexec.exe 'the MSI fallback path is unavailable on this image'
+          $null = HaveOS 'expand.exe' 'extracts .cab/.msi payloads (archiver)' expand.exe 'cab extraction is unavailable'
+          $null = HaveOS 'taskkill.exe' 'graceful teardown of the recorder, as ui_test.sh:190 does with pkill' taskkill.exe 'teardown falls back to Stop-Process -Force'
+          W "--- tools the diagnostics read state through ---"
+          $null = HaveOS 'query.exe' 'lists logon sessions (the desktop question)' query.exe 'the session listing is unavailable'
+          W ""
+          W "=== the capture toolchain (Q2 depends on these) ==="
+          $ffWasMissing = -not (Get-Command ffmpeg -ErrorAction SilentlyContinue)
+          $null = Install-WithChoco 'ffmpeg' 'the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still' ffmpeg ffmpeg
+          $fp = Get-Command ffprobe -ErrorAction SilentlyContinue
+          if (-not $fp) {
+            AR 'ffprobe' 'reads the recorded container and codec back' 'ABSENT' '<none>' 'the container report falls back to size and file type'
+          } elseif ($ffWasMissing) {
+            AR 'ffprobe' 'reads the recorded container and codec back' 'INSTALLED BY US' (Ver ffprobe) "came with choco install ffmpeg -> $($fp.Source)"
+          } else {
+            AR 'ffprobe' 'reads the recorded container and codec back' 'PREINSTALLED' (Ver ffprobe) $fp.Source
+          }
+          W ""
+          W "=== libraries the capture path loads ==="
+          foreach ($asm in @('System.Drawing', 'System.Windows.Forms')) {
+            try {
+              Add-Type -AssemblyName $asm
+              $a = [AppDomain]::CurrentDomain.GetAssemblies() |
+                Where-Object { $_.GetName().Name -eq $asm } | Select-Object -First 1
+              if ($a) {
+                AR $asm 'GDI still capture (CopyFromScreen / virtual-screen bounds)' 'PREINSTALLED' ($a.GetName().Version.ToString()) $a.Location
+              } else {
+                AR $asm 'GDI still capture (CopyFromScreen / virtual-screen bounds)' 'ABSENT' '<none>' 'loaded but not visible in the AppDomain'
+              }
+            } catch {
+              AR $asm 'GDI still capture (CopyFromScreen / virtual-screen bounds)' 'ABSENT' '<none>' "Add-Type failed: $($_.Exception.Message)"
+            }
+          }
+          $clr = if ($PSVersionTable.ContainsKey('CLRVersion')) { $PSVersionTable.CLRVersion.ToString() } else { [System.Environment]::Version.ToString() }
+          AR '.NET Framework' 'backs System.Drawing / System.Windows.Forms and Add-Type' 'PREINSTALLED' $clr "[System.Environment]::Version = $([System.Environment]::Version)"
+          foreach ($mod in @('CimCmdlets', 'Microsoft.PowerShell.Security')) {
+            $m = Get-Module -ListAvailable $mod | Sort-Object Version -Descending | Select-Object -First 1
+            if ($m) {
+              AR "$mod (PowerShell module)" 'CIM environment queries / Authenticode check on the installer' 'PREINSTALLED' ($m.Version.ToString()) $m.Path
+            } else {
+              AR "$mod (PowerShell module)" 'CIM environment queries / Authenticode check on the installer' 'ABSENT' '<none>' 'the corresponding diagnostic is unavailable'
+            }
+          }
+          W ""
+          W "--- rows so far ---"
+          Get-Content $audit | ForEach-Object { W $_ }
+          exit 0
+
+      - name: "Q1 evidence: download the pinned Cura (macOS)"
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Downloaded with curl, never a browser: no com.apple.quarantine
+          # xattr is applied, so Gatekeeper is not part of this test.
+          set +e
+          mkdir -p "$EVIDENCE"
+          VERSION="${CURA_VERSION:-5.13.0}"
+          REQUEST="${CURA_MACOS_ARCH:-auto}"
+          LOG="$EVIDENCE/download-macos.txt"
+          API="https://api.github.com/repos/Ultimaker/Cura/releases/tags/${VERSION}"
+          BASE="https://github.com/Ultimaker/Cura/releases/download/${VERSION}"
+          ASSETS="$EVIDENCE/cura-assets.txt"
+          DECISION="$EVIDENCE/macos-arch.txt"
+          case "$REQUEST" in
+            auto|arm64|x64) ;;
+            *) REQUEST=auto ;;
+          esac
+          {
+            echo "requested version : $VERSION"
+            echo "requested arch    : ${CURA_MACOS_ARCH:-auto} (auto | arm64 | x64)"
+            echo
+            echo "--- every asset the release actually publishes ---"
+            curl -sSL --fail --max-time 60 "$API" >"$EVIDENCE/cura-release.json"
+            if [ ! -s "$EVIDENCE/cura-release.json" ]; then
+              echo "release listing unavailable — the arch policy cannot be applied"
+              echo "SPIKE-Q1: download=FAILED (release listing unavailable)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 1
+            fi
+            grep -oE 'https://github\.com/Ultimaker/Cura/releases/download/[^"]*' \
+              "$EVIDENCE/cura-release.json" | sort | tee "$ASSETS"
+            echo
+            # The macOS arch policy, driven by the RUNTIME asset list of the
+            # requested version — never by a hardcoded per-version table.
+            # The sweep spans 5.7-5.13 and the published assets differ
+            # across it, so this rule is exactly what the eventual fetch
+            # layer needs per version: the spike is the seed of it, not a
+            # throwaway.
+            #   auto   prefer arm64 when published; else x64, which needs
+            #          Rosetta on an arm64 host to execute at all
+            #   arm64  force it; fail loudly when the version has none
+            #   x64    force it; fail loudly when the version has none
+            #          (forcing x64 on an arm64 host IS the Rosetta probe)
+            ARM64_ASSET="UltiMaker-Cura-${VERSION}-macos-ARM64.dmg"
+            X64_ASSET="UltiMaker-Cura-${VERSION}-macos-X64.dmg"
+            HAS_ARM64=no
+            HAS_X64=no
+            if grep -qF "$ARM64_ASSET" "$ASSETS"; then HAS_ARM64=yes; fi
+            if grep -qF "$X64_ASSET" "$ASSETS"; then HAS_X64=yes; fi
+            echo "arm64 dmg published: $HAS_ARM64"
+            echo "x64 dmg published  : $HAS_X64"
+            echo
+            ARCH_TAG=""
+            WHY=""
+            case "$REQUEST" in
+              arm64)
+                if [ "$HAS_ARM64" = yes ]; then
+                  ARCH_TAG=ARM64
+                  WHY="forced by the macos_arch input; the release publishes it"
+                fi
+                ;;
+              x64)
+                if [ "$HAS_X64" = yes ]; then
+                  ARCH_TAG=X64
+                  WHY="forced by the macos_arch input; the release publishes it"
+                fi
+                ;;
+              *)
+                if [ "$HAS_ARM64" = yes ]; then
+                  ARCH_TAG=ARM64
+                  WHY="auto: the release publishes an arm64 dmg"
+                elif [ "$HAS_X64" = yes ]; then
+                  ARCH_TAG=X64
+                  WHY="auto: no arm64 dmg published, falling back to x64"
+                fi
+                ;;
+            esac
+            if [ -z "$ARCH_TAG" ]; then
+              echo "SPIKE-Q1: macos-arch=FAILED (${REQUEST} is unpublished for ${VERSION} — see the list above)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 1
+            fi
+            echo "chosen: $ARCH_TAG — $WHY"
+            printf '%s\n' "$ARCH_TAG" >"$DECISION"
+            printf 'SPIKE-Q1: macos-arch=%s (%s)\n' "$ARCH_TAG" "$WHY" \
+              | tee -a "$EVIDENCE/verdict.txt"
+            # An x64 build on an arm64 host executes only through Rosetta,
+            # so say that outright, with the probe result backing it.
+            if [ "$ARCH_TAG" = X64 ]; then
+              HOST_ARCH="$(uname -m)"
+              echo "host arch: $HOST_ARCH"
+              if [ "$HOST_ARCH" = arm64 ]; then
+                if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+                  echo "Rosetta is not working — installing it: an x64 Cura cannot"
+                  echo "execute here without it"
+                  sudo softwareupdate --install-rosetta --agree-to-license
+                  echo "softwareupdate exit: $?"
+                fi
+                if arch -x86_64 /usr/bin/true 2>&1; then
+                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=OK — Rosetta is what makes this binary execute" \
+                    | tee -a "$EVIDENCE/verdict.txt"
+                else
+                  echo "SPIKE-Q1: rosetta-required=YES (x64 asset on an arm64 host), probe=FAILED — this binary cannot execute here" \
+                    | tee -a "$EVIDENCE/verdict.txt"
+                fi
+              else
+                echo "SPIKE-Q1: rosetta-required=NO (x64 asset on an x64 host, ${HOST_ARCH})" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+              fi
+            else
+              echo "SPIKE-Q1: rosetta-required=NO (native arm64 asset)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+            ASSET="UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
+            URL="${BASE}/${ASSET}"
+            echo
+            echo "--- download: $URL ---"
+            curl -L --fail --retry 3 --retry-delay 5 \
+              --connect-timeout 30 --max-time 900 \
+              -w "http_code=%{http_code} bytes=%{size_download}\n" \
+              -o "$EVIDENCE/$ASSET" "$URL"
+            rc=$?
+            echo "curl exit: $rc"
+            if [ "$rc" -ne 0 ]; then
+              echo "SPIKE-Q1: download=FAILED (curl exit $rc)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 1
+            fi
+            echo "--- what landed ---"
+            ls -l "$EVIDENCE/$ASSET"
+            du -h "$EVIDENCE/$ASSET"
+            file "$EVIDENCE/$ASSET"
+            echo "SPIKE-Q1: download=OK ($(du -h "$EVIDENCE/$ASSET" | cut -f1))" \
+              | tee -a "$EVIDENCE/verdict.txt"
+          } 2>&1 | tee "$LOG"
+          # The pipeline's status belongs to tee, so the verdict is
+          # re-derived from what the run actually recorded.
+          if grep -qE 'SPIKE-Q1: (download|macos-arch)=FAILED' \
+            "$EVIDENCE/verdict.txt" 2>/dev/null; then
+            exit 1
+          fi
+
+      - name: "Q1 evidence: download the pinned Cura (Windows)"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'download-windows.txt'
+          $verdict = Join-Path $EVIDENCE 'verdict.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          function V($m) { W $m; Add-Content -Path $verdict -Value $m }
+          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
+
+          $base = "https://github.com/Ultimaker/Cura/releases/download/$ver"
+          $exeName = "UltiMaker-Cura-$ver-win64-X64.exe"
+          $msiName = "UltiMaker-Cura-$ver-win64-X64.msi"
+          $exeUrl = "$base/$exeName"
+          W "requested version : $ver"
+          W "installer url     : $exeUrl"
+
+          W ""
+          W "--- every download URL the release actually publishes ---"
+          try {
+            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/Ultimaker/Cura/releases/tags/$ver" -TimeoutSec 60
+            W "release $($rel.tag_name): $($rel.assets.Count) assets"
+            foreach ($a in $rel.assets) {
+              W ("  {0}  {1:N1} MB" -f $a.name, ($a.size / 1MB))
+            }
+            $names = $rel.assets | ForEach-Object { $_.name }
+            W "pinned installer present: $($names -contains $exeName)"
+            W "msi fallback present    : $($names -contains $msiName)"
+          } catch {
+            W "release listing FAILED: $($_.Exception.Message)"
+          }
+
+          W ""
+          W "--- download ---"
+          $exePath = Join-Path $EVIDENCE $exeName
+          & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 -o "$exePath" "$exeUrl" 2>&1 |
+            ForEach-Object { W $_ }
+          $rc = $LASTEXITCODE
+          W "curl.exe exit: $rc"
+          if ($rc -ne 0) {
+            V "SPIKE-Q1: download=FAILED (curl exit $rc)"
+            exit 1
+          }
+          $f = Get-Item $exePath
+          W "landed: $($f.FullName)"
+          W ("size  : {0:N1} MB ({1} bytes)" -f ($f.Length / 1MB), $f.Length)
+          $sig = Get-AuthenticodeSignature $exePath
+          W "signature: $($sig.Status) / signer $($sig.SignerCertificate.Subject)"
+          V ("SPIKE-Q1: download=OK ({0:N1} MB)" -f ($f.Length / 1MB))
+          exit 0
+
+      - name: "Q1 evidence: silent install (macOS — mount the dmg, copy the .app)"
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          VERSION="${CURA_VERSION:-5.13.0}"
+          LOG="$EVIDENCE/install-macos.txt"
+          # The arch is the download step's decision (auto or forced, taken
+          # from the release's own asset list) — never re-derived here, so
+          # the two steps cannot disagree about which dmg is on disk.
+          ARCH_TAG="$(cat "$EVIDENCE/macos-arch.txt" 2>/dev/null)"
+          if [ -z "$ARCH_TAG" ]; then
+            echo "the download step recorded no arch decision — nothing to install"
+            echo "SPIKE-Q1: install=SKIPPED (no arch decision)" \
+              | tee -a "$EVIDENCE/verdict.txt"
+            exit 0
+          fi
+          DMG="$EVIDENCE/UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
+          MNT="$(pwd)/$EVIDENCE/mnt"
+          APP=/Applications/UltiMaker-Cura.app
+          {
+            echo "installing the ${ARCH_TAG} dmg the download step selected"
+            if [ ! -f "$DMG" ]; then
+              echo "no dmg downloaded — install cannot proceed"
+              echo "SPIKE-Q1: install=SKIPPED (no dmg)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 0
+            fi
+            echo "=== attaching $DMG ==="
+            mkdir -p "$MNT"
+            sudo hdiutil attach "$DMG" -nobrowse -mountpoint "$MNT"
+            echo "--- contents ---"
+            ls -la "$MNT"
+            APP_SRC="$(find "$MNT" -maxdepth 1 -name '*.app' -print -quit)"
+            echo "app bundle in the dmg: ${APP_SRC:-<none>}"
+            if [ -z "$APP_SRC" ]; then
+              echo "SPIKE-Q1: install=FAILED (no .app inside the dmg)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              sudo hdiutil detach "$MNT"
+              exit 1
+            fi
+            echo "=== copying the bundle out ==="
+            sudo rm -rf "$APP"
+            sudo ditto "$APP_SRC" "$APP"
+            echo "ditto exit: $?"
+            sudo hdiutil detach "$MNT"
+            echo "hdiutil detach exit: $?"
+            echo
+            echo "=== installed app ==="
+            du -sh "$APP"
+            ls -la "$APP/Contents/MacOS"
+            BIN_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+              "$APP/Contents/Info.plist" 2>/dev/null)"
+            if [ -z "$BIN_NAME" ]; then
+              BIN_NAME=UltiMaker-Cura
+            fi
+            BIN="$APP/Contents/MacOS/$BIN_NAME"
+            echo "launch candidate: $BIN"
+            # The arch of the shipped binary is the other half of the
+            # Rosetta question: it says whether this dmg really is Intel.
+            file "$BIN"
+            echo "--- signature (informational) ---"
+            codesign -dv --verbose=2 "$APP" 2>&1 | head -20
+            echo "--- quarantine xattr (empty = never quarantined) ---"
+            QX="$(xattr -l "$APP" 2>&1 | head -5)"
+            echo "${QX:-<none>}"
+            if [ -x "$BIN" ]; then
+              echo "SPIKE-Q1: install=OK ($BIN, $(du -sh "$APP" | cut -f1))" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q1: install=FAILED (no executable at $BIN)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 1
+            fi
+          } 2>&1 | tee "$LOG"
+          if grep -q 'SPIKE-Q1: install=FAILED' "$EVIDENCE/verdict.txt" 2>/dev/null; then
+            exit 1
+          fi
+
+      - name: "Q3 evidence: Cura's own bundled Python and Qt (macOS)"
+        # Anything that has to run INSIDE Cura's process must use the
+        # interpreter and Qt Cura ships, not the runner's. Where they live
+        # is searched for and reported, never assumed: the bundle is walked
+        # for interpreters, Qt frameworks and PyQt6 metadata, and the
+        # candidate interpreter is made to import PyQt6 so the answer is a
+        # result rather than a path guess.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          AUDIT="$EVIDENCE/dependency-audit.tsv"
+          LOG="$EVIDENCE/bundled-runtime-macos.txt"
+          PLATFORM="macOS/$RUNNER_ARCH"
+          APP=/Applications/UltiMaker-Cura.app
+          {
+            [ -s "$AUDIT" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AUDIT"
+            ar() {
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$PLATFORM" "$1" "$2" "$3" "$4" "$5" >>"$AUDIT"
+              echo "[audit] $1 | $3 | $4 | $5"
+            }
+            if [ ! -d "$APP" ]; then
+              echo "no bundle at $APP — its bundled runtime cannot be located"
+              ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
+                "ABSENT" "<none>" "no bundle to search: the install step reports why"
+              ar "Cura's bundled Qt/PyQt6" "the Qt Cura itself is linked against" \
+                "ABSENT" "<none>" "no bundle to search"
+              exit 0
+            fi
+            echo "=== interpreters inside the bundle (searched, not assumed) ==="
+            find "$APP" -type f -name 'python3*' -perm -u+x 2>/dev/null | head -20
+            find "$APP" -type d -name 'python3.*' 2>/dev/null | head -10
+            find "$APP" -type d -name 'Python.framework' 2>/dev/null | head -5
+            PY="$(find "$APP" -type f -name 'python3*' -perm -u+x 2>/dev/null | head -1)"
+            if [ -z "$PY" ]; then
+              ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
+                "ABSENT" "<none>" "no python3* executable found anywhere under $APP"
+            else
+              PYV="$("$PY" --version 2>&1 | head -1)"
+              echo "candidate interpreter: $PY ($PYV)"
+              echo "--- can it import PyQt6? (the binding the port injects through) ---"
+              if QT_IMPORT="$("$PY" -c 'import PyQt6.QtCore as c; print("PyQt6", c.PYQT_VERSION_STR, "Qt", c.QT_VERSION_STR)' 2>&1)"; then
+                echo "IMPORT OK: $QT_IMPORT"
+                ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
+                  "INSTALLED BY US" "$PYV" \
+                  "ships inside the dmg we installed: $PY; PyQt6 import OK: $QT_IMPORT"
+              else
+                echo "IMPORT FAILED (the exact error is the result):"
+                printf '%s\n' "$QT_IMPORT" | head -5
+                ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
+                  "INSTALLED BY US" "$PYV" \
+                  "ships inside the dmg we installed: $PY; PyQt6 import FAILED: $(printf '%s' "$QT_IMPORT" | head -1)"
+              fi
+            fi
+            echo
+            echo "=== Qt inside the bundle (versions read from what is there) ==="
+            find "$APP" -maxdepth 8 -name 'Qt*.framework' -print 2>/dev/null | head -20
+            QTC="$(find "$APP" -maxdepth 8 -name 'QtCore.framework' -print -quit 2>/dev/null)"
+            if [ -z "$QTC" ]; then
+              ar "Cura's bundled Qt" "the Qt Cura itself is linked against" "ABSENT" "<none>" \
+                "no QtCore.framework anywhere under $APP (searched to depth 8)"
+            else
+              # A framework keeps its Info.plist in one of two places; both
+              # are tried rather than one being assumed.
+              QV=""
+              for plist in "$QTC/Resources/Info.plist" "$QTC/Versions/A/Resources/Info.plist"; do
+                if [ -f "$plist" ]; then
+                  QV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null)"
+                  [ -n "$QV" ] && break
+                fi
+              done
+              ar "Cura's bundled Qt" "the Qt Cura itself is linked against" "INSTALLED BY US" \
+                "${QV:-<version not readable>}" "QtCore.framework at $QTC"
+            fi
+            echo "--- PyQt6 inside the bundle ---"
+            find "$APP" -maxdepth 8 -type d -name 'PyQt6*' -print 2>/dev/null | head -10
+            DI="$(find "$APP" -maxdepth 8 -type d -name 'PyQt6-*.dist-info' -print -quit 2>/dev/null)"
+            if [ -n "$DI" ] && [ -f "$DI/METADATA" ]; then
+              PV="$(grep -m1 '^Version:' "$DI/METADATA" | cut -d' ' -f2)"
+              ar "Cura's bundled PyQt6" "the binding the port injects through" "INSTALLED BY US" \
+                "${PV:-<not readable>}" "$DI"
+            elif [ -n "$DI" ]; then
+              ar "Cura's bundled PyQt6" "the binding the port injects through" "INSTALLED BY US" \
+                "<not readable>" "$DI has no METADATA"
+            else
+              ar "Cura's bundled PyQt6" "the binding the port injects through" "ABSENT" "<none>" \
+                "no PyQt6-*.dist-info anywhere under $APP"
+            fi
+            echo
+            echo "--- rows so far ---"
+            cat "$AUDIT"
+          } 2>&1 | tee "$LOG"
+          exit 0
+
+      - name: "Q1 evidence: silent install (Windows — NSIS /S, MSI fallback)"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'install-windows.txt'
+          $verdict = Join-Path $EVIDENCE 'verdict.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          function V($m) { W $m; Add-Content -Path $verdict -Value $m }
+          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
+          $exe = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.exe"
+
+          # The installer's own registry records are the authoritative
+          # answer to "where did it land"; the filesystem sweep backs up
+          # an installer that writes neither.
+          function Find-Cura {
+            # Loops collect their output rather than appending with +=,
+            # which keeps the accumulating out of any inner-scope question.
+            $registryHits = foreach ($k in @(
+              'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+            )) {
+              Get-ItemProperty -Path $k -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -like '*Cura*' } |
+                ForEach-Object { "registry: $($_.DisplayName) v$($_.DisplayVersion) -> $($_.InstallLocation)" }
+            }
+            $fileHits = foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+              if (-not $root) { continue }
+              Get-ChildItem -Path $root -Filter 'UltiMaker-Cura.exe' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName }
+            }
+            return @($registryHits) + @($fileHits)
+          }
+
+          if (-not (Test-Path $exe)) {
+            W "no installer downloaded — install cannot proceed"
+            V "SPIKE-Q1: install=SKIPPED (no installer)"
+            exit 0
+          }
+
+          W "=== NSIS silent install: $exe /S ==="
+          $p = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
+          W "installer exit code: $($p.ExitCode)"
+          Start-Sleep -Seconds 10
+
+          W "=== where did it land (after /S) ==="
+          $hits = Find-Cura
+          $hits | ForEach-Object { W $_ }
+          $binary = $hits | Where-Object { $_ -like '*UltiMaker-Cura.exe' } | Select-Object -First 1
+
+          if (-not $binary) {
+            # /S is the documented NSIS silent switch, but Cura's script
+            # may not honour it; the release also publishes an MSI, whose
+            # /qn is unambiguous. The second 170 MB buys a real answer.
+            W ""
+            W "=== no binary from /S — trying the MSI with msiexec /qn ==="
+            $msi = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.msi"
+            $msiUrl = "https://github.com/Ultimaker/Cura/releases/download/$ver/UltiMaker-Cura-$ver-win64-X64.msi"
+            & curl.exe -L --fail --retry 3 --connect-timeout 30 --max-time 900 -o "$msi" "$msiUrl" 2>&1 |
+              ForEach-Object { W $_ }
+            W "curl.exe exit: $LASTEXITCODE"
+            if ($LASTEXITCODE -eq 0) {
+              $msiLog = Join-Path $EVIDENCE 'msi-install.log'
+              $msiProc = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+                '/i', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$msiLog`"")
+              W "msiexec exit code: $($msiProc.ExitCode)"
+              Start-Sleep -Seconds 10
+              W "=== where did it land (after msiexec) ==="
+              $hits = Find-Cura
+              $hits | ForEach-Object { W $_ }
+              $binary = $hits | Where-Object { $_ -like '*UltiMaker-Cura.exe' } | Select-Object -First 1
+            }
+          }
+
+          if ($binary) {
+            W ""
+            W "=== installed binary ==="
+            W "path: $binary"
+            $vi = (Get-Item $binary).VersionInfo
+            W "version: $($vi.FileVersion) / $($vi.ProductName)"
+            # The launch step reads this rather than repeating a slow
+            # disk sweep, and it is the path this step verified.
+            $binary | Set-Content -Path (Join-Path $EVIDENCE 'binary-path.txt')
+            V "SPIKE-Q1: install=OK ($binary)"
+          } else {
+            V "SPIKE-Q1: install=FAILED (no UltiMaker-Cura.exe after /S and /qn)"
+            exit 1
+          }
+          exit 0
+
+      - name: "Q3 evidence: Cura's own bundled Python and Qt (Windows)"
+        # Same contract as the macOS audit: locate, never assume. Cura's
+        # Windows build embeds its interpreter differently from the .app,
+        # so what is reported here is whatever the install dir actually
+        # contains — python*.exe, a python3*.dll, Qt6Core*.dll and any
+        # PyQt6 metadata — and the interpreter is made to import PyQt6 so
+        # the finding is a result, not a guess.
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'bundled-runtime-windows.txt'
+          $audit = Join-Path $EVIDENCE 'dependency-audit.tsv'
+          $PLATFORM = "Windows/$env:RUNNER_ARCH"
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          if (-not (Test-Path $audit)) {
+            Add-Content -Path $audit -Value "platform`tcomponent`trole`tstatus`tversion`tnotes"
+          }
+          function AR($component, $role, $status, $version, $notes) {
+            Add-Content -Path $audit -Value ("$PLATFORM`t$component`t$role`t$status`t$version`t$notes")
+            W "[audit] $component | $status | $version | $notes"
+          }
+          $role = "runs anything inside Cura's process (the port injects through it)"
+
+          $pathFile = Join-Path $EVIDENCE 'binary-path.txt'
+          $binary = if (Test-Path $pathFile) { Get-Content $pathFile -First 1 } else { $null }
+          if (-not $binary -or -not (Test-Path $binary)) {
+            W "no installed binary on record - the bundled runtime cannot be located"
+            AR "Cura's bundled Python" $role 'ABSENT' '<none>' 'nothing installed to search'
+            AR "Cura's bundled Qt/PyQt6" 'the Qt Cura itself is linked against' 'ABSENT' '<none>' 'nothing installed to search'
+            exit 0
+          }
+          $dir = Split-Path -Parent $binary
+          W "install dir: $dir"
+
+          W ""
+          W "=== interpreters inside the install dir (searched, not assumed) ==="
+          $pyExes = Get-ChildItem -Path $dir -Recurse -Depth 5 -File -Filter 'python*.exe' -ErrorAction SilentlyContinue
+          if ($pyExes) {
+            $pyExes | ForEach-Object { W ("  {0}  v{1}" -f $_.FullName, $_.VersionInfo.FileVersion) }
+          } else {
+            W "  no python*.exe under the install dir"
+          }
+          $pyDlls = Get-ChildItem -Path $dir -Recurse -Depth 5 -File -Filter 'python3*.dll' -ErrorAction SilentlyContinue
+          if ($pyDlls) {
+            $pyDlls | ForEach-Object { W ("  dll: {0}  v{1}" -f $_.FullName, $_.VersionInfo.FileVersion) }
+          }
+          $py = $pyExes | Select-Object -First 1
+          if (-not $py) {
+            $note = if ($pyDlls) {
+              "the build embeds its interpreter as python3*.dll rather than shipping python.exe (searched $dir, depth 5)"
+            } else {
+              "no python executable and no python3*.dll under the install dir (searched $dir, depth 5)"
+            }
+            AR "Cura's bundled Python" $role 'ABSENT' '<none>' $note
+          } else {
+            # run inside a bounded process so a launcher that waits forever
+            # cannot consume the job timeout
+            $out = Join-Path $EVIDENCE 'bundled-python-probe.out.txt'
+            $err = Join-Path $EVIDENCE 'bundled-python-probe.err.txt'
+            $code = "import sys`nprint('python', sys.version.split()[0])`ntry:`n    import PyQt6.QtCore as c`n    print('PyQt6', c.PYQT_VERSION_STR, 'Qt', c.QT_VERSION_STR)`nexcept Exception as e:`n    print('import FAILED:', type(e).__name__, e)"
+            $proc = $null
+            try {
+              $proc = Start-Process -FilePath $py.FullName -ArgumentList @('-c', "`"$code`"") -PassThru -NoNewWindow -RedirectStandardOutput $out -RedirectStandardError $err
+              $proc | Wait-Process -Timeout 60 -ErrorAction Stop
+            } catch {
+              W "the bundled interpreter did not finish within 60 s - killing it"
+              if ($proc) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            }
+            $probeOut = if (Test-Path $out) { Get-Content $out -Raw } else { '' }
+            if ($probeOut) { $probeOut -split "`r?`n" | Where-Object { $_ } | ForEach-Object { W "  $_" } }
+            $probeErr = if (Test-Path $err) { Get-Content $err -Raw } else { '' }
+            if ($probeErr) { W "  stderr: $($probeErr.Trim())" }
+            $pyVersion = "$($py.VersionInfo.FileVersion)"
+            if (-not $pyVersion) {
+              $pyVersion = ($probeOut -split "`r?`n" | Where-Object { $_ -like 'python *' } | Select-Object -First 1)
+            }
+            if (-not $pyVersion) { $pyVersion = '<not readable>' }
+            $probeOne = (($probeOut -replace "`r?`n", '; ').Trim())
+            AR "Cura's bundled Python" $role 'INSTALLED BY US' $pyVersion "ships inside the installed app: $($py.FullName); probe: $probeOne"
+          }
+
+          W ""
+          W "=== Qt / PyQt6 inside the install dir (versions read from what is there) ==="
+          $qtDlls = Get-ChildItem -Path $dir -Recurse -Depth 5 -File -Filter 'Qt6Core*.dll' -ErrorAction SilentlyContinue
+          if ($qtDlls) {
+            $qtDlls | ForEach-Object { W ("  {0}  v{1}" -f $_.FullName, $_.VersionInfo.FileVersion) }
+            $qtMain = $qtDlls | Select-Object -First 1
+            AR "Cura's bundled Qt" 'the Qt Cura itself is linked against' 'INSTALLED BY US' "$($qtMain.VersionInfo.FileVersion)" "ships inside the installed app: $($qtMain.FullName)"
+          } else {
+            AR "Cura's bundled Qt" 'the Qt Cura itself is linked against' 'ABSENT' '<none>' "no Qt6Core*.dll under the install dir (searched $dir, depth 5)"
+          }
+          $pyqtDirs = Get-ChildItem -Path $dir -Recurse -Depth 5 -Directory -Filter 'PyQt6*' -ErrorAction SilentlyContinue
+          if ($pyqtDirs) { $pyqtDirs | ForEach-Object { W "  dir: $($_.FullName)" } }
+          $distInfo = $pyqtDirs | Where-Object { $_.Name -like 'PyQt6-*.dist-info' } | Select-Object -First 1
+          if ($distInfo) {
+            $meta = Join-Path $distInfo.FullName 'METADATA'
+            $verLine = if (Test-Path $meta) { (Select-String -Path $meta -Pattern '^Version:' | Select-Object -First 1).Line } else { $null }
+            if ($verLine) {
+              $pv = ($verLine -split ':', 2)[1]
+              AR "Cura's bundled PyQt6" 'the binding the port injects through' 'INSTALLED BY US' ($pv.Trim()) $distInfo.FullName
+            } else {
+              AR "Cura's bundled PyQt6" 'the binding the port injects through' 'INSTALLED BY US' '<not readable>' "$($distInfo.FullName) has no readable METADATA"
+            }
+          } else {
+            AR "Cura's bundled PyQt6" 'the binding the port injects through' 'ABSENT' '<none>' "no PyQt6-*.dist-info under the install dir"
+          }
+          W ""
+          W "--- rows so far ---"
+          Get-Content $audit | ForEach-Object { W $_ }
+          exit 0
+
+      - name: "Q2 evidence: launch Cura and capture the screen (macOS)"
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          LOG="$EVIDENCE/launch-macos.txt"
+          APP=/Applications/UltiMaker-Cura.app
+          BIN_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+            "$APP/Contents/Info.plist" 2>/dev/null)"
+          if [ -z "$BIN_NAME" ]; then
+            BIN_NAME=UltiMaker-Cura
+          fi
+          BIN="$APP/Contents/MacOS/$BIN_NAME"
+          SHOT="$EVIDENCE/cura-desktop.png"
+          VIDEO="$EVIDENCE/scenario.mp4"
+          FFSTILL="$EVIDENCE/ffmpeg-still.png"
+          # The harness's own geometry (runner.py SIZE / HARNESS_GEOMETRY):
+          # the same value is what keeps the native artifacts comparable.
+          VIDEO_SIZE="${HARNESS_GEOMETRY:-1920x1080}"
+          WAIT_SECS=35
+          FFMPEG="$(command -v ffmpeg)"
+          SCREEN_INDEX=""
+          {
+            if [ ! -x "$BIN" ]; then
+              echo "Cura is not installed — launch not attempted (see the install step)"
+              echo "SPIKE-Q1: launch=NOT-ATTEMPTED (no install)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              exit 0
+            fi
+            # The recorder is ffmpeg on every platform, matching
+            # tests/harness/runner.py:247-250 exactly — same flags, same
+            # framerate, same scenario.mp4 naming, started with the app,
+            # killed at teardown — so the native artifacts stay
+            # comparable with the Linux runs. Only the INPUT DEVICE
+            # differs: x11grab on Linux, gdigrab on Windows,
+            # avfoundation here.
+            if [ -z "$FFMPEG" ]; then
+              echo "ffmpeg: ABSENT — attempting brew install (the images"
+              echo "usually ship it; the Windows leg does the same via choco)"
+              if command -v brew >/dev/null; then
+                HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg
+                echo "brew exit: $?"
+                FFMPEG="$(command -v ffmpeg)"
+                if [ -n "$FFMPEG" ]; then
+                  # recorded here too, so the audit table can never
+                  # under-report who provisioned what
+                  AU="$EVIDENCE/dependency-audit.tsv"
+                  [ -s "$AU" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AU"
+                  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "macOS/$RUNNER_ARCH" "ffmpeg" \
+                    "the video recorder (runner.py:247-250)" "INSTALLED BY US" \
+                    "$(ffmpeg -version 2>&1 | head -1)" \
+                    "installed by the launch step: the audit step did not provision it" >>"$AU"
+                fi
+              else
+                echo "brew: ABSENT too — no encoder path on this image"
+              fi
+            fi
+            if [ -z "$FFMPEG" ]; then
+              echo "SPIKE-Q2: video=FAILED (no ffmpeg on the macOS runner)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "ffmpeg: $FFMPEG"
+              echo "=== avfoundation device probe (which index is the screen?) ==="
+              ffmpeg -f avfoundation -list_devices true -i "" \
+                >"$EVIDENCE/avfoundation-devices.txt" 2>&1
+              cat "$EVIDENCE/avfoundation-devices.txt"
+              # The index is taken from what the probe reported, not
+              # assumed — avfoundation ordering is not guaranteed.
+              SCREEN_INDEX="$(sed -n \
+                's/.*\[\([0-9][0-9]*\)\] Capture screen.*/\1/p' \
+                "$EVIDENCE/avfoundation-devices.txt" | head -1)"
+              if [ -z "$SCREEN_INDEX" ]; then
+                echo "no 'Capture screen' device in the probe output —"
+                echo "falling back to index 1, the conventional screen device"
+                SCREEN_INDEX=1
+              fi
+              echo "screen device index: $SCREEN_INDEX"
+              echo "--- displays as macOS reports them (context for -video_size) ---"
+              system_profiler SPDisplaysDataType 2>&1 | grep -i 'resolution' | head -3
+              echo "--- recorder argv ---"
+              echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none $VIDEO"
+              ffmpeg -y -loglevel error -f avfoundation \
+                -video_size "$VIDEO_SIZE" -framerate 15 \
+                -i "${SCREEN_INDEX}:none" "$VIDEO" \
+                >"$EVIDENCE/recorder.log" 2>&1 &
+              REC_PID=$!
+              echo "recorder pid: $REC_PID (started BEFORE the launch)"
+              sleep 2
+            fi
+            echo "=== launching $BIN (direct exec: its own output is evidence) ==="
+            ( cd "$APP/Contents/MacOS" && exec "$BIN" ) \
+              >"$EVIDENCE/cura-launch.log" 2>&1 &
+            CURA_PID=$!
+            echo "pid: $CURA_PID"
+            DEADLINE=$((SECONDS + WAIT_SECS))
+            ALIVE=yes
+            while [ "$SECONDS" -lt "$DEADLINE" ]; do
+              # kill -0 succeeds on a zombie, so the state is what counts.
+              PS_STATE="$(ps -p "$CURA_PID" -o stat= 2>/dev/null | tr -d ' \n')"
+              if [ -z "$PS_STATE" ] || [ "${PS_STATE#Z}" != "$PS_STATE" ]; then
+                ALIVE=no
+                break
+              fi
+              sleep 5
+            done
+            echo "after the wait: alive=$ALIVE (waited $SECONDS s of $WAIT_SECS)"
+            if [ "$ALIVE" = no ]; then
+              wait "$CURA_PID"
+              echo "Cura exit status: $?"
+              echo "--- the process is gone; its own output ---"
+              tail -40 "$EVIDENCE/cura-launch.log"
+              echo "=== retrying through LaunchServices (open -n) ==="
+              open -n "$APP"
+              echo "open exit: $?"
+              sleep 10
+            fi
+            echo "--- does a GUI app instance exist? (LaunchServices) ---"
+            LSAPP="$(lsappinfo list 2>&1 | grep -i -A2 cura | head -20)"
+            echo "${LSAPP:-lsappinfo: no Cura entry}"
+            if pgrep -f 'UltiMaker-Cur[a]' >/dev/null; then
+              echo "process: STILL RUNNING"
+            else
+              echo "process: NOT RUNNING"
+            fi
+            echo
+            echo "=== still capture (inside the recording window) ==="
+            screencapture -x "$SHOT"
+            echo "screencapture exit: $?"
+            if [ -f "$SHOT" ]; then
+              ls -l "$SHOT"
+              file "$SHOT"
+              echo "note: a solid/empty frame compresses to a few KB, a real"
+              echo "      desktop to hundreds — the size IS the signal"
+            fi
+            echo
+            echo "=== stopping the recorder (harness teardown kills ffmpeg) ==="
+            if [ -n "${REC_PID:-}" ] && kill -0 "$REC_PID" 2>/dev/null; then
+              # SIGINT is what lets ffmpeg finalise the mp4 index; the
+              # harness's pkill -9 sweep below is the backstop.
+              kill -INT "$REC_PID" 2>/dev/null
+              sleep 3
+              if kill -0 "$REC_PID" 2>/dev/null; then
+                echo "still running after SIGINT — SIGKILL, as ui_test.sh does"
+                kill -9 "$REC_PID" 2>/dev/null
+                sleep 2
+              fi
+              wait "$REC_PID" 2>/dev/null
+              echo "recorder exit status: $?"
+            else
+              echo "no recorder process to stop"
+            fi
+            pkill -9 -f 'ffmpe[g]' 2>/dev/null
+            echo "teardown sweep (pkill -9 -f ffmpe[g], as ui_test.sh) done"
+            echo "--- recorder output ---"
+            tail -20 "$EVIDENCE/recorder.log" 2>/dev/null
+            echo "--- the recording ---"
+            if [ -s "$VIDEO" ]; then
+              ls -l "$VIDEO"
+              du -h "$VIDEO"
+              file "$VIDEO"
+              echo "--- container/codec (ffmpeg -i exits non-zero here: expected) ---"
+              ffmpeg -hide_banner -i "$VIDEO" 2>&1 | head -12
+              echo "SPIKE-Q2: video=OK ($(du -h "$VIDEO" | cut -f1) mp4, avfoundation)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q2: video=FAILED (ffmpeg wrote no scenario.mp4 — see recorder.log and the device probe above)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+            echo
+            echo "=== the harness's own still form: ffmpeg -frames:v 1 ==="
+            # runner.py:96-104 captures stills through ffmpeg as well, so
+            # one here reports whether the harness's capture path itself
+            # works natively on this runner.
+            if [ -n "$FFMPEG" ]; then
+              ffmpeg -y -loglevel error -f avfoundation -video_size "$VIDEO_SIZE" \
+                -i "${SCREEN_INDEX}:none" -frames:v 1 "$FFSTILL"
+              echo "ffmpeg still exit: $?"
+              if [ -s "$FFSTILL" ]; then
+                ls -l "$FFSTILL"
+                file "$FFSTILL"
+                echo "SPIKE-Q2: ffmpeg-still=OK ($(du -h "$FFSTILL" | cut -f1), asked for $VIDEO_SIZE)" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+              else
+                echo "SPIKE-Q2: ffmpeg-still=FAILED (no PNG written)" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+              fi
+            fi
+            echo
+            echo "--- launch log (tail) ---"
+            tail -40 "$EVIDENCE/cura-launch.log" 2>/dev/null
+            echo
+            echo "--- cleaning up ---"
+            pkill -f 'UltiMaker-Cur[a]'
+            echo "pkill exit: $?"
+            sleep 2
+            if [ -s "$SHOT" ]; then
+              echo "SPIKE-Q2: screenshot=OK ($(du -h "$SHOT" | cut -f1))" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q2: screenshot=FAILED (no PNG written)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+            if [ "$ALIVE" = no ]; then
+              echo "SPIKE-Q1: launch=FAILED (process exited within ${WAIT_SECS} s)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            else
+              echo "SPIKE-Q1: launch=OK (still running after the wait)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+            fi
+          } 2>&1 | tee "$LOG"
+          exit 0
+
+      - name: "Q2 evidence: launch Cura and capture the screen (Windows)"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $log = Join-Path $EVIDENCE 'launch-windows.txt'
+          $verdict = Join-Path $EVIDENCE 'verdict.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          function V($m) { W $m; Add-Content -Path $verdict -Value $m }
+
+          $pathFile = Join-Path $EVIDENCE 'binary-path.txt'
+          $binary = if (Test-Path $pathFile) { Get-Content $pathFile -First 1 } else { $null }
+          if (-not $binary -or -not (Test-Path $binary)) {
+            $binary = Get-ChildItem -Path @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) `
+                -Filter 'UltiMaker-Cura.exe' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $binary) {
+            W "Cura is not installed — launch not attempted (see the install step)"
+            V "SPIKE-Q1: launch=NOT-ATTEMPTED (no install)"
+            exit 0
+          }
+          # The recorder is ffmpeg on every platform, matching
+          # tests/harness/runner.py:247-250 exactly — same flags, same
+          # framerate, same scenario.mp4 naming, started with the app and
+          # killed at teardown — so the native artifacts stay comparable
+          # with the Linux runs. Only the INPUT DEVICE differs: x11grab on
+          # Linux, gdigrab here, avfoundation on macOS. It starts BEFORE
+          # the launch so the recording spans launch and first paint.
+          $video = Join-Path $EVIDENCE 'scenario.mp4'
+          $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if (-not $ff) {
+            W "ffmpeg absent — attempting choco install (the runner ships none)"
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+              & choco install ffmpeg -y --no-progress 2>&1 |
+                Select-Object -Last 8 | ForEach-Object { W $_ }
+              W "choco exit: $LASTEXITCODE"
+              $env:Path = "$([System.Environment]::GetEnvironmentVariable('Path','Machine'));$([System.Environment]::GetEnvironmentVariable('Path','User'))"
+            } else {
+              W "choco absent too — this image has no encoder path"
+            }
+            $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+            if ($ff) {
+              # recorded here too, so the audit table can never
+              # under-report who provisioned what
+              $au = Join-Path $EVIDENCE 'dependency-audit.tsv'
+              if (-not (Test-Path $au)) {
+                Add-Content -Path $au -Value "platform`tcomponent`trole`tstatus`tversion`tnotes"
+              }
+              Add-Content -Path $au -Value ("Windows/$env:RUNNER_ARCH`tffmpeg`tthe video recorder (runner.py:247-250)`tINSTALLED BY US`t$((& $ff.Source --version 2>&1 | Select-Object -First 1))`tinstalled by the launch step: the audit step did not provision it")
+            }
+          }
+          $rec = $null
+          if ($ff) {
+            W "ffmpeg: $($ff.Source)"
+            # gdigrab takes no -video_size: it captures the whole desktop.
+            $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
+                        '-framerate', '15', '-i', 'desktop', "`"$video`"")
+            W "recorder argv: ffmpeg $($ffArgs -join ' ')"
+            $rec = Start-Process -FilePath $ff.Source -PassThru -ArgumentList $ffArgs
+            W "recorder pid: $($rec.Id) (started BEFORE the launch)"
+            Start-Sleep -Seconds 3
+          } else {
+            W "no recorder available — the video leg cannot run on this image"
+          }
+
+          W "=== launching $binary ==="
+          $p = Start-Process -FilePath $binary -PassThru
+          W "pid: $($p.Id)"
+
+          # Bounded wait, polled: an early crash is reported at once
+          # rather than after the full window. Shorter than the recording,
+          # so the capture covers the whole boot.
+          $WAIT_SECS = 35
+          $deadline = (Get-Date).AddSeconds($WAIT_SECS)
+          $died = $false
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 5
+            $p.Refresh()
+            if ($p.HasExited) { $died = $true; break }
+          }
+          if ($died) {
+            W "process exited early with code $($p.ExitCode)"
+          } else {
+            $p.Refresh()
+            W "process alive after the wait: Responding=$($p.Responding)"
+            W "MainWindowTitle='$($p.MainWindowTitle)'  <- non-empty means a real window"
+            W "MainWindowHandle=$($p.MainWindowHandle)"
+          }
+
+          W ""
+          W "=== screen geometry ==="
+          $vs = $null
+          try {
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            W "VirtualScreen: x=$($vs.X) y=$($vs.Y) w=$($vs.Width) h=$($vs.Height)"
+          } catch {
+            W "SystemInformation FAILED: $($_.Exception.Message)"
+          }
+          # GDI screen capture: if it cannot see a desktop, no still can
+          # be taken this way.
+          function Grab-Frame($path) {
+            if (-not $vs) { return $false }
+            try {
+              $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+              $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+              $gfx.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size)
+              $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+              $gfx.Dispose(); $bmp.Dispose()
+              return ((Get-Item $path).Length -gt 0)
+            } catch {
+              W "frame capture failed: $($_.Exception.Message)"
+              return $false
+            }
+          }
+
+          W ""
+          W "=== still capture (System.Drawing CopyFromScreen) ==="
+          $shot = Join-Path $EVIDENCE 'cura-desktop.png'
+          if (Grab-Frame $shot) {
+            $len = (Get-Item $shot).Length
+            W ("wrote {0}: {1:N1} KB" -f $shot, ($len / 1KB))
+            W "note: a solid/empty frame compresses to a few KB, a real"
+            W "      desktop to hundreds — the size IS the signal"
+            V ("SPIKE-Q2: screenshot=OK ({0:N1} KB)" -f ($len / 1KB))
+          } else {
+            W "still capture wrote nothing"
+            V "SPIKE-Q2: screenshot=FAILED (no PNG written)"
+          }
+
+          W ""
+          W "=== stopping the recorder (harness teardown kills ffmpeg) ==="
+          if ($rec) {
+            if (-not $rec.HasExited) {
+              # Ask politely first so ffmpeg can finalise the mp4 index;
+              # the harness's pkill -9 is the forced path below.
+              W "taskkill /PID $($rec.Id)"
+              & taskkill.exe /PID $rec.Id 2>&1 | ForEach-Object { W $_ }
+              Start-Sleep -Seconds 3
+              $rec.Refresh()
+              if (-not $rec.HasExited) {
+                W "still running — force, as ui_test.sh's pkill -9 does"
+                Stop-Process -Id $rec.Id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+              }
+            }
+            $rec.Refresh()
+            if ($rec.HasExited) { W "recorder exit code: $($rec.ExitCode)" }
+          }
+          Get-Process ffmpeg -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          W "teardown sweep (all ffmpeg processes, as ui_test.sh) done"
+          W ""
+          W "--- the recording ---"
+          if ((Test-Path $video) -and (Get-Item $video).Length -gt 0) {
+            $vlen = (Get-Item $video).Length
+            W ("wrote {0}: {1:N1} KB / {2:N1} MB" -f $video, ($vlen / 1KB), ($vlen / 1MB))
+            # -i with no output exits non-zero on purpose: this is the
+            # container/codec report, not a transcode.
+            if ($ff) {
+              & $ff.Source -hide_banner -i "$video" 2>&1 |
+                Select-Object -First 12 | ForEach-Object { W $_ }
+            }
+            V ("SPIKE-Q2: video=OK mp4 ({0:N1} KB, gdigrab)" -f ($vlen / 1KB))
+          } else {
+            V "SPIKE-Q2: video=FAILED (no scenario.mp4 — see the recorder lines above)"
+          }
+
+          W ""
+          W "=== the harness's own still form: ffmpeg -frames:v 1 ==="
+          # runner.py:96-104 grabs stills through ffmpeg as well, so one
+          # here reports whether the harness's capture path itself works
+          # natively on this runner.
+          if ($ff) {
+            $ffStill = Join-Path $EVIDENCE 'ffmpeg-still.png'
+            & $ff.Source -y -loglevel error -f gdigrab -i desktop -frames:v 1 "$ffStill" 2>&1 |
+              ForEach-Object { W $_ }
+            W "ffmpeg still exit: $LASTEXITCODE"
+            if ((Test-Path $ffStill) -and (Get-Item $ffStill).Length -gt 0) {
+              W ("{0}: {1:N1} KB" -f $ffStill, ((Get-Item $ffStill).Length / 1KB))
+              V ("SPIKE-Q2: ffmpeg-still=OK ({0:N1} KB)" -f ((Get-Item $ffStill).Length / 1KB))
+            } else {
+              V "SPIKE-Q2: ffmpeg-still=FAILED (no PNG written)"
+            }
+          }
+
+          W ""
+          W "=== cleaning up ==="
+          Get-Process -Name 'UltiMaker-Cura' -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          if ($died) {
+            V "SPIKE-Q1: launch=FAILED (exited within the ${WAIT_SECS} s wait)"
+          } else {
+            V "SPIKE-Q1: launch=OK (alive after the wait)"
+          }
+          exit 0
+
+      - name: "Q3 evidence: the dependency audit table"
+        # The port's provisioning checklist: one row per external
+        # dependency this leg touched, whether the image already had it,
+        # and the version — so the port knows what it must install on each
+        # OS instead of rediscovering the gaps. Runs under always() so a
+        # failed leg still ships the table.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE"
+          TSV="$EVIDENCE/dependency-audit.tsv"
+          TXT="$EVIDENCE/dependency-audit.txt"
+          PLATFORM="${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}"
+          {
+            echo "dependency audit — $PLATFORM"
+            echo "generated: $(date -u)"
+            echo
+            if [ -s "$TSV" ]; then
+              echo "| Component | Role | Status | Version | Notes |"
+              echo "|---|---|---|---|---|"
+              awk -F'\t' 'NR>1 { printf "| %s | %s | %s | %s | %s |\n", $2, $3, $4, $5, $6 }' "$TSV"
+              echo
+              echo "status: PREINSTALLED = the image already had it; INSTALLED BY US ="
+              echo "missing at start and provisioned by this run; ABSENT = neither."
+            else
+              echo "(no audit rows were recorded)"
+            fi
+          } 2>&1 | tee "$TXT"
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            cat "$TXT" >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || \
+              echo "(could not append the table to the step summary)"
+          fi
+          INSTALLED=0
+          UNRESOLVED=0
+          if [ -s "$TSV" ]; then
+            STATS="$(awk -F'\t' 'NR>1 { if ($4=="INSTALLED BY US") i++; else if ($4=="ABSENT") a++ } END { printf "%d %d", i+0, a+0 }' "$TSV" 2>/dev/null)"
+            INSTALLED="${STATS%% *}"
+            UNRESOLVED="${STATS##* }"
+          fi
+          MISSING=$(( ${INSTALLED:-0} + ${UNRESOLVED:-0} ))
+          printf 'SPIKE-Q3: deps missing-at-start=%s, installed=%s (unresolved=%s)\n' \
+            "$MISSING" "${INSTALLED:-0}" "${UNRESOLVED:-0}" >>"$EVIDENCE/verdict.txt"
+          echo "SPIKE-Q3: deps missing-at-start=$MISSING, installed=${INSTALLED:-0} (unresolved=${UNRESOLVED:-0})"
+          exit 0
+
+      - name: Print the verdict and the evidence tree
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          echo "===== spike verdict ====="
+          cat "$EVIDENCE/verdict.txt" 2>/dev/null || echo "(no verdict lines)"
+          echo "===== evidence tree ====="
+          find "$EVIDENCE" -type f 2>/dev/null | while read -r f; do
+            echo "$(du -h "$f" | cut -f1)  $f"
+          done
+          exit 0
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spike-native-${{ matrix.os }}
+          path: spike-evidence/
+          if-no-files-found: warn
+          retention-days: 14
