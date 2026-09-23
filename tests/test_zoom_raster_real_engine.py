@@ -168,19 +168,43 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                 total += self._delta(image.pixel(ox + col, oy + row), self._background)
         return total
 
-    def _set_payload(self, payload):
+    def _set_payload(self, payload, arrived=None):
         # A different anchor forces the face's full stack reset, so a
-        # payload swap never paints over stale pixels.
+        # payload swap never paints over stale pixels. The settled
+        # frame is RETURNED: a caller that grabs again gets a frame the
+        # predicate never cleared, which is how a baseline ends up
+        # without the grid its diff assumes.
         self.face.setProperty("progress", dict(payload, anchor=-1))
         self._pump_settle()
         self.face.setProperty("progress", payload)
-        self._settled_grab()
+        return self._settled_grab(arrived)
 
-    def _grab(self):
-        image = self.window.grabWindow()
+    def _grid_inked(self, image):
+        """The grid's own ink: the 40 mm graduation's column, sampled
+        where the miter census looks. That census subtracts a baseline
+        frame and the graduation is inside its spike zone, so a
+        baseline still waiting for its grid reads as a spike on this
+        column — the (68,38) report is that column, at 1.664 px/mm
+        with the 2 px face origin."""
+        origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
+        ox, oy = int(origin.x()), int(origin.y())
+        col = ox + int(self.mapping["offsetX"]
+                       + 40.0 * self.mapping["sx"])
+        row = oy + self._scene_row(228.0, 1.0)
+        off = image.pixel(col + 6, row)  # clear of the line's own width
+        return max(self._delta(image.pixel(col + step, row), off)
+                   for step in (-1, 0, 1)) > 30
+
+    def _grab_from(self, image):
+        """The background comes from the SAME frame as the measurement:
+        _ink_mass reads every pixel against it, so a background sampled
+        from another frame turns that frame's ink into backdrop."""
         origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
         self._background = image.pixel(int(origin.x()) + 8, int(origin.y()) + 8)
         return image
+
+    def _grab(self):
+        return self._grab_from(self.window.grabWindow())
 
     def _settled_grab(self, arrived=None):
         """Grab once the threaded rasters have landed: two consecutive
@@ -191,7 +215,14 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         "the composed stroke vanished"). The deadline is a hang guard,
         not a budget: the rasters on a starved machine take as long as
         they take, and the caller's own assertion is what fails when
-        they never land."""
+        they never land.
+
+        The frame the predicate cleared IS the arrival evidence, so it
+        is the frame returned: re-grabbing here measures a frame nothing
+        validated, which is the same "vanished" signature one frame
+        later (the CI 3.10 leg took this path — its seven-test file
+        finished in 5.0 s, so the predicate had been satisfied and the
+        fresh grab, not the wait, was what read empty)."""
         import time as _time
 
         deadline = _time.monotonic() + 15.0
@@ -203,7 +234,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             if (arrived is None or arrived(image)) and previous is not None and (
                     _parent.PlateFaceRenderTests._sample(image)
                     == _parent.PlateFaceRenderTests._sample(previous)):
-                return self._grab()
+                return self._grab_from(image)
             previous = image
         return self._grab()
 
@@ -228,8 +259,10 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         width — while a round join stays within width/2 of the path.
         The oracle is a per-pixel DIFF against a grid-and-backdrop
         baseline: the harness backdrop is not uniform and the grid
-        lines cross every region, but both are identical between the
-        two grabs and cancel exactly."""
+        lines cross every region. Both frames must therefore CARRY the
+        grid for it to cancel — a baseline still waiting for its own
+        grid reads as a spike on the graduation's column, which is what
+        the loaded runner's (68,38) was (the 40 mm line at 1.664 px/mm)."""
         wedge = {
             "available": True, "reason": "",
             "layers": {
@@ -247,12 +280,12 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         }
         self.face.setProperty("lineScale", 6.0)  # thick: ~2 px at this face
         self._pump_settle()
-        self._set_payload(self.EMPTY_PAYLOAD)
-        baseline = self._grab()
-        self._set_payload(wedge)
         origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
         ox, oy = int(origin.x()), int(origin.y())
         arm_row = self._scene_row(205.0, 1.0)
+        # The baseline is the settled frame the grid predicate cleared,
+        # never a bare grab: the diff subtracts it pixel for pixel.
+        baseline = self._set_payload(self.EMPTY_PAYLOAD, arrived=self._grid_inked)
 
         def diff(image, col, row):
             a = image.pixel(ox + col, oy + row)
@@ -264,17 +297,14 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                        for col in range(30, 60))
 
         # The threaded raster's landing is not deterministic in the
-        # offscreen harness: wait for the wedge's own ink to appear
-        # rather than sampling for a stable (possibly stale) frame.
-        import time as _time
-        # A hang guard, not a budget: the rasters on a starved machine
-        # take as long as they take, and the assertion below is what
-        # fails when the ink never lands.
-        deadline = _time.monotonic() + 15.0
-        image = self.window.grabWindow()
-        while arm_ink(image) <= 60 and _time.monotonic() < deadline:
-            self._pump_settle()
-            image = self.window.grabWindow()
+        # offscreen harness: wait for the wedge's own ink AND for the
+        # grid the diff subtracts, rather than sampling for a stable
+        # (possibly stale) frame. A hang guard, not a budget: the
+        # rasters on a starved machine take as long as they take, and
+        # the assertion below is what fails when the ink never lands.
+        image = self._set_payload(
+            wedge, arrived=lambda frame: arm_ink(frame) > 60
+            and self._grid_inked(frame))
         self.assertGreater(arm_ink(image), 60, "the wedge never painted in the harness")
         # The spike's landing zone: both arms descend left-down, so a
         # miter spike would point up-right of the corner — rows above,
