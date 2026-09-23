@@ -18,12 +18,16 @@
 #       runners have no usable GUI is being corrected here by evidence,
 #       not by assumption. Video is ffmpeg on every platform, replicating
 #       the harness's own capture (tests/harness/runner.py:247-250) -
-#       same flags, same 15 fps, same scenario.mp4 naming, started before
-#       the launch and killed at teardown - so a native run's artifacts
-#       stay comparable with the Linux runs. Only the INPUT DEVICE is
-#       per-platform: x11grab (Linux) / avfoundation (macOS) / gdigrab
-#       (Windows). Stills come both from the platform's own API and in
-#       the harness's ffmpeg -frames:v 1 form.
+#       same flags, same 15 fps, same scenario.mp4 naming, same
+#       whole-display region at the harness geometry, started before the
+#       launch and stopped with a signal at teardown the way runner.py
+#       stops it (never a kill: an unindexed mp4 is what a kill leaves) -
+#       so a native run's artifacts stay comparable with the Linux runs.
+#       Only the INPUT DEVICE is per-platform: x11grab (Linux) /
+#       avfoundation (macOS) / gdigrab (Windows). Stills come both from
+#       the platform's own API and in the harness's ffmpeg -frames:v 1
+#       form, and they too are full-display, so neither a still nor the
+#       video can be clipped by a scenario that resizes the window.
 #   Q3  What must each platform PROVISION? A runner image is trusted for
 #       nothing: every external tool a leg touches is probed, reported as
 #       present-with-version or absent, installed when the image lacks it,
@@ -1880,13 +1884,91 @@ jobs:
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 0
             fi
+            echo
+            echo "=== display geometry (the harness pins one screen size) ==="
+            # A full-screen capture is only comparable with the Linux leg
+            # if the screen is the harness's size: runner.py records
+            # -video_size SIZE (HARNESS_GEOMETRY, 1920x1080) of an Xvfb
+            # display, and avfoundation records the display it is given -
+            # run 35934260021 recorded 1024x768 here while the argv asked
+            # for 1920x1080. So the resolution is READ, moved to the pinned
+            # geometry when it differs, and READ AGAIN; both readings are
+            # logged, and a runner that cannot be moved is a FINDING
+            # rather than a silent capture at whatever size it has.
+            WANT_W="${VIDEO_SIZE%%x*}"
+            WANT_H="${VIDEO_SIZE##*x}"
+            DISP_BEFORE="$(system_profiler SPDisplaysDataType 2>&1 | sed -n 's/^ *Resolution: *//p' | head -1)"
+            echo "display before: ${DISP_BEFORE:-<unreadable>} (system_profiler)"
+            echo "the harness geometry this run is pinned to: $VIDEO_SIZE"
+            DISPLAY_WHY="not attempted"
+            case "$DISP_BEFORE" in
+              "$WANT_W x $WANT_H"*)
+                DISPLAY_WHY="already at the pinned geometry" ;;
+              "")
+                DISPLAY_WHY="system_profiler reported no resolution" ;;
+              *)
+                DP="$(command -v displayplacer)"
+                if [ -z "$DP" ] && command -v brew >/dev/null 2>&1; then
+                  echo "displayplacer: ABSENT - provisioning it (brew install displayplacer)"
+                  HOMEBREW_NO_AUTO_UPDATE=1 brew install displayplacer
+                  echo "brew install displayplacer exit: $?"
+                  DP="$(command -v displayplacer)"
+                  if [ -n "$DP" ]; then
+                    AU="$EVIDENCE/dependency-audit.tsv"
+                    [ -s "$AU" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AU"
+                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "macOS/$RUNNER_ARCH" "displayplacer" \
+                      "moves the display to the harness geometry for the full-screen capture" \
+                      "INSTALLED BY US" "$(displayplacer --version 2>&1 | head -1)" \
+                      "installed by the launch step: the audit step did not provision it" >>"$AU"
+                  fi
+                fi
+                if [ -z "$DP" ]; then
+                  DISPLAY_WHY="no displayplacer and no Homebrew to provision one, so the display cannot be moved"
+                else
+                  "$DP" list >"$EVIDENCE/displayplacer-list.txt" 2>&1
+                  echo "--- displayplacer list (tail) ---"
+                  tail -12 "$EVIDENCE/displayplacer-list.txt"
+                  DPID="$(sed -n 's/.*Persistent screen id: *\([^ ]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                  DPHZ="$(sed -n 's/.*hz:\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                  [ -n "$DPHZ" ] || DPHZ=60
+                  if [ -z "$DPID" ]; then
+                    DISPLAY_WHY="displayplacer reported no persistent screen id"
+                  else
+                    echo "displayplacer: setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz"
+                    "$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:8"
+                    echo "displayplacer exit: $?"
+                    sleep 3
+                    DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H}"
+                  fi
+                fi
+                ;;
+            esac
+            DISP_AFTER="$(system_profiler SPDisplaysDataType 2>&1 | sed -n 's/^ *Resolution: *//p' | head -1)"
+            echo "display after: ${DISP_AFTER:-<unreadable>} ($DISPLAY_WHY)"
+            case "$DISP_AFTER" in
+              "$WANT_W x $WANT_H"*)
+                echo "SPIKE-Q2: display=OK (${DISP_AFTER:-unreadable}, $DISPLAY_WHY)" \
+                  | tee -a "$EVIDENCE/verdict.txt" ;;
+              *)
+                echo "SPIKE-Q2: display=MISMATCH (pinned $VIDEO_SIZE, this runner is ${DISP_AFTER:-unreadable}, $DISPLAY_WHY)" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+                echo "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently" ;;
+            esac
+
             # The recorder is ffmpeg on every platform, matching
             # tests/harness/runner.py:247-250 exactly - same flags, same
             # framerate, same scenario.mp4 naming, started with the app,
-            # killed at teardown - so the native artifacts stay
-            # comparable with the Linux runs. Only the INPUT DEVICE
-            # differs: x11grab on Linux, gdigrab on Windows,
-            # avfoundation here.
+            # stopped with a signal at teardown, never a kill: an
+            # unindexed mp4 is what a kill leaves, and the native
+            # artifacts stay comparable with the Linux runs. Only the
+            # INPUT DEVICE differs: x11grab on Linux, gdigrab on Windows,
+            # avfoundation here. The region is the WHOLE DISPLAY on every
+            # platform - the Linux capture is a full display whose only
+            # occupant is the app - because no ffmpeg input device
+            # re-reads its region once running (gdigrab bakes the clip
+            # rectangle into its header, avfoundation's crop filter is a
+            # constant expression), so a window-bounded capture would clip
+            # the window as a resize test grew it, silently.
             if [ -z "$FFMPEG" ]; then
               echo "ffmpeg: ABSENT - attempting brew install (the images"
               echo "usually ship it; the Windows leg does the same via choco)"
@@ -1928,8 +2010,6 @@ jobs:
                 SCREEN_INDEX=1
               fi
               echo "screen device index: $SCREEN_INDEX"
-              echo "--- displays as macOS reports them (context for -video_size) ---"
-              system_profiler SPDisplaysDataType 2>&1 | grep -i 'resolution' | head -3
               echo "--- recorder argv ---"
               echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none $VIDEO"
               ffmpeg -y -loglevel error -f avfoundation \
@@ -2078,17 +2158,165 @@ jobs:
             fi
 
             echo
+            echo "=== where Cura's window is (the capture itself is the whole display) ==="
+            # The recorder captures the whole display, so this is not a bound:
+            # it is the check that the frame contains Cura rather than whatever
+            # is in front of it - and that the window is wholly INSIDE the
+            # display, because a window placed partly off the screen is
+            # CLIPPED by a full-display capture and nothing in the file says
+            # so. The reads go through System Events, which may itself need an
+            # Automation grant, so a refusal is recorded as the result rather
+            # than assumed away. The window is NOT maximised: the harness pins
+            # it smaller than the screen on purpose, so the screen-fits
+            # assertion keeps its subject. A test that deliberately moves the
+            # window out of bounds opts out with SPIKE_OFFSCREEN_WINDOW=allow.
+            BOUNDS_POLICY="${SPIKE_OFFSCREEN_WINDOW:-clamp}"
+            echo "window bounds policy: $BOUNDS_POLICY (SPIKE_OFFSCREEN_WINDOW; 'allow' leaves a deliberately off-screen window where the test put it)"
+            # The display the window is compared against: the one the run's
+            # capture is of, read above rather than assumed.
+            DISP_W="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^\([0-9][0-9]*\) *x.*/\1/p')"
+            DISP_H="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^[0-9][0-9]* *x *\([0-9][0-9]*\).*/\1/p')"
+            if [ -z "$DISP_W" ] || [ -z "$DISP_H" ]; then
+              DISP_W="$WANT_W"
+              DISP_H="$WANT_H"
+              echo "window bounds: the display size could not be parsed, so the pinned geometry ${DISP_W}x${DISP_H} is used as the bound"
+            fi
+            WPROC="$(osascript -e 'tell application "System Events" to get name of every process whose name contains "Cura"' 2>&1 | tr ',' '\n' | sed -n '/[Cc]ura/p' | head -1 | sed 's/^ *//;s/ *$//')"
+            WFRONT=""
+            WMIN="<unreadable>"
+            WRECT="<unreadable>"
+            WPX=""; WPY=""; WPW=""; WPH=""
+            # One reader for every look, so the position, size, focus and
+            # minimised state always come from the same instant.
+            read_window() {
+              WFRONT="$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>&1)"
+              local wpos wsize
+              wpos="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get position of window 1" 2>&1)"
+              wsize="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get size of window 1" 2>&1)"
+              WMIN="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get value of attribute \"AXMinimized\" of window 1" 2>&1)"
+              WRECT="$wpos / $wsize"
+              WPX="$(printf '%s' "$wpos" | cut -d, -f1 | tr -dc '0-9-')"
+              WPY="$(printf '%s' "$wpos" | cut -d, -f2 | tr -dc '0-9-')"
+              WPW="$(printf '%s' "$wsize" | cut -d, -f1 | tr -dc '0-9-')"
+              WPH="$(printf '%s' "$wsize" | cut -d, -f2 | tr -dc '0-9-')"
+              echo "window 1: position='${wpos}' size='${wsize}' minimised='${WMIN}' frontmost='${WFRONT:-<unreadable>}'"
+            }
+            if [ -z "$WPROC" ]; then
+              echo "window: no process name containing 'Cura' could be read (System Events may be ungranted)"
+            else
+              echo "window process (read, not assumed): $WPROC"
+              # Up to three looks: an alert can hold the focus for a moment
+              # after it is dismissed, and what matters is the state the
+              # recording runs in, not the state it was found in.
+              for attempt in 1 2 3; do
+                read_window
+                case "$WFRONT" in
+                  *[Cc]ura*) break ;;
+                esac
+                if [ "$attempt" = 1 ]; then
+                  echo "Cura does not hold the focus - bringing it forward (open -a: no permission needed)"
+                  open -a "$APP"
+                  echo "open -a exit: $?"
+                fi
+                sleep 3
+              done
+              # Bounds, against the display: a window placed partly off the
+              # screen is clipped by the full-screen capture, which is what
+              # the owner saw in a recording of this leg.
+              case "$WPX$WPY$WPW$WPH" in
+                ''|*[!0-9-]*)
+                  echo "window bounds: the rectangle could not be read, so it cannot be checked against the display" ;;
+                *)
+                  if [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
+                     [ $((WPX + WPW)) -le "$DISP_W" ] && [ $((WPY + WPH)) -le "$DISP_H" ]; then
+                    echo "window bounds: in-bounds ($WPX,$WPY ${WPW}x${WPH} inside ${DISP_W}x${DISP_H})"
+                    echo "SPIKE-Q2: window-bounds=OK ($WPX,$WPY ${WPW}x${WPH} inside the ${DISP_W}x${DISP_H} display, nothing clipped)" \
+                      | tee -a "$EVIDENCE/verdict.txt"
+                  elif [ "$BOUNDS_POLICY" = allow ]; then
+                    echo "window bounds: OUT of bounds ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}) and the run opted out (SPIKE_OFFSCREEN_WINDOW=allow), so it is left where it is and a clipped frame is expected"
+                    echo "SPIKE-Q2: window-bounds=CLIPPED-ON-PURPOSE ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}; the test moved it out and the run allowed it)" \
+                      | tee -a "$EVIDENCE/verdict.txt"
+                  elif [ "$WPW" -gt "$DISP_W" ] || [ "$WPH" -gt "$DISP_H" ]; then
+                    echo "window bounds: OUT of bounds and the window (${WPW}x${WPH}) is larger than the display (${DISP_W}x${DISP_H}), so it cannot be brought fully inside it"
+                    echo "SPIKE-Q2: window-bounds=CLIPPED ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}: part of the window is outside the display, so the full-screen recording omits it)" \
+                      | tee -a "$EVIDENCE/verdict.txt"
+                  else
+                    echo "window bounds: OUT of bounds ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H})"
+                    NEWX="$WPX"
+                    NEWY="$WPY"
+                    [ "$NEWX" -lt 0 ] && NEWX=0
+                    [ $((NEWX + WPW)) -gt "$DISP_W" ] && NEWX=$((DISP_W - WPW))
+                    [ "$NEWY" -lt 0 ] && NEWY=0
+                    [ $((NEWY + WPH)) -gt "$DISP_H" ] && NEWY=$((DISP_H - WPH))
+                    # The mechanism is System Events' set position, which needs
+                    # the Automation/Accessibility grant; a refusal is recorded
+                    # with its own words rather than assumed to have worked.
+                    echo "moving the window to $NEWX,$NEWY (System Events set position of window 1; size kept at ${WPW}x${WPH})"
+                    MOVE_OUT="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to set position of window 1 to {$NEWX, $NEWY}" 2>&1)"
+                    echo "set position result: ${MOVE_OUT:-<no output>}"
+                    sleep 2
+                    read_window
+                    if [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
+                       [ $((WPX + WPW)) -le "$DISP_W" ] && [ $((WPY + WPH)) -le "$DISP_H" ]; then
+                      echo "SPIKE-Q2: window-bounds=OK (moved to $WPX,$WPY ${WPW}x${WPH} inside ${DISP_W}x${DISP_H} by System Events set position)" \
+                        | tee -a "$EVIDENCE/verdict.txt"
+                    else
+                      echo "SPIKE-Q2: window-bounds=CLIPPED ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}: the window is outside the display and the move did not bring it back)" \
+                        | tee -a "$EVIDENCE/verdict.txt"
+                      echo "FINDING: the window is not wholly inside the display and could not be moved into it, so the recording is clipped - reported here rather than left to be noticed by eye"
+                    fi
+                  fi
+                  ;;
+              esac
+            fi
+            # The verdict is about what was VERIFIED. The recording continues
+            # either way: a whole-display capture needs neither a rectangle nor
+            # the focus to start, so an unverified window is reported as a
+            # frame that may show something else, not as a failed recording.
+            case "$WFRONT$WMIN$WPX$WPY$WPW$WPH" in
+              *[Cc]ura*false*[0-9]*)
+                echo "SPIKE-Q2: window=VISIBLE ($WPROC holds the front, window 1 at $WRECT, not minimised; the capture is the whole display, so Cura is in frame wherever the window sits)" \
+                  | tee -a "$EVIDENCE/verdict.txt" ;;
+              *)
+                echo "SPIKE-Q2: window=NOT-VERIFIED (frontmost='${WFRONT:-<unreadable>}' minimised='${WMIN}' window1='${WRECT}')" \
+                  | tee -a "$EVIDENCE/verdict.txt"
+                echo "FINDING: Cura's window could not be shown to be frontmost, unminimised and readable, so the full-screen recording may be of whatever covers it - reported rather than assumed, and the recording continues because a whole-display capture needs no rectangle to start" ;;
+            esac
+
+            echo
             echo "=== still capture (inside the recording window) ==="
+            # Full-screen, like the recorder and like runner.py's own stills:
+            # a still of the whole display follows whatever a resize test does
+            # to the window, where a still of a fixed rectangle would not.
             screencapture -x "$SHOT"
             echo "screencapture exit: $?"
             if [ -f "$SHOT" ]; then
               ls -l "$SHOT"
               file "$SHOT"
+              PNG_WH="$(file "$SHOT" | sed -n 's/.*PNG image data, \([0-9][0-9]* x [0-9][0-9]*\).*/\1/p')"
+              echo "still size: ${PNG_WH:-unreadable} (the display this run captures is ${DISP_W}x${DISP_H})"
               echo "note: a solid/empty frame compresses to a few KB, a real"
               echo "      desktop to hundreds - the size IS the signal"
             fi
+            # Steady-state re-read of the geometry that decides whether the
+            # recording is clipped: a window the run moved after the bounds
+            # check above shows up here rather than in someone's eye later.
+            if [ -n "$WPROC" ]; then
+              read_window
+              case "$WPX$WPY$WPW$WPH" in
+                ''|*[!0-9-]*) echo "window rectangle at the still: unreadable ($WRECT)" ;;
+                *)
+                  echo "window rectangle at the still, vs the display ${DISP_W}x${DISP_H}: $WPX,$WPY ${WPW}x${WPH}"
+                  if [ "$WPX" -lt 0 ] || [ "$WPY" -lt 0 ] || \
+                     [ $((WPX + WPW)) -gt "$DISP_W" ] || [ $((WPY + WPH)) -gt "$DISP_H" ]; then
+                    echo "SPIKE-Q2: window-bounds=CLIPPED-AT-STILL ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}: the window moved out of the display during the run, so the recording omits that part of it)" \
+                      | tee -a "$EVIDENCE/verdict.txt"
+                  fi
+                  ;;
+              esac
+            fi
             echo
-            echo "=== stopping the recorder (harness teardown kills ffmpeg) ==="
+            echo "=== stopping the recorder (SIGINT first, as the harness stops it: a kill leaves no mp4 index) ==="
             if [ -n "${REC_PID:-}" ] && kill -0 "$REC_PID" 2>/dev/null; then
               # SIGINT is what lets ffmpeg finalise the mp4 index; the
               # harness's pkill -9 sweep below is the backstop.
@@ -2123,9 +2351,19 @@ jobs:
               echo "--- container/codec (ffmpeg -i exits non-zero here: expected) ---"
               ffmpeg -hide_banner -i "$VIDEO" 2>&1 | head -12
               echo "--- ffprobe's own reading of the container ---"
-              ffprobe -v error -show_entries format=duration,size:stream=codec_name,width,height,nb_frames \
-                -of default=noprint_wrappers=1 "$VIDEO" 2>&1 | head -12
-              echo "SPIKE-Q2: video=OK ($VSIZE bytes, mp4, avfoundation)" \
+              PROBE_TEXT="$(ffprobe -v error -show_entries format=duration,size:stream=codec_name,width,height,nb_frames \
+                -of default=noprint_wrappers=1 "$VIDEO" 2>&1 | head -12)"
+              echo "$PROBE_TEXT"
+              # The recorded frame size, against the pinned geometry: "the
+              # recordings look low resolution" is answered by the numbers,
+              # and a capture that came out at the display's own size rather
+              # than the pinned one must be visible here, not inferred.
+              REC_W="$(printf '%s\n' "$PROBE_TEXT" | sed -n 's/^width=//p' | head -1)"
+              REC_H="$(printf '%s\n' "$PROBE_TEXT" | sed -n 's/^height=//p' | head -1)"
+              REC_DIMS="unknown"
+              [ -n "$REC_W" ] && [ -n "$REC_H" ] && REC_DIMS="${REC_W}x${REC_H}"
+              echo "recorded frame size: $REC_DIMS (pinned geometry $VIDEO_SIZE, display before the run: ${DISP_BEFORE:-unreadable})"
+              echo "SPIKE-Q2: video=OK ($VSIZE bytes, mp4, avfoundation, $REC_DIMS)" \
                 | tee -a "$EVIDENCE/verdict.txt"
             elif [ "$VSIZE" -gt 0 ]; then
               echo "SPIKE-Q2: video=FAILED ($VSIZE bytes: a container with no frames - see recorder.log above)" \
@@ -2136,9 +2374,10 @@ jobs:
             fi
             echo
             echo "=== the harness's own still form: ffmpeg -frames:v 1 ==="
-            # runner.py:96-104 captures stills through ffmpeg as well, so
-            # one here reports whether the harness's capture path itself
-            # works natively on this runner.
+            # runner.py:96-104 captures stills through ffmpeg as well
+            # (x11grab, -video_size SIZE, -frames:v 1), so one here reports
+            # whether the harness's capture path itself works natively on
+            # this runner - the display, one frame, no -framerate.
             if [ -n "$FFMPEG" ]; then
               ffmpeg -y -loglevel error -f avfoundation -video_size "$VIDEO_SIZE" \
                 -i "${SCREEN_INDEX}:none" -frames:v 1 "$FFSTILL"
@@ -2198,6 +2437,106 @@ jobs:
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
 
+          # --- the native calls this step needs ---------------------------
+          # One compiled class in three groups, every one of them a Windows
+          # API call with no managed equivalent:
+          #   * window: the rectangle the window occupies and the checks
+          #     that say it is on screen and in front rather than behind
+          #     something - the capture is the whole display, so a window
+          #     that is occluded is a frame recording whatever covers it;
+          #   * console: the control event that stops the recorder the way
+          #     the harness stops it everywhere else (the teardown below);
+          #   * display: EnumDisplaySettings / ChangeDisplaySettings, the
+          #     only way to move this runner to the harness geometry.
+          # A build failure is reported rather than fatal: the teardown then
+          # falls back to the force, and the video verdict already names a
+          # missing index as its own fault.
+          $csSrc = @(
+            'using System;',
+            'using System.Runtime.InteropServices;',
+            'public static class SpikeNative {',
+            '  [StructLayout(LayoutKind.Sequential)]',
+            '  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }',
+            '  [StructLayout(LayoutKind.Sequential)]',
+            '  public struct POINT { public int X; public int Y; }',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool IsWindowVisible(IntPtr hwnd);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool IsIconic(IntPtr hwnd);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern IntPtr GetForegroundWindow();',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool SetForegroundWindow(IntPtr hwnd);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool ShowWindow(IntPtr hwnd, int cmd);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern IntPtr WindowFromPoint(POINT point);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern int GetSystemMetrics(int index);',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern bool AttachConsole(uint pid);',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern bool FreeConsole();',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern bool GenerateConsoleCtrlEvent(uint evt, uint group);',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern uint GetConsoleProcessList(uint[] list, uint count);',
+            '  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]',
+            '  public struct DEVMODE {',
+            '    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;',
+            '    public ushort dmSpecVersion;',
+            '    public ushort dmDriverVersion;',
+            '    public ushort dmSize;',
+            '    public ushort dmDriverExtra;',
+            '    public uint dmFields;',
+            '    public int dmUnionWord0;',
+            '    public int dmUnionWord1;',
+            '    public int dmUnionWord2;',
+            '    public int dmUnionWord3;',
+            '    public short dmColor;',
+            '    public short dmDuplex;',
+            '    public short dmYResolution;',
+            '    public short dmTTOption;',
+            '    public short dmCollate;',
+            '    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;',
+            '    public ushort dmLogPixels;',
+            '    public uint dmBitsPerPel;',
+            '    public uint dmPelsWidth;',
+            '    public uint dmPelsHeight;',
+            '    public uint dmDisplayFlags;',
+            '    public uint dmDisplayFrequency;',
+            '    public uint dmICMMethod;',
+            '    public uint dmICMIntent;',
+            '    public uint dmMediaType;',
+            '    public uint dmDitherType;',
+            '    public uint dmReserved1;',
+            '    public uint dmReserved2;',
+            '    public uint dmPanningWidth;',
+            '    public uint dmPanningHeight;',
+            '  }',
+            '  [DllImport("user32.dll", EntryPoint = "EnumDisplaySettingsW", CharSet = CharSet.Unicode, SetLastError = true)]',
+            '  public static extern bool EnumDisplaySettings(string device, int mode, ref DEVMODE devmode);',
+            '  [DllImport("user32.dll", EntryPoint = "ChangeDisplaySettingsW", CharSet = CharSet.Unicode, SetLastError = true)]',
+            '  public static extern int ChangeDisplaySettings(ref DEVMODE devmode, int flags);',
+            '}'
+          ) -join "`n"
+          $nativeOk = $false
+          try {
+            Add-Type -TypeDefinition $csSrc -ErrorAction Stop
+            $nativeOk = $true
+          } catch {
+            W "the native helper could not be compiled on this image ($($_.Exception.Message)) - no window rectangle, no graceful recorder stop and no display change"
+          }
+          W ("native helper: compiled={0}" -f $nativeOk)
+
           $pathFile = Join-Path $EVIDENCE 'binary-path.txt'
           $binary = if (Test-Path $pathFile) { Get-Content $pathFile -First 1 } else { $null }
           if (-not $binary -or -not (Test-Path $binary)) {
@@ -2213,7 +2552,8 @@ jobs:
           # The recorder is ffmpeg on every platform, matching
           # tests/harness/runner.py:247-250 exactly - same flags, same
           # framerate, same scenario.mp4 naming, started with the app and
-          # killed at teardown - so the native artifacts stay comparable
+          # stopped with a signal at teardown, never a kill: an unindexed
+          # mp4 is what a kill leaves, and the artifacts stay comparable
           # with the Linux runs. Only the INPUT DEVICE differs: x11grab on
           # Linux, gdigrab here, avfoundation on macOS. It starts BEFORE
           # the launch so the recording spans launch and first paint.
@@ -2329,69 +2669,17 @@ jobs:
           $mySess = $null
           $recExitedEarly = $false
           $recGoneLogged = $false
+          $recWasForced = $false
           # Collected after teardown and reused by the video verdict, which
           # quotes ffmpeg's own first line when no container was written: the
           # recorder's words are the diagnosis, so they travel with the verdict.
           $recErrText = ''
           $recOutText = ''
-          if ($ff) {
-            W "ffmpeg: $($ff.Source)"
-            # gdigrab takes no -video_size: it captures the whole desktop.
-            $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
-                        '-framerate', '15', '-i', 'desktop', "`"$video`"")
-            W "recorder argv: ffmpeg $($ffArgs -join ' ')"
-            # THE CHOICE, logged because the next run has to be readable
-            # without re-deriving it: System.Diagnostics.Process with
-            # UseShellExecute=FALSE and CreateNoWindow=TRUE - a CreateProcess
-            # child of this step, so it shares the session, window station and
-            # desktop the foreground probes capture through - started in this
-            # step's OWN directory, which is the one difference the previous
-            # run's missing recording turned out to be. The recorder's streams
-            # are redirected to the evidence files the Linux leg names, and
-            # drained as above.
-            $recErr = Join-Path $EVIDENCE 'recorder.log'
-            $recOut = Join-Path $EVIDENCE 'recorder-stdout.txt'
-            W "recorder launch: System.Diagnostics.Process, UseShellExecute=FALSE, CreateNoWindow=TRUE - CreateProcess called by this step, so the child gets this step's token, session, window station and desktop, in working directory $stepCwd (the directory the foreground probes resolve the same relative output path against)"
-            $videoAbs = $video
-            if (-not [System.IO.Path]::IsPathRooted($videoAbs)) { $videoAbs = Join-Path $stepCwd $videoAbs }
-            W "recorder output path: $videoAbs"
-            if (-not (Test-Path (Split-Path -Parent $videoAbs))) {
-              W "recorder output directory does not exist: $(Split-Path -Parent $videoAbs) - nothing can be written there"
-            }
-            try {
-              $rec = Start-BgCapture $ff.Source $ffArgs $stepCwd
-            } catch {
-              W "recorder launch FAILED: $($_.Exception.Message)"
-              $rec = $null
-            }
-            if ($rec) {
-              $recOutTask = $rec.OutTask
-              $recErrTask = $rec.ErrTask
-              W "recorder pid: $($rec.Process.Id) (started BEFORE the launch)"
-              W "recorder stderr: $recErr, stdout: $recOut (both uploaded with the evidence)"
-              # The session is the thing the hypothesis is about, so it is
-              # measured rather than assumed: equal session ids mean the
-              # recorder sits where the desktop lives.
-              $mySess = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-              $recSess = $rec.Process.SessionId
-              W "recorder session: $recSess (this step runs in $mySess)"
-              if ($recSess -ne $mySess) {
-                W "SESSION MISMATCH: the recorder is in session $recSess and the step in $mySess - another session is a desktop the recorder cannot see, which is exactly what an empty scenario.mp4 looks like"
-              }
-              Start-Sleep -Seconds 3
-              $rec.Process.Refresh()
-              if ($rec.Process.HasExited) {
-                $recExitedEarly = $true
-                W ("recorder already exited after 3 s, code {0} - no capture is running" -f $rec.Process.ExitCode)
-              } else {
-                W "recorder alive after 3 s (a capture is running)"
-              }
-              if (Test-Path $video) { W ("scenario.mp4 after 3 s: {0} bytes" -f (Get-Item $video).Length) }
-              else { W "scenario.mp4 not created after 3 s" }
-            }
-          } else {
-            W "no recorder available - the video leg cannot run on this image"
-          }
+          # The recorder starts below, before the launch, and captures the
+          # whole display - so nothing about the window has to be known first
+          # and the recording spans the boot as well as the session. The
+          # window rectangle is measured after the boot; it verifies the app
+          # is on screen, it does not bound the capture.
 
           # --- GL: hand Cura a renderer that exists on this runner --------
           # WHY THE FIRST RUN ENDED IN A MODAL "Failed to probe OpenGL"
@@ -2651,7 +2939,7 @@ jobs:
           if ($glLib) {
             Set-GlVar 'QT_OPENGL_DLL' $glLib
             W ("GL choice: QT_OPENGL_DLL={0} ({1})" -f $glLib, $glWhy)
-            W "  this is the variable that makes Qt load exactly this file and skip the System32-only search; whether Cura's own process still holds it when Qt reads it is measured below, not assumed"
+            W "  this is the variable that makes Qt load exactly this file and skip the System32-only search; Cura's own cura_app.py empties it on non-Linux before PyQt6 is imported, so what this buys is a read-back that the environment is inherited - the library Qt actually loads is verified below, by Qt's own line and by the System32 deployment"
           } else {
             W "GL choice: none - QT_OPENGL_DLL stays unset and Cura gets the system OpenGL this runner has already failed to probe"
           }
@@ -2674,12 +2962,16 @@ jobs:
           }
           if (Test-Path $envProbe) {
             $childEnv = @(Get-Content -LiteralPath $envProbe | Where-Object {
-              $_ -match '^(QT_OPENGL|QSG_RHI_BACKEND|QT_QUICK_BACKEND|QT_LOGGING_RULES|QT_FORCE_STDERR_LOGGING|GALLIUM_DRIVER|LIBGL_ALWAYS_SOFTWARE)=' })
+              $_ -match '^(QT_OPENGL_DLL|QT_OPENGL|QSG_RHI_BACKEND|QT_QUICK_BACKEND|QT_LOGGING_RULES|QT_FORCE_STDERR_LOGGING|GALLIUM_DRIVER|LIBGL_ALWAYS_SOFTWARE)=' })
             W ("GL env read-back (cmd /c set inside a process this step launched): {0} of the names above are present in the child" -f $childEnv.Count)
             foreach ($l in $childEnv) { W ("  child env: " + $l.Trim()) }
             $childHasDll = @($childEnv | Where-Object { $_ -like 'QT_OPENGL_DLL=*' }).Count -gt 0
-            if (-not $childHasDll) {
-              W "  child env: QT_OPENGL_DLL is ABSENT from the launched child - the variables are not reaching launched processes at all, which is the fault this read-back exists to catch"
+            if ($childHasDll) {
+              W "  child env: QT_OPENGL_DLL reached the launched child, so this step's environment IS inherited; what happens to it inside Cura is Cura's own doing (cura_app.py empties it before PyQt6 is imported)"
+            } elseif ($glLib) {
+              W "  child env: QT_OPENGL_DLL is ABSENT from the launched child although this step set it - the variable is not reaching launched processes, which is the fault this read-back exists to catch"
+            } else {
+              W "  child env: QT_OPENGL_DLL is absent because this step set none (no candidate library was chosen above), not because inheritance failed"
             }
           } else {
             W "GL env read-back: the child probe wrote no file, so no launched child's environment could be read"
@@ -2763,6 +3055,171 @@ jobs:
             Audit-Row 'OpenGL library handed to Cura' 'the GL implementation the Windows desktop path actually loads' 'ABSENT' "Mesa $MESA_VER llvmpipe wanted as System32\opengl32.dll" "QT_OPENGL_DLL cannot be used (Cura's cura_app.py empties it on non-Linux and AA_UseDesktopOpenGL makes the System32-only desktop path the only one) and the System32 deployment did not take: $sysGlWhy"
           }
 
+          W "=== display geometry (the harness pins one screen size) ==="
+          # The harness resolves ONE screen size (HARNESS_GEOMETRY, 1920x1080
+          # by default) and pins the window INSIDE it (HARNESS_WINDOW,
+          # 1840x1040) - deliberately smaller, so the screen-fits assertion
+          # has something to defend. The capture is the whole display, so a
+          # runner whose display is smaller than the pinned geometry breaks
+          # two things at once: the pinned window cannot fit the screen at
+          # all, and the recording comes out at the runner's size rather than
+          # the Linux leg's, which is also why the recordings looked low
+          # resolution. So the display is read, moved, and read again - the
+          # values are logged because neither is known in advance (run
+          # 35934260021 was 1024x768 on BOTH runners).
+          $wantGeo = "$env:HARNESS_GEOMETRY"
+          if (-not $wantGeo) { $wantGeo = '1920x1080' }
+          $wantW = 0
+          $wantH = 0
+          if ($wantGeo -match '^([0-9]+)x([0-9]+)$') { $wantW = [int]$Matches[1]; $wantH = [int]$Matches[2] }
+          $scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $vsNow = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          W ("display before: primary {0}x{1} at {2},{3}; virtual screen {4}x{5} at {6},{7}" -f `
+              $scr.Width, $scr.Height, $scr.X, $scr.Y, $vsNow.Width, $vsNow.Height, $vsNow.X, $vsNow.Y)
+          W "the harness geometry this run is pinned to: $wantGeo"
+          $displayWhy = 'not attempted'
+          if ($wantW -le 0) {
+            $displayWhy = "the pinned geometry '$wantGeo' is not WxH"
+          } elseif (($scr.Width -eq $wantW) -and ($scr.Height -eq $wantH)) {
+            $displayWhy = 'already at the pinned geometry'
+          } elseif (-not $nativeOk) {
+            $displayWhy = 'the native helper did not compile, so no mode can be set'
+          } else {
+            $dmNow = New-Object SpikeNative.DEVMODE
+            $dmSize = [System.Runtime.InteropServices.Marshal]::SizeOf($dmNow)
+            if ($dmSize -ne 220) {
+              # Windows defines DEVMODE as 220 bytes; a struct that
+              # marshals to any other size would hand the display API a
+              # buffer it does not own, so the call is not made at all.
+              $displayWhy = ("the DEVMODE this helper marshals is {0} bytes, not the 220 Windows defines" -f $dmSize)
+            } else {
+              $found = $null
+              $modes = 0
+              $i = 0
+              while ($i -lt 4096) {
+                $cand = New-Object SpikeNative.DEVMODE
+                if (-not [SpikeNative]::EnumDisplaySettings($null, $i, [ref]$cand)) { break }
+                $modes++
+                if (($cand.dmPelsWidth -eq $wantW) -and ($cand.dmPelsHeight -eq $wantH) -and ($cand.dmBitsPerPel -ge 32)) {
+                  $found = $cand
+                  break
+                }
+                $i++
+              }
+              W ("display modes this adapter reports: {0} (looking for {1}x{2} at 32 bpp)" -f $modes, $wantW, $wantH)
+              if (-not $found) {
+                $displayWhy = ("no {0}x{1} mode in this adapter's list" -f $wantW, $wantH)
+              } else {
+                # DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+                $found.dmFields = 0x00040000 -bor 0x00080000 -bor 0x00100000 -bor 0x00400000
+                $rc = [SpikeNative]::ChangeDisplaySettings([ref]$found, 0)
+                W ("ChangeDisplaySettings({0}x{1}, dynamic) returned {2} (0 = DISP_CHANGE_SUCCESSFUL)" -f $wantW, $wantH, $rc)
+                if ($rc -eq 0) {
+                  $displayWhy = ("moved from {0}x{1} by ChangeDisplaySettings" -f $scr.Width, $scr.Height)
+                  Start-Sleep -Seconds 3
+                } else {
+                  $displayWhy = ("ChangeDisplaySettings returned {0}" -f $rc)
+                }
+              }
+            }
+          }
+          $scr2 = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $vs2 = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          W ("display after: primary {0}x{1}; virtual screen {2}x{3} ({4})" -f `
+              $scr2.Width, $scr2.Height, $vs2.Width, $vs2.Height, $displayWhy)
+          if (($scr2.Width -eq $wantW) -and ($scr2.Height -eq $wantH)) {
+            V ("SPIKE-Q2: display=OK ({0}x{1}, {2})" -f $scr2.Width, $scr2.Height, $displayWhy)
+          } else {
+            V ("SPIKE-Q2: display=MISMATCH (pinned {0}, this runner has {1}x{2}, {3})" -f `
+                $wantGeo, $scr2.Width, $scr2.Height, $displayWhy)
+            W "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently"
+          }
+
+          # THE RECORDER. The harness's recipe (runner.py:247-250: same flags,
+          # -framerate 15, scenario.mp4), this platform's input device, and
+          # the WHOLE DISPLAY as the region - started before the launch,
+          # exactly where the Linux harness starts its own.
+          #
+          # Why not the window rectangle: part of the scenarios resize the
+          # window (the screen-fits assertion exists to defend exactly that),
+          # and no ffmpeg input device re-reads its region once running -
+          # x11grab fixes it in the input spec, gdigrab bakes the clip
+          # rectangle into its header (its window-title mode bakes the client
+          # rectangle the same way, so that platform-specific route would not
+          # follow a resize either), and avfoundation's crop filter is a
+          # constant expression. A rectangle frozen at start clips the window
+          # as it grows and pads it as it shrinks: a recording that
+          # misrepresents the run plausibly. The display cannot be wrong, and
+          # it is what the Linux leg captures - x11grab's -video_size SIZE of
+          # a display whose only occupant is the app. The window rectangle is
+          # measured below all the same, to verify the app is on screen rather
+          # than to bound the capture.
+          $capW = $scr2.Width
+          $capH = $scr2.Height
+          $captureArgs = @('-video_size', ("{0}x{1}" -f $capW, $capH))
+          if (($scr2.Width -eq $wantW) -and ($scr2.Height -eq $wantH)) {
+            W ("capture region: the whole display, {0}x{1} - the pinned geometry, so this recording is the size the Linux leg records" -f $capW, $capH)
+          } else {
+            W ("capture region: the whole display, {0}x{1} - the display could not be moved to the pinned {2}, so this recording is NOT that size (see the display lines above)" -f $capW, $capH, $wantGeo)
+          }
+          $recErr = Join-Path $EVIDENCE 'recorder.log'
+          $recOut = Join-Path $EVIDENCE 'recorder-stdout.txt'
+          if (-not $ff) {
+            W "no recorder available - the video leg cannot run on this image"
+          } else {
+            W "recorder: ffmpeg $($ff.Source)"
+            $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs +
+                      @('-framerate', '15', '-i', 'desktop', "`"$video`"")
+            W "recorder argv: ffmpeg $($ffArgs -join ' ')"
+            # The launch mechanism, recorded because the next run has to be
+            # readable without re-deriving it: System.Diagnostics.Process with
+            # UseShellExecute=FALSE and CreateNoWindow=TRUE - a CreateProcess
+            # child of this step, so it shares the session, window station and
+            # desktop the foreground probes capture through - started in this
+            # step's OWN directory, which is the one difference the earlier
+            # run's missing recording turned out to be. Both streams are
+            # redirected, because that is where ffmpeg's reason for an empty
+            # capture goes.
+            W "recorder launch: System.Diagnostics.Process, UseShellExecute=FALSE, CreateNoWindow=TRUE - a CreateProcess child of this step, in working directory $stepCwd (the directory the foreground probes resolve the same relative output path against)"
+            $videoAbs = $video
+            if (-not [System.IO.Path]::IsPathRooted($videoAbs)) { $videoAbs = Join-Path $stepCwd $videoAbs }
+            W "recorder output path: $videoAbs"
+            if (-not (Test-Path (Split-Path -Parent $videoAbs))) {
+              W "recorder output directory does not exist: $(Split-Path -Parent $videoAbs) - nothing can be written there"
+            }
+            try {
+              $rec = Start-BgCapture $ff.Source $ffArgs $stepCwd
+            } catch {
+              W "recorder launch FAILED: $($_.Exception.Message)"
+              $rec = $null
+            }
+            if ($rec) {
+              $recOutTask = $rec.OutTask
+              $recErrTask = $rec.ErrTask
+              W "recorder pid: $($rec.Process.Id) (started before the launch, as the Linux harness starts its own)"
+              W "recorder stderr: $recErr, stdout: $recOut (both uploaded with the evidence)"
+              # The session is the thing the hypothesis is about, so it is
+              # measured rather than assumed: equal session ids mean the
+              # recorder sits where the desktop lives.
+              $mySess = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+              $recSess = $rec.Process.SessionId
+              W "recorder session: $recSess (this step runs in $mySess)"
+              if ($recSess -ne $mySess) {
+                W "SESSION MISMATCH: the recorder is in session $recSess and the step in $mySess - another session is a desktop the recorder cannot see, which is exactly what an empty scenario.mp4 looks like"
+              }
+              Start-Sleep -Seconds 3
+              $rec.Process.Refresh()
+              if ($rec.Process.HasExited) {
+                $recExitedEarly = $true
+                W ("recorder already exited after 3 s, code {0} - no capture is running" -f $rec.Process.ExitCode)
+              } else {
+                W "recorder alive after 3 s (a capture is running)"
+              }
+              if (Test-Path $video) { W ("scenario.mp4 after 3 s: {0} bytes" -f (Get-Item $video).Length) }
+              else { W "scenario.mp4 not created after 3 s" }
+            }
+          }
+
           W "=== launching $binary ==="
           # Cura's own streams are captured, not left to a console of its own:
           # the probe warning is printed there as well as shown, and the first
@@ -2790,29 +3247,14 @@ jobs:
           $recGrew = $false
           $recSamples = @()
           $realTitle = ''
+          # The recorder is already running (started before this launch), so
+          # these samples cover the boot as well as the session.
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 5
             $p.Refresh()
             if ($p.HasExited) { $died = $true; break }
             $t = "$($p.MainWindowTitle)"
             if ($t -and -not (Test-ProbeTitle $t)) { $realTitle = $t }
-            if ($rec) {
-              $rec.Process.Refresh()
-              $recAlive = -not $rec.Process.HasExited
-              if (Test-Path $video) {
-                $s = (Get-Item $video).Length
-                if ($s -gt $HEADER_MAX) { $recGrew = $true }
-                $recSamples += $s
-                W ("[{0}] scenario.mp4: {1} bytes, recorder alive={2}" -f (Get-Date -Format 'HH:mm:ss'), $s, $recAlive)
-              } else {
-                W ("[{0}] scenario.mp4: not created yet, recorder alive={1}" -f (Get-Date -Format 'HH:mm:ss'), $recAlive)
-              }
-              if (-not $recAlive -and -not $recGoneLogged) {
-                $recGoneLogged = $true
-                $recExitedEarly = $true
-                W "recorder is gone - the recording ended without teardown being asked"
-              }
-            }
           }
           $BOOT_SECS = 90
           if ($died) {
@@ -2844,24 +3286,204 @@ jobs:
                 W ("[{0}] window title: '{1}'" -f (Get-Date -Format 'HH:mm:ss'), $t)
               }
               if ($t -and -not (Test-ProbeTitle $t)) { $realTitle = $t; break }
-              if ($rec) {
-                $rec.Process.Refresh()
-                $recAlive = -not $rec.Process.HasExited
-                if (Test-Path $video) {
-                  $s = (Get-Item $video).Length
-                  if ($s -gt $HEADER_MAX) { $recGrew = $true }
-                  $recSamples += $s
-                }
-                if (-not $recAlive -and -not $recGoneLogged) {
-                  $recGoneLogged = $true
-                  $recExitedEarly = $true
-                  W "recorder is gone - the recording ended without teardown being asked"
-                }
-              }
               Start-Sleep -Seconds 5
             }
             if ($realTitle) { W "real window seen: '$realTitle' (boot wait up to ${BOOT_SECS} s)" }
             else { W "no real window within the ${BOOT_SECS} s boot wait - the titles above are what the process put up" }
+          }
+
+          W ""
+          W "=== where Cura's window is (the capture itself is the whole display) ==="
+          # The recorder is already running against the whole display, so this
+          # is not a bound - it is the check that the frame contains Cura
+          # rather than whatever is in front of it. The failure mode is
+          # silent: something covering the window is recorded as the session
+          # and nothing in the file says so. The rectangle is MEASURED, never
+          # assumed: no window manager and no harness pin place the window on
+          # this runner, so its position is whatever Cura asked for (the
+          # harness's HARNESS_WINDOW pin is the Linux boot gate's job).
+          $winX = 0
+          $winY = 0
+          $winW = 0
+          $winH = 0
+          $rectWhy = 'no window handle'
+          $visible = $false
+          $minimised = $true
+          $front = $false
+          $topPid = 0
+          $hwnd = [IntPtr]::Zero
+          for ($k = 0; $k -lt 12; $k++) {
+            $p.Refresh()
+            $hwnd = $p.MainWindowHandle
+            if ($hwnd -ne [IntPtr]::Zero) { break }
+            Start-Sleep -Seconds 2
+          }
+          W ("window handle: {0} (MainWindowHandle of pid {1})" -f $hwnd, $p.Id)
+          if (($hwnd -ne [IntPtr]::Zero) -and (-not $nativeOk)) {
+            $rectWhy = 'the native helper did not compile, so GetWindowRect cannot be called'
+          } elseif ($hwnd -ne [IntPtr]::Zero) {
+            $wr = New-Object SpikeNative.RECT
+            if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wr)) {
+              $winX = $wr.Left
+              $winY = $wr.Top
+              $winW = $wr.Right - $wr.Left
+              $winH = $wr.Bottom - $wr.Top
+              $rectWhy = 'GetWindowRect'
+            } else {
+              $rectWhy = ('GetWindowRect failed (win32 error {0})' -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            }
+          }
+          $wantWin = "$env:HARNESS_WINDOW"
+          if (-not $wantWin) { $wantWin = '1840x1040' }
+          W ("window rectangle: {0},{1} {2}x{3} ({4}); the harness window pin is {5}" -f $winX, $winY, $winW, $winH, $rectWhy, $wantWin)
+          # BOUNDS, checked against the display rather than assumed: a window
+          # placed partly off the screen is CLIPPED by a full-display capture -
+          # the frame silently omits part of the window, which is what the
+          # owner saw in a recording of this leg. Nothing here trusts the
+          # window manager to have placed it sensibly, and the rule is that a
+          # moved or resized window stays inside the capture area unless the
+          # test itself calls for otherwise: SPIKE_OFFSCREEN_WINDOW=allow is
+          # that opt-out, and the default brings the window back in.
+          $boundsPolicy = "$env:SPIKE_OFFSCREEN_WINDOW"
+          if (-not $boundsPolicy) { $boundsPolicy = 'clamp' }
+          W ("window bounds policy: {0} (SPIKE_OFFSCREEN_WINDOW; 'allow' leaves a deliberately off-screen window where the test put it)" -f $boundsPolicy)
+          $inBounds = (($winW -gt 0) -and ($winH -gt 0) -and ($winX -ge 0) -and ($winY -ge 0) -and
+                       (($winX + $winW) -le $capW) -and (($winY + $winH) -le $capH))
+          W ("window rectangle vs the capture area (0,0 {0}x{1}): in-bounds={2} rect={3},{4} {5}x{6}" -f `
+              $capW, $capH, $inBounds, $winX, $winY, $winW, $winH)
+          $clampWhy = 'the whole window is already inside the capture area'
+          if (-not $inBounds) {
+            if ($boundsPolicy -eq 'allow') {
+              $clampWhy = 'the run opted out (SPIKE_OFFSCREEN_WINDOW=allow), so the window is left where it is and a clipped frame is expected'
+              W $clampWhy
+            } elseif (-not $nativeOk) {
+              $clampWhy = 'the native helper did not compile, so the window cannot be moved'
+            } elseif ($hwnd -eq [IntPtr]::Zero) {
+              $clampWhy = 'there is no window handle to move'
+            } elseif (($winW -gt $capW) -or ($winH -gt $capH)) {
+              $clampWhy = ("the window is larger than the capture area ({0}x{1}), so it cannot be brought fully inside it" -f $winW, $winH)
+            } else {
+              $nx = [Math]::Max(0, [Math]::Min($winX, $capW - $winW))
+              $ny = [Math]::Max(0, [Math]::Min($winY, $capH - $winH))
+              # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE: move only, keep the
+              # pinned size (the screen-fits assertion keeps its subject) and
+              # leave the stacking and the focus alone, so the visibility
+              # check below reads the state the move produced and nothing else.
+              $moved = [SpikeNative]::SetWindowPos($hwnd, [IntPtr]::Zero, $nx, $ny, 0, 0, 0x0015)
+              W ("window out of bounds: moving {0},{1} -> {2},{3} (SetWindowPos, size kept at {4}x{5})" -f $winX, $winY, $nx, $ny, $winW, $winH)
+              if ($moved) {
+                Start-Sleep -Seconds 2
+                $wrC = New-Object SpikeNative.RECT
+                if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wrC)) {
+                  $winX = $wrC.Left
+                  $winY = $wrC.Top
+                  $winW = $wrC.Right - $wrC.Left
+                  $winH = $wrC.Bottom - $wrC.Top
+                }
+                $inBounds = (($winW -gt 0) -and ($winH -gt 0) -and ($winX -ge 0) -and ($winY -ge 0) -and
+                             (($winX + $winW) -le $capW) -and (($winY + $winH) -le $capH))
+                $clampWhy = ("SetWindowPos to {0},{1}" -f $nx, $ny)
+              } else {
+                $clampWhy = ("SetWindowPos failed (win32 error {0})" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+              }
+            }
+            W ("window rectangle after the bounds fix: {0},{1} {2}x{3} in-bounds={4} ({5})" -f `
+                $winX, $winY, $winW, $winH, $inBounds, $clampWhy)
+          }
+          if ($inBounds) {
+            V ("SPIKE-Q2: window-bounds=OK ({0},{1} {2}x{3} inside the {4}x{5} capture area; {6})" -f `
+                $winX, $winY, $winW, $winH, $capW, $capH, $clampWhy)
+          } else {
+            V ("SPIKE-Q2: window-bounds=CLIPPED ({0},{1} {2}x{3} against the {4}x{5} capture area: part of the window is outside the display, so the full-screen recording omits it; {5})" -f `
+                $winX, $winY, $winW, $winH, $capW, $capH, $clampWhy)
+            W "FINDING: the window is not wholly inside the capture area and could not be moved into it, so the recording is clipped - reported here rather than left to be noticed by eye"
+          }
+          # Visibility, checked rather than assumed. The failure mode is the
+          # reason: with something else covering the window, the frame
+          # records that something else instead of Cura, and nothing about
+          # the file says so afterwards.
+          if (($hwnd -ne [IntPtr]::Zero) -and $nativeOk) {
+            $visible = [SpikeNative]::IsWindowVisible($hwnd)
+            $minimised = [SpikeNative]::IsIconic($hwnd)
+            $front = ([SpikeNative]::GetForegroundWindow() -eq $hwnd)
+            $probe = New-Object SpikeNative.POINT
+            $probe.X = [int]($winX + ($winW / 2))
+            $probe.Y = [int]($winY + ($winH / 2))
+            $topHwnd = [SpikeNative]::WindowFromPoint($probe)
+            $topPid = 0
+            [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+            W ("visibility: IsWindowVisible={0} IsIconic={1} foreground={2} topmost window at the rectangle centre belongs to pid {3} (Cura is pid {4})" -f `
+                $visible, $minimised, $front, $topPid, $p.Id)
+            if ((-not $front) -or $minimised) {
+              # Ask for the front and then look again: what matters is the
+              # state the recording runs in, not the state it was found in.
+              W "bringing the window to the front (ShowWindow(SW_RESTORE) then SetForegroundWindow)"
+              if ($minimised) { [void][SpikeNative]::ShowWindow($hwnd, 9) }
+              [void][SpikeNative]::SetForegroundWindow($hwnd)
+              Start-Sleep -Seconds 3
+              $p.Refresh()
+              $wr = New-Object SpikeNative.RECT
+              if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wr)) {
+                $winX = $wr.Left
+                $winY = $wr.Top
+                $winW = $wr.Right - $wr.Left
+                $winH = $wr.Bottom - $wr.Top
+              }
+              $visible = [SpikeNative]::IsWindowVisible($hwnd)
+              $minimised = [SpikeNative]::IsIconic($hwnd)
+              $front = ([SpikeNative]::GetForegroundWindow() -eq $hwnd)
+              $probe.X = [int]($winX + ($winW / 2))
+              $probe.Y = [int]($winY + ($winH / 2))
+              $topHwnd = [SpikeNative]::WindowFromPoint($probe)
+              $topPid = 0
+              [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+              W ("visibility after bringing it forward: IsWindowVisible={0} IsIconic={1} foreground={2} topmost pid {3}" -f `
+                  $visible, $minimised, $front, $topPid)
+            }
+          }
+          # The rectangle must be a real region of this desktop, and the
+          # topmost window at its centre must be Cura: a rectangle off the
+          # screen is a different fault from an occluded one.
+          $vsRect = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $rectOnScreen = (($winW -gt 0) -and ($winH -gt 0) -and
+                           ($winX -ge $vsRect.Left) -and ($winY -ge $vsRect.Top) -and
+                           (($winX + $winW) -le $vsRect.Right) -and (($winY + $winH) -le $vsRect.Bottom))
+          $unoccluded = ($topPid -eq $p.Id)
+          if ($visible -and (-not $minimised) -and $rectOnScreen -and $unoccluded) {
+            V ("SPIKE-Q2: window=VISIBLE ({0},{1} {2}x{3}, foreground={4}, topmost pid {5}, inside the virtual screen; the capture is the whole display, so Cura is in frame wherever the window sits)" -f `
+                $winX, $winY, $winW, $winH, $front, $topPid)
+          } else {
+            V ("SPIKE-Q2: window=NOT-VERIFIED (visible={0} minimised={1} on-screen={2} unoccluded={3} rect={4},{5} {6}x{7})" -f `
+                $visible, $minimised, $rectOnScreen, $unoccluded, $winX, $winY, $winW, $winH)
+            W "FINDING: the window could not be shown to be visible, unminimised and unoccluded, so the full-screen recording may be of something else at that spot - reported rather than assumed, and the recording continues because a whole-display capture needs no rectangle to start"
+          }
+          # The recorder is already running (started before the launch), so
+          # these samples say whether frames are arriving while Cura boots.
+          if ($rec) {
+            # Sampled while the rest of the step runs, because the verdict
+            # separates "no frame was ever muxed" from "frames went in and
+            # no index came out" by whether this container ever grew past
+            # its header. Four samples over 20 s, then the checks below add
+            # the recording's remaining length ($HEADER_MAX is the same 1 KB
+            # the recorder's own header check uses).
+            for ($s = 0; $s -lt 4; $s++) {
+              Start-Sleep -Seconds 5
+              $rec.Process.Refresh()
+              $recAlive = -not $rec.Process.HasExited
+              if (Test-Path $video) {
+                $sLen = (Get-Item $video).Length
+                if ($sLen -gt $HEADER_MAX) { $recGrew = $true }
+                $recSamples += $sLen
+                W ("[{0}] scenario.mp4: {1} bytes, recorder alive={2}" -f (Get-Date -Format 'HH:mm:ss'), $sLen, $recAlive)
+              } else {
+                W ("[{0}] scenario.mp4: not created yet, recorder alive={1}" -f (Get-Date -Format 'HH:mm:ss'), $recAlive)
+              }
+              if (-not $recAlive -and -not $recGoneLogged) {
+                $recGoneLogged = $true
+                $recExitedEarly = $true
+                W "recorder is gone - the recording ended without teardown being asked"
+              }
+            }
           }
 
           W ""
@@ -3045,6 +3667,20 @@ jobs:
           }
           # GDI screen capture: if it cannot see a desktop, no still can
           # be taken this way.
+          function Get-PngSize($path) {
+            # A PNG's IHDR carries the pixel size, so a still's declared
+            # dimensions can be reported without an image library: 8-byte
+            # signature, then the chunk length, "IHDR", then width and height
+            # as big-endian uint32.
+            try {
+              $b = [System.IO.File]::ReadAllBytes($path)
+              if ($b.Length -lt 24) { return '' }
+              $w = [int]$b[16] * 16777216 + [int]$b[17] * 65536 + [int]$b[18] * 256 + [int]$b[19]
+              $h = [int]$b[20] * 16777216 + [int]$b[21] * 65536 + [int]$b[22] * 256 + [int]$b[23]
+              return ("{0}x{1}" -f $w, $h)
+            } catch { return '' }
+          }
+
           function Grab-Frame($path) {
             if (-not $vs) { return $false }
             try {
@@ -3062,43 +3698,134 @@ jobs:
 
           W ""
           W "=== still capture (System.Drawing CopyFromScreen) ==="
+          # Full-screen, like the recorder and like runner.py's own stills: a
+          # still taken of the whole display follows whatever a resize test
+          # does to the window, where a still of a fixed rectangle would not.
           $shot = Join-Path $EVIDENCE 'cura-desktop.png'
           if (Grab-Frame $shot) {
             $len = (Get-Item $shot).Length
             W ("wrote {0}: {1:N1} KB" -f $shot, ($len / 1KB))
+            $pngWH = Get-PngSize $shot
+            W ("still size: {0} (the display this run captures is {1}x{2})" -f $(if ($pngWH) { $pngWH } else { 'unreadable' }), $capW, $capH)
             W "note: a solid/empty frame compresses to a few KB, a real"
             W "      desktop to hundreds - the size IS the signal"
-            V ("SPIKE-Q2: screenshot=OK ({0:N1} KB)" -f ($len / 1KB))
+            V ("SPIKE-Q2: screenshot=OK ({0:N1} KB{1})" -f ($len / 1KB), $(if ($pngWH) { ', ' + $pngWH } else { '' }))
           } else {
             W "still capture wrote nothing"
             V "SPIKE-Q2: screenshot=FAILED (no PNG written)"
           }
+          # Steady-state re-read of the only geometry that decides whether the
+          # recording is clipped: the window against the capture area. A
+          # window the run moved after the bounds check above shows up here
+          # rather than in someone's eye later.
+          if (($hwnd -ne [IntPtr]::Zero) -and $nativeOk) {
+            $wrL = New-Object SpikeNative.RECT
+            if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wrL)) {
+              $lx = $wrL.Left
+              $ly = $wrL.Top
+              $lw = $wrL.Right - $wrL.Left
+              $lh = $wrL.Bottom - $wrL.Top
+              $lIn = (($lw -gt 0) -and ($lh -gt 0) -and ($lx -ge 0) -and ($ly -ge 0) -and
+                      (($lx + $lw) -le $capW) -and (($ly + $lh) -le $capH))
+              W ("window rectangle at the still, vs the capture area (0,0 {0}x{1}): in-bounds={2} rect={3},{4} {5}x{6}" -f `
+                  $capW, $capH, $lIn, $lx, $ly, $lw, $lh)
+              if (-not $lIn) {
+                V ("SPIKE-Q2: window-bounds=CLIPPED-AT-STILL ({0},{1} {2}x{3} against {4}x{5}: the window moved out of the capture area during the run, so the recording omits that part of it)" -f `
+                    $lx, $ly, $lw, $lh, $capW, $capH)
+              }
+            }
+          }
 
           W ""
-          W "=== stopping the recorder (harness teardown kills ffmpeg) ==="
-          if ($rec) {
-            if (-not $rec.Process.HasExited) {
-              # Polite first, as the macOS leg does with SIGINT, so ffmpeg can
-              # finalise the mp4 index. On Windows that route is known to be
-              # closed for this child: taskkill without /F posts WM_CLOSE, and
-              # a process with no window cannot receive it. This launch is
-              # windowless by construction (CreateNoWindow), so expect the
-              # same reply the first run got: the force below is the real stop,
-              # and the index a force leaves unwritten is what the video
-              # verdict now reports as NO-INDEX instead of hiding.
-              W "taskkill /PID $($rec.Process.Id) (WM_CLOSE - expected to fail for a windowless child)"
-              & taskkill.exe /PID $rec.Process.Id 2>&1 | ForEach-Object { W $_ }
-              Start-Sleep -Seconds 3
-              $rec.Process.Refresh()
-              if (-not $rec.Process.HasExited) {
-                W "still running - force, as ui_test.sh's pkill -9 does"
-                Stop-Process -Id $rec.Process.Id -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 2
-              }
+          W "=== stopping the recorder (the harness's own graceful stop) ==="
+          # HOW THE HARNESS STOPS ITS RECORDER, on every platform: with a
+          # signal, never a kill, so ffmpeg reaches av_write_trailer and the
+          # mp4 gets its index. runner.py:278-281 waits a second and calls
+          # Popen.terminate() (SIGTERM on Linux) with a 10 s wait, then kills
+          # only if that wait expires; the macOS leg sends SIGINT and does the
+          # same. tools/ui_test.sh's pkill -9 is a backstop that runs AFTER
+          # that stop, not the stop itself. Windows has the same lever and not
+          # a different one: ffmpeg installs a console control handler
+          # (fftools/ffmpeg.c, term_init: SetConsoleCtrlHandler(CtrlHandler,
+          # TRUE)) and turns CTRL_C_EVENT and CTRL_BREAK_EVENT into the same
+          # shutdown as SIGINT - sigterm_handler(SIGINT), the transcode loop
+          # returns, the trailer is written. What a windowless child cannot
+          # receive is a WM_CLOSE, which is all taskkill posts without /F, and
+          # that is why run 35934448026 ended with 524336 bytes of frames and
+          # no index: the capture worked and the stop was a kill.
+          # So: the console control event, aimed at the console the recorder
+          # is attached to, then the harness's own 10 s bounded wait, then the
+          # force as the last resort. CTRL_BREAK_EVENT is the event that can
+          # be aimed (a targeted CTRL_C_EVENT is not delivered to a process
+          # group by design), and group 0 means every process sharing the
+          # console the event is generated on.
+          $stopWhy = 'not attempted'
+          if ($rec -and (-not $rec.Process.HasExited)) {
+            if (-not $nativeOk) {
+              $stopWhy = 'the native helper did not compile, so no console control event can be sent'
+              W $stopWhy
             } else {
-              $recExitedEarly = $true
-              W "the recorder had already exited on its own before teardown"
+              # This process must survive the event it raises: with a handler
+              # of NULL and TRUE, the calling process ignores the console
+              # control events it generates.
+              [void][SpikeNative]::SetConsoleCtrlHandler([IntPtr]::Zero, $true)
+              $attached = $false
+              $consolePids = @()
+              try {
+                $attached = [SpikeNative]::AttachConsole([uint32]$rec.Process.Id)
+                if ($attached) {
+                  W "attached to the recorder's own console (it has one of its own)"
+                } else {
+                  # No console of its own: it inherited this step's, which is
+                  # the case the target list below is read for - so the
+                  # processes the event will reach are named rather than
+                  # assumed.
+                  $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                  $buf = New-Object 'uint32[]' 64
+                  $n = [SpikeNative]::GetConsoleProcessList($buf, [uint32]64)
+                  for ($c = 0; $c -lt [Math]::Min([int]$n, 64); $c++) { $consolePids += $buf[$c] }
+                  W ("AttachConsole failed (win32 error {0}) - the recorder shares this step's console; processes on it: {1}" -f $err, ($consolePids -join ', '))
+                }
+                $sent = [SpikeNative]::GenerateConsoleCtrlEvent(0x1, 0)
+                $sentErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                W ("GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) returned {0} (win32 error {1})" -f $sent, $sentErr)
+                if ($sent) {
+                  $stopWhy = 'the console control event was sent'
+                } else {
+                  $stopWhy = ("GenerateConsoleCtrlEvent failed (win32 error {0})" -f $sentErr)
+                }
+              } catch {
+                $stopWhy = ('the console control event threw: ' + $_.Exception.Message)
+                W $stopWhy
+              } finally {
+                if ($attached) { [void][SpikeNative]::FreeConsole() }
+              }
             }
+            # The bounded wait the harness uses: video.wait(timeout=10) in
+            # runner.py, so a recorder that is writing its index is given the
+            # same ten seconds and only then forced. Forcing during the
+            # trailer write is exactly how an index goes missing.
+            $waited = 0
+            while ($waited -lt 10) {
+              Start-Sleep -Seconds 1
+              $rec.Process.Refresh()
+              if ($rec.Process.HasExited) { break }
+              $waited++
+            }
+            $rec.Process.Refresh()
+            if ($rec.Process.HasExited) {
+              W ("recorder stopped {0} s after the event ({1})" -f $waited, $stopWhy)
+            } else {
+              W ("still running {0} s after the console control event ({1}) - force, as ui_test.sh's pkill -9 does" -f $waited, $stopWhy)
+              $recWasForced = $true
+              Stop-Process -Id $rec.Process.Id -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+            }
+          } elseif ($rec) {
+            $recExitedEarly = $true
+            W "the recorder had already exited on its own before teardown"
+          }
+          if ($rec) {
             $rec.Process.Refresh()
             if ($rec.Process.HasExited) { W "recorder exit code: $($rec.Process.ExitCode)" }
           }
@@ -3152,6 +3879,11 @@ jobs:
           $probeText = ''
           $indexOk = $false
           $indexWhy = 'there is nothing to read'
+          # The recorded frame size, reported against the pinned geometry:
+          # "the recordings look low resolution" is answered by the numbers,
+          # and a capture that came out at the display's size rather than the
+          # pinned one must be visible here rather than inferred.
+          $recDims = 'unknown'
           if ($vlen -gt 0) {
             if ($probe) {
               $probeText = (& $probe.Source -v error -show_entries 'format=duration,size:stream=codec_name,width,height,nb_frames' `
@@ -3159,6 +3891,10 @@ jobs:
               $indexOk = (($LASTEXITCODE -eq 0) -and ($probeText -match 'codec_name'))
               if ($indexOk) { $indexWhy = 'ffprobe read the container back' }
               else { $indexWhy = 'ffprobe cannot read the container (no index in it)' }
+              $dw = ([regex]::Match($probeText, '(?m)^width=([0-9]+)')).Groups[1].Value
+              $dh = ([regex]::Match($probeText, '(?m)^height=([0-9]+)')).Groups[1].Value
+              if ($dw -and $dh) { $recDims = ("{0}x{1}" -f $dw, $dh) }
+              W ("recorded frame size: {0} (pinned geometry {1})" -f $recDims, $wantGeo)
             } else {
               # No ffprobe on this image: the index atom itself is the check.
               try {
@@ -3176,7 +3912,8 @@ jobs:
           $sessNote = ''
           if ($rec) {
             if ($recExitedEarly) { $recEnd = '; the recorder had stopped on its own before teardown' }
-            else { $recEnd = '; it was still running until the teardown kill' }
+            elseif ($recWasForced) { $recEnd = ("; the teardown had to force it ({0})" -f $stopWhy) }
+            else { $recEnd = ("; it was stopped at teardown ({0})" -f $stopWhy) }
             if ($recSess -and $mySess -and ($recSess -ne $mySess)) {
               $sessNote = ("; the recorder ran in session {0} and this step in {1}, so it had another desktop" -f $recSess, $mySess)
             } elseif ($recSess) {
@@ -3199,7 +3936,7 @@ jobs:
               W "--- ffprobe's own reading of the container ---"
               W $probeText.TrimEnd()
             }
-            V ("SPIKE-Q2: video=OK ({0:N1} KB, mp4, gdigrab, index readable)" -f ($vlen / 1KB))
+            V ("SPIKE-Q2: video=OK ({0:N1} KB, mp4, gdigrab, {1}, index readable)" -f ($vlen / 1KB), $recDims)
           } elseif ($vlen -gt $HEADER_MAX) {
             W ("wrote {0}: {1:N1} KB, but {2}" -f $video, ($vlen / 1KB), $indexWhy)
             if ($probe) {
@@ -3235,13 +3972,15 @@ jobs:
 
           if (-not $videoOk) {
             W ""
-            W "=== why is the recording not usable? (bounded gdigrab probes) ==="
-            # The harness's own argv, bounded and in the foreground so the
-            # diagnostics land in this log, next to the variant that skips the
-            # mouse: gdigrab draws the cursor itself, and a screen it cannot
-            # draw a cursor onto is one way this comes back empty. Finding an
-            # empty recording is the point - what the runs say is the result,
-            # so it fails loudly here rather than diagnosing nothing.
+            W "=== why is the recording not usable? (foreground gdigrab probes) ==="
+            # The recorder's own argv in the foreground, so the diagnostics
+            # land in this log, next to the variant that skips the mouse:
+            # gdigrab draws the cursor itself, and a screen it cannot draw a
+            # cursor onto is one way this comes back empty. Finding an empty
+            # recording is the point - what the runs say is the result, so it
+            # fails loudly here rather than diagnosing nothing. A probe that
+            # works where the recorder failed means the launch context is
+            # what differed, not the capture.
             if ($ff) {
               $probes = @(
                 @{ name = 'harness-argv'; extra = @() },
@@ -3249,7 +3988,7 @@ jobs:
               )
               foreach ($pv in $probes) {
                 $pf = Join-Path $EVIDENCE ("gdigrab-probe-" + $pv.name + ".mp4")
-                $pargs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $pv.extra +
+                $pargs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs + $pv.extra +
                          @('-framerate', '15', '-t', '5', '-i', 'desktop', "`"$pf`"")
                 W ("probe ({0}): ffmpeg {1}" -f $pv.name, ($pargs -join ' '))
                 & $ff.Source @pargs 2>&1 | ForEach-Object { W $_ }
@@ -3268,8 +4007,8 @@ jobs:
               # scenario.mp4 is fixed with it; no file again, with ffmpeg's
               # reason printed above, means something else is.
               $bgFile = Join-Path $EVIDENCE 'gdigrab-probe-background.mp4'
-              $bgArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab',
-                          '-framerate', '15', '-t', '5', '-i', 'desktop', "`"$bgFile`"")
+              $bgArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs +
+                        @('-framerate', '15', '-t', '5', '-i', 'desktop', "`"$bgFile`"")
               W ("probe (background): ffmpeg {0}" -f ($bgArgs -join ' '))
               $bg = $null
               try {
@@ -3303,17 +4042,21 @@ jobs:
 
           W ""
           W "=== the harness's own still form: ffmpeg -frames:v 1 ==="
-          # runner.py:96-104 grabs stills through ffmpeg as well, so one
-          # here reports whether the harness's capture path itself works
-          # natively on this runner.
+          # runner.py:96-104 grabs stills through ffmpeg as well (x11grab,
+          # -video_size SIZE, -frames:v 1), so one here reports whether the
+          # harness's capture path itself works natively on this runner - the
+          # recorder's own region and flags, one frame, no -framerate.
           if ($ff) {
             $ffStill = Join-Path $EVIDENCE 'ffmpeg-still.png'
-            & $ff.Source -y -loglevel error -f gdigrab -i desktop -frames:v 1 "$ffStill" 2>&1 |
-              ForEach-Object { W $_ }
+            $stillArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs +
+                         @('-i', 'desktop', '-frames:v', '1', "`"$ffStill`"")
+            & $ff.Source @stillArgs 2>&1 | ForEach-Object { W $_ }
             W "ffmpeg still exit: $LASTEXITCODE"
             if ((Test-Path $ffStill) -and (Get-Item $ffStill).Length -gt 0) {
-              W ("{0}: {1:N1} KB" -f $ffStill, ((Get-Item $ffStill).Length / 1KB))
-              V ("SPIKE-Q2: ffmpeg-still=OK ({0:N1} KB)" -f ((Get-Item $ffStill).Length / 1KB))
+              $stillWH = Get-PngSize $ffStill
+              W ("{0}: {1:N1} KB, {2}" -f $ffStill, ((Get-Item $ffStill).Length / 1KB), $(if ($stillWH) { $stillWH } else { 'size unreadable' }))
+              W ("still size: {0} (the display this run captures is {1}x{2})" -f $(if ($stillWH) { $stillWH } else { 'unreadable' }), $capW, $capH)
+              V ("SPIKE-Q2: ffmpeg-still=OK ({0:N1} KB{1})" -f ((Get-Item $ffStill).Length / 1KB), $(if ($stillWH) { ', ' + $stillWH } else { '' }))
             } else {
               V "SPIKE-Q2: ffmpeg-still=FAILED (no PNG written)"
             }
