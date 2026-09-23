@@ -525,7 +525,11 @@ class RealEngineTestCase(unittest.TestCase):
                     candidates.append(window)
             stem = "%s.%s" % (type(self).__name__, self._testMethodName)
             written = []
-            for index, window in enumerate(candidates):
+            # Newest first, and only a handful: a test that mounts a
+            # window per stage accumulates dozens, and an artefact
+            # nobody can review is not evidence. The last windows are
+            # the scene the failure happened in.
+            for index, window in enumerate(reversed(candidates[-6:])):
                 grab = getattr(window, "grabWindow", None)
                 if grab is None:
                     continue
