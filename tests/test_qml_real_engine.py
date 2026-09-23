@@ -3205,7 +3205,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     break
         return rows
 
-    def _grab_when_inked(self, window, face, top=None, timeout=2.5):
+    def _grab_when_inked(self, window, face, top=None, timeout=15.0):
+        # The timeout is a hang guard, not a budget: on a starved
+        # runner the threaded raster legitimately takes longer than a
+        # couple of seconds, and the caller's own ink assertion is
+        # what fails when it never lands.
         # With a top edge: the wait targets the plot's top band — the
         # scene-graph dot inks instantly and must not satisfy the
         # wait before the threaded strokes land.

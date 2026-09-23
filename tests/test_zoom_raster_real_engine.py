@@ -182,15 +182,27 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         self._background = image.pixel(int(origin.x()) + 8, int(origin.y()) + 8)
         return image
 
-    def _settled_grab(self):
+    def _settled_grab(self, arrived=None):
         """Grab once the threaded rasters have landed: two consecutive
-        sampled frames identical (the parent suite's idiom)."""
+        sampled frames identical AND, when given, *arrived* satisfied.
+        Agreement alone is not arrival — two grabs taken before the
+        canvases paint anything agree perfectly, so a settle test on
+        its own hands the census an empty picture (the loaded runner's
+        "the composed stroke vanished"). The deadline is a hang guard,
+        not a budget: the rasters on a starved machine take as long as
+        they take, and the caller's own assertion is what fails when
+        they never land."""
+        import time as _time
+
+        deadline = _time.monotonic() + 15.0
         previous = None
-        for _ in range(30):
+        image = self.window.grabWindow()
+        while _time.monotonic() < deadline:
             self._pump_settle()
             image = self.window.grabWindow()
-            if previous is not None and (_parent.PlateFaceRenderTests._sample(image)
-                                         == _parent.PlateFaceRenderTests._sample(previous)):
+            if (arrived is None or arrived(image)) and previous is not None and (
+                    _parent.PlateFaceRenderTests._sample(image)
+                    == _parent.PlateFaceRenderTests._sample(previous)):
                 return self._grab()
             previous = image
         return self._grab()
@@ -255,7 +267,10 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         # offscreen harness: wait for the wedge's own ink to appear
         # rather than sampling for a stable (possibly stale) frame.
         import time as _time
-        deadline = _time.monotonic() + 3.0
+        # A hang guard, not a budget: the rasters on a starved machine
+        # take as long as they take, and the assertion below is what
+        # fails when the ink never lands.
+        deadline = _time.monotonic() + 15.0
         image = self.window.grabWindow()
         while arm_ink(image) <= 60 and _time.monotonic() < deadline:
             self._pump_settle()
@@ -286,7 +301,11 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         self._set_payload(payload)
         self.face.setProperty("showPrevious", True)
         self.face.setProperty("showNext", True)
-        mass = self._band_mass(self._settled_grab(), 203.0, 1.0, 4)
+        # The arrival evidence IS the assertion: wait until the
+        # composed stroke is in the band, then measure it.
+        image = self._settled_grab(
+            lambda frame: self._band_mass(frame, 203.0, 1.0, 4) > 0)
+        mass = self._band_mass(image, 203.0, 1.0, 4)
         self.assertGreater(mass, 0, "the composed stroke vanished")
 
 
@@ -429,15 +448,22 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
                 float(face.property("viewPanX")), float(face.property("viewPanY")),
                 count)
 
-    def _settled_grab(self):
+    def _settled_grab(self, arrived=None):
         """Grab once the threaded rasters have landed: two consecutive
-        sampled frames identical (the parent suite's idiom)."""
+        sampled frames identical AND, when given, *arrived* satisfied —
+        agreement alone accepts a canvas that has not painted yet. The
+        deadline is a hang guard, not a budget."""
+        import time as _time
+
+        deadline = _time.monotonic() + 15.0
         previous = None
-        for _ in range(30):
+        image = self._window.grabWindow()
+        while _time.monotonic() < deadline:
             self._pump_ms(30)
             image = self._window.grabWindow()
-            if previous is not None and (_parent.PlateFaceRenderTests._sample(image)
-                                         == _parent.PlateFaceRenderTests._sample(previous)):
+            if (arrived is None or arrived(image)) and previous is not None and (
+                    _parent.PlateFaceRenderTests._sample(image)
+                    == _parent.PlateFaceRenderTests._sample(previous)):
                 return image
             previous = image
         return image

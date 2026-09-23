@@ -131,7 +131,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
                             - ((base >> s) & 0xFF)) for s in (0, 8, 16))
                     for r in range(292, 309)]
 
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 15.0
         previous = None
         image = window.grabWindow()
         per_row = band(image)
@@ -253,7 +253,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
                     return c
             return None
 
-        def painted(image, pan_x, timeout=3.0):
+        def painted(image, pan_x, timeout=15.0):
             """The same frame once the raster's own ink is on it. The
             warm raster is read off the file system, so a fixed pump is
             a host assumption: the macOS CI's slower read handed the
