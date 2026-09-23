@@ -19,6 +19,13 @@ import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# The Cura widget stubs extend QtQuick Controls, whose default style is
+# the host's native one. On Windows and macOS that style lives in a
+# plugin the pip wheel cannot load, so a mount of any document holding
+# one of those stubs fails there — the cascade reads only as "Type
+# CameraPane unavailable". Basic is the engine-independent style, and
+# pinning it is what makes a mount behave the same on every host.
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from qt_runtime_support import QT_AVAILABLE  # noqa: E402
 
