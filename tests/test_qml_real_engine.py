@@ -31,6 +31,34 @@ from qt_runtime_support import QT_AVAILABLE  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+_ENV_REPORTED = False
+
+
+def _report_environment():
+    """One line per process naming the environment the pixel censuses
+    are measured in: the resolved default family and how many families
+    that platform's font database offers. A leg that lays out
+    differently from the pinned container says so here, once — instead
+    of leaving a dozen width assertions to disagree without saying why.
+    Never raises: a probe that fails the suite it is diagnosing is
+    worse than no probe."""
+    global _ENV_REPORTED
+    if _ENV_REPORTED:
+        return
+    _ENV_REPORTED = True
+    try:
+        from PyQt6.QtGui import QFontDatabase, QGuiApplication
+        families = sorted(QFontDatabase.families())
+        sys.stderr.write(
+            "harness environment: default family=%r families=%d "
+            "QT_QPA_FONTDIR=%r\n"
+            % (QGuiApplication.font().family(), len(families),
+               os.environ.get("QT_QPA_FONTDIR", "")))
+        sys.stderr.write("harness environment: families=%r\n" % (families[:8],))
+    except Exception as exc:  # noqa: BLE001 - a probe must never fail the suite
+        sys.stderr.write("harness environment: unavailable (%r)\n" % (exc,))
+    sys.stderr.flush()
+
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QMetaObject, QObject, QPointF, QRectF, Qt, QUrl, qInstallMessageHandler
     from PyQt6.QtCore import pyqtProperty, pyqtSignal, pyqtSlot
@@ -451,6 +479,7 @@ class RealEngineTestCase(unittest.TestCase):
                 "mount_window: asked %dx%d, got document %dx%d window %dx%d\n"
                 % (int(width), int(height), got[0], got[1], got[2], got[3]))
             sys.stderr.flush()
+        _report_environment()
         return document, window
 
     def _settle_window(self, window):
