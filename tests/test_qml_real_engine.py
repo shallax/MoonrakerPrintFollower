@@ -2115,7 +2115,13 @@ class CameraFpsControlTests(RealEngineTestCase):
         # The floor of the same rule: a frame too small for even the
         # chip shows no FPS surface — the rate is still the shift
         # wheel's.
-        pane, window, model, _image, frame = self._fps_pane(110, 400)
+        # The mount must leave the frame under the chip's own 96 px
+        # threshold on EVERY platform, and the frame does not track the
+        # mount the same way on each: on Windows it comes out at the
+        # mount less its 2 px of chrome (108 at a 110 mount, which is
+        # the reported premise failure), where this container leaves it
+        # ~15 px narrower. 80 is clear of the threshold either way.
+        pane, window, model, _image, frame = self._fps_pane(80, 400)
         self.assertLess(frame.width(), 96,
                         "the tiny mount must actually be too small for the chip")
         self.assertFalse(self.find(pane, "cameraBar").property("visible"))
