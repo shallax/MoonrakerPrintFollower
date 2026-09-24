@@ -789,6 +789,62 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         die "the staged driver has no plugin.json"
     echo "staged $PLUGIN_DIR/MoonrakerPrintFollower and $PLUGIN_DIR/HarnessDriver"
 
+    # The driver's clicks are QTest injections (tests/harness/driver:
+    # qclick), and the click-free legs passed while every clicking one died
+    # with "QtTest injection unavailable". UltiMaker's build of PyQt6
+    # carries only the modules Cura uses and QtTest is not one of them, so
+    # `from PyQt6 import QtTest` cannot succeed; the driver's fallback then
+    # looks for the wheel's binding, and no leg stages one. Qt's own
+    # QtTest.framework IS in the bundle - only the binding is missing - and
+    # the wheel's binding resolves its framework through @loader_path from
+    # the same package dir every other binding in this bundle uses, so one
+    # file restores the import path the driver tries first.
+    echo
+    echo "--- the QtTest binding (the driver's click path) ---"
+    QT_PKG="$APP/Contents/Frameworks/PyQt6"
+    QT_LIB="$QT_PKG/Qt6/lib"
+    QT_TEST="$QT_PKG/QtTest.abi3.so"
+    echo "package dir : $QT_PKG"
+    if [ -f "$QT_TEST" ]; then
+        echo "binding     : already there ($QT_TEST)"
+    elif [ ! -f "$QT_PKG/QtCore.abi3.so" ]; then
+        # Staging into a directory the port does not import from would look
+        # like success and change nothing.
+        warn "$QT_PKG carries no QtCore.abi3.so - not the PyQt6 package dir the port imports, so the binding was not staged"
+    else
+        # Versions are read out of the installed build, never assumed.
+        # Both reads are allowed to fail (pipefail is on): an absent or
+        # unreadable version has to reach the warn below, not kill the leg
+        # before it can report anything.
+        QT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+            "$QT_LIB/QtCore.framework/Versions/A/Resources/Info.plist" 2>/dev/null | tr -d '[:space:]' || true)"
+        if [ -z "$QT_VER" ]; then
+            warn "the bundle's Qt version could not be read from $QT_LIB/QtCore.framework - no wheel to match the binding against"
+        else
+            echo "bundle Qt   : $QT_VER (PyQt6's own version tracks it; the bundle's log reports PyQt6 $QT_VER)"
+            # Keyless and no pip: the version's metadata names the wheel.
+            QT_WHEEL="$INSTALLER_DIR/PyQt6-$QT_VER-macos.whl"
+            QT_URL="$(curl -sSL --max-time 60 "https://pypi.org/pypi/PyQt6/$QT_VER/json" 2>/dev/null |
+                grep -o 'https://files\.pythonhosted\.org/[^"]*universal2\.whl' | head -1 || true)"
+            if [ -z "$QT_URL" ]; then
+                warn "PyPI lists no universal2 wheel for PyQt6 $QT_VER - the binding was not staged"
+            elif ! curl -sSL --fail --retry 3 --retry-delay 5 --connect-timeout 30 \
+                    --max-time 300 -o "$QT_WHEEL" "$QT_URL"; then
+                warn "the PyQt6 $QT_VER wheel could not be downloaded from $QT_URL"
+            elif ! sudo unzip -o -q -j "$QT_WHEEL" 'PyQt6/QtTest.abi3.so' -d "$QT_PKG"; then
+                warn "the PyQt6 $QT_VER wheel carried no PyQt6/QtTest.abi3.so"
+            else
+                echo "binding     : staged $QT_TEST ($(stat -f%z "$QT_TEST") bytes)"
+            fi
+            rm -f "$QT_WHEEL"
+        fi
+    fi
+    if [ -e "$QT_LIB/QtTest.framework/Versions/A/QtTest" ]; then
+        echo "framework   : $QT_LIB/QtTest.framework (the binding's own rpath target)"
+    else
+        warn "no QtTest.framework at $QT_LIB - the binding would not resolve it"
+    fi
+
     # --- 7. the plugin's network peer -------------------------------------
     # The seeded machine records point at 127.0.0.1:7125, and the runner's
     # own /harness/* calls go to the same port. The simulator has to be up

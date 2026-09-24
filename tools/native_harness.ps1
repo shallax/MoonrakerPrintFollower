@@ -1214,6 +1214,76 @@ foreach ($name in 'MoonrakerPrintFollower', 'HarnessDriver') {
 }
 Write-Log "staged $PluginDir\MoonrakerPrintFollower and $PluginDir\HarnessDriver"
 
+# The driver's clicks are QTest injections (tests\harness\driver: qclick),
+# and the click-free legs passed while every clicking one died with "QtTest
+# injection unavailable". UltiMaker's build of PyQt6 carries only the
+# modules Cura uses and QtTest is not one of them, so `from PyQt6 import
+# QtTest` cannot succeed; the driver's fallback then looks for the wheel's
+# binding under its Linux-only name, which no Windows leg stages. Qt's own
+# Qt6Test.dll IS in the bundle - only the binding is missing - so one file
+# restores the import path the driver tries first.
+Write-Log ""
+Write-Log "--- the QtTest binding (the driver's click path) ---"
+$QtPkg = Join-Path $curaDir 'PyQt6'
+$QtTest = Join-Path $QtPkg 'QtTest.pyd'
+$QtCorePyd = Join-Path $QtPkg 'QtCore.pyd'
+$QtTestDll = Join-Path $QtPkg 'Qt6\bin\Qt6Test.dll'
+Write-Log "package dir : $QtPkg"
+if (Test-Path -LiteralPath $QtTest) {
+    Write-Log "binding     : already there ($QtTest)"
+} elseif (-not (Test-Path -LiteralPath $QtCorePyd)) {
+    # Staging into a directory the port does not import from would look
+    # like success and change nothing.
+    Write-Warn "$QtPkg carries no QtCore.pyd - not the PyQt6 package dir the port imports, so the binding was not staged"
+} else {
+    # Versions are read out of the installed build, never assumed.
+    $qtVer = ''
+    $qtFileVersion = ''
+    $coreDll = Join-Path $QtPkg 'Qt6\bin\Qt6Core.dll'
+    if (Test-Path -LiteralPath $coreDll) {
+        $qtFileVersion = (Get-Item -LiteralPath $coreDll).VersionInfo.FileVersion
+        if ($qtFileVersion -match '^(\d+\.\d+\.\d+)') { $qtVer = $Matches[1] }
+    }
+    if (-not $qtVer) {
+        Write-Warn "the bundle's Qt version could not be read from $coreDll ('$qtFileVersion') - no wheel to match the binding against"
+    } else {
+        Write-Log "bundle Qt   : $qtVer (PyQt6's own version tracks it; the bundle's log reports PyQt6 $qtVer)"
+        # Keyless and no pip: the version's metadata names the wheel.
+        $api = "https://pypi.org/pypi/PyQt6/$qtVer/json"
+        $meta = Join-Path $WorkDir 'pyqt6-pypi.json'
+        $wheelUrl = ''
+        if (Get-CurlFile $api $meta) {
+            $wheelUrl = (ConvertFrom-Json -InputObject (Get-Content -LiteralPath $meta -Raw -Encoding UTF8)).urls |
+                Where-Object { $_.filename -like '*win_amd64.whl' } |
+                Select-Object -First 1 -ExpandProperty url
+        }
+        if (-not $wheelUrl) {
+            Write-Warn "PyPI lists no win_amd64 wheel for PyQt6 $qtVer ($api) - the binding was not staged"
+        } else {
+            $qtWheel = Join-Path $WorkDir 'PyQt6-wheel.zip'
+            if (-not (Get-CurlFile $wheelUrl $qtWheel)) {
+                Write-Warn "the PyQt6 $qtVer wheel could not be downloaded from $wheelUrl"
+            } else {
+                $qtStage = Join-Path $WorkDir 'pyqt6_wheel'
+                if (Test-Path -LiteralPath $qtStage) { Remove-Item -LiteralPath $qtStage -Recurse -Force }
+                Expand-Archive -LiteralPath $qtWheel -DestinationPath $qtStage -Force
+                $qtSrc = Join-Path $qtStage 'PyQt6\QtTest.pyd'
+                if (-not (Test-Path -LiteralPath $qtSrc)) {
+                    Write-Warn "the PyQt6 $qtVer wheel carried no PyQt6\QtTest.pyd"
+                } else {
+                    Copy-Item -LiteralPath $qtSrc -Destination $QtTest -Force
+                    Write-Log "binding     : staged $QtTest ($((Get-Item -LiteralPath $QtTest).Length) bytes)"
+                }
+            }
+        }
+    }
+}
+if (Test-Path -LiteralPath $QtTestDll) {
+    Write-Log "runtime     : $QtTestDll (the binding loads this by name, from the bundle)"
+} else {
+    Write-Warn "no Qt6Test.dll at $QtTestDll - the binding would not resolve it"
+}
+
 # --- 8. the plugin's network peer -----------------------------------------
 # The seeded machine records point at 127.0.0.1:7125, and the runner's own
 # /harness/* calls go to the same port. The simulator has to be up BEFORE
