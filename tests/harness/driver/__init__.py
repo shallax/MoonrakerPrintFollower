@@ -1430,6 +1430,22 @@ class HarnessServer(QObject):
                             continue
                         button.click()
                         clicked += 1
+                        # And END the modal explicitly. A click is real
+                        # input and the right way to answer, but on macOS
+                        # a native alert can hide on that click while
+                        # exec() keeps running underneath - which leaves
+                        # the plugin blocked inside QMessageBox.question
+                        # with its box already gone, so the caller never
+                        # gets an answer while every check here reports
+                        # success. Measured: "asking" logged, "answer="
+                        # never, and the leg walking on 71 s later past a
+                        # modal it never answered. done() is a no-op on a
+                        # dialog that has already finished, so it costs
+                        # nothing on the platforms that behave.
+                        try:
+                            box.done(int(standard))
+                        except Exception:
+                            pass
                         results.append(int(box.result()))
                     qtest.QTest.qWait(100)
                     fresh = [w for w in QApplication.topLevelWidgets()
