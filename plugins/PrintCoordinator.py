@@ -713,6 +713,9 @@ class PrintCoordinator(QObject):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
+        # Paired with the confirm log above: an accepted replace that
+        # never reaches here is a dropped callback, not a refused one.
+        Logger.log("i", "Moonraker current print load requested")
         self._loads.request_load()
         self._message("Resolving current print…")
         self._client.force_refresh()

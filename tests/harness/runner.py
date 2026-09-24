@@ -3070,7 +3070,12 @@ def suite_step(step):
     if op == "confirm_box":
         reply = rpc({"id": 1, "cmd": "confirm_box", "button": step.get("button", "Yes")})
         time.sleep(0.5)
-        return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", "answered"
+        # The code the plugin reads is part of the proof: a box that
+        # closes without carrying the requested answer is a fail, not
+        # an answered dialog.
+        results = reply.get("results") or []
+        note = "answered" if not results else f"answered with code {results[0]}"
+        return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", note
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])
         unknown = reply.get("unknown") or []

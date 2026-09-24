@@ -1255,7 +1255,12 @@ class HarnessServer(QObject):
             # the driver reported success — the box then sat over the
             # scenario and every later step failed (the macOS legs).
             # The dialog is verified GONE afterwards: an unanswered box
-            # is a failed press, never a quiet pass.
+            # is a failed press, never a quiet pass. The CODE the
+            # caller reads is verified too, sampled right after the
+            # press: the code is latched when the box closes, so a
+            # correction afterwards moves result() while the plugin has
+            # already read the old one — a wrong code has to fail the
+            # step here, not be papered over.
             try:
                 wanted = str(request.get("button") or "Yes")
                 standard = {"Yes": QMessageBox.StandardButton.Yes,
@@ -1270,12 +1275,14 @@ class HarnessServer(QObject):
                     return {"id": request_id, "ok": False, "error": "no QMessageBox up"}
                 qtest = _import_qtest()
                 clicked = 0
+                results = []
                 for box in boxes:
                     button = box.button(standard)
                     if button is None:
                         continue
                     button.click()
                     clicked += 1
+                    results.append(int(box.result()))
                 qtest.QTest.qWait(120)
                 still = [w for w in QApplication.topLevelWidgets()
                          if isinstance(w, QMessageBox) and w.isVisible()]
@@ -1287,7 +1294,15 @@ class HarnessServer(QObject):
                     return {"id": request_id, "ok": False,
                             "error": f"no {wanted} button on the box",
                             "titles": [w.windowTitle() for w in boxes]}
-                return {"id": request_id, "ok": True, "clicked": clicked}
+                wrong = [r for r in results if r != int(standard)]
+                if wrong:
+                    return {"id": request_id, "ok": False,
+                            "error": (f"the box answered {wrong}, not {int(standard)}"
+                                      " — the plugin takes its No branch"),
+                            "clicked": clicked, "results": results,
+                            "titles": [w.windowTitle() for w in boxes]}
+                return {"id": request_id, "ok": True, "clicked": clicked,
+                        "results": results, "titles": [w.windowTitle() for w in boxes]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":

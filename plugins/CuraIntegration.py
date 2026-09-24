@@ -328,6 +328,12 @@ class CuraIntegration(QObject):
                 "with the G-code currently printing in Moonraker.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
+            # The answer is the whole gate on this load, and a box that
+            # comes back with a code the plugin does not recognise
+            # silently takes the No branch: log the raw code so a
+            # refused replace is never invisible.
+            Logger.log("i", "Moonraker replace confirm: answer=%s yes=%s",
+                       int(answer), int(QMessageBox.StandardButton.Yes))
             if answer == QMessageBox.StandardButton.Yes: self.queue(callback)
         self.queue(ask)
 

@@ -380,13 +380,21 @@ class CliTests(unittest.TestCase):
                           "-i", "desktop"])
 
     def test_the_cli_dispatches_for_this_host_by_default(self):
+        # The subject is the ROUTING: the launchers call the CLI with no
+        # --system, so an argv pinned to one platform's device here is a
+        # Linux expectation run on all three (it fails the macOS and
+        # Windows suites, which both run this file). Each device's argv
+        # is pinned literally against its own platform name above; what
+        # is asked here is that the default answers for the host it is
+        # running on.
         done = subprocess.run(
             [sys.executable, str(HERE / "native_host.py"), "capture-input",
              "--size", SIZE, "--display", DISPLAY],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
         self.assertEqual(json.loads(done.stdout.decode("utf-8")),
-                         ["-f", "x11grab", "-video_size", SIZE, "-i", DISPLAY])
+                         native_host.capture_input_args(
+                             native_host.current_system(), SIZE, display=DISPLAY))
 
 
 if __name__ == "__main__":

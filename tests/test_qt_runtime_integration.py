@@ -2493,6 +2493,21 @@ class RemoteFileServiceMetadataTests(unittest.TestCase):
         self.addCleanup(self.service.close)
         self.service.bind(("part.gcode", 1000, 1))
 
+    def _wait_for_the_backoff_to_expire(self, timeout=3.0):
+        """Pump events until the service's own retry window has passed.
+
+        The window is read from time.monotonic(), which on Windows is
+        GetTickCount64 — a clock that only advances every ~15 ms tick, so
+        a 5 ms window is not cleared by waiting 5 ms (or 15). Waiting on
+        the implementation's own deadline keeps the assertion as strict
+        on a coarse clock as on a fine one; the iteration bound means a
+        clock that never advances fails the assertion, not the suite.
+        """
+        for _ in range(int(timeout * 200)):
+            if time.monotonic() >= self.service._metadata_retry_at:
+                return
+            self.qt.events(5)
+
     def test_metadata_failure_retries_after_backoff_and_completes_on_success(self):
         self.service.METADATA_RETRY_DELAYS_MS = (5,)
         self.service.request_metadata()
@@ -2509,7 +2524,7 @@ class RemoteFileServiceMetadataTests(unittest.TestCase):
         self.assertEqual(len(self.transport.requests), 1)
 
         # After the window the same job retries; success completes metadata.
-        self.qt.events(15)
+        self._wait_for_the_backoff_to_expire()
         self.service.request_metadata()
         self.assertEqual(len(self.transport.requests), 2)
         self.transport.requests[-1].callback({"result": {"estimated_time": 3600, "uuid": "u-1"}}, None)
