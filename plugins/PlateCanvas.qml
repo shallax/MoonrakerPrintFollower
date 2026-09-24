@@ -17,6 +17,12 @@ Item {
     property var printerModel: null
     property var plate: null          // the model's plateObjects payload
     property bool compact: false
+    // The bed graphic. Always on in the product; a harness that
+    // measures a STROKE turns it off so the frame holds only the ink
+    // under test — the grid is drawn on a threaded canvas whose paint
+    // lands between grabs, so a measurement that subtracts one frame
+    // from another measures the grid and whatever else moved with it.
+    property bool showGrid: true
     // The zoom/pan view, owned by the follower face and applied by
     // THIS canvas's grid (the bottom raster must move with the
     // layers): identity elsewhere — the picker never zooms.
@@ -271,6 +277,10 @@ Item {
         plateCanvas.requestPaint();
     }
     onHoveredNameChanged: plateCanvas.requestPaint()
+    // The grid flag is a paint input, and this canvas paints into an
+    // IMAGE: without the repaint the buffer keeps the last picture it
+    // was given, so turning the grid off left it on screen.
+    onShowGridChanged: plateCanvas.requestPaint()
     onViewScaleChanged: {
         _publishView();
         plateCanvas.requestPaint();
@@ -299,7 +309,9 @@ Item {
             if (plot == null) {
                 return;
             }
-            _drawGrid(ctx, plot);
+            if (root.showGrid) {
+                _drawGrid(ctx, plot);
+            }
             if (root.plate == null) {
                 return;
             }

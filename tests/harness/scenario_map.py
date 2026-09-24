@@ -877,4 +877,16 @@ EXCLUSIONS = {
         "date": "2026-09-23",
         "recheck": "a scenario addresses the prefix images directly",
     },
+    # The zoom rail down the plate's edge: raised only by a wheel or a
+    # right-drag, and the harness's input set carries neither — the
+    # same limit moonrakerFollowerJump's absent-wait records. No
+    # scenario can reach it, so it carries an exclusion rather than a
+    # mapping. The name exists for the Qt suite, which addresses it to
+    # take it out of the miter stroke census's frame.
+    "moonrakerPlateZoomScope": {
+        "reason": "the plate's zoom rail: raised only by a wheel or a right-drag, neither of which the harness input set carries",
+        "evidence": "test_zoom_raster_real_engine.py's chrome exclusion in the miter stroke census",
+        "date": "2026-09-24",
+        "recheck": "the harness gains wheel or drag input over the plate face",
+    },
 }

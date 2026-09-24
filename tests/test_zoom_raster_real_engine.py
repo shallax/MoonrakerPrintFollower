@@ -155,6 +155,12 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         self.face.setProperty("showTravels", False)
         self.face.setProperty("lineScale", 1.0)
         self.face.setProperty("viewScale", 1.0)
+        # The grid flag is the FACE's (setUpClass shares one mount), so
+        # a test that turns it off must not leave the next one without
+        # a grid it never asked to lose.
+        canvas = self.face.findChild(QQuickItem, "moonrakerPlateCanvas")
+        if canvas is not None:
+            canvas.setProperty("showGrid", True)
         self._pump_settle()
 
     @staticmethod
@@ -176,51 +182,178 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         # payload swap never paints over stale pixels. The settled
         # frame is RETURNED: a caller that grabs again gets a frame the
         # predicate never cleared, which is how a baseline ends up
-        # without the grid its diff assumes.
+        # without the ink its diff assumes.
         self.face.setProperty("progress", dict(payload, anchor=-1))
         self._pump_settle()
         self.face.setProperty("progress", payload)
         return self._settled_grab(arrived)
 
-    def _grid_inked(self, image):
-        """The grid's own ink: the 40 mm graduation's column, sampled
-        where the miter census looks. That census subtracts a baseline
-        frame, so a baseline still waiting for its grid reads as a
-        spike on this column. The graduation sits at col 68 on this
-        harness (1.664 px/mm, a 2 px face origin) — which is NOT the
-        column the Windows failure reports: that begins at 78, where
-        this harness draws no grid element at all, so the two are not
-        the same fault and this docstring cannot name the cause. The
-        census map in the failure message is what does."""
+    def _grid_off(self):
+        """Take the bed graphic out of the frame.
+
+        The stroke measurement should see the stroke. The oracle this
+        replaces subtracted one asynchronously painted frame from
+        another, so it measured whatever else the face was drawing that
+        moved between the two — the zoom scope's slide, most of all.
+        Removing the grid takes the largest such element out and leaves
+        the chrome boxes to cover the rest."""
+        canvas = self.face.findChild(QQuickItem, "moonrakerPlateCanvas")
+        self.assertIsNotNone(canvas, "the face has no plate canvas")
+        # Checked, not discarded: setProperty on a property the engine
+        # does not know (a stale compiled QML) returns False and warns,
+        # and the test would then measure a grid it believes is gone.
+        self.assertTrue(canvas.setProperty("showGrid", False),
+                        "the canvas has no showGrid property")
+        self._pump_settle()
+        return canvas
+
+    @staticmethod
+    def _segment_distance(px, py, ax, ay, bx, by):
+        """The distance from (px, py) to the segment (ax, ay)-(bx, by),
+        clamped to the segment's ends: the round-join envelope of a
+        polyline is exactly "within half the stroke width of it"."""
+        dx, dy = bx - ax, by - ay
+        span = dx * dx + dy * dy
+        if span <= 0.0:
+            t = 0.0
+        else:
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / span))
+        return ((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2) ** 0.5
+
+    def _distance_to_path(self, px, py, path):
+        return min(self._segment_distance(px, py, path[i][0], path[i][1],
+                                          path[i + 1][0], path[i + 1][1])
+                   for i in range(len(path) - 1))
+
+    def _device_origin(self):
+        """The face's origin in DEVICE pixels, and the ratio that maps
+        scene to device. A grab returns device pixels while the plot's
+        mapping is in logical ones, so at any ratio but 1.0 sampling
+        the two as one reads the wrong region entirely."""
         origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
-        ox, oy = int(origin.x()), int(origin.y())
-        col = ox + int(self.mapping["offsetX"]
-                       + 40.0 * self.mapping["sx"])
-        row = oy + self._scene_row(228.0, 1.0)
+        ratio = float(self.window.devicePixelRatio())
+        return (origin.x() * ratio, origin.y() * ratio, ratio)
 
-        def inked(sample_row):
-            off = image.pixel(col + 6, sample_row)  # clear of the line's width
-            return max(self._delta(image.pixel(col + step, sample_row), off)
-                       for step in (-1, 0, 1)) > 30
+    def _chrome_boxes(self):
+        """The rectangles of chrome the stroke measurement must not
+        read as ink, in device pixels.
 
-        if not inked(row):
-            return False
-        # EVERY row the spike census reads on this column, not one of
-        # them. This predicate is the BASELINE's arrival proof, and the
-        # census diffs a 16x24 region: a baseline accepted while the
-        # graduation was drawn at the sampled row alone leaves the rest
-        # of that region un-inked, and the diff against the measured
-        # frame then reads the GRID as spike ink — the (78,38) report is
-        # this column. One point cannot establish a region.
-        corner_row = self._scene_row(215.0, 1.0)
-        return all(inked(oy + probe) for probe in range(corner_row - 22, corner_row - 6))
+        The zoom scope is a 38 px rail down the face with its own
+        readout and marker, and it carries a `Behavior on x` — so it
+        is both ink and MOVING ink. It has nothing to do with the
+        stroke, and the box comes from the LIVE item rather than a
+        constant, so the exclusion follows it wherever it is parked."""
+        ox, oy, ratio = self._device_origin()
+        boxes = []
+        for name in ("moonrakerPlateZoomScope",):
+            item = self.face.findChild(QQuickItem, name)
+            if item is None or not item.isVisible():
+                continue
+            origin = item.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
+            # Two pixels of margin: the item's own border and the
+            # antialiasing of its edge are outside its box, and the
+            # isolation predicate asks for zero stray samples — a
+            # half-covered edge pixel would hold it off forever.
+            pad = 2 * ratio
+            boxes.append((int(origin.x() * ratio - pad), int(origin.y() * ratio - pad),
+                          int((origin.x() + item.width()) * ratio + pad),
+                          int((origin.y() + item.height()) * ratio + pad)))
+        return boxes
+
+    def _in_chrome(self, col, row, boxes):
+        return any(left <= col <= right and top <= row <= bottom
+                   for left, top, right, bottom in boxes)
+
+    def _stray_sample(self, image, step=4):
+        """Off-backdrop pixels outside the chrome, sampled coarsely.
+
+        This is the ARRIVAL predicate for the isolated frame, so it
+        runs on every candidate and must stay cheap — the precise
+        _stroke_ink does the asserting. It exists because the grid is
+        drawn on a THREADED canvas: clearing the flag leaves the last
+        painted image on screen until the worker's repaint lands, and
+        on a starved machine that window is wide enough to grab, so
+        the frame reads as a full grid while every property says the
+        grid is off."""
+        ox, oy, ratio = self._device_origin()
+        backdrop, _ = self._backdrop_of(image)
+        chrome = self._chrome_boxes()
+        count = 0
+        for row in range(0, image.height(), step):
+            for col in range(0, image.width(), step):
+                if self._in_chrome(col, row, chrome):
+                    continue
+                if self._delta(image.pixel(col, row), backdrop) >= 40:
+                    count += 1
+        return count
+
+    def _stroke_ink(self, image):
+        """Every pixel of the frame that stands off its own backdrop,
+        in scene coordinates, with the chrome taken out. With the grid
+        off the face paints nothing else on the bare window, so this is
+        the stroke."""
+        ox, oy, ratio = self._device_origin()
+        backdrop, _ = self._backdrop_of(image)
+        # The boxes the frame was GRABBED with, never a fresh read: the
+        # backdrop scan above takes long enough for the rail to travel
+        # out from under a freshly-read box.
+        chrome = getattr(self, "_frame_chrome", None) or self._chrome_boxes()
+        pixels = []
+        for row in range(image.height()):
+            for col in range(image.width()):
+                if self._in_chrome(col, row, chrome):
+                    continue
+                if self._delta(image.pixel(col, row), backdrop) >= 40:
+                    pixels.append(((col + 0.5 - ox) / ratio, (row + 0.5 - oy) / ratio))
+        return pixels
+
+    def _bbox_ink(self, image, path, margin=3.0):
+        """Ink inside the wedge's own bounding box, and nothing else.
+
+        This is the ARRIVAL predicate, so it runs on every settled
+        candidate frame — it must not walk the whole picture the way
+        _stroke_ink does, or the wait spends its own deadline
+        measuring. The margin covers the stroke's half-width and its
+        antialiasing. The backdrop is the frame's top-left corner: the
+        wedge is 25 scene px away from it at this mapping, and with the
+        grid off nothing else paints there."""
+        ox, oy, ratio = self._device_origin()
+        backdrop = image.pixel(int(ox) + 2, int(oy) + 2)
+        xs = [point[0] for point in path]
+        ys = [point[1] for point in path]
+        left = int((min(xs) - margin) * ratio + ox)
+        right = int((max(xs) + margin) * ratio + ox)
+        top = int((min(ys) - margin) * ratio + oy)
+        bottom = int((max(ys) + margin) * ratio + oy)
+        count = 0
+        chrome = self._chrome_boxes()
+        for row in range(max(0, top), min(image.height(), bottom + 1)):
+            for col in range(max(0, left), min(image.width(), right + 1)):
+                if self._in_chrome(col, row, chrome):
+                    continue
+                if self._delta(image.pixel(col, row), backdrop) >= 40:
+                    count += 1
+        return count
+
+    @staticmethod
+    def _backdrop_of(image):
+        """The frame's own backdrop — its most common value, and how
+        many samples it holds. The isolation check reads both: a frame
+        with the grid off and nothing painted is one value, entirely."""
+        from collections import Counter
+        counts = Counter(image.pixel(col, row)
+                         for row in range(0, image.height(), 3)
+                         for col in range(0, image.width(), 3))
+        return counts.most_common(1)[0][0], counts
 
     def _grab_from(self, image):
         """The background comes from the SAME frame as the measurement:
         _ink_mass reads every pixel against it, so a background sampled
-        from another frame turns that frame's ink into backdrop."""
+        from another frame turns that frame's ink into backdrop. The
+        chrome boxes ride along for the same reason."""
         origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
         self._background = image.pixel(int(origin.x()) + 8, int(origin.y()) + 8)
+        self._frame_chrome = self._chrome_boxes()
         return image
 
     def _grab(self):
@@ -247,13 +380,37 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
 
         deadline = _time.monotonic() + 15.0
         previous = None
-        image = self.window.grabWindow()
+        previous_chrome = None
+        # The chrome must be still AS WELL as the canvas, and still for
+        # a while: the zoom scope slides to its parked x over a 180 ms
+        # Behavior, and a frame grabbed mid-slide carries a full-height
+        # edge wherever it happened to be. Agreement on two frames is
+        # not enough on its own — the rail rests at x=6 until the
+        # face's width binding re-evaluates and then leaves, so a pair
+        # of frames can agree during that rest and the very next moment
+        # be mid-slide. Which is what the Windows census reported: 16 px
+        # in one column at (85,38), then 120 px across eight columns
+        # from (78,38), both the rail's left edge inside its band.
+        started = _time.monotonic()
+        quiet_until = started + self.CHROME_QUIET_S
         while _time.monotonic() < deadline:
             self._pump_settle()
             image = self.window.grabWindow()
+            chrome = self._chrome_boxes()
+            now = _time.monotonic()
+            if previous_chrome is not None and chrome != previous_chrome:
+                quiet_until = now + self.CHROME_QUIET_S
+            previous_chrome = chrome
             if (arrived is None or arrived(image)) and previous is not None and (
-                    _parent.PlateFaceRenderTests._sample(image)
+                    now >= quiet_until
+                    and _parent.PlateFaceRenderTests._sample(image)
                     == _parent.PlateFaceRenderTests._sample(previous)):
+                # The chrome is captured WITH the frame: reading it
+                # later put the box where the rail had moved to, not
+                # where the frame drew it, and the measurement then
+                # excluded an empty rectangle and counted 32,586 px of
+                # rail as stroke ink.
+                self._frame_chrome = chrome
                 return self._grab_from(image)
             previous = image
         # The deadline is a hang guard, and a hang guard that RETURNS
@@ -269,99 +426,51 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                    * self.mapping["sy"] * scale)
 
     @staticmethod
-    def _evidence_dir():
-        """Where a failing census drops its frames.
+    def _offending_columns(offenders, ratio):
+        """The failing pixels as a compact NUMERIC report: one line per
+        column that carries any, with its row span and its worst
+        distance past the envelope, in device pixels. A count says how
+        much; the columns say which element — a graduation is one
+        column over every row, a miter spike is a wedge."""
+        by_column = {}
+        for (sx, sy), distance in offenders:
+            col = int(round(sx * ratio))
+            row = int(round(sy * ratio))
+            low, high, worst = by_column.get(col, (row, row, 0.0))
+            by_column[col] = (min(low, row), max(high, row), max(worst, distance))
+        return "\n".join("  col %4d: rows %d..%d (%d px), worst %.2f px past "
+                         "the envelope" % (col, low, high, high - low + 1, worst)
+                         for col, (low, high, worst) in sorted(by_column.items()))
+
+    def _write_evidence(self, stem, frames, report):
+        """The frames and the numeric report, beside the mapping they
+        were measured through.
 
         HARNESS_SHOT_DIR first: CI sets it and already publishes the
         directory as the harness-mounts artefact, so the pictures
-        arrive with everything else. The fallback is the dev
-        container's scratch dir, NOT a Windows path — a Windows runner
-        has no /tmp, so the "frames written to /tmp/mpf/..." line
-        named a directory that does not exist and two Windows miter
+        arrive with everything else. The fallback is the platform's
+        own temp directory — never a literal /tmp, which a Windows
+        runner does not have, so the old "frames written to /tmp/..."
+        line named a directory that did not exist and two Windows
         failures produced no retrievable evidence at all."""
-        folder = os.environ.get("HARNESS_SHOT_DIR") or os.path.join(
-            tempfile.gettempdir(), "mpf")
+        from pathlib import Path
+        root = os.environ.get("HARNESS_SHOT_DIR")
+        folder = Path(root) if root else Path(tempfile.gettempdir()) / "mpf"
         try:
-            os.makedirs(folder, exist_ok=True)
-        except OSError:
-            return None
-        return folder
-
-    def _census_report(self, diff, rect, threshold=40):
-        """The census as ASCII, carried in the failure message.
-
-        A count says how MUCH ink disagreed; the map says WHERE, which
-        is what separates a miter spike (a wedge up-right of the
-        corner) from a baseline accepted in a different state (whole
-        rows, or one column). It travels in the runner's log, which
-        survives where a PNG on a Windows path does not."""
-        top, left, bottom, right = rect
-        header = ["      " + "".join(str((left + i) // 100)
-                                     for i in range(right - left + 1)),
-                  "      " + "".join(str(((left + i) // 10) % 10)
-                                     for i in range(right - left + 1)),
-                  "      " + "".join(str((left + i) % 10)
-                                     for i in range(right - left + 1))]
-        body = []
-        for row in range(top, bottom + 1):
-            cells = "".join("." if diff(c, row) < threshold
-                            else str(min(9, diff(c, row) // 28))
-                            for c in range(left, right + 1))
-            body.append("%5d %s" % (row, cells))
-        return "\n".join(header + body)
-
-    def _ink_map(self, image, rect, backdrop, threshold=40):
-        """One frame's own ink over the census region: '#' where a pixel
-        stands off *backdrop*, '.' where it is backdrop. The diff map
-        says the frames DISAGREE; these say which frame carries the
-        ink, which is the difference between a spike the painter drew
-        and a baseline that had not painted its grid yet."""
-        top, left, bottom, right = rect
-
-        def stands_off(col, row):
-            pixel = image.pixel(col, row)
-            return max(abs(((pixel >> s) & 0xFF) - ((backdrop >> s) & 0xFF))
-                       for s in (0, 8, 16)) >= threshold
-
-        return "\n".join(
-            "%5d %s" % (row, "".join("#" if stands_off(col, row) else "."
-                                     for col in range(left, right + 1)))
-            for row in range(top, bottom + 1))
-
-    @staticmethod
-    def _backdrop(image, rect):
-        """The region's most common value: the grid's cell fill, which
-        both frames share, so their ink maps are comparable."""
-        from collections import Counter
-        top, left, bottom, right = rect
-        counts = Counter(image.pixel(col, row) for row in range(top, bottom + 1)
-                         for col in range(left, right + 1))
-        return counts.most_common(1)[0][0]
-
-    def _write_census_frames(self, diff, image, baseline, stem):
-        """Measured, baseline and their difference, beside the mapping
-        the census read. The difference is the picture the oracle
-        actually sees; a reader comparing the other two by eye is
-        re-deriving it."""
-        folder = self._evidence_dir()
-        if folder is None:
-            return "the evidence directory could not be created"
-        from PyQt6.QtGui import QColor, QImage
-        probe = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
-        probe.fill(QColor(0, 0, 0))
-        for row in range(image.height()):
-            for col in range(image.width()):
-                delta = diff(col, row)
-                probe.setPixelColor(col, row, QColor(min(255, delta * 3), 0, 0))
-        written = []
-        for name, frame in ((stem + "-measured.png", image),
-                            (stem + "-baseline.png", baseline),
-                            (stem + "-difference.png", probe)):
-            path = os.path.join(folder, name)
-            if frame.save(path):
-                written.append(path)
-        with open(os.path.join(folder, stem + "-mapping.txt"), "w") as handle:
-            handle.write("mapping %r\n" % (self.mapping,))
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return "the evidence directory could not be created: %s" % exc
+        written, failed = [], []
+        for name, frame in frames:
+            path = folder / ("%s-%s.png" % (stem, name))
+            # save() returns False rather than raising: an unchecked
+            # call reports evidence that is not on disk.
+            (written if frame.save(str(path)) else failed).append(str(path))
+        (folder / ("%s-report.txt" % stem)).write_text(
+            "%s\nmapping %r\n" % (report, self.mapping))
+        if failed:
+            return "%s (COULD NOT WRITE: %s)" % (", ".join(written),
+                                                 ", ".join(failed))
         return ", ".join(written)
 
     def _band_mass(self, image, bed_y, scale, span):
@@ -373,28 +482,60 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                      int(25.0 * sx * scale), 2 * span)
         return self._ink_mass(image, rect)
 
+    # Two arms meeting at an acute corner at bed (35, 215), symmetric
+    # about it so the join points exactly along +x. The corner is the
+    # RIGHTMOST point, so a spike is the only thing that can put ink to
+    # its right.
+    #
+    # The angle is 18 degrees, and that is a MEASUREMENT, not a taste:
+    # Canvas's miterLimit defaults to 10, and it falls back to a BEVEL
+    # when width/sin(angle/2) exceeds that — so a miter only exists at
+    # angles where 1/sin(angle/2) < 10, i.e. above ~11.5 degrees. The
+    # wedge this replaced met at 2.5 degrees, where the default join is
+    # bevelled and the test could not have caught a miter at all: it
+    # passed with lineJoin set to "miter", which is how the mistake
+    # surfaced. At 18 degrees the ratio is 6.4, the miter is drawn, and
+    # it reaches ~12.7 px past the path where a round join reaches 1.
+    MITER_WEDGE = [[15.0, 211.8, 1.0], [35.0, 215.0, 1.0], [15.0, 218.2, 1.0]]
+    # The antialiasing allowance: Qt spreads partial coverage over the
+    # pixel the geometric edge crosses, so ink reaches at most one
+    # device pixel past the envelope, plus the half-pixel between a
+    # pixel's INDEX and its CENTRE. Both are bounded and platform
+    # independent; the mutant clears it by ~8 px.
+    AA_TOLERANCE = 1.5
+    # The ink a wedge this size must produce: two arms of ~20 mm at
+    # 1.664 px/mm and ~4 px wide is ~270 px of ink, so 40 is positive
+    # evidence the stroke rendered without being a width assertion.
+    WEDGE_FLOOR = 40
+    # How long the chrome must hold still before a frame counts as
+    # settled: comfortably more than the zoom scope's 180 ms slide, so
+    # a rest that is merely a pause mid-transition cannot pass.
+    CHROME_QUIET_S = 0.35
+
     def test_no_miter_spike_on_acute_corners(self):
-        """The miter-join regression (the live report's spikes on
-        tight joins): a near-parallel wedge drawn with a THICK stroke
-        must not poke ink past the corner. The default Canvas miter
-        extends width/sin(angle/2) — ~160 px for this wedge at this
-        width — while a round join stays within width/2 of the path.
-        The oracle is a per-pixel DIFF against a grid-and-backdrop
-        baseline: the harness backdrop is not uniform and the grid
-        lines cross every region. Both frames must therefore CARRY the
-        grid for it to cancel — a baseline still waiting for its own
-        grid reads as a spike on the graduation's column. The Windows
-        report begins at (78,38), ten columns right of the graduation
-        at 68 — so the failure message carries the census diff and both
-        frames' own ink, which is what tells the two apart."""
+        """The miter-join regression (the live report's spikes on tight
+        joins): an acute wedge drawn with a THICK stroke must not poke
+        ink past the corner. The default Canvas miter extends
+        width/sin(angle/2) — ~12.7 px for this wedge at this width —
+        while a round join stays within width/2 of the path.
+
+        The oracle is the round-join envelope itself: EVERY inked pixel
+        must lie within half the stroke width of the polyline. It needs
+        no baseline and no subtraction, because the grid is off. The
+        oracle this replaces DIFFED one asynchronously painted frame
+        against another, and so measured whatever else the face was
+        drawing: the zoom scope slides to its parked x over a 180 ms
+        Behavior, and a grab taken mid-slide carried its full-height
+        edge through the census band — 16 px in one column at (85,38),
+        then 120 px across eight from (78,38), neither of them stroke
+        ink at all. Isolating the stroke removes that whole class
+        rather than widening a tolerance around it."""
         wedge = {
             "available": True, "reason": "",
             "layers": {
                 "prev": None,
                 "current": {
-                    "classes": {"WALL-OUTER": [
-                        [[15.0, 205.0, 1.0], [35.0, 215.0, 1.0], [16.0, 205.0, 1.0]],
-                    ]},
+                    "classes": {"WALL-OUTER": [self.MITER_WEDGE]},
                     "travels": [], "travelStarts": [], "travelEnds": [],
                     "motions": 3,
                 },
@@ -402,73 +543,88 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 3, "method": "motion index", "anchor": 0,
         }
-        self.face.setProperty("lineScale", 6.0)  # thick: ~2 px at this face
+        self._grid_off()
+        # Thick: ~4 px at this face. The margin is the point — a miter
+        # reaches (width/2)/sin(angle/2) past the vertex, so the
+        # overshoot past the envelope grows with the width while the
+        # antialiasing allowance does not. At ~2 px the mutant cleared
+        # the envelope by 2.77 px; at ~4 px it clears it by ~10, which
+        # no platform's rasteriser is going to swallow.
+        self.face.setProperty("lineScale", 12.0)
         self._pump_settle()
-        origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
-        ox, oy = int(origin.x()), int(origin.y())
-        arm_row = self._scene_row(205.0, 1.0)
-        # The baseline is the settled frame the grid predicate cleared,
-        # never a bare grab: the diff subtracts it pixel for pixel.
-        baseline = self._set_payload(self.EMPTY_PAYLOAD, arrived=self._grid_inked)
 
-        def diff(image, col, row):
-            a = image.pixel(ox + col, oy + row)
-            b = baseline.pixel(ox + col, oy + row)
-            return max(abs(((a >> s) & 0xFF) - ((b >> s) & 0xFF)) for s in (0, 8, 16))
-
-        def arm_ink(image):
-            return max(diff(image, col, row) for row in range(arm_row - 4, arm_row + 5)
-                       for col in range(30, 60))
-
-        # The threaded raster's landing is not deterministic in the
-        # offscreen harness: wait for the wedge's own ink AND for the
-        # grid the diff subtracts, rather than sampling for a stable
-        # (possibly stale) frame. A hang guard, not a budget: the
-        # rasters on a starved machine take as long as they take, and
-        # the assertion below is what fails when the ink never lands.
-        image = self._set_payload(
-            wedge, arrived=lambda frame: arm_ink(frame) > 60
-            and self._grid_inked(frame))
-        self.assertGreater(arm_ink(image), 60, "the wedge never painted in the harness")
-        # The spike's landing zone: both arms descend left-down, so a
-        # miter spike would point up-right of the corner — rows above,
-        # columns right of it — flooding this arm-free region for
-        # ~160 px. A round join leaves it at baseline.
-        corner_row = self._scene_row(215.0, 1.0)
-        corner_col = int(35.0 * self.mapping["sx"])
-        spiked = [(col, row) for row in range(corner_row - 22, corner_row - 6)
-                  for col in range(corner_col + 4, corner_col + 28)
-                  if not diff(image, col, row) < 40]
-        if spiked:
-            # The pictures, so the next reader can tell a genuine spike
-            # from a baseline that was accepted before the grid it
-            # subtracts had painted. The census subtracts one and reads
-            # the other, so both belong in the evidence — and the map
-            # belongs in the MESSAGE, because the artefact lane and the
-            # runner's filesystem are not the same place.
-            wrote = self._write_census_frames(
-                lambda col, row: diff(image, col, row), image, baseline, "miter")
-            region = (corner_row - 22, corner_col + 4,
-                      corner_row - 7, corner_col + 27)
-            backdrop = self._backdrop(image, region)
-
-            def cell(col, row):
-                return diff(image, col, row)
-
+        # Isolation, asserted rather than assumed: with the grid off and
+        # an empty layer the bare face paints nothing but its own
+        # chrome. Anything else would be measured as stroke ink below —
+        # which is exactly how the census failed, reading a rail that
+        # was mid-slide as a join.
+        empty = self._set_payload(
+            self.EMPTY_PAYLOAD,
+            arrived=lambda frame: self._stray_sample(frame) == 0)
+        stray = self._stroke_ink(empty)
+        # assertTrue, not assertEqual against []: a stray list runs to
+        # tens of thousands of pixel pairs, and unittest prints the
+        # whole diff — 600 KB of log for one failure.
+        if stray:
+            _, _, ratio = self._device_origin()
+            columns = self._offending_columns(
+                [(pixel, 0.0) for pixel in stray], ratio)
+            wrote = self._write_evidence(
+                "miter-isolation",
+                (("isolated", empty),),
+                "with the grid off and an empty layer %d px stand off the "
+                "backdrop, and only the chrome may:\n%s"
+                % (len(stray), columns))
             self.fail(
-                "miter spike ink at %s (%d px) of the %dx%d census; the "
-                "corner is at col %d row %d, the arms at row %d, the 40 mm "
-                "graduation at col %d.\nmapping %r\n"
-                "census DIFF (measured vs baseline):\n%s\n"
-                "baseline's own ink:\n%s\nmeasured's own ink:\n%s\n"
-                "frames: %s"
-                % (spiked[0], len(spiked), 24, 16, corner_col, corner_row,
-                   arm_row, int(self.mapping["offsetX"] + 40.0 * self.mapping["sx"]),
-                   self.mapping,
-                   self._census_report(cell, region),
-                   self._ink_map(baseline, region, backdrop),
-                   self._ink_map(image, region, backdrop),
-                   wrote))
+                "the face paints more than the stroke with the grid off: "
+                "%d stray px, first at scene %s.\ngrabbed chrome boxes %s, "
+                "live %s\n%s\nframes: %s"
+                % (len(stray), stray[0], getattr(self, "_frame_chrome", None),
+                   self._chrome_boxes(), columns, wrote))
+
+        width = (ZoomInkMassTests._publish_width(self.face)
+                 * float(self.window.devicePixelRatio()))
+        half = width / 2.0
+        envelope = half + self.AA_TOLERANCE
+        path = [_parent.PlateFaceRenderTests._scene(self.mapping, x, y)
+                for x, y, _ in self.MITER_WEDGE]
+
+        # Positive evidence: the wedge's own ink, and the wait for it.
+        # A hang guard, not a budget — the assertion below is what fails
+        # when the ink never lands.
+        image = self._set_payload(
+            wedge, arrived=lambda frame: self._bbox_ink(frame, path) >= self.WEDGE_FLOOR)
+        inked = self._stroke_ink(image)
+        self.assertGreaterEqual(
+            len(inked), self.WEDGE_FLOOR,
+            "the wedge never painted: %d px of ink, the floor is %d. "
+            "Stroke width %.2f px, envelope %.2f px, mapping %r"
+            % (len(inked), self.WEDGE_FLOOR, width, envelope, self.mapping))
+
+        # The envelope: a round join is exactly "no ink further from the
+        # path than half the stroke". Every inked pixel is measured
+        # against it — there is no region to sample and no column to
+        # exclude.
+        offenders = [(pixel, self._distance_to_path(pixel[0], pixel[1], path) - envelope)
+                     for pixel in inked
+                     if self._distance_to_path(pixel[0], pixel[1], path) > envelope]
+        if offenders:
+            _, _, ratio = self._device_origin()
+            wrote = self._write_evidence(
+                "miter",
+                (("measured", image), ("isolated", empty)),
+                "stroke width %.2f device px, envelope %.2f, %d px of ink, "
+                "%d outside:\n%s"
+                % (width, envelope, len(inked), len(offenders),
+                   self._offending_columns(offenders, ratio)))
+            self.fail(
+                "miter spike: %d of %d inked px lie outside the round-join "
+                "envelope (half the stroke's %.2f px, plus %.1f px of "
+                "antialiasing = %.2f px).\ncorner at scene %s, arms from %s "
+                "to %s\nmapping %r\n%s\nframes: %s"
+                % (len(offenders), len(inked), half, self.AA_TOLERANCE, envelope,
+                   path[1], path[0], path[2], self.mapping,
+                   self._offending_columns(offenders, ratio), wrote))
 
     def test_ghost_pending_printed_share_one_width(self):
         """Test 7: the same geometry renders at one physical width in
@@ -664,7 +820,8 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
                   + (float(bed["bedYMax"]) - bed_y) * float(plot["sy"])) * scale))
         return col, row
 
-    def _publish_width(self, face):
+    @staticmethod
+    def _publish_width(face):
         """The ONE physical stroke-width the painters read (the QML's
         toolpathWidthPx), forced through the view carrier so the
         property flips land deterministically."""

@@ -2226,6 +2226,7 @@ Item {
     // drag handle; the bottom is the 100% fit.
     Rectangle {
         id: zoomScope
+        objectName: "moonrakerPlateZoomScope"
         visible: root.available() && !root.compact
         // Wide enough for the "800%" label (the live report: the
         // percentage overflowed the scope's bounds). Docked it hugs
