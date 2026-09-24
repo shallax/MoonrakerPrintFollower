@@ -121,6 +121,18 @@ def main():
     result = _JUnitResult()
     suite.run(result)
     _write(result.cases, started, time.time() - started)
+    for case in result.cases:
+        if case["kind"] in ("failure", "error"):
+            # The count alone left a red leg unnamed in CI: the 3.11
+            # pass reported "1 failures" and no test name, and the
+            # XML it wrote is not uploaded. Name it here, with the
+            # tail of the traceback — the exception line is the part
+            # a reader of the leg needs.
+            print("%s %s.%s" % (case["kind"].upper(), case["classname"],
+                                case["name"].split(" ", 1)[0]))
+            tail = [line for line in case["message"].splitlines() if line.strip()][-3:]
+            for line in tail:
+                print("    " + line)
     print("wrote %s: %d tests, %d failures, %d errors, %d skipped" % (
         OUTPUT, len(result.cases), len(result.failures), len(result.errors),
         len(result.skipped)))

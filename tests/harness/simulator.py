@@ -368,6 +368,10 @@ class PrinterState:
         # layer past the print's end (the x10 report) — restamping
         # per reset means every scenario's print starts from the
         # kickoff layer instead of the previous scenario's residue.
+        # The interval comes back too: a scenario that holds the
+        # clock mid-run must not hand the next one a print that
+        # never crosses a layer.
+        self.layer_clock_interval_s = 6.0
         self._layer_clock_at = time.monotonic()
         self._prev_state = None
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",

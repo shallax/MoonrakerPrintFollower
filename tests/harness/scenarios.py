@@ -2363,14 +2363,22 @@ SCENARIOS = [
          # file position — progress 0.5 lands INSIDE the baked
          # pause's layer, the gate refuses, and the whole scenario
          # cascades (the 2026-09-18 flake). The first tick makes the
-         # resolution deterministic: layer 1, the candidate 2.
+         # resolution deterministic: layer 1, the candidate 2. The
+         # clock is held while the click resolves: on a loaded
+         # runner the resolution outlasts the 6s tick, the candidate
+         # lands a layer later, and the row never reads "End of
+         # layer 2" (the CI flake) — the pin alone cannot pin it.
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 3600}},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
          # The row the click made, not any row: the baked row also
          # reads "End of layer", and matching it hid a refused click
          # (the 2026-09-18 flake's false positive).
          {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         # The row is read: the pause now has to fire, and it fires
+         # by the print crossing the layer.
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
          # The 4.3.0 ruling: a fired pause STAYS listed, restyled as
@@ -2388,9 +2396,12 @@ SCENARIOS = [
          # layer-clock tick the resolver's file-position fallback
          # lands inside the baked pause's layer and the click refuses.
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
+         # The same held clock as p6, released once the row is read.
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 3600}},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
          {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
