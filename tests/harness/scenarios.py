@@ -2433,8 +2433,20 @@ SCENARIOS = [
          {"op": "sim_set_current_print"},
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         # The load's own precondition: the plugin's activity gate reads
+         # the OBSERVED print (a load request is dropped while the lane
+         # sees no active print), and sim_set_current_print only moves
+         # the sim. A slow feed then turns the button press into a
+         # no-op whose only trace is a missing indicator — the printing
+         # group's h2 waits for the same filename before its press.
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
          {"op": "confirm_box", "button": "Yes"},
+         # And the plugin's own load gate, so a load that never engages
+         # fails here with the gate readout instead of 30 s later on the
+         # indicator (h2's assertion).
+         {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
@@ -2464,9 +2476,17 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
+         # The press rides the button's OWN enable binding — a disabled
+         # QML item is skipped by the hit test, so an early press falls
+         # through to the Flickable and reports a refusal with no reason
+         # in it. Wait for the term the binding reads.
+         {"op": "wait_model", "prop": "canPausePrint", "value": True, "budget": 20},
+         {"op": "model_read", "prop": "pauseReason"},
          {"op": "click_text", "text": "Pause"},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
+         {"op": "wait_model", "prop": "canResumePrint", "value": True, "budget": 20},
+         {"op": "model_read", "prop": "resumeReason"},
          {"op": "click_text", "text": "Resume"},
          {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
          {"op": "sim_set", "state": {"display_status": {"message": "RENDERED-A", "progress": 0.5}}},
@@ -2497,6 +2517,9 @@ SCENARIOS = [
          # recovery path — error ALLOWS the restart, the assumption
          # blocks until the cycle.
          {"op": "assert_model", "prop": "canRestart", "value": True},
+         # The refusal's own words, so a restart that never fires is
+         # named here rather than inferred from an empty ledger.
+         {"op": "model_read", "prop": "restartReason"},
          {"op": "exec_slot", "slot": "emergencyHoldReleased", "args": []},
          {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
          {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},
@@ -2516,6 +2539,10 @@ SCENARIOS = [
          # of the dashboard's scroll — the click must land like a
          # human's would: scrolled into view, then pressed.
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The row's enable binding: the fans section is disabled while
+         # the controls are locked, and a disabled track swallows the
+         # press without committing anything.
+         {"op": "wait_model", "prop": "controlsLocked", "value": False, "budget": 20},
          {"op": "scroll_into_view", "objectName": "moonrakerFansSection"},
          {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
          # One track click commits exactly ONCE (the UX re-review:
