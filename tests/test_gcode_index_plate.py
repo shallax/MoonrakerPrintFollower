@@ -42,6 +42,7 @@ import tempfile
 import threading
 import time
 import unittest
+from itertools import pairwise
 from unittest.mock import patch
 
 import plugins.GCodeIndex as gcode_index
@@ -73,6 +74,14 @@ def _write_gcode(data):
 def _codes(names):
     """The code each vocabulary entry takes: _TYPE_NONE, _TYPE_OTHER, then names."""
     return {name: code + 2 for code, name in enumerate(names)}
+
+
+# The passive-yield pins' numbers: the production gate hands the
+# interpreter back every 6 ms, and the heartbeat asks every 10 ms. A
+# gap past the bound means the worker stopped yielding, and the UI
+# thread lost the interpreter for several timer periods.
+_YIELD_MAX_GAP_S = 0.05
+_HEARTBEAT_INTERVAL_MS = 10
 
 
 class FeatureTypeTests(unittest.TestCase):
@@ -2458,6 +2467,128 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                 break
         self.assertLess(full_at_demand, 60,
                         "the pass finished before the demand cut in")
+
+    def test_the_batch_loop_yields_the_interpreter_with_no_demand_pending(self):
+        # The passive-yield pin. A batch's loop is tight and its layers
+        # are cheap, so nothing but a wall-clock gate stops the worker
+        # holding the GIL for the walk's whole duration — which is what
+        # the UI thread reads as a frozen window for the pass. The
+        # cadence is counted from the production yield's own calls (the
+        # real yield still runs), and the count it is held to is the
+        # ASKED count, never a fire count against the wall clock: a
+        # descheduled worker cannot hand back a GIL it is not holding,
+        # so a floor on fires per unit of time pins the machine's load
+        # rather than the gate.
+        module = self.qt.load("GCodeIndexService")
+        self.assertTrue(hasattr(module, "passive_yield"),
+                        "the background workers have no passive yield at all")
+        # 20,000 layers: the deadline is what ends the walk, never an
+        # exhausted frontier — a batch that ran out of layers would stop
+        # asking the gate before the window closed.
+        index = make_index(layers=20000, motions=20)
+        self.service._view = module.IndexView(self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        captured = []
+        original = self.service._submit
+        self.service._submit = lambda kind, work, lease=None: captured.append((kind, work))
+        self.service._advance()
+        self.service._submit = original
+        self.assertEqual(captured[0][0], "fullprep",
+                         "the first submission was not the pass")
+        asked = []
+        yields = []
+        real = module.passive_yield
+
+        def recorded(now, last):
+            # The gate is asked far more often than it fires — the
+            # demand check runs at the preparation's own granularity —
+            # so only the calls that MOVED the watermark are hand-backs.
+            asked.append(now)
+            updated = real(now, last)
+            if updated != last:
+                yields.append(time.monotonic())
+            return updated
+
+        started = time.monotonic()
+        with patch.object(module, "passive_yield", recorded):
+            frontier, _encoded, _uncacheable = captured[0][1]()
+        elapsed = time.monotonic() - started
+        gaps = sorted(b - a for a, b in pairwise(yields))
+        self.assertGreaterEqual(
+            len(asked), 64,
+            "the batch walked %d layers in %.0f ms and asked the gate %d times"
+            % (frontier, elapsed * 1000.0, len(asked)))
+        self.assertGreaterEqual(
+            len(yields), 4,
+            "the batch walked %d layers in %.0f ms and yielded %d times"
+            % (frontier, elapsed * 1000.0, len(yields)))
+        self.assertLess(gaps[len(gaps) // 2], _YIELD_MAX_GAP_S,
+                        "the batch's median yield gap was %.0f ms"
+                        % (gaps[len(gaps) // 2] * 1000.0))
+
+    def test_the_ui_thread_heartbeat_keeps_beating_through_a_flat_out_pass(self):
+        # The outcome pin for the passive yields: the main thread's own
+        # timer must keep beating while the pass walks flat-out on the
+        # worker. A worker that never hands the interpreter back starves
+        # it for the walk's whole duration, which is the live freeze.
+        module = self.qt.load("GCodeIndexService")
+        index = make_index(layers=8000, motions=20)
+        self.service._view = module.IndexView(self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        beats = []
+        heartbeat = self.qt.QTimer()
+        heartbeat.setInterval(_HEARTBEAT_INTERVAL_MS)
+        heartbeat.timeout.connect(lambda: beats.append(time.monotonic()))
+        self.addCleanup(heartbeat.stop)
+        heartbeat.start()
+        started = time.monotonic()
+        self._pump(timeout=30.0)
+        elapsed = time.monotonic() - started
+        heartbeat.stop()
+        self.assertGreaterEqual(
+            len(beats), max(4, int(elapsed * 1000.0 / _HEARTBEAT_INTERVAL_MS / 4)),
+            "%.0f ms of flat-out pass produced %d beats"
+            % (elapsed * 1000.0, len(beats)))
+        worst = max(b - a for a, b in pairwise(beats))
+        self.assertLess(
+            worst - _HEARTBEAT_INTERVAL_MS / 1000.0, _YIELD_MAX_GAP_S,
+            "the UI thread's heartbeat stalled %.0f ms (interval %d ms)"
+            % (worst * 1000.0, _HEARTBEAT_INTERVAL_MS))
+
+    def test_the_demands_own_encodings_are_written_by_the_worker(self):
+        # The persistence move's two pins at once: a demanded layer's
+        # encoded bytes must reach the incremental writer, and they must
+        # reach it from the WORKER — the commit's per-layer
+        # write+flush+seek+table-write+flush is exactly the UI-thread
+        # cost the move removes. The store's append is recorded through
+        # the class, so the identity assertion holds for every path that
+        # can reach it.
+        from plugins.PreparedStore import PreparedCache
+        index = make_index(layers=6, motions=40)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.files.job_key, index)
+        self.service._prepared_open(self.files.identity)
+        ui_thread = threading.get_ident()
+        appends = []
+        real_append = PreparedCache.append
+
+        def recorded(store, writer, layer, payload):
+            appends.append((threading.get_ident(), layer))
+            return real_append(store, writer, layer, payload)
+
+        with patch.object(PreparedCache, "append", recorded):
+            self.service.request_hydration(2)
+            self._pump()
+        self.assertIn(2, [layer for _ident, layer in appends],
+                      "the demanded layer never reached the writer")
+        self.assertNotIn(ui_thread, [ident for ident, _layer in appends],
+                         "a store append ran on the UI thread")
+        # ...and the once-only guarantee survives the move: the demanded
+        # layer's slot holds its bytes in the published store rather than
+        # the (0, 0) hole the pass alone would have left behind it.
+        loaded = self.store.load_table("print-key")
+        self.assertEqual(loaded["table"][2][0], self.state_cached,
+                         "the demanded layer published as a hole")
 
     def test_the_batch_loop_yields_on_the_foreground_event_alone(self):
         # The loop-top yield reads the thread-safe EVENT, never the

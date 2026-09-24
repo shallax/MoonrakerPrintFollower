@@ -14,7 +14,12 @@ from types import MappingProxyType
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
+from .GCodeIndex import (
+    LayerMotionIndex,
+    build_index_from_file,
+    hydrate_layer_from_file,
+    passive_yield,
+)
 from .MonitorFormatting import _segment_in_polygon, polygon_bounds
 from .PlateProgress import (
     PreparationYield,
@@ -1391,7 +1396,13 @@ class GCodeIndexService(QObject):
         writer exactly once, whichever path produced it: a
         demand-prepared layer must never
         become a (0, 0) hole merely because the background pass
-        found it already in the RAM cache."""
+        found it already in the RAM cache.
+
+        The demand path does not commit through here: the worker that
+        produced an encoding appends it itself, because this call's
+        write+flush+seek+table-write+flush sat on the UI thread once
+        per demanded layer. The captured writer and its retirement flag
+        carry the ownership the generation check used to."""
         self._prepared_coverage.add(layer)
         if self._prepared is None or self._prepared_identity is None or self._prepared_saved:
             return
@@ -1640,20 +1651,40 @@ class GCodeIndexService(QObject):
                 self._files.request_file()
             self._hydrating = set(submitted)
             cache = self._full_cache
+            # The demanded encodings persist from the WORKER (below), so
+            # the writer they enter is opened and captured HERE, on the
+            # owner thread — a lazy open inside the worker would mutate
+            # owner state across the thread boundary, and could resurrect
+            # a writer a cutover had already retired. The capture plus
+            # the writer's own retirement flag is the structural
+            # ownership the pass already runs on. Opening it here also
+            # keeps the self-heal a failed publish relies on: the next
+            # demand opens a fresh writer and the finish retries it.
+            if self._prepared is not None and self._prepared_identity is not None \
+                    and self._prepared_writer is None and not self._prepared_saved:
+                self._prepared_writer = self._prepared.open_for_write(
+                    self._prepared_identity, len(self._view.ranges))
+            prepared_writer = self._prepared_writer
+            prepared_store = self._prepared
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
             # The WHOLE demanded window rides ONE task: a seek's three
             # layers arrive together instead of through three chained
-            # round-trips. The worker OWNS NOTHING: it returns (failed, stash) and the
-            # generation-checked _finish commits — a stale old-job
-            # worker can never touch the new job's stores. A cached
-            # layer decodes straight off the compact store instead of
-            # re-reading the file and re-walking the geometry.
+            # round-trips. The worker owns its own ENCODINGS — they enter
+            # the writer before it returns, which is the only way a
+            # demanded layer's per-layer write+flush lands off the UI
+            # thread — and returns (failed, stash) for the rest, which
+            # the generation-checked _finish commits: a stale old-job
+            # worker's appends reach a retired writer and are refused. A
+            # cached layer decodes straight off the compact store instead
+            # of re-reading the file and re-walking the geometry.
             def hydrate_and_prepare():
                 failed = []
                 stash = {}
+                yield_at = time.monotonic()
                 for layer in submitted:
+                    yield_at = passive_yield(time.monotonic(), yield_at)
                     raw = cache.peek(layer)  # peek: the worker never reorders
                     ram_hit = raw is not None
                     if raw is None:
@@ -1716,6 +1747,17 @@ class GCodeIndexService(QObject):
                         encoded = _encode_layer(payload)
                     except Exception:
                         pass
+                    if encoded is not None and prepared_writer is not None:
+                        # Every successfully encoded layer enters the
+                        # incremental writer exactly once, whichever path
+                        # produced it: the demand's layer must never
+                        # publish as a (0, 0) hole merely because the
+                        # pass found it cached. The write rides the
+                        # worker — the commit's copy of it was on the UI
+                        # thread — and the store refuses a second append
+                        # to a filled slot, so beating the pass to the
+                        # layer cannot double-write it.
+                        prepared_store.append(prepared_writer, layer, encoded)
                     stash[layer] = (encoded, payload, False,
                                     _decoded_charge(raw=encoded, payload=payload))
                 return failed, stash
@@ -1825,12 +1867,26 @@ class GCodeIndexService(QObject):
                 encoded = {}
                 uncacheable = set()
                 frontier = start
+                yield_at = time.monotonic()
+
+                def demand_pending():
+                    # The demand event is read FIRST and alone decides
+                    # the interrupt: a foreground request must never
+                    # wait out the interval. Only an idle check pays
+                    # the passive hand-back, so the interior of a dense
+                    # layer keeps the UI thread fed as well.
+                    nonlocal yield_at
+                    if self._foreground_pending.is_set():
+                        return True
+                    yield_at = passive_yield(time.monotonic(), yield_at)
+                    return False
+
                 while time.monotonic() < deadline:
                     # The loop-top yield reads the thread-safe EVENT,
                     # never the mutable hydrate set across the thread
                     # boundary — the owner records every demand in
                     # both, but only the event is the worker's signal.
-                    if self._foreground_pending.is_set():
+                    if demand_pending():
                         break  # a demand arrived — it outranks the pass
                     layer = frontier
                     if layer >= len(index.ranges):
@@ -1877,8 +1933,7 @@ class GCodeIndexService(QObject):
                         if lease is None or not hydrate_layer_from_file(index, lease.path, layer):
                             break
                     try:
-                        payload = _prepare_layer(
-                            index, layer, self._foreground_pending.is_set)
+                        payload = _prepare_layer(index, layer, demand_pending)
                     except PreparationYield:
                         # Do not advance the frontier: this layer was
                         # deliberately abandoned before memo/publication.
@@ -1930,7 +1985,9 @@ class GCodeIndexService(QObject):
         self._hydrating = set(owed)
 
         def hydrate_arrays():
+            yield_at = time.monotonic()
             for layer in owed:
+                yield_at = passive_yield(time.monotonic(), yield_at)
                 if index.compact and layer not in index.hydrated_layers \
                         and not hydrate_layer_from_file(index, lease.path, layer):
                     Logger.log("w", "layer %d arrays failed to hydrate from %s — "
@@ -2039,10 +2096,11 @@ class GCodeIndexService(QObject):
                 for layer, (encoded, decoded, ram_hit, size) in stash.items():
                     if encoded is not None:
                         self._full_cache.set(layer, encoded, len(encoded))
-                        # The demand's encoding persists NOW — the pass may walk
-                        # past it or find it cached later; the writer
-                        # must hold it either way.
-                        self._prepared_persist(layer, encoded)
+                        # The encoding entered the writer from the worker
+                        # that produced it. The coverage still follows
+                        # the COMMIT: a stale generation's stash is
+                        # dropped here and must not count as resolved.
+                        self._prepared_coverage.add(layer)
                     self._decoded_lru.set(layer, decoded, size)
                     self._decoded_sizes[layer] = size
                     if ram_hit:
