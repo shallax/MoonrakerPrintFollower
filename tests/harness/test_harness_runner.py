@@ -487,5 +487,90 @@ class HarvestCuraLogTests(unittest.TestCase):
         self.assertEqual(list(self.dest.iterdir()), [])
 
 
+class StaticLegTests(unittest.TestCase):
+    """The static-green class: a leg whose screen does not move.
+
+    A green verdict over a frozen screen is not a success — the
+    macOS motion leg passed 73 of 73 steps while its 216 s recording
+    showed no visible change for about 173 s. The thresholds are
+    measured across the 51 galleries, and the frame comparison has to
+    tolerate the encoder's own dither, which is what made an exact-hash
+    reading miss a 394 s frozen stretch by two orders of magnitude."""
+
+    def _sequence(self, plan):
+        # plan: a list of (count, brightness) — the frames of each move.
+        frames = []
+        for count, level in plan:
+            frames.extend([bytes([level]) * 8] * count)
+        return frames
+
+    def test_a_leg_frozen_for_most_of_its_length_fails(self):
+        # 20 s of motion then 80 s of one picture: the macOS motion
+        # leg's shape, in miniature.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames)
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["span_s"], 80)
+        self.assertEqual(verdict["share"], 0.8)
+
+    def test_the_encoders_own_dither_still_reads_as_still(self):
+        # The measured encoder behaviour: 254 of 393 frozen pairs
+        # differ by exactly one grey level. An exact comparison sees
+        # 70 distinct frames and calls this leg busy; the frozen leg it
+        # really is has to read as frozen.
+        frames = [bytes([10]) * 8] * 30
+        frames += [bytes([40 if index % 2 else 41]) * 8 for index in range(70)]
+        self.assertEqual(len(set(frames)), 3)
+        verdict = runner.static_verdict(frames)
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["span_s"], 70)
+
+    def test_a_moving_leg_passes(self):
+        frames = [bytes([(index * 7) % 250]) * 8 for index in range(200)]
+        verdict = runner.static_verdict(frames)
+        self.assertTrue(verdict["ok"])
+        self.assertLess(verdict["span_s"], runner.STATIC_LEG_SECONDS)
+
+    def test_a_still_span_under_the_absolute_floor_passes(self):
+        # Legitimate idle: one step waiting on a model, a budget of
+        # 15-30 s. The longest span on a leg that is not one of the
+        # frozen macOS ones is 59 s, and no budget reaches the floor.
+        frames = self._sequence([(30, 10), (45, 90), (30, 200)])
+        self.assertTrue(runner.static_verdict(frames)["ok"])
+
+    def test_a_leg_too_short_to_judge_is_not_judged(self):
+        self.assertIsNone(runner.static_verdict([]))
+        self.assertIsNone(runner.static_verdict([b"\x00" * 8]))
+
+    def test_the_frame_length_is_the_duration(self):
+        # The decode is one frame per second, so a run's length IS its
+        # seconds and no frame rate has to be carried alongside.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn("fps=1,scale=", source)
+        self.assertIn("static_verdict(frames)", source)
+
+    def test_the_exit_path_judges_every_recording(self):
+        # The check must cover every mode — the suite groups, the
+        # boot-only legs and their second boots — so it runs in the
+        # runner's own exit path over the run directory, after the
+        # recorders are closed, and it lands in evidence.json as well
+        # as the gallery.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        harvest = source.index("harvest_cura_log(RUN_DIR)")
+        judge = source.index("static_leg_report(RUN_DIR)", harvest)
+        self.assertLess(harvest, judge, "every recording must be closed first")
+        self.assertIn('"static_leg"', source)
+        self.assertIn("for root, _dirs, names in os.walk(run_dir)", source)
+
+    def test_the_thresholds_are_the_measured_ones(self):
+        # 60 s clears every legitimate idle measured across the 51
+        # galleries (the longest non-frozen span is 59 s) and the
+        # share separates a leg that froze (39-92% of its duration)
+        # from one that spent a step waiting.
+        self.assertEqual(runner.STATIC_LEG_SECONDS, 60.0)
+        self.assertEqual(runner.STATIC_LEG_SHARE, 0.35)
+        self.assertEqual(runner.STATIC_FRAME_MAD, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

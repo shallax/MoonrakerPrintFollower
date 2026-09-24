@@ -350,6 +350,138 @@ def scenario(expect_fail=False):
     return _verdict(steps)
 
 
+# A leg whose screen does not move is not a success (the static-green
+# ruling): the recording IS the evidence, so a leg that shows the same
+# picture for most of its length cannot have exercised anything,
+# whatever its steps reported. The thresholds are measured, not
+# chosen: across the 51 galleries the longest static span on a leg
+# that is not one of the frozen macOS ones is 59 s, and every
+# legitimate idle (a step waiting on a model, a budget of 15-30 s) sits
+# well under that, so the absolute floor is 60 s; the share is what
+# separates a leg that froze (39-92% of its duration) from one that
+# spent a single step waiting.
+STATIC_LEG_SECONDS = 60.0
+STATIC_LEG_SHARE = 0.35
+# The encoder's own dither moves a frozen frame by about one grey
+# level (measured on the galleries: 254 of 393 frozen consecutive
+# pairs differ by at most 1), so an exact-hash comparison reads a 394 s
+# frozen stretch as 3 s — two orders of magnitude wrong. Frames are
+# compared as 64x36 grey means, and a pair counts as unchanged within
+# one level.
+STATIC_FRAME_MAD = 1.0
+STATIC_SAMPLE = (64, 36)
+
+
+def frame_mad(before, after):
+    """Mean absolute difference between two grey frames (0-255)."""
+    if not before or len(before) != len(after):
+        return 255.0
+    return sum(abs(a - b) for a, b in zip(before, after, strict=True)) / float(len(before))
+
+
+def static_run(frames):
+    """The longest near-identical run: (start, length) in frames."""
+    best = (0, 1) if frames else (0, 0)
+    start = 0
+    length = 1
+    for index in range(1, len(frames)):
+        if frame_mad(frames[index - 1], frames[index]) <= STATIC_FRAME_MAD:
+            length += 1
+        else:
+            start, length = index, 1
+        if length > best[1]:
+            best = (start, length)
+    return best
+
+
+def static_verdict(frames, seconds=STATIC_LEG_SECONDS, share=STATIC_LEG_SHARE):
+    """Whether a leg's frame sequence is too static to be a success.
+
+    Returns None when there is nothing to judge (fewer than two
+    frames), else a dict with the span, its share of the leg and the
+    verdict. One frame per second, so a length IS a duration."""
+    if len(frames) < 2:
+        return None
+    start, length = static_run(frames)
+    covered = length / float(len(frames))
+    ok = not (length >= seconds and covered >= share)
+    return {"ok": ok, "start_s": start, "span_s": length,
+            "share": round(covered, 3), "frames": len(frames)}
+
+
+def static_leg_check(video_path):
+    """The leg-level static check: decode the recording at one frame
+    per second and fail the leg when one near-identical run covers
+    most of it. The recorder itself is ffmpeg, so the decoder is
+    present wherever a recording exists; a leg with no analysable
+    recording is recorded, never failed (there is nothing to read)."""
+    if not video_path or not os.path.exists(video_path):
+        return None
+    argv = ["ffmpeg", "-v", "error", "-i", video_path,
+            "-vf", f"fps=1,scale={STATIC_SAMPLE[0]}:{STATIC_SAMPLE[1]},format=gray",
+            "-f", "rawvideo", "-"]
+    try:
+        done = subprocess.run(argv, capture_output=True, check=False)
+    except OSError:
+        return None
+    size = STATIC_SAMPLE[0] * STATIC_SAMPLE[1]
+    raw = done.stdout
+    frames = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
+    return static_verdict(frames)
+
+
+def _merge_static_into_evidence(run_dir, records):
+    """Put the leg's static verdict in the machine-readable record as
+    well as the gallery: the artifact audit reads evidence.json."""
+    path = os.path.join(run_dir, "evidence.json")
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    data["static_leg"] = records
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+
+
+def static_leg_report(run_dir):
+    """Every recording a leg leaves, judged (the static-green ruling).
+
+    The leg fails when one near-identical run covers most of a
+    recording, whatever its steps reported. It runs in the runner's own
+    exit path, so it covers every mode: the suite groups, the
+    boot-only first-install and migration legs, and their second boots.
+    A recording that cannot be decoded is left unjudged rather than
+    called static."""
+    records = []
+    for root, _dirs, names in os.walk(run_dir):
+        for name in sorted(names):
+            if not name.endswith(".mp4"):
+                continue
+            path = os.path.join(root, name)
+            verdict = static_leg_check(path)
+            if verdict is None:
+                continue
+            verdict["file"] = os.path.relpath(path, run_dir)
+            records.append(verdict)
+            if not verdict["ok"]:
+                print(f"ui_test: STATIC LEG — {verdict['file']}: the screen was still "
+                      f"for {verdict['span_s']}s of its {verdict['frames']}s "
+                      f"({int(verdict['share'] * 100)}%)")
+    if not records:
+        return 0
+    with open(os.path.join(run_dir, "static_leg.json"), "w", encoding="utf-8") as handle:
+        json.dump(records, handle, indent=2)
+        handle.write("\n")
+    _merge_static_into_evidence(run_dir, records)
+    return 1 if any(not record["ok"] for record in records) else 0
+
+
 def _verdict(steps):
     """The suite verdict: failures print to stdout too, so a cell's
     job log names the failing steps even when the gallery upload dies
@@ -4074,4 +4206,7 @@ if __name__ == "__main__":
         # In a finally: a run that raised is the one whose log is worth
         # reading, and a native leg has nowhere else to keep it.
         harvest_cura_log(RUN_DIR)
+    # The leg-level static check, after every recording is closed: a
+    # green verdict over a screen that never moved is not a success.
+    _rc = _rc or static_leg_report(RUN_DIR)
     sys.exit(_rc)
