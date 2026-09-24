@@ -793,20 +793,41 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # every native leg died on the runner's first simulator call with the
     # port refused.
     SIM_PORT=7125
+    # A directory this run owns, on the simulator's PYTHONPATH. Installing
+    # into it rather than into whatever environment pip resolves keeps the
+    # dependency beside the run and inside the interpreter that serves.
+    SIM_SITE="$WORK_DIR/pysite"
     PYTHON="$(command -v python3 2>/dev/null || echo python3)"
+    # The interpreter that serves is the one that has to import it, so every
+    # check below runs against it with the same PYTHONPATH the launch uses.
+    sim_import_ok() {
+        PYTHONPATH="$SIM_SITE${PYTHONPATH:+:$PYTHONPATH}" \
+            "$PYTHON" -c 'import tornado' >/dev/null 2>&1
+    }
     if [ "$SCENARIO" = "real" ]; then
         note "real mode: no simulator - the seeded record points at the real host"
     else
         # A stale instance from an earlier run would keep serving old code.
         pkill -f 'simulator_serve[.]py' 2>/dev/null || true
         sleep 0.5
-        if ! "$PYTHON" -c 'import tornado' >/dev/null 2>&1; then
-            note "tornado is absent - installing it (the simulator's only dependency)"
-            "$PYTHON" -m pip install --quiet --disable-pip-version-check tornado || true
+        if ! sim_import_ok; then
+            note "tornado is absent - installing it into $SIM_SITE (the simulator's only dependency)"
+            # Unquiet on purpose: on failure pip's last lines carry the
+            # reason, and on success they show what was written where.
+            if ! "$PYTHON" -m pip install --disable-pip-version-check \
+                    --target "$SIM_SITE" tornado 2>&1 | tail -4; then
+                die "tornado could not be installed with $PYTHON - the simulator cannot start"
+            fi
+        fi
+        # Re-checked against that exact interpreter and PYTHONPATH before
+        # anything is launched, rather than trusting the installer's exit.
+        if ! sim_import_ok; then
+            die "$PYTHON cannot import tornado with PYTHONPATH=$SIM_SITE - the simulator cannot start"
         fi
         # The checkout's own simulator, not a staged copy: it is the version
         # under test and this host has the tree.
-        nohup "$PYTHON" "$ROOT/tests/harness/simulator_serve.py" "$SIM_PORT" \
+        PYTHONPATH="$SIM_SITE${PYTHONPATH:+:$PYTHONPATH}" \
+            nohup "$PYTHON" "$ROOT/tests/harness/simulator_serve.py" "$SIM_PORT" \
             >"$WORK_DIR/simulator.log" 2>&1 &
         SIM_UP="no"
         for _ in $(seq 1 50); do

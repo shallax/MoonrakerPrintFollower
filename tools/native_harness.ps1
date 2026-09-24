@@ -464,17 +464,38 @@ function Get-PythonVersion([string]$Exe) {
 # and both relax the preference for the same reason: pip's progress and a
 # missing module's traceback arrive on stderr, which the redirect turns into
 # a terminating error under 'Stop'. Relaxed inside the functions only.
-function Test-PyModule([string]$Module) {
+#
+# Both take the interpreter explicitly and read it from the same site
+# directory the launch puts on PYTHONPATH. A bare 'python' resolves through
+# PATH to a different interpreter than the one that serves, and a bare pip
+# install reported success into a site that interpreter did not search - the
+# module was installed, the exit code was 0, and every leg still died on the
+# simulator's first import.
+function Test-PyModule([string]$Exe, [string]$Module, [string]$Site = '') {
     $ErrorActionPreference = 'Continue'
-    & python -c "import $Module" 2>&1 | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    $prev = $env:PYTHONPATH
+    if ($Site) { $env:PYTHONPATH = $Site }
+    try {
+        & $Exe -c "import $Module" 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        if ($Site) {
+            if ($null -ne $prev) { $env:PYTHONPATH = $prev }
+            else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
-function Install-PyModule([string]$Module) {
+# Unquiet on purpose: on failure pip's last lines carry the reason, and on
+# success they show what was written where. The exit code is logged either
+# way rather than inferred.
+function Install-PyModule([string]$Exe, [string]$Module, [string]$Site) {
     $ErrorActionPreference = 'Continue'
-    & python -m pip install --quiet --disable-pip-version-check $Module 2>&1 |
-        Select-Object -Last 2 | ForEach-Object { Write-Log "  $_" }
-    return ($LASTEXITCODE -eq 0)
+    & $Exe -m pip install --disable-pip-version-check --target $Site $Module 2>&1 |
+        Select-Object -Last 4 | ForEach-Object { Write-Log "  $_" }
+    $rc = $LASTEXITCODE
+    Write-Log "pip install $Module -> exit $rc (target $Site)"
+    return ($rc -eq 0)
 }
 
 function Test-Simulator([int]$Port) {
@@ -1212,11 +1233,21 @@ if ($Scenario -eq 'real') {
         Where-Object { $_.CommandLine -and $_.CommandLine -like '*simulator_serve.py*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 500
-    if (-not (Test-PyModule 'tornado')) {
-        Write-Log "tornado is absent - installing it (the simulator's only dependency)"
-        if (-not (Install-PyModule 'tornado')) {
-            Write-Warn "tornado could not be installed - the simulator will not start"
+    # A directory this run owns, on the simulator's PYTHONPATH. Installing
+    # into it rather than into whatever environment pip resolves keeps the
+    # dependency beside the run and inside the interpreter that serves.
+    $SimSite = Join-Path $WorkDir 'pysite'
+    if (-not (Test-PyModule $py.Source 'tornado' $SimSite)) {
+        Write-Log "tornado is absent - installing it into $SimSite (the simulator's only dependency)"
+        if (-not (Install-PyModule $py.Source 'tornado' $SimSite)) {
+            Fail "tornado could not be installed with $($py.Source) - the simulator cannot start"
         }
+    }
+    # The interpreter that serves is the one that has to import it, so the
+    # import is re-checked against that exact interpreter with PYTHONPATH set
+    # before anything is launched.
+    if (-not (Test-PyModule $py.Source 'tornado' $SimSite)) {
+        Fail "$($py.Source) cannot import tornado with PYTHONPATH=$SimSite - the simulator cannot start"
     }
     # The checkout's own simulator, not a staged copy: it is the version
     # under test and this host has the tree.
@@ -1224,9 +1255,22 @@ if ($Scenario -eq 'real') {
     $simDir = Join-Path $Root 'tests\harness'
     $simLog = Join-Path $WorkDir 'simulator.log'
     $simErrLog = Join-Path $WorkDir 'simulator.err.log'
-    $simProc = Start-Process -FilePath $py.Source -ArgumentList @($simScript, "$SimPort") `
-        -WorkingDirectory $simDir -PassThru -RedirectStandardOutput $simLog -RedirectStandardError $simErrLog
-    Write-Log "simulator: $($py.Source) $simScript $SimPort (pid $($simProc.Id)), log $simLog"
+    # PYTHONPATH is set for the launch only: the simulator needs $SimSite,
+    # and Cura - launched further down with the same inherited environment -
+    # must not see it.
+    $prevPyPath = $env:PYTHONPATH
+    if (Test-Path -LiteralPath $SimSite) {
+        if ($prevPyPath) { $env:PYTHONPATH = "$SimSite;$prevPyPath" }
+        else { $env:PYTHONPATH = $SimSite }
+    }
+    try {
+        $simProc = Start-Process -FilePath $py.Source -ArgumentList @($simScript, "$SimPort") `
+            -WorkingDirectory $simDir -PassThru -RedirectStandardOutput $simLog -RedirectStandardError $simErrLog
+    } finally {
+        if ($null -ne $prevPyPath) { $env:PYTHONPATH = $prevPyPath }
+        else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+    }
+    Write-Log "simulator: $($py.Source) $simScript $SimPort (pid $($simProc.Id)), PYTHONPATH $SimSite, log $simLog"
     $simUp = $false
     foreach ($i in 1..50) {
         if (Test-Simulator $SimPort) { $simUp = $true; break }
