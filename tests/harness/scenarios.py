@@ -1915,16 +1915,22 @@ SCENARIOS = [
          # The prompt is the card's own dialog: the button is on screen
          # and pressed, the same way the rename confirm is.
          {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
-         # Cancel first, then ask again: the prompt's other answer has
-         # to be real, and a Cancel that loaded anyway would be a Yes
-         # the user never gave (the load busy term is the model's own
-         # word on it).
+         # Three answers, each witnessed. Escape and Cancel are the
+         # two ways to say no and neither may load (the load busy term
+         # is the model's own word on it); Return is the way to say
+         # yes. A prompt whose keyboard answers were never wired would
+         # otherwise look identical to one that has them.
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "absent": True, "budget": 20},
+         {"op": "assert_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": false'},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerReplaceCancelButton"},
          {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "absent": True, "budget": 20},
          {"op": "assert_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": false'},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
-         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
+         {"op": "key_press", "key": "Return"},
          {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},

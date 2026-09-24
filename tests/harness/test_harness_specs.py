@@ -206,6 +206,10 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn('objectName: "moonrakerReplaceConfirmButton"', qml)
         self.assertIn('objectName: "moonrakerReplaceCancelButton"', qml)
         self.assertIn("modal: true", qml)
+        # Centred on the window, not nested in the card: the question
+        # is the application's, and a 340px corner card is a strange
+        # place to ask it from.
+        self.assertIn("anchors.centerIn: Overlay.overlay", qml)
         # The state is the model's, and the popup is written from the
         # change handler rather than bound: bindings on setProperty-fed
         # values go stale on this dynamically created component (the

@@ -172,7 +172,14 @@ Item {
     // disagree with the model about whether the question is up.
     Popup {
         id: replacePromptDialog
-        anchors.centerIn: parent
+        // Centred on the SCREEN, not on the card: the question is about
+        // everything Cura holds, not about the card, and a corner card
+        // is a strange place to ask it from. The window's overlay is
+        // where the box this replaced put itself, so this is the
+        // placement users had before. The model still decides WHICH
+        // card raises it, so re-parenting cannot put up two.
+        parent: Overlay.overlay
+        anchors.centerIn: Overlay.overlay
         padding: UM.Theme.getSize("default_margin").width
         modal: true
         closePolicy: Popup.NoAutoClose
@@ -195,13 +202,21 @@ Item {
             // inside it answered).
             objectName: "moonrakerReplacePrompt"
             focus: true
-            // Escape is the same answer as Cancel, and it TELLS the
-            // model: the popup's own close would leave the model
-            // saying the question is still up, and the visibility
-            // binding would put it straight back.
+            // The keyboard answers, and they TELL the model: the
+            // popup's own close would leave the model saying the
+            // question is still up, and updateReplacePrompt would put
+            // it straight back. Escape cancels (the same answer as the
+            // Cancel button); Return and the keypad's Enter accept.
+            // Keys bubble UP the focus chain, so these hold while a
+            // button inside has focus too.
             Keys.onEscapePressed: base.replaceCancelled()
+            Keys.onReturnPressed: base.replaceConfirmed()
+            Keys.onEnterPressed: base.replaceConfirmed()
             spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
+            // Twice the delete dialog's width: this prompt carries a
+            // full sentence about what the replace discards, and at the
+            // narrow width it wrapped to three lines.
+            width: 640 * screenScaleFactor
             UM.Label {
                 text: "Replace Cura contents?"
                 font: UM.Theme.getFont("large_bold")
@@ -212,24 +227,40 @@ Item {
                 text: "This will discard everything currently loaded in Cura and replace it with the G-code currently printing in Moonraker."
                 font: UM.Theme.getFont("medium")
             }
-            RowLayout {
+            // The verbs sit together at the bottom right, at equal
+            // width — the placement Cura's own dialogs use. Stretched
+            // across a 640px dialog they read as a toolbar, and the
+            // dialog's width would then be decided by two buttons.
+            Item {
                 width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "moonrakerReplaceConfirmButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Replace"
-                    Layout.fillWidth: true
-                    onClicked: base.replaceConfirmed()
-                }
-                // The card's own secondary, not Cura's: this file's
-                // buttons are pinned to the wrapper that centres its
-                // label (Cura's ActionButton label does not).
-                PreviewSecondaryButton {
-                    objectName: "moonrakerReplaceCancelButton"
-                    text: "Cancel"
-                    Layout.fillWidth: true
-                    onClicked: base.replaceCancelled()
+                height: replaceButtons.height
+                Row {
+                    id: replaceButtons
+                    anchors.right: parent.right
+                    spacing: UM.Theme.getSize("narrow_margin").width
+                    Cura.PrimaryButton {
+                        objectName: "moonrakerReplaceConfirmButton"
+                        focusPolicy: Qt.StrongFocus
+                        // fixedWidthMode gives the label a width to be
+                        // centred IN: Cura's ActionButton binds
+                        // buttonText.width to `undefined` without it, and
+                        // a Text with no width cannot centre itself — the
+                        // label sits wherever its own glyphs end (the
+                        // same offset PreviewSecondaryButton wraps).
+                        fixedWidthMode: true
+                        text: "Replace"
+                        width: 130 * screenScaleFactor
+                        onClicked: base.replaceConfirmed()
+                    }
+                    // The card's own secondary, not Cura's: this file's
+                    // buttons are pinned to the wrapper that centres its
+                    // label (Cura's ActionButton label does not).
+                    PreviewSecondaryButton {
+                        objectName: "moonrakerReplaceCancelButton"
+                        text: "Cancel"
+                        width: 130 * screenScaleFactor
+                        onClicked: base.replaceCancelled()
+                    }
                 }
             }
         }

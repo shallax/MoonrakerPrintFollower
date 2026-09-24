@@ -248,8 +248,11 @@ SCENARIO_MAP = {
     # asks again, so all three surfaces ride that one scenario — the
     # cancel surface has no other caller.
     "moonrakerReplacePrompt": "h2",
-    "moonrakerReplaceConfirmButton": "h2",
     "moonrakerReplaceCancelButton": "h2",
+    # Its PRESS lives in the preview leg: h2 answers by keyboard
+    # (Escape, then Return) so both keyboard answers are witnessed,
+    # and p1 presses the same button with the mouse.
+    "moonrakerReplaceConfirmButton": "p1",
     # The protocol endpoints: the simulator's contract test owns the
     # wire shapes; the scenarios drive them through the real UI.
     "status_endpoint": "b1", "websocket_endpoint": "a1",

@@ -168,8 +168,9 @@ class ClassificationRatchetTests(unittest.TestCase):
         # the i3 precedent).
         # Four fewer (4.6.0): the replace prompt is the card's own
         # popup, so its four legs press a button instead of answering
-        # a widget box - the ratchet only tightens.
-        self.assertLessEqual(direct, 149)
+        # a widget box - the ratchet only tightens. Measured, not
+        # assumed: 154 became 150.
+        self.assertLessEqual(direct, 150)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
@@ -827,7 +828,12 @@ class CaptureGateTests(unittest.TestCase):
         self.assertIn("def progress(message):", source)
         self.assertIn('print(f"ui_test: {message}", flush=True)', source)
         self.assertIn("[{done}] {spec", source)   # the line that opens a scenario
-        self.assertIn("{spec['id']} done in ", source)  # the one that closes it
+        self.assertIn("{spec['id']}: ", source)   # the one that closes it
+        # The verdict LEADS it, and both words are there: a scan must
+        # never have to read "0 failed" as a pass, nor hunt for which
+        # scenario is the red one.
+        self.assertIn('"PASSED \\u2705" if not failed else "FAILED \\u274c"', source)
+        self.assertIn("all {len(scenario_steps)} steps passed", source)
         # The container leg runs the runner without -u, so the flush
         # cannot be delegated to argv.
         self.assertIn("python3 -u /tmp/mpf/harness_runner.py",

@@ -643,7 +643,10 @@ def _verdict(steps):
     failed = [name for name, _, _, ok, cap in steps
               if not ok or (isinstance(cap, tuple) and cap[1])]
     if failed:
-        print(f"ui_test: FAILED steps: {', '.join(failed)}")
+        print(f"ui_test: FAILED \u274c {len(failed)} of {len(steps)} steps failed: "
+              f"{', '.join(failed)}")
+    else:
+        print(f"ui_test: PASSED \u2705 all {len(steps)} steps passed")
     return 0 if not failed else 1
 
 
@@ -3124,10 +3127,14 @@ def suite_run(group_id):
             scenario_steps = suite_scenario(spec)
             steps.extend(scenario_steps)
             failed = [entry[0] for entry in scenario_steps if not entry[3]]
-            progress(f"[{done}] {spec['id']} done in "
-                     f"{time.monotonic() - started:.0f}s — {len(scenario_steps)} steps, "
-                     f"{len(failed)} failed"
-                     + (f": {', '.join(failed)}" if failed else ""))
+            # The verdict LEADS: a scan of this log should never have
+            # to read "0 failed" as a pass, or hunt for which scenario
+            # is the red one.
+            progress(f"[{done}] {spec['id']}: "
+                     + ("PASSED \u2705" if not failed else "FAILED \u274c")
+                     + f" in {time.monotonic() - started:.0f}s — "
+                     + (f"{len(scenario_steps)} steps, failed: {', '.join(failed)}"
+                        if failed else f"all {len(scenario_steps)} steps passed"))
     finally:
         stop_recorder(video)
     title = f"Scenario group {group_id}"

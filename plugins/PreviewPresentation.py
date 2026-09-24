@@ -109,6 +109,15 @@ class PreviewPresentation(QObject):
             except RuntimeError: pass
             for name, value in self._values.items():
                 if name == "gateVisible": continue
+                if name == "replacePromptVisible":
+                    # The prompt is a Popup, and a Popup renders in the
+                    # WINDOW's overlay: it escapes whatever hidden
+                    # ancestor holds its card, so both hostings would
+                    # put one up at once (measured: two identical
+                    # dialogs, overlapping, on the same screen). Only
+                    # the card the model considers current may ask —
+                    # the same term the gates above use, one level in.
+                    value = bool(value) and (not panel_up if overlay else panel_up)
                 try: control.setProperty(name, value)
                 except RuntimeError: pass
 

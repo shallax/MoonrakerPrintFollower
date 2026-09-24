@@ -258,6 +258,16 @@ jobs:
           }
           if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
 
+      # The verdict panel for this job's page. GitHub shows a job as a
+      # name and a dot; the leg's own log buries the outcome under a
+      # hundred progress lines, so the summary states it first and the
+      # detail under it. `always()` because a failed leg is exactly when
+      # this matters most.
+      - name: Summarise the unit
+        if: always()
+        shell: bash
+        run: python tools/gate_summary.py "$GALLERY" "${{ inputs.os }} ${{ inputs.unit }}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload the unit's gallery
         if: always()
         uses: actions/upload-artifact@v7

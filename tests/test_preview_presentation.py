@@ -492,6 +492,39 @@ class PreviewPresentationTests(unittest.TestCase):
             # A caller's gateVisible is not a value: the gate is this module's call.
             self.assertFalse(card.property("gateVisible"))
 
+    def test_only_the_current_card_is_told_to_raise_the_prompt(self):
+        # The prompt is a Popup, and a Popup renders in the WINDOW's
+        # overlay: it escapes whatever hidden ancestor holds its card,
+        # so publishing the value to both hostings put two identical
+        # dialogs on screen at once (measured, in the local gate run's
+        # own screenshots). The card the model considers current is the
+        # one that may ask — the overlay while Cura hides its panel,
+        # the panel while it shows it.
+        scene = self.build()
+        scene.presentation.publish({"configuredForFollowing": True,
+                                    "previewStageActive": True,
+                                    "replacePromptVisible": True})
+        self.assertTrue(scene.panel_card.property("replacePromptVisible"))
+        self.assertFalse(scene.overlay_card.property("replacePromptVisible"))
+
+        scene.app.set_platform_activity(False)
+        scene.app.activityChanged.emit()
+        self.assertFalse(scene.panel_card.property("replacePromptVisible"))
+        self.assertTrue(scene.overlay_card.property("replacePromptVisible"))
+
+    def test_a_withdrawn_prompt_stays_withdrawn_on_the_hidden_card(self):
+        # The other direction: the card that is NOT current must read
+        # False, never a stale True from the turn it was current.
+        scene = self.build()
+        scene.presentation.publish({"configuredForFollowing": True,
+                                    "previewStageActive": True,
+                                    "replacePromptVisible": True})
+        scene.app.set_platform_activity(False)
+        scene.app.activityChanged.emit()
+        scene.presentation.publish({"replacePromptVisible": False})
+        for card in (scene.panel_card, scene.overlay_card):
+            self.assertFalse(card.property("replacePromptVisible"))
+
     def test_a_deleted_card_never_takes_the_other_host_down(self):
         scene = self.build(panel_card=DeletedCard())
         scene.presentation.publish({"configuredForFollowing": True, "previewStageActive": True})
