@@ -21,7 +21,9 @@ Three things genuinely differ between the platforms:
     display it is given, so the native launcher must have put the
     display AT the harness geometry or shot()'s size check fails the
     frame, which is the honest reading of a frame that is not the one
-    the run asked for.
+    the run asked for. macOS takes its STILLS through screencapture
+    instead (still_argv): avfoundation serves one screen client at a
+    time, and the recorder owns it for the whole run.
   * the recorder's OUTPUT FLAGS. A native recorder is stopped by a
     kill when a run tears down, and a plain mp4 keeps its index at the
     end, so a killed recorder leaves an mdat with no moov — a file no
@@ -55,6 +57,11 @@ SYSTEMS = (LINUX, MACOS, WINDOWS)
 DEFAULT_SCREEN_INDEX = "1"
 
 _CAPTURE_DEVICE = {LINUX: "x11grab", MACOS: "avfoundation", WINDOWS: "gdigrab"}
+
+# macOS's still, by absolute path: the recorder here owns avfoundation
+# for the whole run (still_argv), and screencapture does not go through
+# it at all.
+MACOS_STILL_TOOL = "/usr/sbin/screencapture"
 
 # The recorder's output flags where the recorder is stopped by a kill
 # (see the module docstring). Inserted after the input spec, where
@@ -107,7 +114,7 @@ def capture_input_args(system, size, *, display=None, screen_index=None, framera
 
 def recorder_output_args(system):
     """The output options a RECORDING needs on this platform (never a
-    still's: a still is finished by its own -frames:v)."""
+    still's: an ffmpeg still is finished by its own -frames:v)."""
     _checked(system)
     return [] if system == LINUX else list(_FRAGMENTED)
 
@@ -122,7 +129,21 @@ def recorder_argv(system, path, *, size, display=None, screen_index=None, framer
 
 
 def still_argv(system, path, *, size, display=None, screen_index=None):
-    """The full argv for one frame (the harness's shot())."""
+    """The full argv for one frame (the harness's shot()).
+
+    macOS takes the frame with the platform's own screencapture, NOT
+    with a second ffmpeg. avfoundation serves one screen client at a
+    time: a still asked for while the recorder holds the display is
+    accepted, prints its format negotiation and then never delivers a
+    frame, so every shot() burned its full 30-second timeout and every
+    macOS leg failed on the capture. Measured, not assumed: the spike
+    took the same ffmpeg still on the same runner with the recorder
+    stopped and got a 1920x1080 frame, and took a screencapture of Cura
+    on the display while the recorder ran. -x is silent, -t pins the
+    format so the extension is not what decides it.
+    """
+    if _checked(system) == MACOS:
+        return [MACOS_STILL_TOOL, "-x", "-t", "png", path]
     return (["ffmpeg", "-y", "-loglevel", "error"]
             + capture_input_args(system, size, display=display,
                                  screen_index=screen_index)

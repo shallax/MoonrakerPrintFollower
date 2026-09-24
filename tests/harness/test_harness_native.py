@@ -110,11 +110,15 @@ class MacosCaptureTests(unittest.TestCase):
              "-g", "30", "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
              VIDEO_PATH])
 
-    def test_the_still_carries_no_fragmentation(self):
-        argv = native_host.still_argv(native_host.MACOS, STILL_PATH, size=SIZE,
-                                      screen_index="1")
-        self.assertNotIn("-movflags", argv)
-        self.assertEqual(argv[-3:], ["-frames:v", "1", STILL_PATH])
+    def test_the_still_is_the_platforms_own_screencapture(self):
+        # Not a second ffmpeg: avfoundation serves one screen client at
+        # a time and the recorder holds it for the whole run, so the
+        # still was accepted and then never delivered a frame - every
+        # macOS leg failed on shot()'s 30-second timeout.
+        self.assertEqual(
+            native_host.still_argv(native_host.MACOS, STILL_PATH, size=SIZE,
+                                   screen_index="1"),
+            [native_host.MACOS_STILL_TOOL, "-x", "-t", "png", STILL_PATH])
 
     def test_the_device_probe_reads_the_screen_index(self):
         # ffmpeg writes the device list to stderr and exits non-zero —
