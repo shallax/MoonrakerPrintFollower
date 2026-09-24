@@ -3265,10 +3265,24 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
         self.assertTrue(wrapped.prefixValid)
+        old_key = wrapped._prefix_key
+        old_url = wrapped.prefixData
         model.setFollowerView("popover", 1.5, 0.7, 563, 492, False, 0.0, 0.0)
-        self.qt.events(5)
-        self.assertFalse(wrapped.prefixValid,
-                         "the view change left the old prefix valid")
+        # The flag cannot carry this claim. The flush's invalidation
+        # schedules the replacement itself, so the flag reads false only
+        # until that re-render lands — and the read then races the
+        # landing, failing while the old prefix is already gone. What
+        # must not survive is the OLD prefix: its key and its URL. The
+        # wait is the settled window the rest of this file uses.
+        self._pump_rasters(model, "popover")
+        self.assertNotEqual(wrapped._prefix_key, old_key,
+                            "the retained prefix kept the old view's key")
+        self.assertNotEqual(wrapped.prefixData, old_url,
+                            "the old view's prefix is still the one served")
+        self.assertEqual(wrapped._prefix_key, wrapped._expected_key,
+                         "a stale prefix reads valid after the re-render")
+        self.assertTrue(wrapped.prefixValid,
+                        "the new view's prefix never read valid")
 
     def test_the_print_epoch_blocks_a_colliding_stale_completion(self):
         # The print switch recreates layer 100 with token 1 at
