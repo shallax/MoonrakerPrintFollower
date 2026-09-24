@@ -201,6 +201,19 @@ class TestingDocPinTests(unittest.TestCase):
                        "orchestrates the whole release gate"):
             self.assertNotIn(phrase, text, phrase)
 
+    def test_the_capture_gate_and_its_cost_are_documented(self):
+        # The macOS legs run without pictures. The document is where a
+        # reader learns an empty mac gallery is by design rather than a
+        # broken harness, and the cost is stated rather than implied —
+        # a caveat that quietly disappears is worse than none.
+        text = self._doc()
+        self.assertIn("macOS legs run without pictures", text)
+        self.assertIn("macOS has no visual-regression detection in CI", text)
+        self.assertIn("HARNESS_CAPTURE=on", text)
+        # The still-span rule's own change, which is what clears the
+        # windows group-status red without retiring the check.
+        self.assertIn("A still span nobody drove is not judged", text)
+
 
 if __name__ == "__main__":
     unittest.main()

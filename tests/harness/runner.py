@@ -70,6 +70,65 @@ def record_argv(path, framerate=15):
                                      framerate=framerate)
 
 
+# The capture gate. A leg whose screen cannot be relied on to present
+# runs its steps with no recorder and no stills: every step assertion
+# is answered in-process from the live QML tree and the models, so the
+# picture is the only thing lost — the static verdict and the frame
+# probe judge pictures, and nothing else reads one.
+#
+# The LEG says so, not the platform: tools/native_harness.sh exports
+# HARNESS_CAPTURE=off with its reason for the CI mac, whose runner has
+# no GPU (OpenGL in a macOS guest is software by construction — Apple's
+# paravirtual GPU is Metal-only) and on which the window stops
+# presenting partway through a leg. Measured on
+# gate-group-connection-macos-latest: the stills go byte-identical
+# while the menu bar clock and the dock keep ticking in the same
+# frames, and a real click on Cura's own MonitorStage header (`a9-07`)
+# changes nothing on screen — while all 45 steps pass, because they
+# read the tree. A Mac with a real GPU presents normally, so this is
+# deliberately not a platform default: a local run keeps its pictures,
+# and HARNESS_CAPTURE=on restores them on the CI mac for a look.
+# The recorder's own origin: every step records its offset from this,
+# which is what aligns a step to the second of the recording it ran in.
+# None when nothing is being recorded.
+CAPTURE_T0 = None
+
+
+def capture_enabled(override):
+    """The gate's decision: off only when the leg said off. Anything
+    else — unset, empty, "on", a typo — captures, so a missing or
+    mangled variable fails toward the recording rather than away from
+    it."""
+    return (override or "").strip().lower() != "off"
+
+
+CAPTURE = capture_enabled(os.environ.get("HARNESS_CAPTURE"))
+CAPTURE_REASON = os.environ.get("HARNESS_CAPTURE_REASON") or (
+    "" if CAPTURE else "this leg was told to capture nothing (HARNESS_CAPTURE=off) "
+                       "and gave no reason — see TESTING.md on the capture gate")
+
+
+def start_recorder(path, framerate=15):
+    """The platform recorder, or None when this leg captures nothing."""
+    global CAPTURE_T0
+    if not CAPTURE:
+        return None
+    CAPTURE_T0 = time.monotonic()
+    return subprocess.Popen(record_argv(path, framerate=framerate))
+
+
+def stop_recorder(video):
+    """Stop a recorder whatever start_recorder returned."""
+    if video is None:
+        return
+    time.sleep(1)
+    video.terminate()
+    try:
+        video.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        video.kill()
+
+
 def harvest_cura_log(dest_dir, suffix=""):
     """Cura's own log, kept beside the evidence.
 
@@ -161,6 +220,11 @@ def shot(name):
     The frame must also match the declared SIZE: a clamped or
     truncated grab still writes a plausible file, and every
     evidence claim downstream rests on these pixels."""
+    if not CAPTURE:
+        # No frame, and deliberately no error: a leg that captures
+        # nothing must not fail every step for the absence of the
+        # picture it was told not to take.
+        return (None, None)
     path = os.path.join(RUN_DIR, f"{name}.png")
     try:
         os.unlink(path)
@@ -311,8 +375,7 @@ def discover():
 def scenario(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -339,12 +402,7 @@ def scenario(expect_fail=False):
             steps.append(("13-final", "all stage transitions reached by real clicks",
                           "PREPARE -> PREVIEW -> MONITOR -> PREPARE", True, shot("13-final")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     write_gallery(steps, expect_fail, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
@@ -394,22 +452,72 @@ def static_run(frames):
     return best
 
 
-def static_verdict(frames, seconds=STATIC_LEG_SECONDS, share=STATIC_LEG_SHARE):
+def static_verdict(frames, seconds=STATIC_LEG_SECONDS, share=STATIC_LEG_SHARE,
+                   interactions=None):
     """Whether a leg's frame sequence is too static to be a success.
 
     Returns None when there is nothing to judge (fewer than two
     frames), else a dict with the span, its share of the leg and the
-    verdict. One frame per second, so a length IS a duration."""
+    verdict. One frame per second, so a length IS a duration.
+
+    A span that contains no real input is NOT judged (the
+    non-interactive ruling). The rule exists to catch a window that
+    stopped presenting WHILE IT WAS BEING DRIVEN; a stretch of a leg
+    whose steps only pushed simulator state and read models asked
+    nothing of the screen, so its stillness is not evidence about the
+    screen. gate-group-status is the measured case: 34 steps before
+    its first click, correctly still throughout, and red on Windows at
+    62 s where the same leg on ubuntu sat at 59 s — a one-second
+    margin deciding a verdict is the tell that the span was not the
+    thing being measured. `interactions` is the list of (first, last)
+    seconds the leg was driven; None means the alignment is unknown
+    and every span is judged as before, so a leg that cannot be
+    aligned keeps the old teeth rather than silently losing them."""
     if len(frames) < 2:
         return None
     start, length = static_run(frames)
     covered = length / float(len(frames))
-    ok = not (length >= seconds and covered >= share)
+    driven = interactions is None or any(
+        first < start + length and last > start for first, last in interactions)
+    ok = not (length >= seconds and covered >= share) or not driven
     return {"ok": ok, "start_s": start, "span_s": length,
-            "share": round(covered, 3), "frames": len(frames)}
+            "share": round(covered, 3), "frames": len(frames),
+            "driven": driven}
 
 
-def static_leg_check(video_path):
+def _interaction_windows(run_dir):
+    """The seconds a recording was actually driven, from the sibling
+    evidence.json: every real-input step's span on the recorder's own
+    clock. None when the evidence cannot place the steps (no `at_s`),
+    which keeps the old everything-is-judged behaviour rather than
+    silently retiring the check; a list — possibly empty, for a leg
+    that clicked nothing — when it can.
+
+    Widened a second either side: ffmpeg's own startup sits between the
+    recorder's origin and the first frame, and the decode samples at
+    one frame per second."""
+    path = os.path.join(run_dir, "evidence.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    steps = data.get("steps") or []
+    if not any(step.get("at_s") is not None for step in steps):
+        return None
+    windows = []
+    for step in steps:
+        if step.get("class") != "ui-interaction" or step.get("at_s") is None:
+            continue
+        first = max(0.0, step["at_s"] - 1.0)
+        last = step["at_s"] + (step.get("duration_ms") or 0) / 1000.0 + 1.0
+        windows.append((first, last))
+    return windows
+
+
+def static_leg_check(video_path, interactions=None):
     """The leg-level static check: decode the recording at one frame
     per second and fail the leg when one near-identical run covers
     most of it. The recorder itself is ffmpeg, so the decoder is
@@ -427,7 +535,7 @@ def static_leg_check(video_path):
     size = STATIC_SAMPLE[0] * STATIC_SAMPLE[1]
     raw = done.stdout
     frames = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
-    return static_verdict(frames)
+    return static_verdict(frames, interactions=interactions)
 
 
 def _merge_static_into_evidence(run_dir, records):
@@ -457,14 +565,23 @@ def static_leg_report(run_dir):
     exit path, so it covers every mode: the suite groups, the
     boot-only first-install and migration legs, and their second boots.
     A recording that cannot be decoded is left unjudged rather than
-    called static."""
+    called static. A leg that captures nothing is not judged at all:
+    the static rule reads pictures, and there are none to read."""
+    if not CAPTURE:
+        print("ui_test: STATIC LEG — not judged: this leg captures nothing "
+              f"({CAPTURE_REASON or 'no reason recorded'})")
+        return 0
     records = []
     for root, _dirs, names in os.walk(run_dir):
         for name in sorted(names):
             if not name.endswith(".mp4"):
                 continue
             path = os.path.join(root, name)
-            verdict = static_leg_check(path)
+            # A recording is judged against the steps that ran beside
+            # it: the second boot's recording must not be read against
+            # the first boot's interactions.
+            interactions = _interaction_windows(root)
+            verdict = static_leg_check(path, interactions=interactions)
             if verdict is None:
                 continue
             verdict["file"] = os.path.relpath(path, run_dir)
@@ -473,6 +590,13 @@ def static_leg_report(run_dir):
                 print(f"ui_test: STATIC LEG — {verdict['file']}: the screen was still "
                       f"for {verdict['span_s']}s of its {verdict['frames']}s "
                       f"({int(verdict['share'] * 100)}%)")
+            elif not verdict.get("driven", True):
+                # Named, never silent: a span nobody drove is not a pass
+                # on the screen, it is a stretch where the screen was
+                # not asked anything.
+                print(f"ui_test: STATIC LEG — {verdict['file']}: not judged, "
+                      f"no input step fell inside its {verdict['span_s']}s still "
+                      f"stretch (of {verdict['frames']}s)")
     if not records:
         return 0
     with open(os.path.join(run_dir, "static_leg.json"), "w", encoding="utf-8") as handle:
@@ -605,6 +729,11 @@ def foreground_guard():
     foreground authority (the WM-less Xvfb, before the window has ever
     been active) answers `none`: recorded, never a failure, because
     there is no baseline to read a theft against."""
+    if not CAPTURE:
+        # The guard protects the RECORDING. With no frames there is
+        # nothing to protect, and re-raising Cura would be a side
+        # effect on a leg that claims nothing about the display.
+        return {"authority": "not-applicable", "capture": "off"}
     try:
         state = rpc({"id": 1, "cmd": "foreground", "raise": True}, timeout=20)
     except Exception as exc:
@@ -628,6 +757,8 @@ def _foreground_verdict(foreground, ok, assertion):
     in the assertion, never hidden."""
     if foreground is None:
         return ok, assertion
+    if foreground.get("authority") == "not-applicable":
+        return ok, f"{assertion} · the display guard is off with the capture"
     if foreground.get("foreground") is False and foreground.get("authority") not in (
             None, "none", "unreachable"):
         return False, (f"{assertion} · the display was taken from Cura and the "
@@ -654,6 +785,11 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "capture": os.path.basename(path) if path else None,
         "capture_error": capture_error,
         "duration_ms": round((time.monotonic() - started) * 1000),
+        # Seconds from the recorder's start to this step's start: what
+        # aligns a step to the second of the recording it ran in, which
+        # is how the static check knows whether a still span was driven.
+        "at_s": (round(started - CAPTURE_T0, 1)
+                 if CAPTURE_T0 is not None else None),
         "delivery": delivery,
         # The evidence-visibility fields (the review's C8/C9): the
         # resolved element's scene rect — what the capture outlines —
@@ -697,14 +833,30 @@ def write_evidence(title):
             "steps": by_class,
             "scenario_minimum": scenario_min,
         },
+        # The capture record, always present: a reader of this file must
+        # never have to infer from an empty gallery whether the leg took
+        # no pictures because it was told not to or because the harness
+        # broke.
+        "capture": {
+            "mode": "on" if CAPTURE else "off",
+            "reason": CAPTURE_REASON,
+            "judged": CAPTURE,
+        },
         "steps": EVIDENCE,
     }
     if FRAME_PROBES:
         run["frames"] = FRAME_PROBES
         stalled = frames_verdict(FRAME_PROBES)
-        for scenario_id in stalled:
-            print(f"ui_test: NO FRAMES — scenario {scenario_id}: the window "
-                  f"delivered no frame between its start and its end sample")
+        if not CAPTURE:
+            # Recorded, never named as a fault: this leg makes no claim
+            # about the screen, and on macOS every scenario would trip
+            # it — the stall is the environment the capture gate exists
+            # for, and it is measured here rather than announced.
+            run["frames_stalled"] = stalled
+        else:
+            for scenario_id in stalled:
+                print(f"ui_test: NO FRAMES — scenario {scenario_id}: the window "
+                      f"delivered no frame between its start and its end sample")
 
     with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
         json.dump(run, handle, indent=2)
@@ -744,10 +896,16 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
         os.environ.get("HARNESS_MODE", ""),
         time.strftime("%Y-%m-%d %H:%M"),
     ) if part)
-    video_tag = (f'<video src="{html.escape(os.path.basename(video))}" controls '
-                 f'style="max-width:100%"></video>'
-                 if video and os.path.exists(video) else
-                 '<p class="note">no recording for this run</p>')
+    if not CAPTURE:
+        # Say WHY the gallery is empty, in the gallery: an unlabelled
+        # picture-free page reads as a broken harness.
+        video_tag = ('<p class="note"><b>No captures on this leg by design.</b> '
+                     f'{html.escape(CAPTURE_REASON)}</p>')
+    else:
+        video_tag = (f'<video src="{html.escape(os.path.basename(video))}" controls '
+                     f'style="max-width:100%"></video>'
+                     if video and os.path.exists(video) else
+                     '<p class="note">no recording for this run</p>')
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>body{{font-family:sans-serif;background:#111;color:#ddd;margin:2em}}
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
@@ -1417,8 +1575,7 @@ def scenario9():
     # without pausing; the entry stays listed, restyled as missed.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario9.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario9.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1466,12 +1623,7 @@ def scenario9():
         steps.append(("06-missed", "the printer drove past the layer without pausing",
                       "the entry restyled as missed", missed, shot("06-missed")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #9 — pause list verified-only"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1486,8 +1638,7 @@ def scenario8():
     # receipt canary (the WS feed keeps flowing end to end).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario8.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario8.mp4"), framerate=5))
+    video = start_recorder(video_path, framerate=5)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1550,12 +1701,7 @@ def scenario8():
                       "%d ws entries in the 100-entry window" % ws_count,
                       bool(ws_count >= 95), shot("07-receipt-canary")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #8 — dwell profile"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1569,8 +1715,7 @@ def scenario10():
     # print then starts and the latch clears.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario10.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario10.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1620,12 +1765,7 @@ def scenario10():
                       "the plugin shows the fresh job connected",
                       bool(fresh and model.get("connected")), shot("06-fresh-print")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #10 — restart arming / e-stop latch"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1639,8 +1779,7 @@ def scenario11():
     # last command on the up arrow.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario11.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario11.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1692,12 +1831,7 @@ def scenario11():
                       "the input shows %r" % recall_state.get("text"),
                       bool(recall_state.get("text") == "G28"), shot("08-recall")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #11 — scroll-to-prompt"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1712,8 +1846,7 @@ def scenario7():
     # WS entries grew (the positive sentinel).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario7.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario7.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1759,12 +1892,7 @@ def scenario7():
                       "WS entries grew %d -> %d (must grow)" % (baseline_ws, ws_after),
                       ws_after > baseline_ws, shot("06-ws-sentinel")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #7 — transport handover"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1779,8 +1907,7 @@ def scenario6():
     # and back re-attaches — THE ONLY automatic re-attach.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario6.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario6.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1847,12 +1974,7 @@ def scenario6():
                       "the attached state survived the view swap (the ONLY automatic re-attach)",
                       preserved, shot("08-swap-preserves-attach")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #6 — detach on any layer selection change"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1868,8 +1990,7 @@ def scenario5():
     # its first sample right after the sync snapshot.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario5.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario5.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1939,12 +2060,7 @@ def scenario5():
                       bool(aux_state and aux_state.get("aux_extruder_temperature") == 200.0),
                       shot("07-aux-datum")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #5 — temperatures at print start"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1959,8 +2075,7 @@ def scenario4():
     # viewport's changing test pattern prove liveness.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario4.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario4.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2020,12 +2135,7 @@ def scenario4():
                           "viewport crops differ: %s... vs %s..." % (hash_a[:8], hash_b[:8]),
                           live, shot("05-camera-b")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #4 — camera first load"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2039,8 +2149,7 @@ def scenario3():
     # previous content returns (empty, fixed height — no reflow).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario3.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario3.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2088,12 +2197,7 @@ def scenario3():
                       bool(cleared_ok) and cleared.get("height") == baseline_height,
                       shot("07-cleared")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #3 — M117 in the Print-job section"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2108,8 +2212,7 @@ def scenario2(expect_fail=False):
     # the empty card must never reappear.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario2.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario2.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2178,12 +2281,7 @@ def scenario2(expect_fail=False):
                       "empty card absent in every post-click sample",
                       empty_never_back and bool(settled_at), shot("07-settled")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #2 — the card stays through load and after render"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2199,8 +2297,7 @@ def scenario1(expect_fail=False):
     # throughout.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario1.mp4")
-    video = subprocess.Popen(
-        record_argv(os.path.join(RUN_DIR, "scenario1.mp4"), framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2269,12 +2366,7 @@ def scenario1(expect_fail=False):
         steps.append(("08-one-connection", "the whole scenario ran on one websocket connection",
                       "connections == 1 (no reconnect needed)", one_connection, shot("08-one-connection")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #1 — the failure state clears itself"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2370,8 +2462,7 @@ def first_install1():
     boot leaves on disk."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall1.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2448,12 +2539,7 @@ def first_install1():
                       "closeApplication accepted and the process is gone",
                       bool(quit_reply.get("ok")) and exited, shot("05-quit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "First install — boot 1: the clean activation and the save"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2467,8 +2553,7 @@ def first_install2():
     blob — the machine record must still be there, field for field."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall2.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2509,12 +2594,7 @@ def first_install2():
                       "the document is identical to the one the first boot left",
                       untouched, shot("03-untouched")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "First install — boot 2: the config survives the second boot"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2705,8 +2785,7 @@ def migration1():
     real one-shot, and the machine switch re-routes the live model."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration1.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2788,12 +2867,7 @@ def migration1():
         steps.append(("07-clean-exit", "the app quit cleanly after the migration",
                       "the driver acked the quit", bool(quit_reply.get("ok")), shot("07-clean-exit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Migration — boot 1: the v1 blob migrates into the v2 files"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2805,8 +2879,7 @@ def migration2():
     migrated tree alone — the one-shot never re-runs."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration2.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2862,12 +2935,7 @@ result = {"backups": sorted(
         steps.append(("05-clean-exit", "the app quit cleanly after the second boot",
                       "the driver acked the quit", bool(quit_reply.get("ok")), shot("05-clean-exit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Migration — boot 2: the second boot leaves the migrated tree alone"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2918,8 +2986,7 @@ def suite_run(group_id):
         return 1
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2972,12 +3039,7 @@ def suite_run(group_id):
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
             steps.extend(suite_scenario(spec))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = f"Scenario group {group_id}"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -3179,8 +3241,7 @@ def real_run():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "real.mp4")
     video_path = os.path.join(RUN_DIR, "real.mp4")
-    video = subprocess.Popen(
-        record_argv(video_path, framerate=15))
+    video = start_recorder(video_path, framerate=15)
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -3192,12 +3253,7 @@ def real_run():
         for spec in specs:
             steps.extend(suite_scenario(spec, step_fn=real_step))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Real-printer read-only — observation, no commands"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")

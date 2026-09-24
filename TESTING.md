@@ -633,6 +633,49 @@ SimulationView is the ACTIVE view (the Preview stage click).
   the z14 scenario (the broken start that stays broken, the fired
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
+- **The capture gate — macOS legs run without pictures (2026-09-24).**
+  A CI mac has no GPU, and OpenGL in a macOS guest is software by
+  construction (Apple's paravirtual GPU is Metal-only), so Cura lands
+  on the renderer its own probe declines on macOS
+  (`UM/View/GL/OpenGLContext.py`, CURA-6092). On that renderer the
+  window stops presenting partway through a leg. Measured on
+  `gate-group-connection-macos-latest`: the stills go byte-identical
+  while the menu bar clock and the dock keep ticking in the same
+  frames, and `a9-07` — a real click on Cura's own MonitorStage
+  header — changes nothing on screen; all 45 steps pass, because they
+  read the QML tree. Forcing 4.1 core back with
+  `view/opengl_version_detect = force_modern` does not fix it (the
+  window freezes either way) and makes the render-heavy legs far
+  slower — `group-printing` measured 3.5× (2.8 → 9.7 min) against a
+  15-minute budget — so that pin was removed.
+  The macOS legs therefore capture nothing: no recorder, no stills,
+  no frame probe, no static verdict, no display guard. **Every step
+  assertion is untouched** — the steps are answered in-process from
+  the live QML tree and the models, so the pictures are the whole of
+  what is lost. The mode and its reason are recorded in every leg's
+  `evidence.json` (`capture: {mode, reason, judged}`), the gallery
+  says why it has no recording, and the exit path prints
+  `STATIC LEG — not judged`. `HARNESS_CAPTURE=on` restores the
+  pictures for a local look at the same leg. The cost is stated
+  plainly: **macOS has no visual-regression detection in CI.** The
+  render assertions that matter (the follower's raster composition,
+  the preview card, the readouts' contrast) run offscreen on Linux,
+  where rendering is deterministic, and a CI mac was never where they
+  lived.
+- **A still span nobody drove is not judged (2026-09-24).** The
+  static rule asks whether the screen moved, and it cannot tell
+  "nothing was supposed to happen" from "the window froze".
+  `group-status` is the measured case: its first 34 steps push
+  simulator state and read models with no input at all, so the screen
+  is correctly still — and Windows failed it at 62 s where ubuntu ran
+  the same leg at 59 s. A one-second margin deciding a verdict is the
+  tell that the span was not the thing being measured. Each step now
+  records `at_s` (seconds from the recorder's start), and a span is
+  judged only if a real-input step falls inside it. A genuinely
+  frozen window is still driven while it freezes, so the rule keeps
+  its teeth; a leg whose steps cannot be aligned (`at_s` absent)
+  keeps the old everything-is-judged behaviour rather than silently
+  losing them.
 
 ## 5. Phasing (each phase ends with screenshots AND video for review)
 

@@ -542,12 +542,71 @@ class StaticLegTests(unittest.TestCase):
         self.assertIsNone(runner.static_verdict([]))
         self.assertIsNone(runner.static_verdict([b"\x00" * 8]))
 
+    def test_a_still_span_nobody_drove_is_not_judged(self):
+        # The Windows group-status case in miniature: the leg pushes
+        # simulator state and reads models for the first 62 s (34 steps
+        # before its first click), so the screen is correctly still —
+        # and the same leg on ubuntu sat one second under the floor. A
+        # span with no input inside it cannot say anything about the
+        # screen.
+        frames = self._sequence([(62, 90), (20, 10)])
+        driven_late = [(70.0, 76.0)]
+        verdict = runner.static_verdict(frames, interactions=driven_late)
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+        self.assertEqual(verdict["span_s"], 62)  # the span is still measured
+
+    def test_the_teeth_stay_when_the_span_was_driven(self):
+        # The macOS motion leg's shape: the screen froze WHILE the leg
+        # was clicking at it. That is the failure the rule exists for,
+        # and an interaction inside the span must still fail it.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=[(30.0, 34.0)])
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(verdict["driven"])
+
+    def test_an_unalignable_leg_keeps_the_old_verdict(self):
+        # None means the steps could not be placed in the recording
+        # (evidence with no at_s, an older artifact), and the check
+        # must then judge everything exactly as it did before rather
+        # than quietly retiring itself.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=None)
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(verdict["driven"], "unalignable means judged, not exempt")
+
+    def test_a_leg_with_no_input_anywhere_is_not_judged(self):
+        # An empty list is alignment that SUCCEEDED and found no input:
+        # different from None, and it means nothing here was driven.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=[])
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+
+    def test_the_interaction_windows_come_from_the_sibling_evidence(self):
+        # The alignment is per recording: a second boot's recording must
+        # not be judged against the first boot's clicks.
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"steps": [
+                {"class": "ui-interaction", "at_s": 10.0, "duration_ms": 2000},
+                {"class": "diagnostic-probe", "at_s": 12.0, "duration_ms": 500},
+                {"class": "ui-interaction", "at_s": 40.0, "duration_ms": 0},
+            ]}, handle)
+        self.assertEqual(runner._interaction_windows(SCRATCH),
+                         [(9.0, 13.0), (39.0, 41.0)])
+
+    def test_evidence_that_cannot_place_its_steps_is_not_aligned(self):
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"steps": [{"class": "ui-interaction", "duration_ms": 10}]}, handle)
+        self.assertIsNone(runner._interaction_windows(SCRATCH))
+        self.assertIsNone(runner._interaction_windows(os.path.join(SCRATCH, "absent")))
+
     def test_the_frame_length_is_the_duration(self):
         # The decode is one frame per second, so a run's length IS its
         # seconds and no frame rate has to be carried alongside.
         source = Path(runner.__file__).read_text(encoding="utf-8")
         self.assertIn("fps=1,scale=", source)
-        self.assertIn("static_verdict(frames)", source)
+        self.assertIn("static_verdict(frames, interactions=interactions)", source)
 
     def test_the_exit_path_judges_every_recording(self):
         # The check must cover every mode — the suite groups, the
@@ -603,6 +662,150 @@ class StaticLegTests(unittest.TestCase):
         self.assertEqual(runner.STATIC_LEG_SECONDS, 60.0)
         self.assertEqual(runner.STATIC_LEG_SHARE, 0.35)
         self.assertEqual(runner.STATIC_FRAME_MAD, 1.0)
+
+
+class CaptureGateTests(unittest.TestCase):
+    """The macOS legs run without pictures (the capture gate).
+
+    A CI mac has no GPU, OpenGL in a macOS guest is software by
+    construction, and on that renderer Cura's window stops presenting
+    partway through a leg — measured: the stills go byte-identical
+    while the menu bar and the dock keep ticking in the same frames,
+    and a real click on Cura's own stage header changes nothing on
+    screen. Every step assertion is answered in-process, so the
+    pictures are the whole of what is lost. These pins hold that loss
+    to exactly the pictures: no capture, no capture failure, no
+    display guard, no static verdict — and never a silent one.
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        runner.EVIDENCE[:] = []
+        self._old = (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON)
+        runner.RUN_DIR = SCRATCH
+
+    def tearDown(self):
+        runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON = self._old
+        runner.EVIDENCE[:] = []
+
+    def test_the_leg_says_off_and_nothing_else_does(self):
+        # The LEG carries this, not the platform: a Mac with a real GPU
+        # presents normally, so a local run must keep its pictures.
+        self.assertTrue(runner.capture_enabled(""))
+        self.assertTrue(runner.capture_enabled(None))
+        self.assertTrue(runner.capture_enabled("on"))
+        # A mangled variable fails toward the recording, not away from
+        # it: a leg that meant to capture and cannot is a red, and a
+        # leg that meant to skip and does not is a visible freeze.
+        self.assertTrue(runner.capture_enabled("flase"))
+        # Only "off" — modulo case and padding — turns it off.
+        self.assertFalse(runner.capture_enabled("off"))
+        self.assertFalse(runner.capture_enabled(" OFF "))
+
+    def test_no_capture_is_not_a_capture_failure(self):
+        # A leg told to take no picture must not fail every step for
+        # the absence of the picture: shot() answers an empty capture
+        # with NO error, which is what keeps _verdict() and the
+        # gallery's verdict column green.
+        runner.CAPTURE = False
+        capture = runner.shot("f1-00")
+        self.assertEqual(capture, (None, None))
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "f1-00.png")))
+        entry = runner._evidence_entry({"id": "f1"}, 0, {"op": "sim_set"},
+                                       "f1-00", True, "state", "applied",
+                                       capture, time.monotonic())
+        self.assertIsNone(entry["capture"])
+        self.assertIsNone(entry["capture_error"])
+        self.assertEqual(runner._verdict([("f1-00", "state", "applied", True, capture)]), 0)
+
+    def test_no_recorder_is_started_and_a_missing_one_is_safe_to_stop(self):
+        runner.CAPTURE = False
+        self.assertIsNone(runner.start_recorder(os.path.join(SCRATCH, "x.mp4")))
+        runner.stop_recorder(None)  # must not raise
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "x.mp4")))
+
+    def test_the_display_guard_stands_down_with_the_capture(self):
+        # The guard protects the RECORDING; with no frames it must not
+        # re-raise anything, and it must never fail a step.
+        runner.CAPTURE = False
+        guard = runner.foreground_guard()
+        self.assertEqual(guard["authority"], "not-applicable")
+        ok, assertion = runner._foreground_verdict(guard, True, "it landed")
+        self.assertTrue(ok)
+        self.assertIn("display guard is off", assertion)
+
+    def test_the_evidence_carries_the_mode_and_the_reason(self):
+        runner.CAPTURE = False
+        runner.CAPTURE_REASON = "the runner has no GPU"
+        runner.EVIDENCE.append(runner._evidence_entry(
+            {"id": "f1"}, 0, {"op": "sim_arm"}, "f1-00", True, "armed", "applied",
+            (None, None), time.monotonic()))
+        runner.write_evidence("test run")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["capture"]["mode"], "off")
+        self.assertEqual(data["capture"]["reason"], "the runner has no GPU")
+        self.assertFalse(data["capture"]["judged"])
+
+    def test_the_evidence_says_judged_when_it_captures(self):
+        runner.CAPTURE = True
+        runner.write_evidence("test run")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["capture"]["mode"], "on")
+        self.assertTrue(data["capture"]["judged"])
+
+    def test_an_uncaptured_leg_is_not_judged_rather_than_passed(self):
+        # The dangerous shape is a record that reads as a PASS: the
+        # walk tool flags any static record with a falsy ok, and a
+        # skipped record would have to carry one. So nothing is
+        # written into static_leg at all — the mode in evidence.json
+        # is what says the leg was not judged, and the leg exits 0.
+        runner.CAPTURE = False
+        runner.write_evidence("test run")
+        self.assertEqual(runner.static_leg_report(SCRATCH), 0)
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertNotIn("static_leg", data)
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "static_leg.json")))
+
+    def test_the_frame_stall_is_recorded_not_announced(self):
+        # The probe is kept: on macOS it is the measurement of the freeze
+        # the gate exists for. But a leg that claims nothing about the
+        # screen must not print a fault per scenario, so the stall list
+        # rides the evidence instead of the log.
+        runner.CAPTURE = False
+        runner.FRAME_PROBES[:] = [
+            {"scenario": "g1", "phase": "start", "swapped": 0, "ok": True},
+            {"scenario": "g1", "phase": "end", "swapped": 0, "ok": True},
+        ]
+        try:
+            runner.write_evidence("test run")
+        finally:
+            runner.FRAME_PROBES[:] = []
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["frames_stalled"], ["g1"])
+
+    def test_the_macos_leg_carries_its_own_reason(self):
+        # The caveat has to reach the artifact without the CI environment
+        # supplying it, so the leg that turns the capture off must also
+        # hand over the reason. It is generated by the harness script
+        # into the env file the runner step SOURCES, so an apostrophe in
+        # it would close the quote early and truncate the reason
+        # silently — hence the no-apostrophe rule, pinned here.
+        script = (ROOT / "tools" / "native_harness.sh").read_text(encoding="utf-8")
+        self.assertIn("export HARNESS_CAPTURE='off'", script)
+        # The value is single-quoted and ends at the closing quote before
+        # the echo's own double quote, so [^']* IS the no-apostrophe rule:
+        # one would stop the match early and the content assertions below
+        # would fail on the truncation.
+        found = re.search(r"export HARNESS_CAPTURE_REASON='([^']*)'\"", script)
+        self.assertIsNotNone(found, "the leg must hand over a reason")
+        reason = found.group(1)
+        self.assertIn("no GPU", reason)
+        self.assertIn("TESTING.md", reason)
 
 
 if __name__ == "__main__":

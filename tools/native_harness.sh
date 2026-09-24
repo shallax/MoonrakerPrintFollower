@@ -571,8 +571,9 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 
     # What GL the guest can reach, printed once per leg: the app's renderer
     # here is Apple's software one, because a VM exposes no GPU to the
-    # guest's GL stack, and that single fact is what makes Cura's own probe
-    # take the macOS-only 2.x fallback the config seed below pins away from.
+    # guest's GL stack. That single fact is what makes Cura's own probe take
+    # the macOS-only 2.x fallback (see `--- 8b ---`), and it is why these
+    # legs capture nothing rather than judging a screen that cannot present.
     echo "--- gpu ---"
     sysctl -n kern.hv_vmm_present 2>/dev/null | sed 's/^/hypervisor present: /' || true
     system_profiler SPDisplaysDataType 2>&1 | sed -n '1,20p' || true
@@ -718,30 +719,13 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # under [general], which is where Uranium reads it.
     awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" '
         BEGIN { sec = "" }
-        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
-                if (sec == "[view]") print "opengl_version_detect = force_modern"; next }
+        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids; next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
-        sec == "[view]" && /^opengl_version_detect = / { next }
         { print }
     ' "$CONFIG_DIR_FILE" >"$CONFIG_DIR_FILE.tmp" || die "could not rewrite $CONFIG_DIR_FILE"
     mv "$CONFIG_DIR_FILE.tmp" "$CONFIG_DIR_FILE"
-    # Cura's own GL probe (UM/View/GL/OpenGLContext.py, CURA-6092) throws a
-    # software-backed 4.1 core context away ON macOS ONLY and boots 2.1 "No
-    # profile" instead: it is gated on Platform.isOSX(), so the same build
-    # reports 4.1 core on Linux and Windows. The runner's GL is Apple's
-    # software renderer - a VM exposes no GPU to the guest's GL stack - so
-    # every macOS leg takes that fallback, and on the 2.x path the window
-    # stops presenting after a stage switch: the recordings freeze while the
-    # steps keep passing. A Mac with a GPU gets 4.1 core, so this pins the
-    # leg to the version real users get rather than the downgrade the missing
-    # GPU provokes; force_modern is Uranium's own value for "skip the probe".
-    if ! grep -q '^\[view\]' "$CONFIG_DIR_FILE"; then
-        printf '\n[view]\nopengl_version_detect = force_modern\n' >>"$CONFIG_DIR_FILE"
-    fi
-    grep -q '^opengl_version_detect = force_modern$' "$CONFIG_DIR_FILE" ||
-        die "cura.cfg does not carry the modern OpenGL pin, so this leg would boot on Cura's macOS 2.x fallback"
     if ! grep -q '^active_machine = ' "$CONFIG_DIR_FILE"; then
         # A second [cura] section would make Cura's parser reject the whole
         # file, and no active machine is the wizard, so this is fatal.
@@ -1012,21 +996,26 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     note "driver up: $RPC_FILE"
 
     # --- 8b. the renderer the boot actually got ---------------------------
-    # The cura.cfg pin is the mechanism; this is the outcome, read out of
-    # Cura's own log rather than assumed from the pin having landed. Boot
-    # on the 2.x fallback and the window stops presenting after a stage
-    # switch: every step still passes, so the leg would spend its scenarios
-    # painting one still frame that reads as a product failure. Stop here
-    # instead, where the cause is unambiguous.
+    # Recorded, never fatal. Cura's own probe (UM/View/GL/OpenGLContext.py,
+    # CURA-6092) declines a software-backed 4.1 core context ON macOS ONLY
+    # - the check is gated on Platform.isOSX() rather than on the premise -
+    # and this runner's GL is Apple's software renderer, so the boot lands
+    # on 2.1 "No profile". Forcing 4.1 back with view/opengl_version_detect
+    # = force_modern does NOT fix what that costs here: on this renderer
+    # the window stops presenting either way, and the forced path is the
+    # one Cura calls "much slower", which measured 3.5x on the layer-view
+    # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
+    # The legs therefore run without capture (see tests/harness/runner.py)
+    # and this line is what says which renderer their steps ran on.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
     case "$GL_LINE" in
         *"4.1 Core profile"*)
             note "renderer: ${GL_LINE##*: }" ;;
         "")
-            die "no OpenGL context line in $CONFIG_DIR/cura.log (the file is absent or Cura never logged one), so this boot's renderer cannot be read and a fallback to 2.x would go unnoticed" ;;
+            note "renderer: unreadable - no OpenGL context line in $CONFIG_DIR/cura.log" ;;
         *)
-            die "the boot is on '${GL_LINE##*: }' rather than the pinned 4.1 Core profile - cura.cfg's view/opengl_version_detect did not take, and a 2.x context is what freezes the window" ;;
+            note "renderer: ${GL_LINE##*: } (Cura's macOS software fallback; the legs capture nothing, so this is recorded, not judged)" ;;
     esac
 
     # --- 9. keep the window inside the capture area -----------------------
@@ -1166,6 +1155,23 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         echo "export PLUGIN_VERSION='$PLUGIN_VERSION'"
         echo "export HARNESS_MODE='$RUNNER_MODE'"
         [ -n "$RUNNER_GROUP" ] && echo "export SCENARIO_GROUP='$RUNNER_GROUP'"
+        # This leg captures nothing, and says why in its own evidence.
+        # A CI mac has no GPU — a VM exposes none to the guest's GL
+        # stack — so Cura lands on Apple's software renderer (see
+        # `--- 8b ---`) and on it the window stops presenting partway
+        # through a leg: the stills go byte-identical while the menu bar
+        # and the dock keep ticking, and a real click on Cura's own
+        # stage header changes nothing on screen. Every step assertion
+        # is answered in-process from the QML tree, so the pictures are
+        # the whole of what is lost; the static verdict and the frame
+        # probe judge pictures and stand down with them. A Mac with a
+        # real GPU presents normally, which is why this rides the leg
+        # rather than the platform: HARNESS_CAPTURE=on restores the
+        # pictures here for a local look.
+        echo "export HARNESS_CAPTURE='off'"
+        # No apostrophes: this file is SOURCED, and one would close the
+        # quote early and silently truncate the reason.
+        echo "export HARNESS_CAPTURE_REASON='macOS runs without capture by design. This runner has no GPU, so Cura boots the Apple software renderer and the window stops presenting partway through a leg. Every step assertion is answered in-process from the QML tree, so only the pictures are lost. See TESTING.md.'"
     } >"$ENV_FILE"
     mkdir -p "$ARTIFACT_DIR"
     echo
