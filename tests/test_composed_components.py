@@ -3394,7 +3394,13 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         instead of reading a discard as a commit.
         """
         deadline = time.monotonic() + timeout
-        seen_pending = False
+        # SAMPLED BEFORE ANY PUMP. A job already submitted can complete
+        # inside the first qt.events(), and its token is then gone before
+        # the loop ever sees it — the waiter would fall through to the
+        # already-current path and report a completion it never witnessed
+        # (entry token=1, exit token=None, the committed split older than
+        # the demanded one, so that fallback cannot rescue it).
+        seen_pending = surface.tokens.get(layer_number) is not None
         while time.monotonic() < deadline:
             qt.events(6)
             if surface.tokens.get(layer_number) is not None:
@@ -3721,9 +3727,15 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         reached = threading.Event()
         self.addCleanup(gate.set)
 
+        escaped = {}
+
         def gated_prefix(payload_arg, plot, view, split, **kwargs):
             reached.set()
-            gate.wait(60.0)
+            # Recorded rather than discarded: a timed-out wait would let
+            # the worker render without a release, leaving `reached` set
+            # and the park unproven.
+            if not gate.wait(60.0):
+                escaped["timeout"] = True
             return real_prefix(payload_arg, plot, view, split, **kwargs)
 
         layer_number = 5
@@ -3761,6 +3773,9 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                 self._await_prefix_job(surface, layer_number, final_split,
                                        self.qt),
                 "the waiter never saw the parked job complete")
+            self.assertFalse(escaped.get("timeout"),
+                             "the worker escaped the gate: it rendered without "
+                             "a release")
         self._drain_job(model, surface, self.qt)
         # No final-split assertion HERE, deliberately: this test parks
         # EVERY prefix render, so they unblock together and commit in
@@ -3768,6 +3783,71 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # necessarily the frozen split. The final-split and cadence
         # assertions belong to the tests that drive the real cadence,
         # and they are untouched; this one proves the waiter's contract.
+
+    def test_the_waiter_sees_a_job_that_completes_in_its_first_pump(self):
+        """A job that completes inside the waiter's FIRST pump.
+
+        The waiter's `seen_pending` has to be sampled before any event
+        processing, because a job submitted beforehand can commit during
+        that first qt.events() — after which its token is gone and the
+        loop never sees it. The waiter would then read the layer as
+        already-current and report a completion it never witnessed. The
+        split demanded here is deliberately NOT the one that commits, so
+        that already-current fallback cannot mask the miss.
+        """
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        module = self.qt.load("MoonrakerMonitorModel")
+        real_prefix = module.render_layer_prefix
+        gate = threading.Event()
+        reached = threading.Event()
+        rendered = threading.Event()
+        self.addCleanup(gate.set)
+
+        def gated_prefix(payload_arg, plot, view, split, **kwargs):
+            reached.set()
+            gate.wait(60.0)
+            image = real_prefix(payload_arg, plot, view, split, **kwargs)
+            # The render is DONE and its completion is queued for the
+            # owner thread — which is what makes the commit land inside
+            # the waiter's first pump rather than whenever the pool
+            # happens to get round to it.
+            rendered.set()
+            return image
+
+        layer_number = 5
+        committed = None
+        with patch.object(module, "render_layer_prefix", gated_prefix):
+            for poll in range(self.POLLS):
+                committed = 100 + poll * 12
+                self._poll(model, surface, payload, layer_number, committed,
+                           clock, armed, self.qt)
+            self.assertTrue(reached.wait(10.0),
+                            "no prefix render was submitted to park")
+            clock.t = max(clock.t + 5.0,
+                          getattr(surface.layers[layer_number],
+                                  "_prefix_checkpoint_at", 0.0))
+            model._qt_window(surface, {"prev": None, "current": payload,
+                                       "next": None}, layer_number,
+                             "motion index", committed)
+            self._fire_due_wakes(model, armed, clock)
+            self.qt.events(6)
+            self.assertIsNotNone(surface.tokens.get(layer_number),
+                                 "no pending token to race")
+            # Release, then WAIT for the render to finish without
+            # pumping: the completion signal is now queued, so the
+            # waiter's very first qt.events() delivers it.
+            gate.set()
+            self.assertTrue(rendered.wait(10.0),
+                            "the parked render never finished")
+            # A split that will NOT be the committed one, so the
+            # already-current path cannot answer for the missed token.
+            self.assertTrue(
+                self._await_prefix_job(surface, layer_number, committed + 999,
+                                       self.qt),
+                "the waiter missed a job that completed in its first pump")
+        self._drain_job(model, surface, self.qt)
 
     def test_an_attached_layer_change_bypasses_the_prefix_cadence(self):
         # A new layer's prefix is a fresh demand: it renders
