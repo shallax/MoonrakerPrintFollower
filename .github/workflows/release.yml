@@ -6,7 +6,24 @@ on:
       - "v*"
   # The gate loop runs without a tag: the full matrix on demand from
   # main, so a failing unit costs minutes instead of a junk tag.
+  #
+  # A dispatch may name ONE OS and ONE unit, which is what makes a
+  # regression bisectable: chasing the macOS preview failure cost
+  # several 45-minute matrices, because asking "is it this commit or is
+  # it flaky" meant re-running all 51 legs to read one of them. The
+  # filter is on the JOB, not on the matrix, so a pull_request run
+  # cannot be narrowed by it - the condition short-circuits on the
+  # event name and every leg still runs where the ruleset requires it.
   workflow_dispatch:
+    inputs:
+      os:
+        description: "one runner OS (blank = all three)"
+        type: string
+        default: ""
+      unit:
+        description: "one unit, as the matrix names it (blank = all)"
+        type: string
+        default: ""
   # PRs that touch the gate machinery run the full matrix before they
   # can merge; product-code PRs keep the fast two-unit smoke in ci.yml.
   # Every PR runs the full matrix: the ruleset requires each unit's
@@ -124,6 +141,10 @@ jobs:
     # cached image.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    if: >-
+      github.event_name != 'workflow_dispatch'
+      || ((inputs.os == '' || inputs.os == matrix.os)
+          && (inputs.unit == '' || inputs.unit == matrix.unit))
     strategy:
       fail-fast: false
       matrix:
