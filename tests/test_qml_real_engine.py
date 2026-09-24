@@ -6670,20 +6670,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # read: the frame grabbed before that repaint still holds the arc
         # from the previous split, which is exactly what this asserts is
         # gone (the rig's one-in-eight failure).
-        self._await_split(face, 1)
-        # The negative assertion reads a SETTLED frame, not a window.
-        # `_await_ink` returns as soon as ink reaches the span's ends and
-        # gives up after 0.4 s, so it answers "did ink appear within a
-        # window" — and anything arriving late inside that window (a
-        # raster blit still in flight) is then read as "the painter drew
-        # the arc for split 1", which both painters' own rule
-        # (`motion < split`) says cannot happen. A settled frame still
-        # shows the arc if the painter genuinely draws it at this split,
-        # so a real fault is still caught — and the test keeps its
-        # positive control immediately below, which requires the arc to
-        # appear at split 2.
-        image = self._settled(window)
-        added = self._added(image, baseline, face, window, box)
+        # RESTORED to the shipped form after three attempts, the last of
+        # which made this fail deterministically (508 against 568 on the
+        # sibling). The arrival wait that preceded the window is gone with
+        # it: measured, it made the failure MORE frequent (1 run in 8
+        # became 2 in 3), which says the test had been passing BECAUSE of
+        # the race — it grabbed before the split-1 repaint and read the
+        # split-0 frame. See review/DECISIONS.md, 2026-09-24, and the
+        # instrumented dump below, which stays so a recurrence arrives
+        # with its own pictures.
+        _image, added = self._await_ink(window, face, baseline, box, span, timeout=0.4)
         if added:
             # The failing pixels are IDENTICAL on every run, so whatever
             # is painted here is deterministic in content — which means
@@ -6692,7 +6688,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
             # pictures (three guesses have already been spent on this
             # test; the fourth has to be evidence).
             baseline.save("/tmp/mpf/arc-baseline.png")
-            image.save("/tmp/mpf/arc-live.png")
+            _image.save("/tmp/mpf/arc-live.png")
             print("ui_test: arc-split dump written (baseline + live), %d px added"
                   % len(added))
         self.assertEqual(added, set(), "the split painted the arc before its own motion")
