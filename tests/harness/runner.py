@@ -50,6 +50,18 @@ DRIVER_HOST = "127.0.0.1"
 SYSTEM = native_host.current_system()
 
 
+def progress(message):
+    """One line of stage progress, flushed.
+
+    A leg that prints nothing until it ends is unreadable while it runs,
+    and worse: a leg killed at its timeout dies with whatever is still
+    sitting in a block buffer, so the log shows nothing of how far it
+    got. flush=True rather than a `-u` on every caller, because the
+    container leg, the native legs and a local run all reach this file
+    by different argv."""
+    print(f"ui_test: {message}", flush=True)
+
+
 def still_argv(path):
     """One frame's ffmpeg argv — the capture helper's platform choice.
     The natives record the display they are given, so the display must
@@ -428,6 +440,11 @@ STATIC_LEG_SHARE = 0.35
 # one level.
 STATIC_FRAME_MAD = 1.0
 STATIC_SAMPLE = (64, 36)
+# The room a driven span needs for its response to be captured before
+# the span can be called still anyway: the decode samples at one frame
+# per second, and a step's offset from the recorder's start carries
+# about a second of ffmpeg startup error, so two seconds covers both.
+STATIC_DRIVEN_RESPONSE_S = 2.0
 
 
 def frame_mad(before, after):
@@ -460,42 +477,58 @@ def static_verdict(frames, seconds=STATIC_LEG_SECONDS, share=STATIC_LEG_SHARE,
     frames), else a dict with the span, its share of the leg and the
     verdict. One frame per second, so a length IS a duration.
 
-    A span that contains no real input is NOT judged (the
-    non-interactive ruling). The rule exists to catch a window that
-    stopped presenting WHILE IT WAS BEING DRIVEN; a stretch of a leg
-    whose steps only pushed simulator state and read models asked
-    nothing of the screen, so its stillness is not evidence about the
-    screen. gate-group-status is the measured case: 34 steps before
-    its first click, correctly still throughout, and red on Windows at
-    62 s where the same leg on ubuntu sat at 59 s — a one-second
-    margin deciding a verdict is the tell that the span was not the
-    thing being measured. `interactions` is the list of (first, last)
-    seconds the leg was driven; None means the alignment is unknown
-    and every span is judged as before, so a leg that cannot be
-    aligned keeps the old teeth rather than silently losing them."""
+    A span nobody DROVE is not judged (the non-interactive ruling). The
+    rule exists to catch a window that stopped presenting while it was
+    being driven; a stretch whose steps only pushed simulator state and
+    read models asked nothing of the screen, so its stillness says
+    nothing about the screen. gate-group-status is the measured case:
+    its first 34 steps contain no input at all, the recording is
+    correctly still across them, and the leg went red on Windows at
+    62 s where ubuntu ran the same leg at 59 s — a one-second margin
+    deciding a verdict is the tell that the span was not the thing
+    being measured.
+
+    "Drove" means an input landed INSIDE the run with room to spare,
+    not that one clipped its edge: a click in the last moments of a run
+    is the event that ENDED the stillness — the run is still, and
+    correctly so, right up to it. Measured on ubuntu's group-status:
+    the run covers seconds 7..67 and the first click is at 68.4, so a
+    rule reading the input's trailing edge (as an earlier version of
+    this did) counted the very click that broke the stillness as proof
+    the stillness was fine. STATIC_DRIVEN_RESPONSE_S is the room a
+    response needs to be captured: the decode samples at one frame per
+    second and the step's offset carries about a second of startup
+    error, so two seconds covers both.
+
+    `interactions` is the list of seconds at which the leg sent real
+    input; None means the alignment is unknown, and every span is
+    judged as before — a leg that cannot be aligned keeps the old teeth
+    rather than silently losing them."""
     if len(frames) < 2:
         return None
     start, length = static_run(frames)
     covered = length / float(len(frames))
+    last = start + length - 1
     driven = interactions is None or any(
-        first < start + length and last > start for first, last in interactions)
+        start <= at <= last - STATIC_DRIVEN_RESPONSE_S for at in interactions)
     ok = not (length >= seconds and covered >= share) or not driven
     return {"ok": ok, "start_s": start, "span_s": length,
             "share": round(covered, 3), "frames": len(frames),
             "driven": driven}
 
 
-def _interaction_windows(run_dir):
-    """The seconds a recording was actually driven, from the sibling
-    evidence.json: every real-input step's span on the recorder's own
-    clock. None when the evidence cannot place the steps (no `at_s`),
-    which keeps the old everything-is-judged behaviour rather than
-    silently retiring the check; a list — possibly empty, for a leg
+def _interaction_seconds(run_dir):
+    """The seconds at which the recording was driven, from the sibling
+    evidence.json: when each real-input step STARTED, on the recorder's
+    own clock. None when the evidence cannot place the steps (no
+    `at_s`), which keeps the old everything-is-judged behaviour rather
+    than silently retiring the check; a list — possibly empty, for a leg
     that clicked nothing — when it can.
 
-    Widened a second either side: ffmpeg's own startup sits between the
-    recorder's origin and the first frame, and the decode samples at
-    one frame per second."""
+    The step's START is the whole of what this needs: whether the
+    screen answered an input is a question about the run AFTER it, so
+    the input's own duration says nothing, and carrying it in only ever
+    stretched a late input back over a stillness it did not break."""
     path = os.path.join(run_dir, "evidence.json")
     try:
         with open(path, encoding="utf-8") as handle:
@@ -507,14 +540,8 @@ def _interaction_windows(run_dir):
     steps = data.get("steps") or []
     if not any(step.get("at_s") is not None for step in steps):
         return None
-    windows = []
-    for step in steps:
-        if step.get("class") != "ui-interaction" or step.get("at_s") is None:
-            continue
-        first = max(0.0, step["at_s"] - 1.0)
-        last = step["at_s"] + (step.get("duration_ms") or 0) / 1000.0 + 1.0
-        windows.append((first, last))
-    return windows
+    return [step["at_s"] for step in steps
+            if step.get("class") == "ui-interaction" and step.get("at_s") is not None]
 
 
 def static_leg_check(video_path, interactions=None):
@@ -580,7 +607,7 @@ def static_leg_report(run_dir):
             # A recording is judged against the steps that ran beside
             # it: the second boot's recording must not be read against
             # the first boot's interactions.
-            interactions = _interaction_windows(root)
+            interactions = _interaction_seconds(root)
             verdict = static_leg_check(path, interactions=interactions)
             if verdict is None:
                 continue
@@ -881,7 +908,8 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
         if capture_error:
             verdict = "FAIL"
         rows.append(
-            f'<div class="step {"pass" if ok and not capture_error else "fail"}">'
+            f'<div class="step {"pass" if ok and not capture_error else "fail"}" '
+            f'id="step-{html.escape(str(name))}">'
             f'<h3>{html.escape(name)} — {verdict}</h3>'
             f'<p><b>Action:</b> {html.escape(action)}</p>'
             f'<p><b>Assertion:</b> {html.escape(assertion)}</p>'
@@ -890,6 +918,24 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
                if os.path.exists(path) else "")
             + "</div>")
     body = "\n".join(rows)
+    # The summary first: a 169-step gallery is read for its failures,
+    # and hunting them by eye down a page of passing steps is how a red
+    # leg gets skimmed instead of read. Each failing step links to its
+    # own entry below.
+    failed = [(name, assertion) for name, _action, assertion, ok, path in steps
+              if not ok or (isinstance(path, tuple) and path[1])]
+    expected = [name for name, _a, _s, _ok, _p in steps if name == "13-deliberate-failure"]
+    if failed:
+        summary = ('<div class="summary fail">'
+                   f'<h2>{len(failed)} of {len(steps)} steps FAILED</h2><ul>'
+                   + "".join(f'<li><a href="#step-{html.escape(str(n))}">{html.escape(str(n))}</a>'
+                             f' — {html.escape(str(a))}</li>' for n, a in failed)
+                   + "</ul></div>")
+    else:
+        summary = (f'<div class="summary pass"><h2>all {len(steps)} steps passed</h2>'
+                   + (f'<p class="note">({len(expected)} expected failure by design)</p>'
+                      if expected else "")
+                   + "</div>")
     provenance = " · ".join(part for part in (
         f"Cura {os.environ.get('CURA_VERSION', '?')}",
         f"plugin {os.environ.get('PLUGIN_VERSION', '?')}",
@@ -910,9 +956,14 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
 <style>body{{font-family:sans-serif;background:#111;color:#ddd;margin:2em}}
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
 .pass{{border-left:6px solid #2ea043}}.fail{{border-left:6px solid #f85149}}
+.summary{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#181818}}
+.summary.fail{{border-left:6px solid #f85149}}.summary.pass{{border-left:6px solid #2ea043}}
+.summary h2{{margin:0 0 .5em}}.summary ul{{margin:0;padding-left:1.4em}}
+.summary a{{color:#f85149}}a{{color:#79c0ff}}
 img{{max-width:100%;border:1px solid #444}}h3{{margin-top:0}}</style></head>
 <body><h1>{html.escape(title)}</h1>
 <p class="note">{html.escape(provenance)}</p>
+{summary}
 {video_tag}
 {body}</body></html>"""
     with open(os.path.join(RUN_DIR, "index.html"), "w", encoding="utf-8") as handle:
@@ -3004,6 +3055,8 @@ def suite_run(group_id):
                                         "boot gate: active machine present, no welcome overlay",
                                         "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
         wait_stage("PrepareStage", timeout_ms=60000)
+        progress(f"{group_id}: {len(specs)} scenario(s) in this group")
+        done = 0
         for spec in specs:
             if spec.get("container_skip"):
                 # The engine-divergent scenarios (real Cura
@@ -3037,7 +3090,20 @@ def suite_run(group_id):
             rpc({"id": 1, "cmd": "hide_update_toast"})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
-            steps.extend(suite_scenario(spec))
+            started = time.monotonic()
+            done += 1
+            # One line per scenario, flushed. A silent leg is unreadable
+            # while it runs and — worse — a leg killed at its timeout
+            # dies with whatever is still buffered, so the log shows
+            # nothing of how far it got.
+            progress(f"[{done}] {spec['id']} — {spec.get('name', '')}")
+            scenario_steps = suite_scenario(spec)
+            steps.extend(scenario_steps)
+            failed = [entry[0] for entry in scenario_steps if not entry[3]]
+            progress(f"[{done}] {spec['id']} done in "
+                     f"{time.monotonic() - started:.0f}s — {len(scenario_steps)} steps, "
+                     f"{len(failed)} failed"
+                     + (f": {', '.join(failed)}" if failed else ""))
     finally:
         stop_recorder(video)
     title = f"Scenario group {group_id}"

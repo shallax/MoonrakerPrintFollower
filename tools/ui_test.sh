@@ -738,7 +738,7 @@ case "$MODE" in
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
-            python3 /tmp/mpf/harness_runner.py discover
+            python3 -u /tmp/mpf/harness_runner.py discover
         ;;
     firstinstall)
         # One xdg tree, two boots. The seed is clean (the mode's
@@ -753,7 +753,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py firstinstall1 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py firstinstall1 || RUNNER_RC=$?
         # The first boot's log survives the second launch (which
         # truncates cura_run.log) — the log scan covers both boots.
         cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
@@ -771,7 +771,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
         ;;
     migration)
         # One xdg tree, two boots, seeded PRE-migration: boot 1 runs
@@ -787,7 +787,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py migration1 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py migration1 || RUNNER_RC=$?
         # The first boot's log survives the second launch (which
         # truncates cura_run.log) — the log scan covers both boots.
         cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
@@ -811,7 +811,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py migration2 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py migration2 || RUNNER_RC=$?
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         launch_cura
@@ -826,13 +826,13 @@ case "$MODE" in
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
                 REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
+                python3 -u /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         else
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
+                python3 -u /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         fi
         ;;
 esac

@@ -669,13 +669,29 @@ SimulationView is the ACTIVE view (the Preview stage click).
   simulator state and read models with no input at all, so the screen
   is correctly still — and Windows failed it at 62 s where ubuntu ran
   the same leg at 59 s. A one-second margin deciding a verdict is the
-  tell that the span was not the thing being measured. Each step now
-  records `at_s` (seconds from the recorder's start), and a span is
-  judged only if a real-input step falls inside it. A genuinely
-  frozen window is still driven while it freezes, so the rule keeps
-  its teeth; a leg whose steps cannot be aligned (`at_s` absent)
-  keeps the old everything-is-judged behaviour rather than silently
-  losing them.
+  tell that the span was not the thing being measured.
+  Each step now records `at_s` (seconds from the recorder's start),
+  and a span is judged only if a real input landed **inside it with
+  room to have been answered** — inside the run and at least
+  `STATIC_DRIVEN_RESPONSE_S` (2 s: the decode samples at 1 fps and
+  the offset carries about a second of ffmpeg startup error) before
+  the run ends. That second half is not decoration: a click in a
+  run's last moments is the event that ENDED the stillness, so an
+  input's own duration must not be allowed to stretch it back over a
+  stillness it did not break. Getting that wrong is what failed
+  ubuntu's `group-status` on the first run of this rule — the run
+  covered seconds 7..67, the first click was at 68.4, and reading the
+  input's trailing edge counted that very click as proof the
+  stillness was fine. A genuinely frozen window is driven *while* it
+  freezes, so the rule keeps its teeth; a leg whose steps cannot be
+  aligned (`at_s` absent) keeps the old everything-is-judged
+  behaviour rather than silently losing them. **Known weakness,
+  recorded rather than hidden:** the boundary is a response-latency
+  question, so a click whose response the encoder catches more than
+  two seconds late still reads as "driven"; the rule has now been
+  adjusted three times on one-second margins, which is the argument
+  for replacing it with a per-input response check rather than
+  tuning it again.
 
 ## 5. Phasing (each phase ends with screenshots AND video for review)
 

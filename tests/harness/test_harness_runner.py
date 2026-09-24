@@ -543,27 +543,45 @@ class StaticLegTests(unittest.TestCase):
         self.assertIsNone(runner.static_verdict([b"\x00" * 8]))
 
     def test_a_still_span_nobody_drove_is_not_judged(self):
-        # The Windows group-status case in miniature: the leg pushes
-        # simulator state and reads models for the first 62 s (34 steps
-        # before its first click), so the screen is correctly still —
-        # and the same leg on ubuntu sat one second under the floor. A
-        # span with no input inside it cannot say anything about the
-        # screen.
+        # The group-status case in miniature: the leg pushes simulator
+        # state and reads models for the first 62 s (34 steps before its
+        # first click), so the screen is correctly still. The run covers
+        # frames 0..61, and the click that ENDS the stillness lands at
+        # 63 — after it. A span with no input inside it cannot say
+        # anything about the screen.
         frames = self._sequence([(62, 90), (20, 10)])
-        driven_late = [(70.0, 76.0)]
-        verdict = runner.static_verdict(frames, interactions=driven_late)
+        verdict = runner.static_verdict(frames, interactions=[63.0])
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
         self.assertEqual(verdict["span_s"], 62)  # the span is still measured
 
+    def test_the_click_that_ends_a_stillness_does_not_excuse_it(self):
+        # The measured ubuntu case, to the tenth of a second: the run
+        # covers seconds 7..67 and the first click is at 68.4. An
+        # earlier version of this rule read the input's TRAILING edge
+        # and counted that very click as proof the stillness was fine.
+        frames = self._sequence([(7, 10), (61, 90), (20, 10)])
+        verdict = runner.static_verdict(frames, interactions=[68.4])
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+
     def test_the_teeth_stay_when_the_span_was_driven(self):
         # The macOS motion leg's shape: the screen froze WHILE the leg
         # was clicking at it. That is the failure the rule exists for,
-        # and an interaction inside the span must still fail it.
+        # and an interaction well inside the span must still fail it.
         frames = self._sequence([(20, 10), (80, 90)])
-        verdict = runner.static_verdict(frames, interactions=[(30.0, 34.0)])
+        verdict = runner.static_verdict(frames, interactions=[30.0])
         self.assertFalse(verdict["ok"])
         self.assertTrue(verdict["driven"])
+
+    def test_an_input_needs_room_to_have_been_answered(self):
+        # The response margin: an input in the last moments of a run is
+        # the run ending, not a failure to answer. The run covers
+        # 20..99, so an input at 98 has had no time to show and one at
+        # 40 has.
+        frames = self._sequence([(20, 10), (80, 90)])
+        self.assertFalse(runner.static_verdict(frames, interactions=[98.0])["driven"])
+        self.assertTrue(runner.static_verdict(frames, interactions=[40.0])["driven"])
 
     def test_an_unalignable_leg_keeps_the_old_verdict(self):
         # None means the steps could not be placed in the recording
@@ -583,23 +601,30 @@ class StaticLegTests(unittest.TestCase):
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
 
-    def test_the_interaction_windows_come_from_the_sibling_evidence(self):
+    def test_the_interaction_seconds_come_from_the_sibling_evidence(self):
         # The alignment is per recording: a second boot's recording must
-        # not be judged against the first boot's clicks.
+        # not be judged against the first boot's clicks. Only the
+        # input's START is carried — its duration says nothing about
+        # whether the screen answered it.
         with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
             json.dump({"steps": [
                 {"class": "ui-interaction", "at_s": 10.0, "duration_ms": 2000},
                 {"class": "diagnostic-probe", "at_s": 12.0, "duration_ms": 500},
                 {"class": "ui-interaction", "at_s": 40.0, "duration_ms": 0},
             ]}, handle)
-        self.assertEqual(runner._interaction_windows(SCRATCH),
-                         [(9.0, 13.0), (39.0, 41.0)])
+        self.assertEqual(runner._interaction_seconds(SCRATCH), [10.0, 40.0])
 
     def test_evidence_that_cannot_place_its_steps_is_not_aligned(self):
         with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
             json.dump({"steps": [{"class": "ui-interaction", "duration_ms": 10}]}, handle)
-        self.assertIsNone(runner._interaction_windows(SCRATCH))
-        self.assertIsNone(runner._interaction_windows(os.path.join(SCRATCH, "absent")))
+        self.assertIsNone(runner._interaction_seconds(SCRATCH))
+        self.assertIsNone(runner._interaction_seconds(os.path.join(SCRATCH, "absent")))
+
+    def test_the_response_margin_is_the_documented_one(self):
+        # Two seconds: the decode samples at 1 fps and a step's offset
+        # from the recorder's start carries about a second of ffmpeg
+        # startup error.
+        self.assertEqual(runner.STATIC_DRIVEN_RESPONSE_S, 2.0)
 
     def test_the_frame_length_is_the_duration(self):
         # The decode is one frame per second, so a run's length IS its
@@ -787,6 +812,39 @@ class CaptureGateTests(unittest.TestCase):
         with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(data["frames_stalled"], ["g1"])
+
+    def test_a_long_leg_reports_progress_as_it_runs(self):
+        # A leg that says nothing until it ends is unreadable while it
+        # runs, and a leg killed at its timeout dies with whatever is
+        # still buffered — so the stage lines flush.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn("def progress(message):", source)
+        self.assertIn('print(f"ui_test: {message}", flush=True)', source)
+        self.assertIn("[{done}] {spec", source)   # the line that opens a scenario
+        self.assertIn("{spec['id']} done in ", source)  # the one that closes it
+        # The container leg runs the runner without -u, so the flush
+        # cannot be delegated to argv.
+        self.assertIn("python3 -u /tmp/mpf/harness_runner.py",
+                      (ROOT / "tools" / "ui_test.sh").read_text(encoding="utf-8"))
+
+    def test_the_gallery_opens_with_its_verdict(self):
+        # A 169-step page is read for its failures; hunting them by eye
+        # down a column of passing steps is how a red leg gets skimmed
+        # instead of read. Each failing step is listed at the top and
+        # links to its own entry, which is why the entries carry ids.
+        steps = [("p1-00", "clicked", "it landed", True, None),
+                 ("p1-01", "waited", "the card appeared", False, None)]
+        runner.write_gallery(steps, False, "test run")
+        page = open(os.path.join(SCRATCH, "index.html"), encoding="utf-8").read()
+        self.assertIn("1 of 2 steps FAILED", page)
+        self.assertIn('href="#step-p1-01"', page)
+        self.assertIn('id="step-p1-01"', page)
+        # And a clean leg says so, rather than leaving the reader to
+        # infer it from the absence of red.
+        runner.write_gallery([("p1-00", "clicked", "it landed", True, None)],
+                             False, "test run")
+        page = open(os.path.join(SCRATCH, "index.html"), encoding="utf-8").read()
+        self.assertIn("all 1 steps passed", page)
 
     def test_the_macos_leg_carries_its_own_reason(self):
         # The caveat has to reach the artifact without the CI environment
