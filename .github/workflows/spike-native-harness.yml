@@ -4077,10 +4077,29 @@ jobs:
           $wantW = 0
           $wantH = 0
           if ($wantGeo -match '^([0-9]+)x([0-9]+)$') { $wantW = [int]$Matches[1]; $wantH = [int]$Matches[2] }
-          $scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          function Get-DisplayNow {
+            # [System.Windows.Forms.Screen]::PrimaryScreen.Bounds is cached for
+            # the process lifetime and does NOT follow Set-DisplayResolution: it
+            # went on reporting 1024x768 while Get-DisplayResolution and the
+            # virtual screen both said 1920x1080. The change was read as a
+            # failure and the recorder was then sized from the stale number, so
+            # a display that had moved was recorded at the old geometry. These
+            # two sources do refresh; Screen.PrimaryScreen is not used.
+            $g = Get-Command Get-DisplayResolution -ErrorAction SilentlyContinue
+            if ($g) {
+              # its output arrives as single characters, so join without spaces
+              $line = ((Get-DisplayResolution 2>$null) -join '')
+              if ($line -match '([0-9]+)[^0-9]+([0-9]+)') {
+                return [pscustomobject]@{ Width = [int]$Matches[1]; Height = [int]$Matches[2]; Source = 'Get-DisplayResolution' }
+              }
+            }
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            return [pscustomobject]@{ Width = $vs.Width; Height = $vs.Height; Source = 'SystemInformation.VirtualScreen' }
+          }
+          $scr = Get-DisplayNow
           $vsNow = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          W ("display before: primary {0}x{1} at {2},{3}; virtual screen {4}x{5} at {6},{7}" -f `
-              $scr.Width, $scr.Height, $scr.X, $scr.Y, $vsNow.Width, $vsNow.Height, $vsNow.X, $vsNow.Y)
+          W ("display before: {0}x{1} (from {2}); virtual screen {3}x{4} at {5},{6}" -f `
+              $scr.Width, $scr.Height, $scr.Source, $vsNow.Width, $vsNow.Height, $vsNow.X, $vsNow.Y)
           W "the harness geometry this run is pinned to: $wantGeo"
           $displayWhy = 'not attempted'
           # Set-DisplayResolution ships with the image and is what a working
@@ -4099,9 +4118,9 @@ jobs:
               try {
                 Set-DisplayResolution -Width $wantW -Height $wantH -Force -ErrorAction Stop
                 Start-Sleep -Seconds 3
-                $scrRe = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $scrRe = Get-DisplayNow
                 $vsRe = [System.Windows.Forms.SystemInformation]::VirtualScreen
-                W ("display after: primary {0}x{1}; virtual screen {2}x{3}" -f $scrRe.Width, $scrRe.Height, $vsRe.Width, $vsRe.Height)
+                W ("display after: {0}x{1} (from {2}); virtual screen {3}x{4}" -f $scrRe.Width, $scrRe.Height, $scrRe.Source, $vsRe.Width, $vsRe.Height)
                 if ($getCmd) { W ("display after (Get-DisplayResolution): {0}" -f ((Get-DisplayResolution) -join ' ')) }
                 if (($scrRe.Width -eq $wantW) -and ($scrRe.Height -eq $wantH)) {
                   $movedByCmdlet = $true
@@ -4182,7 +4201,7 @@ jobs:
               }
             }
           }
-          $scr2 = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $scr2 = Get-DisplayNow
           $vs2 = [System.Windows.Forms.SystemInformation]::VirtualScreen
           # The read-back the setting has to answer to comes from the same API
           # that was asked to change it, so a WinForms value that is stale or
@@ -4194,8 +4213,8 @@ jobs:
               $apiMode = [SpikeNative]::DevModeText($dmBack)
             }
           }
-          W ("display after: primary {0}x{1}; virtual screen {2}x{3}; EnumDisplaySettings says {4} ({5})" -f `
-              $scr2.Width, $scr2.Height, $vs2.Width, $vs2.Height, $apiMode, $displayWhy)
+          W ("display after: {0}x{1} (from {2}); virtual screen {3}x{4}; EnumDisplaySettings says {5} ({6})" -f `
+              $scr2.Width, $scr2.Height, $scr2.Source, $vs2.Width, $vs2.Height, $apiMode, $displayWhy)
           if (($scr2.Width -eq $wantW) -and ($scr2.Height -eq $wantH)) {
             V ("SPIKE-Q2: display=OK ({0}x{1}, {2}; {3})" -f $scr2.Width, $scr2.Height, $displayWhy, $apiMode)
           } else {
