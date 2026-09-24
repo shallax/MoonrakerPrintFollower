@@ -6351,15 +6351,32 @@ class PlateFaceRenderTests(RealEngineTestCase):
         face.setWidth(face.width() - 1)
         self.pump(20)
         # At this face size the canvas can still be blank when the
-        # baseline is grabbed, and two blank grabs agree; the baseline
-        # must carry the grid the measurement is diffed against.
-        self._grab_when_inked(window, face)
+        # baseline is grabbed, and two blank grabs agree — so a settle
+        # check alone accepts the blank frame, and every painter test
+        # below then diffs against an empty baseline and passes while
+        # proving nothing. The arrival has to be PROVED, on the frame
+        # that was returned, before the settle is trusted; a canvas
+        # that never paints now fails here and says so.
+        inked = self._grab_when_inked(window, face)
+        self.assertTrue(self._ink_rows(inked, face, window),
+                        "the baseline was grabbed before the grid painted")
         return face, window, self._mapping(plot), self._settled(window)
 
     def _printed(self, split, window, face, baseline, box, span):
         """Move the boundary to *split* and return the pixels the
-        printed strokes added over the baseline."""
+        printed strokes added over the baseline.
+
+        The face must have PAINTED the split before any pixel is read.
+        `_await_ink` returns the moment ink reaches the span's ends, and
+        a frame grabbed before that repaint still holds the PREVIOUS
+        split's ink — which is what the callers' "nothing was painted
+        ahead of the split" assertions then read. Two tests failed that
+        way on the 2-CPU rig, the second only after the first was fixed
+        by hand, which is why the wait lives here rather than at either
+        call site.
+        """
         self._printer.setSplit(split)
+        self._await_split(face, split)
         _image, added = self._await_ink(window, face, baseline, box, span)
         return added
 
@@ -6417,6 +6434,27 @@ class PlateFaceRenderTests(RealEngineTestCase):
                        for shift in (0, 8, 16)):
                     added.add((col, row))
         return added
+
+    def _await_split(self, face, split, timeout=3.0):
+        """The face once it has PAINTED *split*.
+
+        A grab taken before the repaint lands reads the PREVIOUS frame, and
+        at a reduced split that frame still holds the very ink the caller is
+        about to assert is absent — which is how a "painted nothing" check
+        becomes a one-in-eight failure under load (the 2-CPU rig caught this
+        one). ``_lastSplit`` is written inside the paint routine, so it is
+        the face's own word that the frame now belongs to the split it was
+        asked for; waiting on it makes the absence assertion mean what it
+        says, and a genuine product fault still fails it.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if face.property("_lastSplit") == split:
+                return
+            self.app.processEvents()
+            time.sleep(0.05)
+        self.fail("the face never painted split %r (its last was %r)"
+                  % (split, face.property("_lastSplit")))
 
     def _await_ink(self, window, face, baseline, box, span, timeout=3.0):
         """The image once ink reaches both ends of *span*: a paint lands
@@ -6628,6 +6666,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         span = (int(left[0]) + 4, int(right[0]) - 4)
         box = (int(left[0]) - 8, int(apex[1]) - 8, int(right[0]) + 8, int(far[1]) + 8)
         self._printer.setSplit(1)
+        # The face must have PAINTED split 1 before the absence below is
+        # read: the frame grabbed before that repaint still holds the arc
+        # from the previous split, which is exactly what this asserts is
+        # gone (the rig's one-in-eight failure).
+        self._await_split(face, 1)
         _image, added = self._await_ink(window, face, baseline, box, span, timeout=0.4)
         self.assertEqual(added, set(), "the split painted the arc before its own motion")
         added = self._printed(2, window, face, baseline, box, span)

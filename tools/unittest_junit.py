@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Run the plain unittest discovery and write JUnit-style XML for
-Codecov's test-results analytics — the CI leg uploads the file through
-codecov/test-results-action. No pytest dependency: the standard
-library's discovery runs in one process and this result gathers each
-test's verdict. The parallel host legs stay as they are; this is a
-serial pass solely for the report."""
+"""Run the suite per file and write JUnit-style XML for Codecov's
+test-results analytics — the CI leg uploads the file through
+codecov/test-results-action.
+
+ONE PROCESS PER FILE, which is the unit the parallel gate uses and the
+only one the suite actually supports. A single-process discovery
+imports every module before running any test, and `test_leak_probe_
+coverage` creates a module-level ``QCoreApplication`` at import — so the
+real-engine file's setup finds the process already owned and raises
+SkipTest, and 23 of its classes silently skipped in this report while
+the gate ran them. A report of a different suite than the gate's is
+worse than no report."""
 from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 import unittest
 import xml.etree.ElementTree as ET
@@ -115,11 +122,63 @@ def _write(cases, started, elapsed):
     tree.write(OUTPUT, encoding="utf-8", xml_declaration=True)
 
 
-def main():
-    started = time.time()
-    suite = unittest.defaultTestLoader.discover(DISCOVER_DIR, pattern=PATTERN)
+def _run_one(pattern, out_path):
+    """One file, in this process, dumped as JSON to *out_path* (the
+    child mode).
+
+    A FILE, not stdout: the suite's own tests print to stdout (`publish
+    -> picture: 266 ms`, the reverse-scrub diffs), so a JSON appended
+    after them does not parse and the whole file's records are lost —
+    which is how the first version of this reported six "unparsable
+    report" errors and 3103 tests instead of 3829."""
+    import json
+    suite = unittest.defaultTestLoader.discover(DISCOVER_DIR, pattern=pattern)
     result = _JUnitResult()
     suite.run(result)
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(result.cases, handle)
+    return 0
+
+
+def _discover_files():
+    return sorted(name for name in os.listdir(DISCOVER_DIR)
+                  if name.startswith("test_") and name.endswith(".py"))
+
+
+def _run_all():
+    """Every file in its own process, the records merged in order."""
+    import json
+    import subprocess
+    cases = []
+    for name in _discover_files():
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
+            out_path = handle.name
+        try:
+            proc = subprocess.run(
+                [sys.executable, os.path.abspath(__file__), "--one", name, out_path],
+                capture_output=True, text=True)
+            with open(out_path, encoding="utf-8") as handle:
+                cases.extend(json.load(handle))
+        except (OSError, ValueError):
+            # The file died before its result could be dumped: record it
+            # rather than lose it from the report.
+            cases.append({"classname": name, "name": name, "time": 0.0,
+                          "kind": "error",
+                          "message": ((proc.stderr if proc else "") or "")[-2000:]
+                                     or "the file produced no report"})
+        finally:
+            try: os.unlink(out_path)
+            except OSError: pass
+    return cases
+
+
+def main():
+    if len(sys.argv) > 3 and sys.argv[1] == "--one":
+        return _run_one(sys.argv[2], sys.argv[3])
+    started = time.time()
+    cases = _run_all()
+    result = _JUnitResult()
+    result.cases = cases
     _write(result.cases, started, time.time() - started)
     for case in result.cases:
         if case["kind"] in ("failure", "error"):
@@ -133,10 +192,12 @@ def main():
             tail = [line for line in case["message"].splitlines() if line.strip()][-3:]
             for line in tail:
                 print("    " + line)
+    failures = [case for case in result.cases if case["kind"] == "failure"]
+    errors = [case for case in result.cases if case["kind"] == "error"]
+    skipped = [case for case in result.cases if case["kind"] == "skipped"]
     print("wrote %s: %d tests, %d failures, %d errors, %d skipped" % (
-        OUTPUT, len(result.cases), len(result.failures), len(result.errors),
-        len(result.skipped)))
-    return 1 if (result.failures or result.errors) else 0
+        OUTPUT, len(result.cases), len(failures), len(errors), len(skipped)))
+    return 1 if (failures or errors) else 0
 
 
 if __name__ == "__main__":

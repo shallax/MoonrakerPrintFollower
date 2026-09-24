@@ -236,7 +236,13 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                     == _parent.PlateFaceRenderTests._sample(previous)):
                 return self._grab_from(image)
             previous = image
-        return self._grab()
+        # The deadline is a hang guard, and a hang guard that RETURNS
+        # instead of failing turns "the raster never arrived" into an
+        # empty picture the caller then measures — the census blamed the
+        # painter for a frame that had simply not been painted yet.
+        self.fail("the raster never arrived: the settle predicate was "
+                  "unsatisfied for 15 s%s"
+                  % ("" if arrived is not None else " (no predicate given)"))
 
     def _scene_row(self, bed_y, scale):
         return int(self.mapping["offsetY"] + (self.mapping["bedYMax"] - bed_y)
@@ -496,7 +502,10 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
                     == _parent.PlateFaceRenderTests._sample(previous)):
                 return image
             previous = image
-        return image
+        # Same rule as the sibling above: exhaustion is a failure, not a
+        # frame to measure.
+        self.fail("the raster never settled: two sampled frames never "
+                  "agreed AND the arrival predicate held, for 15 s")
 
     def _bed_pixel(self, face, window, plot, bed_x, bed_y, scale, pan_x, pan_y):
         bed = plot["bed"]
