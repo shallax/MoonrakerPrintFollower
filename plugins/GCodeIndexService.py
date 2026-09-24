@@ -86,6 +86,10 @@ _DECODED_LRU_MIN_ENTRIES = 1
 # keeps the byte budget bounded without adding O(points) seek latency.
 _DECODED_PACKED_EXPANSION = 16
 _DECODED_CHARGE_FLOOR = 4 * 1024
+# The progress signal's floor. A pass runs a 120 ms batch back to back,
+# so every batch boundary is a tick; the listeners only redraw a bar,
+# and 4 Hz keeps it moving without making the signal the new cost.
+_PROGRESS_MIN_INTERVAL = 0.25
 
 
 def _decoded_charge(raw=None, payload=None) -> int:
@@ -258,6 +262,11 @@ class GCodeIndexService(QObject):
     the old worker. Cache restore/build/hydration/save all run off the UI thread.
     """
     changed = pyqtSignal()
+    # The pass's own tick: a batch boundary moved the progress, not the
+    # state the UI latches on. Separated from `changed` because a full
+    # refresh is what `changed` costs a listener, and the pass runs a
+    # batch every 120 ms.
+    progress_changed = pyqtSignal()
     failed = pyqtSignal(str)
     _completed = pyqtSignal(int, str, object, object, object)
 
@@ -300,6 +309,12 @@ class GCodeIndexService(QObject):
         self._generation = 0
         self._job = None
         self._view = None
+        # The last state published as a change (None: nothing has been,
+        # so the first boundary publishes) and the progress tick's own
+        # clock — the throttle reads wall time, which a task boundary
+        # never moves.
+        self._notified_key = None
+        self._progress_at = 0.0
         self._cancel = threading.Event()
         # Worker-safe foreground signal. Background preparation reads
         # only this Event, never Qt/model state, and yields at coarse
@@ -401,6 +416,33 @@ class GCodeIndexService(QObject):
         if self._busy in {"build", "restore"}: return "indexing"
         return "ready" if self._view else "idle"
 
+    def _state_key(self):
+        """The state the UI latches on: the phase (an error is one) and
+        the pass's own completion. These are what a preparation batch's
+        boundary can move that a listener would render differently."""
+        return (self.phase, self._prepared_saved, self._prepared_complete)
+
+    def _publish_change(self):
+        self._notified_key = self._state_key()
+        self.changed.emit()
+
+    def _notify_changed(self, kind):
+        """A task boundary's publish. The preparation pass runs a batch
+        every 120 ms and every batch used to be a `changed`, which cost
+        each listener a full refresh — the coordinator's plate payload
+        and printed-object walk among them — for one batch's progress.
+        Only those batches are progress: every other kind (a hydration,
+        a build, a restore, a save) is a demand or a data change a
+        listener rebuilds on, and keeps the unthrottled signal."""
+        if kind != "fullprep" or self._state_key() != self._notified_key:
+            self._publish_change()
+            return
+        now = time.monotonic()
+        if now - self._progress_at < _PROGRESS_MIN_INTERVAL:
+            return
+        self._progress_at = now
+        self.progress_changed.emit()
+
     def bind(self, job_key):
         if self._job == job_key: return
         self._generation += 1
@@ -424,7 +466,7 @@ class GCodeIndexService(QObject):
         self._reset_print_state()
         # Keep _busy until the submitted worker actually completes. No new task
         # is submitted while a stale job is still executing.
-        self.changed.emit()
+        self._publish_change()
 
     def request(self):
         self._wanted = True
@@ -491,7 +533,7 @@ class GCodeIndexService(QObject):
         self._visited_settled = frozenset()
         self._visited_replay_upto = -1
         self._visited_pending = frozenset()
-        self.changed.emit()
+        self._publish_change()
 
     def request_hydration(self, layer):
         view = self._view
@@ -1487,7 +1529,7 @@ class GCodeIndexService(QObject):
         self._cache = cache
         self._prepared = prepared
         self._reset_print_state()
-        self.changed.emit()
+        self._publish_change()
 
     def _reset_print_state(self):
         """The print-specific state a new identity (or a new machine)
@@ -2028,7 +2070,7 @@ class GCodeIndexService(QObject):
             except RuntimeError:
                 if lease is not None: lease.close()  # Qt owner destroyed at shutdown.
         self._executor.submit(run)
-        self.changed.emit()
+        self._notify_changed(kind)
 
     def _finish(self, generation, kind, value, error, lease):
         if lease is not None: lease.close()
@@ -2171,7 +2213,7 @@ class GCodeIndexService(QObject):
                     self._prepared_coverage = {
                         i for i, entry in enumerate(table)
                         if entry[0] != STATE_EMPTY}
-            self.changed.emit()
+            self._notify_changed(kind)
         self._advance()
 
     def close(self):

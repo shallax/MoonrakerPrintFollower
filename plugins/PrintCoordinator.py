@@ -106,6 +106,7 @@ class PrintCoordinator(QObject):
         # stays terse on purpose.
         files.failed.connect(lambda message: Logger.log("w", "Remote file service: %s", message))
         index.changed.connect(self._index_changed)
+        index.progress_changed.connect(self._index_progress)
         index.failed.connect(lambda message: Logger.log("w", "G-code index service: %s", message))
         cura.changed.connect(self.refresh)
         cura.positionChanged.connect(self._position_changed)
@@ -229,15 +230,8 @@ class PrintCoordinator(QObject):
             # any preview load, because the two stale keys agreed with
             # each other). Compare against the print's own filename.
             view = index_view_for_print(self._index.view, filename)
-            # The plate's source: the follower must NOT depend on the
-            # preview's toolpath (the live ruling) — the monitor-only
-            # index (Improve ETA) builds without a preview load, and
-            # its job key is the unresolved identity that gate refuses.
-            # The monitor download only ever names the ACTIVE print,
-            # so an unresolved-key view is accepted for the plate.
-            plate_available = view is not None or (
-                self._index.view is not None
-                and (not self._index.view.job_key or self._index.view.job_key[0] == filename))
+            plate_view = self._plate_source_view(view)
+            plate_available = plate_view is not None
             # The downloaded file's OWN header is the authoritative
             # filament total; Moonraker's parse of it (the metadata
             # below) is the fallback. One bounded head read per
@@ -318,13 +312,8 @@ class PrintCoordinator(QObject):
              next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
             # The follower face's prepared polylines: built HERE from
             # the index (the worker-side prep rule), not in the model.
-            # The plate deliberately accepts the monitor-only unresolved
-            # index when its filename is the active print. Its slider
-            # range and preparation-band metadata must come from that SAME
-            # accepted view, not only from the stricter preview identity
-            # view (which is None on this path).
-            plate_view = view if view is not None else (
-                self._index.view if plate_available else None)
+            # Its slider range and preparation-band metadata read the
+            # SAME accepted view the rest of the plate reads.
             layer_count = len(plate_view.ranges) if plate_view is not None else 0
             # The face's anchor: the live layer while the follower
             # follows the print, the manual one while the user has
@@ -658,10 +647,51 @@ class PrintCoordinator(QObject):
         if was_attached and self._cura.has_toolpath:
             self._preview.attach(True)
 
+    def _plate_source_view(self, view):
+        """The index view the follower's plate may read. The follower
+        must NOT depend on the preview's toolpath (the live ruling) —
+        the monitor-only index (Improve ETA) builds without a preview
+        load, and its job key is the unresolved identity the strict
+        gate refuses, while the monitor download only ever names the
+        ACTIVE print, so an unresolved key is accepted for the plate.
+
+        One derivation, shared by the full refresh and the pass's
+        progress tick: the bar and the payload can never end up reading
+        different files' indexes."""
+        if view is not None: return view
+        index_view = self._index.view
+        if index_view is None: return None
+        if not index_view.job_key: return index_view
+        filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+        return index_view if index_view.job_key[0] == filename else None
+
     def _index_changed(self):
         # A newly installed index resets path anchors, not print-local attachment.
         if self._index.phase == "indexing": self._preview.reset_tracking()
         self.refresh()
+
+    def _index_progress(self):
+        """The background pass's tick. The full refresh is what this
+        signal exists to avoid — it rebuilds the plate payload and
+        walks the printed objects, and the pass ticks at batch rate.
+        Only the progress readouts move here; the poll rebuilds the
+        rest, as it always did. The load term rides along because the
+        Monitor's improve-Eta hourglass ends on a rebuilt snapshot
+        whose load term is False: a tick that carried the last
+        refresh's stale copy would end an hourglass whose load is
+        still running."""
+        if self._closed or self._processing: return
+        filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+        view = index_view_for_print(self._index.view, filename)
+        indexing = self._index.phase == "indexing"
+        self._snapshot = replace(
+            self._snapshot,
+            load_active=self._loads.active,
+            indexing=indexing,
+            index_fraction=self._index.progress if indexing else None,
+            plate_pass_fraction=(self._index.plate_pass_fraction()
+                                 if self._plate_source_view(view) is not None else None))
+        self._publish()
 
     def _position_changed(self):
         if self._binding.config.enabled:

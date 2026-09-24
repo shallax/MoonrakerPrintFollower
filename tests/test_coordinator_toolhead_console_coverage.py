@@ -207,6 +207,10 @@ if QT_AVAILABLE:
 
     class _Index(QObject):
         changed = pyqtSignal()
+        # The pass's throttled tick: the coordinator reads it without
+        # running the full refresh, so the fake carries it separately
+        # from `changed` — the same split the service makes.
+        progress_changed = pyqtSignal()
         failed = pyqtSignal(str)
 
         def __init__(self):
