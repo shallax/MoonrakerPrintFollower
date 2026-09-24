@@ -43,6 +43,9 @@ All geometry here is prepared payload data — the G-code walk, arc
 tessellation and feature topology are covered by the geometry suites.
 """
 
+import os
+import tempfile
+
 from qt_runtime_support import QT_AVAILABLE
 
 if QT_AVAILABLE:
@@ -182,10 +185,13 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
     def _grid_inked(self, image):
         """The grid's own ink: the 40 mm graduation's column, sampled
         where the miter census looks. That census subtracts a baseline
-        frame and the graduation is inside its spike zone, so a
-        baseline still waiting for its grid reads as a spike on this
-        column — the (68,38) report is that column, at 1.664 px/mm
-        with the 2 px face origin."""
+        frame, so a baseline still waiting for its grid reads as a
+        spike on this column. The graduation sits at col 68 on this
+        harness (1.664 px/mm, a 2 px face origin) — which is NOT the
+        column the Windows failure reports: that begins at 78, where
+        this harness draws no grid element at all, so the two are not
+        the same fault and this docstring cannot name the cause. The
+        census map in the failure message is what does."""
         origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
         ox, oy = int(origin.x()), int(origin.y())
         col = ox + int(self.mapping["offsetX"]
@@ -262,6 +268,102 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         return int(self.mapping["offsetY"] + (self.mapping["bedYMax"] - bed_y)
                    * self.mapping["sy"] * scale)
 
+    @staticmethod
+    def _evidence_dir():
+        """Where a failing census drops its frames.
+
+        HARNESS_SHOT_DIR first: CI sets it and already publishes the
+        directory as the harness-mounts artefact, so the pictures
+        arrive with everything else. The fallback is the dev
+        container's scratch dir, NOT a Windows path — a Windows runner
+        has no /tmp, so the "frames written to /tmp/mpf/..." line
+        named a directory that does not exist and two Windows miter
+        failures produced no retrievable evidence at all."""
+        folder = os.environ.get("HARNESS_SHOT_DIR") or os.path.join(
+            tempfile.gettempdir(), "mpf")
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            return None
+        return folder
+
+    def _census_report(self, diff, rect, threshold=40):
+        """The census as ASCII, carried in the failure message.
+
+        A count says how MUCH ink disagreed; the map says WHERE, which
+        is what separates a miter spike (a wedge up-right of the
+        corner) from a baseline accepted in a different state (whole
+        rows, or one column). It travels in the runner's log, which
+        survives where a PNG on a Windows path does not."""
+        top, left, bottom, right = rect
+        header = ["      " + "".join(str((left + i) // 100)
+                                     for i in range(right - left + 1)),
+                  "      " + "".join(str(((left + i) // 10) % 10)
+                                     for i in range(right - left + 1)),
+                  "      " + "".join(str((left + i) % 10)
+                                     for i in range(right - left + 1))]
+        body = []
+        for row in range(top, bottom + 1):
+            cells = "".join("." if diff(c, row) < threshold
+                            else str(min(9, diff(c, row) // 28))
+                            for c in range(left, right + 1))
+            body.append("%5d %s" % (row, cells))
+        return "\n".join(header + body)
+
+    def _ink_map(self, image, rect, backdrop, threshold=40):
+        """One frame's own ink over the census region: '#' where a pixel
+        stands off *backdrop*, '.' where it is backdrop. The diff map
+        says the frames DISAGREE; these say which frame carries the
+        ink, which is the difference between a spike the painter drew
+        and a baseline that had not painted its grid yet."""
+        top, left, bottom, right = rect
+
+        def stands_off(col, row):
+            pixel = image.pixel(col, row)
+            return max(abs(((pixel >> s) & 0xFF) - ((backdrop >> s) & 0xFF))
+                       for s in (0, 8, 16)) >= threshold
+
+        return "\n".join(
+            "%5d %s" % (row, "".join("#" if stands_off(col, row) else "."
+                                     for col in range(left, right + 1)))
+            for row in range(top, bottom + 1))
+
+    @staticmethod
+    def _backdrop(image, rect):
+        """The region's most common value: the grid's cell fill, which
+        both frames share, so their ink maps are comparable."""
+        from collections import Counter
+        top, left, bottom, right = rect
+        counts = Counter(image.pixel(col, row) for row in range(top, bottom + 1)
+                         for col in range(left, right + 1))
+        return counts.most_common(1)[0][0]
+
+    def _write_census_frames(self, diff, image, baseline, stem):
+        """Measured, baseline and their difference, beside the mapping
+        the census read. The difference is the picture the oracle
+        actually sees; a reader comparing the other two by eye is
+        re-deriving it."""
+        folder = self._evidence_dir()
+        if folder is None:
+            return "the evidence directory could not be created"
+        from PyQt6.QtGui import QColor, QImage
+        probe = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        probe.fill(QColor(0, 0, 0))
+        for row in range(image.height()):
+            for col in range(image.width()):
+                delta = diff(col, row)
+                probe.setPixelColor(col, row, QColor(min(255, delta * 3), 0, 0))
+        written = []
+        for name, frame in ((stem + "-measured.png", image),
+                            (stem + "-baseline.png", baseline),
+                            (stem + "-difference.png", probe)):
+            path = os.path.join(folder, name)
+            if frame.save(path):
+                written.append(path)
+        with open(os.path.join(folder, stem + "-mapping.txt"), "w") as handle:
+            handle.write("mapping %r\n" % (self.mapping,))
+        return ", ".join(written)
+
     def _band_mass(self, image, bed_y, scale, span):
         """The ink mass over the FIXED bed region bed-x 15..40 mm and
         the rows around *bed_y*: the same bed content at every zoom,
@@ -281,8 +383,10 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         baseline: the harness backdrop is not uniform and the grid
         lines cross every region. Both frames must therefore CARRY the
         grid for it to cancel — a baseline still waiting for its own
-        grid reads as a spike on the graduation's column, which is what
-        the loaded runner's (68,38) was (the 40 mm line at 1.664 px/mm)."""
+        grid reads as a spike on the graduation's column. The Windows
+        report begins at (78,38), ten columns right of the graduation
+        at 68 — so the failure message carries the census diff and both
+        frames' own ink, which is what tells the two apart."""
         wedge = {
             "available": True, "reason": "",
             "layers": {
@@ -339,12 +443,32 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             # The pictures, so the next reader can tell a genuine spike
             # from a baseline that was accepted before the grid it
             # subtracts had painted. The census subtracts one and reads
-            # the other, so both belong in the evidence.
-            image.save("/tmp/mpf/miter-measured.png")
-            baseline.save("/tmp/mpf/miter-baseline.png")
-            self.fail("miter spike ink at %s (%d px); frames written to "
-                      "/tmp/mpf/miter-{measured,baseline}.png"
-                      % (spiked[0], len(spiked)))
+            # the other, so both belong in the evidence — and the map
+            # belongs in the MESSAGE, because the artefact lane and the
+            # runner's filesystem are not the same place.
+            wrote = self._write_census_frames(
+                lambda col, row: diff(image, col, row), image, baseline, "miter")
+            region = (corner_row - 22, corner_col + 4,
+                      corner_row - 7, corner_col + 27)
+            backdrop = self._backdrop(image, region)
+
+            def cell(col, row):
+                return diff(image, col, row)
+
+            self.fail(
+                "miter spike ink at %s (%d px) of the %dx%d census; the "
+                "corner is at col %d row %d, the arms at row %d, the 40 mm "
+                "graduation at col %d.\nmapping %r\n"
+                "census DIFF (measured vs baseline):\n%s\n"
+                "baseline's own ink:\n%s\nmeasured's own ink:\n%s\n"
+                "frames: %s"
+                % (spiked[0], len(spiked), 24, 16, corner_col, corner_row,
+                   arm_row, int(self.mapping["offsetX"] + 40.0 * self.mapping["sx"]),
+                   self.mapping,
+                   self._census_report(cell, region),
+                   self._ink_map(baseline, region, backdrop),
+                   self._ink_map(image, region, backdrop),
+                   wrote))
 
     def test_ghost_pending_printed_share_one_width(self):
         """Test 7: the same geometry renders at one physical width in
