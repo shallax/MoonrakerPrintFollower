@@ -24,6 +24,21 @@ def _scratch(name: str) -> str:
     """
     return json.dumps(os.path.join(_scratch_dir, name))
 
+
+# The application's own window floor: the em-scaled minimum the window
+# reports, read off the live window by the driver (880x528 under Xvfb,
+# 1040x624 on macOS and Windows). A step that wants the smallest size a
+# user can reach asks for it with the "min" axis and takes each
+# platform's own value. A LITERAL has to clear the largest of the floors
+# because one spec runs on every platform, and it has to clear the floor
+# at all because a size the application refuses is a size no user can
+# drag to — a step resting on one measures a geometry nobody can reach
+# (the 1000-wide requests were clamped to 1040 on Windows and measured
+# what the spec never asked for). Nothing forces past the floor;
+# test_harness_specs pins the rule.
+WINDOW_FLOOR_W = 1040
+WINDOW_FLOOR_H = 624
+
 # Shared probe bodies for the z-group geometry diagnostics: exact
 # rendered rects from the QML scene, the evidence calibration reads.
 RECT_PROBE = (
@@ -2174,8 +2189,11 @@ SCENARIOS = [
          # Narrow enough that the camera cannot hold the panes: both
          # fold to their strips, and the column that fold frees is
          # over the console's threshold again — the console comes back
-         # on its own rule, with no user click.
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # on its own rule, with no user click. The width is the
+         # application's own floor, the narrowest a user can drag to:
+         # 880 under Xvfb, 1040 on native (Windows always ran the
+         # native one — the old 1000 was clamped to it there).
+         {"op": "resize_window", "w": "min", "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerInfoContent", "absent": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStatusContent", "absent": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
@@ -2215,7 +2233,9 @@ SCENARIOS = [
      "name": "the file manager's narrow mode hides the search field, wide restores it",
      "steps": [
          {"op": "exec_slot", "slot": "openFileManager", "args": []},
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # The application's own floor for the width — the narrowest a
+         # user can drag to, each platform's own value.
+         {"op": "resize_window", "w": "min", "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "absent": True, "budget": 30},
          {"op": "resize_window", "w": 1840, "h": 1040},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "budget": 30},
@@ -3001,15 +3021,16 @@ SCENARIOS = [
      "name": "the collapsed readouts hide whole lines when the window cannot fit them",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         # The premise is a window too SHORT for the strip, and Windows
-         # enforces the window's own minimum height on setGeometry
-         # (measured 624px at the runner's scale), so the requested 300
-         # was silently clamped there and the readout stayed legitimately
-         # visible — the step failed on a window the premise never
-         # reached. The layout rule under test is the same code on every
-         # platform, so the window minimum is forced aside for this
-         # resize only; the reply records the value it moved.
-         {"op": "resize_window", "w": 1600, "h": 300, "force": True},
+         # The premise is a window too SHORT for the strip: the step asks
+         # for the application's own minimum height (528 under Xvfb, 624
+         # on native) rather than the old forced 300 — a size no user can
+         # drag to. Measured on Linux the window settles at 1600x880, the
+         # Monitor stage's own pane minimums holding it above the
+         # declared floor, and the strip is then still in the rendered
+         # tree, only scrolled out of its pane. The three absent checks
+         # below therefore stand on a geometry no platform offers, and
+         # their assertion is awaiting a ruling.
+         {"op": "resize_window", "w": 1600, "h": "min"},
          {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
                                      "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},

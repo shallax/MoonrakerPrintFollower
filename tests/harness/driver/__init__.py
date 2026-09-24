@@ -12,7 +12,7 @@ import json
 import os
 import time
 
-from PyQt6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QSize, QTimer, Qt, QUrl, pyqtSlot
+from PyQt6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QTimer, Qt, QUrl, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
@@ -66,9 +66,6 @@ class HarnessServer(QObject):
         self._server.newConnection.connect(self._accept)
         self._pending = []  # (request_id, deadline, predicate, reply_builder)
         self._mounted_switch = None
-        # The window's own minimum size, remembered only while a forced
-        # resize holds it clear of the way (see the resize verb).
-        self._window_minimum = None
         self._clicked_flag = False
         self._win_events = []
         self._py_clicks = []
@@ -450,43 +447,38 @@ class HarnessServer(QObject):
             # class window_pin was rewritten to fix), so the verb
             # keeps applying until the read-back holds.
             #
-            # `force` drops the window's own minimum while the resize
-            # holds. Windows enforces that minimum on setGeometry
-            # (measured 624px tall at the runner's scale), so a
-            # scenario whose premise is a window too SHORT for the
-            # layout it exercises could never build it there — the
-            # layout rule itself is the same code on every platform.
-            # The minimum is put back by the next resize that does not
-            # force, so no later unit inherits the relaxed geometry,
-            # and the reply carries the pre-relax value.
+            # A "min" axis asks for the window's OWN minimum, read off
+            # the live window (the em-scaled window_minimum_size the
+            # application resolves per platform: 880x528 under Xvfb,
+            # 1040x624 on native). A target below that minimum is
+            # refused rather than built: it is a geometry no user can
+            # drag to, so a scenario resting on it asserts nothing —
+            # and nothing here drops the minimum to reach one.
             try:
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
                 _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
-                want = [int(request.get("w", int(_win[0]))),
-                        int(request.get("h", int(_win[1])))]
-                force = bool(request.get("force"))
                 minimum = window.minimumSize()
-                held = self._window_minimum if self._window_minimum is not None else minimum
-                if force:
-                    self._window_minimum = held
-                    window.setMinimumSize(QSize(0, 0))
-                elif self._window_minimum is not None:
-                    window.setMinimumSize(self._window_minimum)
-                    self._window_minimum = None
+                asked = [request.get("w", int(_win[0])),
+                         request.get("h", int(_win[1]))]
+                want = [minimum.width() if axis == "min" else int(axis)
+                        for axis in asked]
+                if want[0] < minimum.width() or want[1] < minimum.height():
+                    return {"id": request_id, "ok": False,
+                            "error": (f"{asked[0]}x{asked[1]} below the window minimum "
+                                      f"{minimum.width()}x{minimum.height()}"),
+                            "minimum": [minimum.width(), minimum.height()]}
                 got = [0, 0]
                 for _attempt in range(5):
-                    if force:
-                        window.setMinimumSize(QSize(0, 0))
                     window.setGeometry(0, 0, want[0], want[1])
                     time.sleep(0.8)
                     got = [window.width(), window.height()]
                     if got == want:
                         break
                 return {"id": request_id, "ok": True, "size": got,
-                        "wanted": want, "forced": force,
-                        "minimum": [held.width(), held.height()]}
+                        "wanted": want,
+                        "minimum": [minimum.width(), minimum.height()]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":

@@ -53,6 +53,43 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("|| RUNNER_RC=$?", source)
         self.assertIn('if [ "${RUNNER_RC:-0}" -ne 0 ]; then', source)
 
+    def test_no_resize_crosses_the_application_window_floor(self):
+        # The application's own floor is the bottom: a target below it
+        # is a size Cura refuses, a user cannot drag there, so the step
+        # would rest on a geometry nobody can reach (and on Windows the
+        # refused request silently measured a different size than the
+        # spec asked for). The "min" token asks the driver for the
+        # platform's own floor; a literal has to clear the largest
+        # floor, since one spec runs on every platform.
+        offenders = []
+        for spec in _scenarios.SCENARIOS:
+            for step in spec.get("steps", ()):
+                if step.get("op") != "resize_window":
+                    continue
+                if "force" in step:
+                    offenders.append(f"{spec['id']}: forces past the window floor")
+                for axis, floor in (("w", _scenarios.WINDOW_FLOOR_W),
+                                    ("h", _scenarios.WINDOW_FLOOR_H)):
+                    value = step.get(axis)
+                    if value == "min":
+                        continue
+                    if not isinstance(value, int) or value < floor:
+                        offenders.append(
+                            f"{spec['id']}: {axis}={value!r} below the floor {floor}")
+        self.assertEqual(offenders, [])
+
+    def test_the_driver_cannot_relax_the_window_floor(self):
+        # The floor may not be dropped to build a geometry a user
+        # cannot reach: the driver's resize verb takes the minimum from
+        # the live window and refuses a target below it, and nothing in
+        # the harness overrides the window's own minimum.
+        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "driver", "__init__.py")
+        with open(driver, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertNotIn("setMinimumSize", source)
+        self.assertIn("below the window minimum", source)
+
     def test_spec_ids_are_unique(self):
         ids = [spec["id"] for spec in _scenarios.SCENARIOS]
         duplicates = sorted({name for name in ids if ids.count(name) > 1})

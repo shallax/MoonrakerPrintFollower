@@ -3492,18 +3492,25 @@ def suite_step(step):
         return True, f"visible items matching {needle!r}", brief or "no matches"
 
     if op == "resize_window":
-        reply = rpc({"id": 1, "cmd": "resize", "w": int(step["w"]), "h": int(step["h"]),
-                     "force": bool(step.get("force"))})
+        # A "min" axis is the application's own floor, read off the
+        # live window by the driver, so one spec asks every platform
+        # for the smallest size its users can drag to. Nothing forces
+        # past that floor.
+        asked = [step["w"], step["h"]]
+        reply = rpc({"id": 1, "cmd": "resize", "w": asked[0], "h": asked[1]})
         if not reply.get("ok"):
-            return (False, f"resize to {step['w']}x{step['h']}", f"driver: {reply.get('error')}")
-        note = f"actual {reply['size']}"
-        if reply.get("forced"):
-            # The window's own minimum is a platform policy, not the
-            # layout under test: the evidence says it was moved aside
-            # and what it was, so the short-window premise reads as
-            # built-to-order rather than free.
-            note += f" · forced past the window minimum {reply.get('minimum')}"
-        return True, f"the window resized to {step['w']}x{step['h']}", note
+            return (False, f"resize to {asked[0]}x{asked[1]}", f"driver: {reply.get('error')}")
+        got = reply.get("size") or [0, 0]
+        note = f"actual {got}"
+        if reply.get("minimum"):
+            # Recorded on every resize so the floor each platform
+            # reports stays visible (macOS and Windows 1040x624, Xvfb
+            # 880x528) — a target below it is a geometry nobody can
+            # reach, and the note is where that shows.
+            note += f" · window minimum {reply['minimum']}"
+        if "min" in asked:
+            note += f" · asked {asked[0]}x{asked[1]}"
+        return True, f"the window resized to {got[0]}x{got[1]}", note
 
     if op == "sim_set_current_print":
         # The running-job state the load needs, with the sim's REAL
