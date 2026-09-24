@@ -17,7 +17,7 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 from UM.Application import Application
 
 # Where the port and the per-run token are published for the runner:
@@ -1318,171 +1318,6 @@ class HarnessServer(QObject):
                         "objectName": wanted}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
-        if cmd == "confirm_box":
-            # Modal QMessageBoxes block the application until answered
-            # (the plugin's replace-confirm uses one). The button is
-            # activated PROGRAMMATICALLY: Qt's test module cannot drive
-            # a native dialog, and on macOS this box renders natively,
-            # so the QTest press it used to send was swallowed while
-            # the driver reported success — the box then sat over the
-            # scenario and every later step failed (the macOS legs).
-            # The dialog is verified GONE afterwards: an unanswered box
-            # is a failed press, never a quiet pass. The CODE the
-            # caller reads is verified too, sampled right after the
-            # press: the code is latched when the box closes, so a
-            # correction afterwards moves result() while the plugin has
-            # already read the old one — a wrong code has to fail the
-            # step here, not be papered over.
-            try:
-                wanted = str(request.get("button") or "Yes")
-                standard = {"Yes": QMessageBox.StandardButton.Yes,
-                            "No": QMessageBox.StandardButton.No,
-                            "Ok": QMessageBox.StandardButton.Ok,
-                            "Cancel": QMessageBox.StandardButton.Cancel}.get(wanted)
-                if standard is None:
-                    return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
-                qtest = _import_qtest()
-                # WAIT for THE box, pumping the loop, and match it by
-                # title. Both halves are load-bearing:
-                #
-                # * Waiting, because the plugin defers its prompt -
-                #   confirm_replace switches the stage and only then arms
-                #   QTimer.singleShot(0, ask) - so the box opens a turn or
-                #   more after the click that asked for it. Reading the
-                #   tree once made the step racy, and on the macOS legs
-                #   (slowest stage switch, software renderer) the gap is
-                #   widest.
-                # * Pumping (qWait), because a plain sleep never lets the
-                #   deferred prompt be built: the wait would time out every
-                #   time and turn a flake into a guaranteed failure.
-                # * The title, because answering ANY visible QMessageBox is
-                #   how this failed silently: the suite's step reported ok
-                #   with code 16384 while the plugin never wrote its
-                #   `answer=` line - the driver had answered some OTHER box
-                #   that happened to carry a Yes button, and the plugin's
-                #   own prompt opened after the call had already returned.
-                #   The plugin titles its box (CuraIntegration: QMessageBox
-                #   .question(None, "Moonraker Print Follower", ...)), which
-                #   is the one selector that says whose dialog this is.
-                wanted_title = str(request.get("title") or "")
-                wanted_text = str(request.get("text") or "")
-
-                def is_the_box(w):
-                    """Whether this is the prompt the caller meant.
-
-                    Matched on TITLE or on the box's own TEXT, and the
-                    text is the one that works everywhere: on macOS this
-                    alert renders natively and windowTitle() comes back
-                    EMPTY even though the plugin set one, so a title-only
-                    match hunted 'Moonraker Print Follower' while the
-                    driver reported `QMessageBox:(untitled)` sitting right
-                    there - it filtered out the box it was looking for.
-                    An untitled box is only accepted when nothing was
-                    asked for, so a stray dialog is still refused."""
-                    title = (w.windowTitle() or "")
-                    if wanted_title and wanted_title.lower() in title.lower():
-                        return True
-                    if wanted_text:
-                        body = f"{w.text()} {w.informativeText()}"
-                        if wanted_text.lower() in body.lower():
-                            return True
-                    return not wanted_title and not wanted_text
-
-                deadline = time.monotonic() + float(request.get("wait_s", 15.0))
-                boxes, seen = [], []
-                while True:
-                    up = [w for w in QApplication.topLevelWidgets()
-                          if isinstance(w, QMessageBox) and w.isVisible()]
-                    seen = [w.windowTitle() for w in up]
-                    boxes = [w for w in up if is_the_box(w)]
-                    if boxes or time.monotonic() >= deadline:
-                        break
-                    qtest.QTest.qWait(100)
-                if not boxes:
-                    # What was up when the prompt never arrived, and it
-                    # is not only message boxes: the question "did the
-                    # plugin open its prompt at all" is answered by
-                    # seeing either the box with a different title or
-                    # nothing at all, and the two need different fixes.
-                    up = [f"{type(w).__name__}:{w.windowTitle() or '(untitled)'}"
-                          for w in QApplication.topLevelWidgets() if w.isVisible()]
-                    return {"id": request_id, "ok": False,
-                            "error": ("no QMessageBox up" if not seen else
-                                      f"no box titled {wanted_title!r} (saw {seen})"),
-                            "waited_s": round(float(request.get("wait_s", 15.0)), 1),
-                            "titles": seen, "top_level": up[:8]}
-                clicked = 0
-                results = []
-                # Keep answering for a moment after the first box. The
-                # plugin's prompt is created by a DEFERRED call, so it can
-                # arrive after the driver has already found and closed
-                # something else - and then it sits there unanswered while
-                # the step reports a success it did not have. Measured on
-                # the macOS legs: `confirm_box ok=True` with code 16384,
-                # and the plugin's own log with no `answer=` line at all.
-                # A short settle that answers anything matching is the
-                # difference between answering A box and answering THE
-                # prompt.
-                for _ in range(15):
-                    for box in boxes:
-                        button = box.button(standard)
-                        if button is None:
-                            continue
-                        button.click()
-                        clicked += 1
-                        # And END the modal explicitly. A click is real
-                        # input and the right way to answer, but on macOS
-                        # a native alert can hide on that click while
-                        # exec() keeps running underneath - which leaves
-                        # the plugin blocked inside QMessageBox.question
-                        # with its box already gone, so the caller never
-                        # gets an answer while every check here reports
-                        # success. Measured: "asking" logged, "answer="
-                        # never, and the leg walking on 71 s later past a
-                        # modal it never answered. done() is a no-op on a
-                        # dialog that has already finished, so it costs
-                        # nothing on the platforms that behave.
-                        try:
-                            box.done(int(standard))
-                        except Exception:
-                            pass
-                        results.append(int(box.result()))
-                    qtest.QTest.qWait(100)
-                    fresh = [w for w in QApplication.topLevelWidgets()
-                             if isinstance(w, QMessageBox) and w.isVisible()
-                             and is_the_box(w)]
-                    if not fresh:
-                        break
-                    boxes = fresh
-                qtest.QTest.qWait(120)
-                still = [w for w in QApplication.topLevelWidgets()
-                         if isinstance(w, QMessageBox) and w.isVisible()]
-                if still:
-                    return {"id": request_id, "ok": False,
-                            "error": f"the box is still up after {clicked} click(s)",
-                            "clicked": clicked, "remaining": len(still)}
-                if not clicked:
-                    return {"id": request_id, "ok": False,
-                            "error": f"no {wanted} button on the box",
-                            "titles": [w.windowTitle() for w in boxes]}
-                wrong = [r for r in results if r != int(standard)]
-                if wrong:
-                    return {"id": request_id, "ok": False,
-                            "error": (f"the box answered {wrong}, not {int(standard)}"
-                                      " — the plugin takes its No branch"),
-                            "clicked": clicked, "results": results,
-                            "titles": [w.windowTitle() for w in boxes]}
-                return {"id": request_id, "ok": True, "clicked": clicked,
-                        "results": results, "titles": [w.windowTitle() for w in boxes],
-                        # The box's own text, because the title is not
-                        # enough to say WHICH dialog was answered on a
-                        # platform that reports none - and "answered a
-                        # box" and "answered the plugin's prompt" are
-                        # different claims that a code alone cannot tell
-                        # apart.
-                        "texts": [(w.text() or "")[:70] for w in boxes]}
-            except Exception as exc:
-                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":
             return {"id": request_id, "ok": True, "clicked": self._clicked_flag,
                     "py_clicks": list(self._py_clicks)}
@@ -2025,8 +1860,8 @@ def _lookup_windows():
     # The main window first, then every other visible QML window by
     # size: the file manager and the dialogs are separate windows,
     # and a main-window-only walk never finds their items. Widget
-    # windows (the QMessageBox) have no contentItem — the QML walks
-    # died on them with AttributeError whenever one happened to be up.
+    # widget windows have no contentItem — the QML walks died on
+    # them with AttributeError whenever one happened to be up.
     from PyQt6.QtQuick import QQuickWindow
     windows = [w for w in QGuiApplication.topLevelWindows()
                if isinstance(w, QQuickWindow)]
@@ -2644,12 +2479,14 @@ _server = None
 def register(app):
     """Uranium plugin entry: the driver lives for the process lifetime."""
     global _server
-    # The plugin's modal boxes must be NON-native: macOS shows
-    # QMessageBox through the platform's own dialog, which Qt's test
-    # module cannot reach — the press went nowhere and the box stayed
-    # up over the rest of the scenario (the macOS legs). The attribute
-    # is read when a dialog is SHOWN, so setting it at plugin load
-    # (long before any scenario press) is enough.
+    # No dialog a leg might meet may be drawn by the PLATFORM: the
+    # driver's presses reach Qt's own widgets, and a platform-drawn
+    # dialog is not one of them, so one that opened would sit over the
+    # rest of the scenario unanswered. The attribute is read when a
+    # dialog is SHOWN, so setting it at plugin load is enough. The
+    # product opens no modal of its own — the replace prompt is the
+    # card's popup — so this is a floor for Cura's dialogs, not a
+    # workaround for one of ours.
     try:
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
     except Exception:

@@ -244,6 +244,12 @@ SCENARIO_MAP = {
     "printConfirmStartButton": "f6",
     "deleteConfirmDeleteButton": "f3",
     "renameConfirmButton": "f7",
+    # The replace prompt (the card's own dialog): h2 asks, cancels and
+    # asks again, so all three surfaces ride that one scenario — the
+    # cancel surface has no other caller.
+    "moonrakerReplacePrompt": "h2",
+    "moonrakerReplaceConfirmButton": "h2",
+    "moonrakerReplaceCancelButton": "h2",
     # The protocol endpoints: the simulator's contract test owns the
     # wire shapes; the scenarios drive them through the real UI.
     "status_endpoint": "b1", "websocket_endpoint": "a1",

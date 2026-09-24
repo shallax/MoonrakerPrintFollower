@@ -83,9 +83,9 @@ class ClassificationRatchetTests(unittest.TestCase):
         # the re-shows exist so each real dismissal can be tested),
         # so its six exec_slot re-shows and one marker-clear are the
         # floor for the feature's coverage (DECISIONS 4.1.0). The pin
-        # now counts exec_code and confirm_box, which the classifier
-        # itself calls direct invocation, so they can never hide
-        # outside the ratchet. One more deliberate raise (4.2.0,
+        # now counts exec_code, which the classifier itself calls
+        # direct invocation, so it can never hide outside the
+        # ratchet. One more deliberate raise (4.2.0,
         # DECISIONS): h6c's setBedMeshThresholds exec — the range
         # filter's window cannot change through a single click (the
         # handle-click no-op ruling makes a full-range window inert to
@@ -95,7 +95,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # session cycle, and no real-input path exists for a
         # reconnection:
         # 47 exec_slot + 12 exec_file_slot + 6 emit_click +
-        # 3 confirm_box + 6 exec_mode + 3 exec_validator +
+        # 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 23 exec_code.
         # One more deliberate raise (4.3.0, DECISIONS): g6's refused
@@ -108,7 +108,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # witness is the inline QTest click.
         text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         direct = len(re.findall(
-            r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
+            r'"op": "(exec_slot|exec_file_slot|emit_click|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
         # A deliberate raise (4.4.0, DECISIONS): the configure group's
         # nine slots — the reorder witness must dispatch through the
@@ -143,8 +143,8 @@ class ClassificationRatchetTests(unittest.TestCase):
         # input path exists for the monitor-side download (the h8
         # precedent's reasoning).
         # And x10's load flow: the fill's ETA needs the follower's
-        # observed layer, so the scenario rides the h2 load (its
-        # confirm_box counts, the h2 precedent).
+        # observed layer, so the scenario rides the h2 load (the h2
+        # precedent).
         # And p6/p7's determinism pin: the wait_sim on the layer
         # clock's first tick (the click's target must resolve from
         # the mapped layer, never the file-position fallback that
@@ -166,7 +166,10 @@ class ClassificationRatchetTests(unittest.TestCase):
         # bounds ride the same direct path as its sibling validators
         # (typing into the pane's text field has no real-input op,
         # the i3 precedent).
-        self.assertLessEqual(direct, 153)
+        # Four fewer (4.6.0): the replace prompt is the card's own
+        # popup, so its four legs press a button instead of answering
+        # a widget box - the ratchet only tightens.
+        self.assertLessEqual(direct, 149)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

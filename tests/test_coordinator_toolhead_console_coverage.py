@@ -287,7 +287,7 @@ if QT_AVAILABLE:
             self.nudges = 0
             self.layer_view_nudges = 0
             self.watched = []
-            self.confirm_replace_callback = None
+            self.stages = []
             self.loads = []
             self.invalidated_reasons = []
 
@@ -300,8 +300,9 @@ if QT_AVAILABLE:
         def watch(self, enabled):
             self.watched.append(enabled)
 
-        def confirm_replace(self, callback):
-            self.confirm_replace_callback = callback
+        def switch_to_preview(self):
+            self.stages.append("PreviewStage")
+            return True
 
         def load(self, lease):
             self.loads.append(lease)
@@ -403,6 +404,8 @@ if QT_AVAILABLE:
         pauseAtLayerRequested = pyqtSignal(int)
         removePauseRequested = pyqtSignal(int)
         clearPausesRequested = pyqtSignal()
+        replaceConfirmed = pyqtSignal()
+        replaceCancelled = pyqtSignal()
 
         def __init__(self):
             super().__init__()
@@ -533,8 +536,22 @@ if QT_AVAILABLE:
 class CoordinatorCoverageTests(unittest.TestCase):
     def setUp(self):
         self._rt = runtime()
-        self._rt.__enter__()
+        self.fixture = self._rt.__enter__()
         self.addCleanup(self._rt.__exit__, None, None, None)
+
+    def _pump(self, seconds):
+        """Run the event loop for a bounded stretch (timer-driven paths)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.fixture.events(5)
+
+    def _accept(self, predicate, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.fixture.events(5)
+            if predicate():
+                return True
+        return predicate()
 
     def _make(self, config=None, configured=True):
         coordinator_class = _coordinator_class()
@@ -560,7 +577,8 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.files.changed.emit()
         self.assertGreater(len(parts.presentation.published), before)
         parts.presentation.loadRequested.emit()
-        self.assertIsNotNone(parts.cura.confirm_replace_callback)
+        self.assertIn({"replacePromptVisible": True}, parts.presentation.published)
+        parts.presentation.replaceConfirmed.emit()
         parts.cura.has_toolpath = True
         parts.presentation.attachmentRequested.emit()
         self.assertEqual(parts.preview.attach_calls, [True])
@@ -1353,12 +1371,56 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(coordinator._detail, "Could not load current print: no disk space")
 
-    def test_confirm_load_delegates_to_cura_replace_prompt(self):
+    def test_confirm_load_switches_the_stage_and_asks_in_the_card(self):
         parts = self._make()
         parts.coordinator.confirm_load()
-        self.assertIsNotNone(parts.cura.confirm_replace_callback)
-        parts.cura.confirm_replace_callback()
-        self.assertTrue(parts.coordinator._loads.load_requested)
+        self.assertEqual(parts.cura.stages, ["PreviewStage"])
+        self.assertIn({"replacePromptVisible": True}, parts.presentation.published)
+        self.assertFalse(parts.coordinator._loads.load_requested,
+                         "the load waits for the user's answer")
+
+    def test_the_prompt_runs_the_load_the_user_agreed_to(self):
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertTrue(self._accept(lambda: parts.coordinator._loads.load_requested))
+
+    def test_the_prompt_is_dismissed_by_either_answer(self):
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceCancelled.emit()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertEqual(parts.presentation.published[-2:],
+                         [{"replacePromptVisible": False},
+                          {"replacePromptVisible": False}])
+        self.assertFalse(parts.coordinator._loads.load_requested,
+                         "Cancel is not an answer to load")
+        self.assertIsNone(parts.coordinator._replace_action,
+                          "the pending load is released, not left armed")
+
+    def test_an_answered_prompt_cannot_run_its_load_twice(self):
+        # The popup's buttons are live until the publish lands, and a
+        # double press used to be two loads.
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertTrue(self._accept(lambda: parts.coordinator._loads.load_requested))
+        before = parts.client.forced
+        parts.presentation.replaceConfirmed.emit()
+        self._pump(0.05)
+        self.assertEqual(parts.client.forced, before,
+                         "the second press ran the load again")
+
+    def test_an_answered_prompt_does_not_load_into_a_closed_plugin(self):
+        # The load is deferred one turn, and shutdown wins that race:
+        # a plugin closed while the answer was in flight must not
+        # start a load it will not finish.
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.coordinator.close()
+        parts.presentation.replaceConfirmed.emit()
+        self._pump(0.1)
+        self.assertFalse(parts.coordinator._loads.load_requested)
 
     def test_the_preview_block_keeps_the_newest_stamp(self):
         parts = self._printing(self._make())

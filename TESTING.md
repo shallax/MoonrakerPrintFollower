@@ -144,7 +144,8 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   clicks). Off-viewport controls are scrolled into the rendered
   viewport first, with the containment asserted.
 - **The RPC surface** — **AMENDED (2026-09-15):** the driver
-  exposes 47 verbs, not the ≤ a dozen this line once promised; the
+  exposes 53 verbs (re-counted 2026-09-24), not the ≤ a dozen this
+  line once promised; the
   pinned structural test covers the runner's step-vocabulary (the
   census-pinned ratchet: real-input steps may only grow, direct
   invocation may only shrink), and the real-mode allowlists are

@@ -1912,7 +1912,19 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
+         # Cancel first, then ask again: the prompt's other answer has
+         # to be real, and a Cancel that loaded anyway would be a Yes
+         # the user never gave (the load busy term is the model's own
+         # word on it).
+         {"op": "deliver_click", "objectName": "moonrakerReplaceCancelButton"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "absent": True, "budget": 20},
+         {"op": "assert_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": false'},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
@@ -2336,7 +2348,10 @@ SCENARIOS = [
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
@@ -2487,7 +2502,10 @@ SCENARIOS = [
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          # And the plugin's own load gate, so a load that never engages
          # fails here with the gate readout instead of 30 s later on the
          # indicator (h2's assertion).
@@ -3129,7 +3147,10 @@ SCENARIOS = [
          {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
          {"op": "click_stage", "stage": "MonitorStage"},

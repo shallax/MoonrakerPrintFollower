@@ -14,6 +14,8 @@ class PreviewPresentation(QObject):
     printPauseRequested = pyqtSignal()
     removePauseRequested = pyqtSignal(int)
     clearPausesRequested = pyqtSignal()
+    replaceConfirmed = pyqtSignal()
+    replaceCancelled = pyqtSignal()
     bedMeshVisibilityRequested = pyqtSignal(bool)
     bedMeshThresholdsRequested = pyqtSignal(float, float)
     bedMeshExaggerationRequested = pyqtSignal(float)
@@ -138,6 +140,8 @@ class PreviewPresentation(QObject):
             ("printPauseRequested", self.printPauseRequested.emit),
             ("removePauseAtLayerRequested", self.removePauseRequested.emit),
             ("clearPauseAtLayersRequested", self.clearPausesRequested.emit),
+            ("replaceConfirmed", self.replaceConfirmed.emit),
+            ("replaceCancelled", self.replaceCancelled.emit),
             ("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit),
             ("bedMeshThresholdsRequested", self.bedMeshThresholdsRequested.emit),
             ("bedMeshExaggerationRequested", self.bedMeshExaggerationRequested.emit),

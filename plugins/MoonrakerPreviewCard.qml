@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
 import UM 1.5 as UM
 import Cura 1.0 as Cura
 
@@ -16,6 +17,10 @@ Item {
     // dynamic names read as undefined at load time and the bindings
     // are dropped before setProperty can ever reach them.
     property bool loadBusy: false
+    // The replace prompt's visibility, driven by the coordinator: the
+    // dialog owns no state of its own, so there is exactly one owner of
+    // "is the question up" and a scenario can see it in the tree.
+    property bool replacePromptVisible: false
     property real loadProgress: -1
     property string loadPhase: ""
     property bool hasToolpath: false
@@ -123,6 +128,8 @@ Item {
     signal pauseAtLayerRequested(int layer)
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
+    signal replaceConfirmed
+    signal replaceCancelled
 
     // THE shared card content: hosted by whichever shell the presenter
     // places it in (the action-panel shell while Cura's panel exists,
@@ -135,7 +142,92 @@ Item {
         followerPanel.visible = base.gateVisible;
     }
 
-    onGateVisibleChanged: updateCardGate()
+    // The prompt follows the card's own gate as well as the model: the
+    // card is instantiated TWICE (the action-panel shell and the corner
+    // overlay) and both receive every published value, so an ungated
+    // prompt would put two identical dialogs up at once. Gated, only
+    // the card the user can actually see asks.
+    function updateReplacePrompt() {
+        replacePromptDialog.visible = base.replacePromptVisible && base.gateVisible;
+    }
+
+    onReplacePromptVisibleChanged: updateReplacePrompt()
+    onGateVisibleChanged: {
+        updateCardGate();
+        updateReplacePrompt();
+    }
+
+    // The replace prompt, as Cura's own dialog rather than a QWidget
+    // QMessageBox. The box-shaped modal was a native alert on macOS and
+    // its nested loop could be left running under a hidden dialog: the
+    // side doing the clicking saw a correct answer while the plugin
+    // never returned from question() and the load never ran - a dozen
+    // steps failed downstream of a step that reported success. A popup
+    // in the card is answered by a real click on a rendered control,
+    // which is what every other scenario drives, and it cannot park the
+    // application in a loop it cannot leave.
+    //
+    // It holds no state of its own: `base.replacePromptVisible` is the
+    // single owner, written by the coordinator, so the dialog cannot
+    // disagree with the model about whether the question is up.
+    Popup {
+        id: replacePromptDialog
+        objectName: "moonrakerReplacePrompt"
+        anchors.centerIn: parent
+        padding: UM.Theme.getSize("default_margin").width
+        modal: true
+        closePolicy: Popup.NoAutoClose
+        focus: false
+        // Written by updateReplacePrompt, never bound: see updateCardGate.
+        onOpened: replacePromptFocus.forceActiveFocus()
+        background: Rectangle {
+            color: UM.Theme.getColor("main_background")
+            border.color: UM.Theme.getColor("lining")
+            border.width: UM.Theme.getSize("default_lining").width
+            radius: UM.Theme.getSize("default_radius").width
+        }
+        contentItem: Column {
+            id: replacePromptFocus
+            focus: true
+            // Escape is the same answer as Cancel, and it TELLS the
+            // model: the popup's own close would leave the model
+            // saying the question is still up, and the visibility
+            // binding would put it straight back.
+            Keys.onEscapePressed: base.replaceCancelled()
+            spacing: UM.Theme.getSize("narrow_margin").height
+            width: 320 * screenScaleFactor
+            UM.Label {
+                text: "Replace Cura contents?"
+                font: UM.Theme.getFont("large_bold")
+            }
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.Wrap
+                text: "This will discard everything currently loaded in Cura and replace it with the G-code currently printing in Moonraker."
+                font: UM.Theme.getFont("medium")
+            }
+            RowLayout {
+                width: parent.width
+                spacing: UM.Theme.getSize("narrow_margin").width
+                Cura.PrimaryButton {
+                    objectName: "moonrakerReplaceConfirmButton"
+                    focusPolicy: Qt.StrongFocus
+                    text: "Replace"
+                    Layout.fillWidth: true
+                    onClicked: base.replaceConfirmed()
+                }
+                // The card's own secondary, not Cura's: this file's
+                // buttons are pinned to the wrapper that centres its
+                // label (Cura's ActionButton label does not).
+                PreviewSecondaryButton {
+                    objectName: "moonrakerReplaceCancelButton"
+                    text: "Cancel"
+                    Layout.fillWidth: true
+                    onClicked: base.replaceCancelled()
+                }
+            }
+        }
+    }
 
     // The pause rows live in a STABLE ListModel the coordinator never
     // touches directly: syncPauseRows() diffs the published list into

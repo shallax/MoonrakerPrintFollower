@@ -134,63 +134,87 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
                       source)
 
-    def test_the_confirm_waits_for_its_box_pumping_the_loop(self):
-        # The plugin's replace-confirm defers its prompt: confirm_replace
-        # switches the stage and only then arms QTimer.singleShot(0, ask).
-        # So the box opens a turn or more after the click that asked for
-        # it, and reading the tree once made the step racy — on the macOS
-        # legs (slowest stage switch, software renderer) the miss showed
-        # up as a plugin that never wrote `answer=` and a load that never
-        # ran, with the step itself reporting a pass. The wait must PUMP
-        # the loop: a sleep never lets the deferred prompt be built, so
-        # the box would time out every time and the "fix" would fail
-        # every leg instead of flaking one.
-        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "driver", "__init__.py")
-        with open(driver, encoding="utf-8") as handle:
-            source = handle.read()
-        handler = source[source.index('if cmd == "confirm_box":'):]
-        handler = handler[:handler.index("if cmd ==", 10)]
-        self.assertIn("while True:", handler, "the box must be waited for")
-        self.assertIn("qWait(", handler, "the wait must pump the event loop")
-        self.assertLess(handler.index("qWait("), handler.index("button.click()"),
-                        "the wait must come before the click")
-        self.assertIn('request.get("wait_s"', handler)
-        # And it must answer THE box, not any box: matching by title is
-        # what stops the driver answering a stray dialog while the
-        # plugin's own prompt opens after the call has returned.
-        self.assertIn('request.get("title"', handler)
-        self.assertIn("windowTitle()", handler)
-        # NOT title-only: macOS renders this alert natively and reports an
-        # EMPTY window title, so a title-only match hunts the right box and
-        # rejects it - measured, the driver saw `QMessageBox:(untitled)`
-        # while looking for "Moonraker Print Follower". The box's own text
-        # is the selector that holds on every platform.
-        self.assertIn('request.get("text"', handler)
-        self.assertIn("informativeText()", handler)
-        runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner.py")
-        with open(runner, encoding="utf-8") as handle:
-            runner_source = handle.read()
-        self.assertIn('"wait_s": float(step.get("wait_s", 15.0))', runner_source)
-        self.assertIn('"title": step.get("title", "Moonraker Print Follower")',
-                      runner_source)
-        # The title the runner defaults to is the one the plugin uses -
-        # and the prompt must not BLOCK. QMessageBox.question() runs its
-        # own nested loop, which on macOS can be left running under a
-        # hidden alert: the driver answered the right dialog, the code
-        # latched, and the plugin never logged an answer while the app
-        # carried on around the modal. open() shows the same dialog
-        # without blocking, with `finished` carrying the same answer.
+    def test_the_replace_prompt_is_the_cards_own_dialog(self):
+        # The replace prompt was a QMessageBox, and the box-shaped
+        # modal is what broke the macOS legs: a native alert answered by
+        # the harness while the plugin never returned from its nested
+        # loop, so a dozen steps failed downstream of a step that
+        # reported success. It is the card's popup now, answered by a
+        # real press on a rendered control like every other scenario.
+        #
+        # The four halves of the contract, each of which has been the
+        # broken one at some point:
+        #   * the plugin opens no widget dialog at all,
+        #   * the card renders the prompt and owns its two buttons,
+        #   * the MODEL is the single authority on whether it is up,
+        #   * every leg that loads a print presses the button.
         cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)))), "plugins", "CuraIntegration.py")
         with open(cura, encoding="utf-8") as handle:
+            integration = handle.read()
+        self.assertNotIn("QMessageBox", integration)
+        self.assertNotIn("QtWidgets", integration)
+        self.assertNotIn("confirm_replace", integration)
+
+        card = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "plugins", "MoonrakerPreviewCard.qml")
+        with open(card, encoding="utf-8") as handle:
+            qml = handle.read()
+        self.assertIn('objectName: "moonrakerReplacePrompt"', qml)
+        self.assertIn('objectName: "moonrakerReplaceConfirmButton"', qml)
+        self.assertIn('objectName: "moonrakerReplaceCancelButton"', qml)
+        self.assertIn("modal: true", qml)
+        # The state is the model's, and the popup is written from the
+        # change handler rather than bound: bindings on setProperty-fed
+        # values go stale on this dynamically created component (the
+        # same reason updateCardGate exists), and a stale binding is a
+        # prompt that never opens.
+        self.assertIn("function updateReplacePrompt()", qml)
+        self.assertIn("replacePromptDialog.visible = base.replacePromptVisible && base.gateVisible",
+                      qml)
+        self.assertIn("onReplacePromptVisibleChanged: updateReplacePrompt()", qml)
+        # Gated on the card's own visibility: the card is instantiated
+        # twice and both copies receive the published value.
+        self.assertNotIn("visible: base.replacePromptVisible", qml)
+
+        coordinator = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "plugins", "PrintCoordinator.py")
+        with open(coordinator, encoding="utf-8") as handle:
             source = handle.read()
-        self.assertIn('QMessageBox(QMessageBox.Icon.Question, "Moonraker Print Follower"',
-                      source)
-        self.assertIn("box.finished.connect(answered)", source)
-        self.assertIn("box.open()", source)
-        self.assertNotIn("QMessageBox.question(None", source,
-                         "the blocking form parks the plugin in a loop it cannot leave")
+        self.assertIn('self._presentation.publish({"replacePromptVisible": True})', source)
+        self.assertIn("def _replace_confirmed(self):", source)
+        self.assertIn("def _replace_cancelled(self):", source)
+        # The pending load is the coordinator's, and answering twice
+        # must not run it twice: the handler clears the field it read.
+        self.assertIn("action, self._replace_action = self._replace_action, None", source)
+
+        # Every scenario that loads a print over existing contents
+        # presses the button - and none of them answers a box.
+        offenders = []
+        for spec in _scenarios.SCENARIOS:
+            steps = spec.get("steps", ())
+            for index, step in enumerate(steps):
+                if step.get("objectName") != "moonrakerReplaceConfirmButton":
+                    continue
+                if step.get("op") == "wait_rect":
+                    continue  # the witness, judged below
+                if step.get("op") != "deliver_click":
+                    offenders.append(f"{spec['id']}: {step.get('op')} on the prompt")
+                # The press must be WITNESSED first: a press at a
+                # control that is not up yet is the race the widget
+                # path had, and an absent read afterwards would make
+                # the miss a vacuous pass.
+                witness = [s for s in steps[:index]
+                           if s.get("op") == "wait_rect"
+                           and s.get("objectName") == "moonrakerReplaceConfirmButton"
+                           and not s.get("absent")]
+                if not witness:
+                    offenders.append(f"{spec['id']}: the prompt is pressed unpainted")
+        self.assertEqual(offenders, [])
+        self.assertTrue(any(step.get("objectName") == "moonrakerReplaceConfirmButton"
+                            for spec in _scenarios.SCENARIOS
+                            for step in spec.get("steps", ())),
+                        "no scenario presses the prompt at all")
 
     def test_a_confirm_is_pressed_not_driven_as_a_slot(self):
         # The static-recording finding: the visual leg confirmed its

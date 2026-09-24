@@ -57,6 +57,10 @@ class PrintCoordinator(QObject):
         self._detail = "Not connected"
         self._gate_logged = None
         self._preview_block = None
+        # The replace prompt's pending action: the load the card's
+        # dialog is asking about, held while the prompt is up (None
+        # when no prompt is up, or after it has been answered).
+        self._replace_action = None
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -118,6 +122,8 @@ class PrintCoordinator(QObject):
         # event would republish it.
         presentation.controlsChanged.connect(self._publish)
         presentation.loadRequested.connect(self.confirm_load)
+        presentation.replaceConfirmed.connect(self._replace_confirmed)
+        presentation.replaceCancelled.connect(self._replace_cancelled)
         presentation.attachmentRequested.connect(self.toggle_attachment)
         # The card's hourglass click is the monitor's improveEta —
         # the same download_and_index path, the same idempotence.
@@ -691,7 +697,44 @@ class PrintCoordinator(QObject):
         self._publish()
 
     def confirm_load(self):
-        self._cura.confirm_replace(self.request_load)
+        # The prompt is Cura's own dialog, drawn in the card: the plugin
+        # never opens a QWidget modal. The box-shaped one was a native
+        # alert on macOS whose nested event loop could be left running
+        # under a hidden dialog, so the side doing the clicking saw a
+        # correct answer while the plugin never returned from
+        # question() and the load never ran - a dozen steps failed
+        # downstream of a step that reported success.
+        #
+        # The coordinator owns the question's state (replacePromptVisible)
+        # and the pending action, so the dialog cannot disagree with the
+        # model about whether it is up, and a scenario can read both in
+        # the tree.
+        self._cura.switch_to_preview()
+        self._replace_action = self.request_load
+        self._presentation.publish({"replacePromptVisible": True})
+
+    def _replace_confirmed(self):
+        action, self._replace_action = self._replace_action, None
+        # Logged on both answers: the pair with request_load's own line
+        # is what tells an answered prompt that ran nothing from one
+        # that was never answered.
+        Logger.log("i", "Moonraker replace confirm: answered yes")
+        self._presentation.publish({"replacePromptVisible": False})
+        if action is None:
+            return
+        # Deferred one turn: the click's own scene change must not be
+        # processed inside it (the load re-reads Cura's state). The
+        # deferral is also the race shutdown wins — a plugin closed
+        # while the answer was in flight must not start a load.
+        def run():
+            if not self._closed:
+                action()
+        QTimer.singleShot(0, run)
+
+    def _replace_cancelled(self):
+        Logger.log("i", "Moonraker replace confirm: answered no")
+        self._replace_action = None
+        self._presentation.publish({"replacePromptVisible": False})
 
     def download_for_monitor(self):
         """Download and index the active print WITHOUT loading it into
@@ -713,8 +756,8 @@ class PrintCoordinator(QObject):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
-        # Paired with the confirm log above: an accepted replace that
-        # never reaches here is a dropped callback, not a refused one.
+        # Paired with the prompt's answer log: an accepted replace that
+        # never reaches here is a dropped action, not a refused one.
         Logger.log("i", "Moonraker current print load requested")
         self._loads.request_load()
         self._message("Resolving current print…")

@@ -714,7 +714,7 @@ CLASS_ORDER = {"diagnostic-probe": 0, "application-integration": 1,
 
 DIRECT_INVOCATION_OPS = frozenset((
     "exec_slot", "exec_file_slot", "emit_click", "click_jog",
-    "confirm_box", "exec_mode", "exec_validator", "exec_console",
+    "exec_mode", "exec_validator", "exec_console",
     "exec_extrude", "exec_test_connection", "exec_code"))
 
 REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text",
@@ -1180,6 +1180,31 @@ for item in _walk(window.contentItem()):
         except Exception:
             result[name] = False
 """
+
+# The replace prompt's own button, emitted — the classic probes' mechanism
+# throughout (their host is the WM-less Xvfb, where a synthesized click
+# does not reach the card). The prompt is the card's popup, so this is the
+# QML handler a real press runs, not a widget box to answer.
+REPLACE_CONFIRM_EMIT = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerReplaceConfirmButton" and bool(item.isVisible()):
+        item.clicked.emit()
+        result["emitted"] = True
+        break
+"""
+
+
+def press_replace_confirm(budget=15.0, interval=1.0):
+    """Answer the card's replace prompt: its own Replace button.
+    Replaces the widget path — there is no QMessageBox to find."""
+    return bool(wait_for(
+        lambda: exec_rpc(REPLACE_CONFIRM_EMIT).get("emitted"), budget, interval))
 
 
 SLOT_READ = """
@@ -1660,8 +1685,7 @@ def scenario9():
         empty = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        wait_for(lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-                 15.0, 1.0)
+        press_replace_confirm()
         action = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
@@ -1991,9 +2015,7 @@ def scenario6():
         empty = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        confirmed = bool(wait_for(
-            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-            15.0, 1.0))
+        confirmed = press_replace_confirm()
         action = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
@@ -2300,12 +2322,10 @@ def scenario2(expect_fail=False):
         # The card's button: window-level synthesized clicks do not
         # reach this control under the WM-less Xvfb, so the button's
         # clicked signal is emitted — the exact QML handler a real
-        # click runs. The replace-confirm QMessageBox that follows is
-        # answered through the classic widget path (confirm_box).
+        # click runs. The replace-confirm that follows is the card's
+        # own popup, pressed at its button.
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        confirmed = bool(wait_for(
-            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-            15.0, 1.0))
+        confirmed = press_replace_confirm()
         steps.append(("05-load-click", "Load current print (clicked-signal emission) + replace-confirm Yes — then HANDS-OFF",
                       "the load was requested and confirmed", bool(confirmed), shot("05-load-click")))
         # The hands-off trace: samples every 2 s, no interaction.
@@ -3430,58 +3450,6 @@ def suite_step(step):
         reply = exec_rpc(code)
         time.sleep(0.6)
         return bool(reply.get("emitted")), f"the '{step['text']}' button's clicked signal (the QML path a real click drives)", "emitted"
-    if op == "confirm_box":
-        # The box opens a turn or more after the click that asks for it:
-        # the plugin switches the stage and only then arms a deferred
-        # singleShot for its prompt. The driver therefore WAITS for the
-        # box, pumping the event loop - a wait that does not pump never
-        # lets the deferred prompt be built - and wait_s is that window.
-        # Reading the tree once, as this did, is what made the step racy:
-        # on the macOS legs the stage switch in front of the prompt is
-        # slowest, the box arrives latest, and the miss showed up not as
-        # a failed step but as a plugin that never wrote its answer line
-        # and a load that never ran.
-        button = step.get("button", "Yes")
-        reply = rpc({"id": 1, "cmd": "confirm_box", "button": button,
-                     # The plugin titles its prompt, and the title is what
-                     # says whose dialog this is: answering any visible
-                     # QMessageBox let a leg report ok with code 16384
-                     # while the plugin never wrote its `answer=` line,
-                     # because the driver had answered another box.
-                     "title": step.get("title", "Moonraker Print Follower"),
-                     # The TEXT is the selector that works everywhere:
-                     # macOS renders this alert natively and reports no
-                     # window title at all, so a title-only match hunted
-                     # the right box and rejected it.
-                     "text": step.get("text", "Replace Cura contents?"),
-                     "wait_s": float(step.get("wait_s", 15.0))})
-        time.sleep(0.5)
-        # The code the plugin reads is part of the proof: a box that
-        # closes without carrying the requested answer is a fail, not
-        # an answered dialog.
-        results = reply.get("results") or []
-        note = "answered" if not results else f"answered with code {results[0]}"
-        if reply.get("texts"):
-            # WHICH dialog was answered. A code alone cannot say whether
-            # the driver answered the plugin's prompt or some other box
-            # that happened to carry a Yes button, and those two leave a
-            # leg in completely different states.
-            note += f" on {reply['texts']}"
-        if not reply.get("ok"):
-            # The driver's error NAMES what it saw, which is the whole
-            # diagnosis when the prompt never arrives: a bare "answered"
-            # here hid "no box titled 'Moonraker Print Follower' (saw
-            # [...])" behind a word that reads like success.
-            note = str(reply.get("error") or "not answered")
-            if reply.get("titles"):
-                note += f" · boxes: {reply['titles']}"
-            if reply.get("top_level"):
-                # Everything visible, not only message boxes: whether the
-                # plugin opened its prompt at all is answered by a box
-                # under another title or by nothing, and those two need
-                # different fixes.
-                note += f" · top level: {reply['top_level']}"
-        return reply.get("ok") is True, f"the {button} on the plugin's QMessageBox", note
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])
         unknown = reply.get("unknown") or []
