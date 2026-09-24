@@ -32,7 +32,7 @@ if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
     docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
 else
     echo "harness smoke: the pull failed — building the image locally"
-    if ! docker build -q -t mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
+    if ! "$root/tools/build_image.sh" mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
         echo "harness smoke: the image build failed:"
         tail -30 "$RUN_ROOT/build.log"
         exit 1

@@ -2129,4 +2129,12 @@ class GCodeIndexService(QObject):
         # store the next session resumes — a plain abort would throw
         # away a partly-prepared print.
         self._retire_prepared_writer()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        # WAITED, not abandoned. cancel_futures drops the queued work,
+        # but the worker already RUNNING keeps the store open and keeps
+        # writing: on Windows a directory holding a file that appears
+        # after the delete has listed it cannot be removed (the test
+        # teardown met WinError 145), and the same race leaves a write
+        # landing after the plugin believes it has shut down. The work
+        # in flight is one bounded unit — the retire above has already
+        # frozen the writer, so there is nothing waiting behind it.
+        self._executor.shutdown(wait=True, cancel_futures=True)

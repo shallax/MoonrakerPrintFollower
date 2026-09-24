@@ -123,7 +123,7 @@ if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
         if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
             docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
         else
-            docker build -q -t mpf-cura-harness "$root/tools/harness"
+            "$root/tools/build_image.sh" mpf-cura-harness "$root/tools/harness"
         fi
     fi
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true

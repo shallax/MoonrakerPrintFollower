@@ -75,7 +75,7 @@ jobs:
           if docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} >/dev/null 2>&1; then
             docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
           else
-            docker build -q -t mpf-cura-harness tools/harness
+            ./tools/build_image.sh mpf-cura-harness tools/harness
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \

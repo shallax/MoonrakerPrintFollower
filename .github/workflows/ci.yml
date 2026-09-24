@@ -507,7 +507,10 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Build the pinned capture image
-        run: docker build -q -t moonraker-print-follower-dev .
+        # Through the retrying helper: this step's apt install is the
+        # one that fails on a bad mirror, and a red image build here
+        # reads as a stale-screenshot failure it has nothing to do with.
+        run: ./tools/build_image.sh moonraker-print-follower-dev .
 
       - name: Regenerate screenshots in the canonical container
         # The dev container pins the toolchain (Qt, fonts) that makes the

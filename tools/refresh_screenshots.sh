@@ -26,7 +26,7 @@ rm -f dist/screenshots/*.png
 # always match what the sync job produces — and fail loudly if the
 # pull/build fails: silently falling back to the stale image commits
 # captures CI will reject.
-docker build --pull -q -t moonraker-print-follower-dev .
+"$(dirname "$0")/build_image.sh" moonraker-print-follower-dev . --pull
 tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
     && python3 tools/capture_preview.py dist/screenshots \
     && python3 tools/capture_settings.py dist/screenshots \

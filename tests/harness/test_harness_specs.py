@@ -134,6 +134,48 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
                       source)
 
+    def test_a_step_never_addresses_a_name_on_a_type_no_walk_reaches(self):
+        # The harness addresses the plugin through QQuickItem.childItems()
+        # — the VISUAL tree. A Popup, a Menu, a Window: none of those is
+        # an Item, so a step naming one can never resolve. It fails
+        # slowly and confusingly: the controls INSIDE the popup answer
+        # normally, so the leg's other steps pass while the wait for the
+        # popup itself times out (measured: the macOS printing leg's
+        # wait for the replace prompt timed out while both its buttons
+        # were pressed without complaint).
+        #
+        # A name NOTHING addresses is fine and several exist (a popup's
+        # own handle, recorded as exclusions) — the rule is about the
+        # names the suite actually presses and reads.
+        import re
+        from pathlib import Path
+        plugins = Path(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))) / "plugins"
+        addressed = {step["objectName"] for spec in _scenarios.SCENARIOS
+                     for step in spec.get("steps", ()) if step.get("objectName")}
+        non_items = ("Popup", "Menu", "Dialog", "Window", "ToolTip", "Action",
+                     "MessageDialog", "FileDialog", "ColorDialog", "FolderDialog",
+                     "Drawer")
+        declaration = re.compile(
+            r"^\s*(?:[A-Z][\w.]*\.)?(" + "|".join(non_items) + r")\s*\{\s*$")
+        offenders = []
+        for path in sorted(plugins.glob("*.qml")):
+            lines = path.read_text(encoding="utf-8").split("\n")
+            for index, line in enumerate(lines):
+                if not declaration.match(line):
+                    continue
+                depth = line.count("{") - line.count("}")
+                for offset in range(index + 1, len(lines)):
+                    body = lines[offset]
+                    if depth == 0:
+                        break
+                    name = re.match(r"^\s*objectName\s*:\s*\"([^\"]+)\"", body)
+                    if depth == 1 and name and name.group(1) in addressed:
+                        offenders.append(f"{path.name}:{offset + 1}: {name.group(1)}")
+                    depth += body.count("{") - body.count("}")
+        self.assertEqual(offenders, [],
+                         "a step addresses a name on a type no walk reaches: %s" % offenders)
+
     def test_the_replace_prompt_is_the_cards_own_dialog(self):
         # The replace prompt was a QMessageBox, and the box-shaped
         # modal is what broke the macOS legs: a native alert answered by

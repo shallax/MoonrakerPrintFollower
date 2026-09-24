@@ -172,7 +172,6 @@ Item {
     // disagree with the model about whether the question is up.
     Popup {
         id: replacePromptDialog
-        objectName: "moonrakerReplacePrompt"
         anchors.centerIn: parent
         padding: UM.Theme.getSize("default_margin").width
         modal: true
@@ -188,6 +187,13 @@ Item {
         }
         contentItem: Column {
             id: replacePromptFocus
+            // The prompt's addressable surface is the popup's own
+            // CONTENT, not the Popup object: a Popup is not an Item and
+            // never appears in the visual tree a walk can reach, so an
+            // objectName on it is a surface nothing can find (measured:
+            // the macOS leg's wait for it timed out while the buttons
+            // inside it answered).
+            objectName: "moonrakerReplacePrompt"
             focus: true
             // Escape is the same answer as Cancel, and it TELLS the
             // model: the popup's own close would leave the model

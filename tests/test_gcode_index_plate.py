@@ -2599,6 +2599,25 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                          self._payload(0),
                          "the checkpointed layer never round-tripped")
 
+    def test_a_close_waits_for_the_worker_it_started(self):
+        # The worker writes the prepared store, and on Windows a
+        # directory holding a file that appears after the delete has
+        # listed it cannot be removed (WinError 145 in this file's own
+        # teardown). The same race lands a write after the plugin
+        # believes it has shut down. close() must not return while a
+        # worker is still running.
+        self._view(3)
+        self.service._prepared_open(self.files.identity)
+        self.service._advance()
+        executor = self.service._executor
+        # The premise: work was actually submitted, so there IS a
+        # worker to leave running (an empty pool would pass this
+        # whatever close() did).
+        self.assertTrue(executor._threads, "no worker was ever started")
+        self.service.close()
+        alive = [t for t in executor._threads if t.is_alive()]
+        self.assertEqual(alive, [], "close() left its worker running")
+
     def test_a_clean_close_publishes_the_partial_preparation(self):
         # The review's clean-shutdown P0: session A prepares a subset,
         # then closes NORMALLY — the checkpoint publishes as an
