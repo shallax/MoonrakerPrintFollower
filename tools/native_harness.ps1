@@ -1284,6 +1284,26 @@ if (Test-Path -LiteralPath $QtTestDll) {
     Write-Warn "no Qt6Test.dll at $QtTestDll - the binding would not resolve it"
 }
 
+# --- 6b. the suite's test model -------------------------------------------
+# tools/ui_test.sh stages the cube into the container's work dir, which IS
+# /tmp/mpf, so the driver's insert-model path resolved there. Here there is
+# no container: /tmp/mpf resolves against Cura's OWN drive, and the probes
+# that write their census there would fail mid-scenario. The cube goes into
+# the work dir, and HARNESS_SCRATCH_DIR below tells the runner that it, not
+# /tmp/mpf, is the shared scratch.
+Write-Log ""
+Write-Log "--- the suite's test model ---"
+$ModelsDir = Join-Path $WorkDir 'models'
+$ModelSrc = Join-Path $Root 'tests\harness\models\voron_cube.stl'
+$ModelDst = Join-Path $ModelsDir 'voron_cube.stl'
+try {
+    New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
+    Copy-Item -LiteralPath $ModelSrc -Destination $ModelDst -Force -ErrorAction Stop
+    Write-Log "model       : $ModelDst ($((Get-Item -LiteralPath $ModelDst).Length) bytes)"
+} catch {
+    Write-Warn "the suite's test model could not be staged at $ModelDst ($($_.Exception.Message))"
+}
+
 # --- 8. the plugin's network peer -----------------------------------------
 # The seeded machine records point at 127.0.0.1:7125, and the runner's own
 # /harness/* calls go to the same port. The simulator has to be up BEFORE
@@ -1616,6 +1636,10 @@ $EnvFile = Join-Path $WorkDir 'harness_env.ps1'
     # driver that never answered is read out of that file.
     "`$env:HARNESS_CURA_CONFIG = '$ConfigDir'",
     "`$env:MPF_WORK_DIR = '$WorkDir'",
+    # The scratch the driver's probes share with the runner: the container
+    # legs get theirs from the /tmp/mpf mount, and here the work dir is the
+    # only path both Cura and the runner can reach.
+    "`$env:HARNESS_SCRATCH_DIR = '$WorkDir'",
     "`$env:CURA_VERSION = '$CuraVersion'",
     "`$env:PLUGIN_VERSION = '$PluginVersion'",
     "`$env:HARNESS_MODE = '$RunnerMode'"

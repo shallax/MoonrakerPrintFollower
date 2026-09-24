@@ -39,6 +39,13 @@ RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-" + time.
 RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
 PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
 TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
+# The scratch Cura and the runner both read. The container's work dir IS
+# /tmp/mpf, so one literal served both sides of its mount; on the natives
+# it serves neither — there is no /tmp/mpf, and Windows resolves a
+# leading-slash path against the CALLER's drive, so the driver (Cura's
+# drive) and the runner (the checkout's) opened different files under the
+# same string. The native harness points this at its own work dir.
+SCRATCH_DIR = os.environ.get("HARNESS_SCRATCH_DIR", "/tmp/mpf")
 DRIVER_HOST = "127.0.0.1"
 SYSTEM = native_host.current_system()
 
@@ -3266,8 +3273,8 @@ def suite_step(step):
         changed = value != before and value is not None
         return changed, f"the model's {step['prop']} changed from {before!r}", f"now {value!r}"
     if op == "write_fixture":
-        # A local gcode file for the upload flow — the runner and the
-        # simulator share /tmp/mpf, so the path resolves on both sides.
+        # A local gcode file for the upload flow — the spec builds the
+        # path from SCRATCH_DIR, so it resolves on both sides here.
         path = step["path"]
         try:
             with open(path, "w", encoding="utf-8") as handle:
@@ -3549,7 +3556,8 @@ def suite_step(step):
                 "app = Application.getInstance()\n"
                 "result = {}\n"
                 "try:\n"
-                "    app.readLocalFile(QUrl.fromLocalFile(\"/tmp/mpf/models/voron_cube.stl\"),"
+                "    app.readLocalFile(QUrl.fromLocalFile("
+                + json.dumps(os.path.join(SCRATCH_DIR, "models", "voron_cube.stl")) + "),"
                 " add_to_recent_files=False)\n"
                 "    result[\"read\"] = True\n"
                 "except Exception as exc:\n"

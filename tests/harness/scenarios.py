@@ -6,6 +6,24 @@ boot with a simulator reset between scenarios. The coverage gate
 """
 from __future__ import annotations
 
+import json
+import os
+
+# The scratch the driver-side probes write into, shared with the runner
+# (runner.SCRATCH_DIR): the container's work dir IS /tmp/mpf, and on the
+# natives that path exists on neither side. Lowercase, unlike this
+# module's probe constants: test_harness_specs compiles every ALL-CAPS
+# str attribute as probe CODE, and a path is not code.
+_scratch_dir = os.environ.get("HARNESS_SCRATCH_DIR", "/tmp/mpf")
+
+
+def _scratch(name: str) -> str:
+    """A path in the shared scratch, as a literal for the driver's code.
+
+    json-encoded because a Windows work dir is all backslash escapes.
+    """
+    return json.dumps(os.path.join(_scratch_dir, name))
+
 # Shared probe bodies for the z-group geometry diagnostics: exact
 # rendered rects from the QML scene, the evidence calibration reads.
 RECT_PROBE = (
@@ -278,7 +296,7 @@ FM_POPUP_PROBE = (
     "        if isinstance(placeholder, str) and placeholder.strip():\n"
     "            result[\"fields\"].append([cls[:18], placeholder[:30], round(p.x()), round(p.y()),\n"
     "                                         round(item.width()), round(item.height())])\n"
-    "with open('/tmp/mpf/fm_popup_probe.json', 'w') as _f:\n"
+    "with open(" + _scratch("fm_popup_probe.json") + ", 'w') as _f:\n"
     "    _json.dump(result, _f)\n"
     "# The full census (with coordinates) rides the file; the RETURNED\n"
     "# summary stays well under the driver's 4000-char transport cap\n"
@@ -324,7 +342,7 @@ FM_BUTTON_PROBE = (
     "            chain.append([node.metaObject().className()[:24], None])\n"
     "    row.append(chain)\n"
     "    result[\"matches\"].append(row)\n"
-    "with open('/tmp/mpf/fm_button_probe.json', 'w') as f:\n"
+    "with open(" + _scratch("fm_button_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
     "result")
 
@@ -371,7 +389,7 @@ SETTINGS_PROBE = (
     "            result[\"config_items\"].append([cls[:22], str(name), str(text)[:30]])\n"
     "except Exception as exc:\n"
     "    result[\"walk_error\"] = repr(exc)\n"
-    "with open('/tmp/mpf/settings_probe.json', 'w') as f:\n"
+    "with open(" + _scratch("settings_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
     "result")
 
@@ -1645,8 +1663,9 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
-         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload.gcode"},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload.gcode"]},
+         {"op": "write_fixture", "path": os.path.join(_scratch_dir, "scenario-upload.gcode")},
+         {"op": "exec_file_slot", "slot": "fileUpload",
+          "args": [os.path.join(_scratch_dir, "scenario-upload.gcode")]},
          {"op": "sim_ledger", "needle": "files/upload", "field": "path", "min": 1, "budget": 30},
          # The honest-lane proof: only the sim's upload handler (not
          # the catch-all) adds the entry to the store, and the
@@ -1655,9 +1674,10 @@ SCENARIOS = [
          # The refusal half: the armed lane answers 400 with its own
          # message, and the note surfaces it. A dead lane would
          # accept this upload and the refusal string never appears.
-         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload-refused.gcode"},
+         {"op": "write_fixture", "path": os.path.join(_scratch_dir, "scenario-upload-refused.gcode")},
          {"op": "sim_arm", "arms": {"fail_upload": True}},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload-refused.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileUpload",
+          "args": [os.path.join(_scratch_dir, "scenario-upload-refused.gcode")]},
          {"op": "wait_model", "prop": "fileManagerNote", "contains": "simulated upload refusal", "budget": 30},
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},

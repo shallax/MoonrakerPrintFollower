@@ -845,6 +845,22 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         warn "no QtTest.framework at $QT_LIB - the binding would not resolve it"
     fi
 
+    # --- 6b. the suite's test model --------------------------------------
+    # tools/ui_test.sh stages the cube into the container's work dir, which
+    # IS /tmp/mpf, so the driver's insert-model path resolved there. Here
+    # there is no container: /tmp/mpf does not exist, and the probes that
+    # write their census there would fail mid-scenario. The cube goes into
+    # the work dir, and HARNESS_SCRATCH_DIR below tells the runner that it,
+    # not /tmp/mpf, is the shared scratch.
+    echo
+    echo "--- the suite's test model ---"
+    mkdir -p "$WORK_DIR/models"
+    if cp "$ROOT/tests/harness/models/voron_cube.stl" "$WORK_DIR/models/voron_cube.stl"; then
+        echo "model       : $WORK_DIR/models/voron_cube.stl ($(stat -f%z "$WORK_DIR/models/voron_cube.stl") bytes)"
+    else
+        warn "the suite's test model could not be staged at $WORK_DIR/models/voron_cube.stl"
+    fi
+
     # --- 7. the plugin's network peer -------------------------------------
     # The seeded machine records point at 127.0.0.1:7125, and the runner's
     # own /harness/* calls go to the same port. The simulator has to be up
@@ -1099,6 +1115,10 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         # driver that never answered is read out of that file.
         echo "export HARNESS_CURA_CONFIG='$CONFIG_DIR'"
         echo "export MPF_WORK_DIR='$WORK_DIR'"
+        # The scratch the driver's probes share with the runner: the
+        # container legs get theirs from the /tmp/mpf mount, and here the
+        # work dir is the only path both Cura and the runner can reach.
+        echo "export HARNESS_SCRATCH_DIR='$WORK_DIR'"
         echo "export CURA_VERSION='$CURA_VERSION'"
         echo "export PLUGIN_VERSION='$PLUGIN_VERSION'"
         echo "export HARNESS_MODE='$RUNNER_MODE'"
