@@ -3431,14 +3431,28 @@ def suite_step(step):
         time.sleep(0.6)
         return bool(reply.get("emitted")), f"the '{step['text']}' button's clicked signal (the QML path a real click drives)", "emitted"
     if op == "confirm_box":
-        reply = rpc({"id": 1, "cmd": "confirm_box", "button": step.get("button", "Yes")})
+        # The box opens a turn or more after the click that asks for it:
+        # the plugin switches the stage and only then arms a deferred
+        # singleShot for its prompt. The driver therefore WAITS for the
+        # box, pumping the event loop - a wait that does not pump never
+        # lets the deferred prompt be built - and wait_s is that window.
+        # Reading the tree once, as this did, is what made the step racy:
+        # on the macOS legs the stage switch in front of the prompt is
+        # slowest, the box arrives latest, and the miss showed up not as
+        # a failed step but as a plugin that never wrote its answer line
+        # and a load that never ran.
+        button = step.get("button", "Yes")
+        reply = rpc({"id": 1, "cmd": "confirm_box", "button": button,
+                     "wait_s": float(step.get("wait_s", 15.0))})
         time.sleep(0.5)
         # The code the plugin reads is part of the proof: a box that
         # closes without carrying the requested answer is a fail, not
         # an answered dialog.
         results = reply.get("results") or []
         note = "answered" if not results else f"answered with code {results[0]}"
-        return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", note
+        if not reply.get("ok") and reply.get("error") == "no QMessageBox up":
+            note = f"no box within {reply.get('waited_s')}s"
+        return reply.get("ok") is True, f"the {button} on the plugin's QMessageBox", note
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])
         unknown = reply.get("unknown") or []

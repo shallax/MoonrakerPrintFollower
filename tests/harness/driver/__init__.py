@@ -1341,11 +1341,30 @@ class HarnessServer(QObject):
                             "Cancel": QMessageBox.StandardButton.Cancel}.get(wanted)
                 if standard is None:
                     return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
-                boxes = [w for w in QApplication.topLevelWidgets()
-                         if isinstance(w, QMessageBox) and w.isVisible()]
-                if not boxes:
-                    return {"id": request_id, "ok": False, "error": "no QMessageBox up"}
                 qtest = _import_qtest()
+                # WAIT for the box, pumping the loop. The plugin defers its
+                # prompt - confirm_replace switches the stage and only then
+                # arms QTimer.singleShot(0, ask) - so the box opens a turn
+                # or more after the click that asked for it, and a plain
+                # sleep would never let it appear. Reading the tree once
+                # and giving up is what made this racy: on macOS the stage
+                # switch is slower (the window is frozen and the renderer
+                # is software), so the gap is widest exactly where the legs
+                # were going red. qWait DRIVES the loop, which is the
+                # difference between waiting for the box and waiting out
+                # the timeout with the box still unbuilt.
+                deadline = time.monotonic() + float(request.get("wait_s", 10.0))
+                boxes = []
+                while True:
+                    boxes = [w for w in QApplication.topLevelWidgets()
+                             if isinstance(w, QMessageBox) and w.isVisible()]
+                    if boxes or time.monotonic() >= deadline:
+                        break
+                    qtest.QTest.qWait(100)
+                if not boxes:
+                    return {"id": request_id, "ok": False,
+                            "error": "no QMessageBox up",
+                            "waited_s": round(float(request.get("wait_s", 10.0)), 1)}
                 clicked = 0
                 results = []
                 for box in boxes:

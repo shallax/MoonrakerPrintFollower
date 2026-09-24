@@ -130,6 +130,33 @@ class HarnessSpecTests(unittest.TestCase):
             source = handle.read()
         self.assertIn("def _aim_point(", source)
         self.assertNotIn("scene.x() + target.width() / 2", source)
+
+    def test_the_confirm_waits_for_its_box_pumping_the_loop(self):
+        # The plugin's replace-confirm defers its prompt: confirm_replace
+        # switches the stage and only then arms QTimer.singleShot(0, ask).
+        # So the box opens a turn or more after the click that asked for
+        # it, and reading the tree once made the step racy — on the macOS
+        # legs (slowest stage switch, software renderer) the miss showed
+        # up as a plugin that never wrote `answer=` and a load that never
+        # ran, with the step itself reporting a pass. The wait must PUMP
+        # the loop: a sleep never lets the deferred prompt be built, so
+        # the box would time out every time and the "fix" would fail
+        # every leg instead of flaking one.
+        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "driver", "__init__.py")
+        with open(driver, encoding="utf-8") as handle:
+            source = handle.read()
+        handler = source[source.index('if cmd == "confirm_box":'):]
+        handler = handler[:handler.index("if cmd ==", 10)]
+        self.assertIn("while True:", handler, "the box must be waited for")
+        self.assertIn("qWait(", handler, "the wait must pump the event loop")
+        self.assertLess(handler.index("qWait("), handler.index("button.click()"),
+                        "the wait must come before the click")
+        self.assertIn('request.get("wait_s"', handler)
+        runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner.py")
+        with open(runner, encoding="utf-8") as handle:
+            runner_source = handle.read()
+        self.assertIn('"wait_s": float(step.get("wait_s", 15.0))', runner_source)
         self.assertNotIn("scene.x() + item.width() / 2", source)
         self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
                       source)
