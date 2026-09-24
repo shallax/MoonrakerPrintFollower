@@ -1,0 +1,270 @@
+# One gate leg: a single unit on a single OS.
+#
+# A reusable workflow, because there are two callers and they must run
+# the SAME steps: the release matrix over every unit and platform, and a
+# dispatch over one of each. A second copy of these steps would drift
+# from the gate it exists to reproduce, which is the failure this file
+# is here to prevent. The steps are the gate job's own, moved verbatim;
+# only their references to the caller's matrix became inputs.
+#
+# UNITS travels as a parameter because it has to: a job that calls a
+# reusable workflow may carry only name/uses/with/secrets/needs/if and
+# permissions - no `env:` - so the caller cannot hold the declaration
+# and the leg sets its own env from what it is handed.
+name: Gate leg
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: "the runner: ubuntu-26.04, macos-latest or windows-latest"
+        type: string
+        required: true
+      unit:
+        description: "the unit's name, as the release matrix names it"
+        type: string
+        required: true
+      UNITS:
+        description: "the release matrix's unit declaration, as JSON"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  leg:
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 90
+    env:
+      HARNESS_CONTAINER: mpf-cura-gate-${{ inputs.unit }}
+      UNITS: ${{ inputs.UNITS }}
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Where this job's gallery lands. One definition, because the
+      # native scripts write it and the upload reads it back — the two
+      # must not drift, and Windows has no /tmp. The Windows value is
+      # forward-slashed so the same string is valid for the script, for
+      # PowerShell and for upload-artifact.
+      - name: Set the gallery root
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            root="${RUNNER_TEMP//\\//}/ui-artifacts"
+          else
+            root=/tmp/mpf/ui-artifacts
+          fi
+          echo "GALLERY=$root/runs/${{ github.run_id }}/${{ inputs.unit }}" >> "$GITHUB_ENV"
+
+      # The Linux leg builds both artifacts through the Makefile, as it
+      # always has. `make` is not on the Windows image and the native
+      # legs need only the .curapackage, so they build that one directly.
+      - name: Build the plugin package (Linux)
+        if: runner.os == 'Linux'
+        run: make package >/dev/null
+
+      - name: Build the plugin package (native)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          py=python3
+          command -v python3 >/dev/null 2>&1 || py=python
+          "$py" tools/build_curapackage.py
+
+      # Everything below is the container leg's alone: the native legs
+      # install Cura themselves, so a Cura tree fetch and a harness image
+      # would be wasted work (and there is no docker on macOS).
+      - name: Restore the pinned Cura tree
+        if: runner.os == 'Linux'
+        id: cura-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/mpf/cura_versions
+          key: mpf-cura-${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}
+
+      - name: Fetch the pinned Cura
+        if: runner.os == 'Linux'
+        run: python3 tools/fetch_cura.py "${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}"
+
+      - name: Pull the harness image and start the container
+        if: runner.os == 'Linux'
+        run: |
+          # PR runs have no pushed image for this sha; the build is the
+          # fallback. The push itself is gated to dispatch/tag runs,
+          # where the token can write packages.
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
+          # Pull the published image rather than rebuilding it. The sha tag
+          # exists only for runs that pushed one, and the push is gated to
+          # non-PR runs, so on a PR that pull could only ever fail and every
+          # Linux leg fell through to a docker build that runs apt-get against
+          # the live archives: seventeen rolls of those dice per run, and one
+          # hiccup killed a leg before it ran anything.
+          #
+          # But pulling always would mean a Dockerfile change is never
+          # exercised, so a PR that touches tools/harness builds regardless.
+          # If the base commit cannot be read, build too - that is the safe
+          # direction, because it keeps the image covered.
+          HARNESS_CHANGED=yes
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            # "unchanged" is only claimed when the base is READABLE and the
+            # diff actually ran. A failed fetch that still resolves locally
+            # would otherwise skip the diff and report unchanged, which is
+            # the unsafe direction.
+            if [ -n "$BASE" ] && git fetch -q --depth=1 origin "$BASE" 2>/dev/null \
+               && git rev-parse -q --verify "$BASE^{commit}" >/dev/null 2>&1; then
+              if git diff --name-only "$BASE" HEAD -- tools/harness | grep -q .; then
+                echo "tools/harness changed in this PR - the image must be built"
+              else
+                echo "tools/harness unchanged in this PR - the published image is used"
+                HARNESS_CHANGED=no
+              fi
+            else
+              echo "could not read the base commit - building, so the image stays covered"
+            fi
+          fi
+          if [ "$HARNESS_CHANGED" = yes ]; then
+            docker build -q -t mpf-cura-harness tools/harness
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" mpf-cura-harness
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" >/dev/null 2>&1; then
+            echo "pulled the published :latest harness image (no image for this sha)"
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" mpf-cura-harness
+          else
+            echo "no published harness image was reachable - building from tools/harness, which needs the apt archive"
+            docker build -q -t mpf-cura-harness tools/harness
+          fi
+          docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
+              -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
+
+      # One attempt per unit (the gate ruling): a retried unit would
+      # hide flakiness. The gallery is the proof — every unit's
+      # evidence lands under this workflow run's root.
+      # The Linux leg is the original path, unchanged: the harness container
+      # already holds Cura, so the budget covers the scenario alone.
+      - name: Run the unit (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 30
+        run: |
+          mkdir -p /tmp/mpf
+          timeout "${{ fromJSON(inputs.UNITS)[inputs.unit].budget }}m" env \
+              CURA_VERSION="${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}" \
+              MODE="${{ fromJSON(inputs.UNITS)[inputs.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(inputs.UNITS)[inputs.unit].group }}" \
+              RUN_DIR_NAME="$GALLERY" \
+              ./tools/ui_test.sh
+
+      # The native legs do their own setup: install Cura, seed it, stage the
+      # plugin and the driver, launch, clamp the window. That is why they get
+      # their own timeout - the gate's per-unit budget bounds the SCENARIO, and
+      # on Linux the equivalent work happened in earlier steps. Charging a cold
+      # 170 MB install to the scenario budget would report a slow network as a
+      # scenario failure.
+      - name: Set up the native harness (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          SCENARIO: ${{ fromJSON(inputs.UNITS)[inputs.unit].group || fromJSON(inputs.UNITS)[inputs.unit].mode }}
+        run: |
+          RUN_DIR_NAME="$GALLERY" \
+            bash tools/native_harness.sh macos "${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}" "$SCENARIO"
+
+      - name: Run the unit (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: ${{ fromJSON(inputs.UNITS)[inputs.unit].budget }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /tmp/mpf-native/harness_env.sh
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          # -u: the step can be killed at its timeout, and block-buffered
+          # stdout dies with the process - the only macOS run so far left
+          # nothing on stdout but ffmpeg's retries, so what the runner was
+          # waiting for could not be read off the log.
+          rc=0
+          python3 -u tests/harness/runner.py ${{ fromJSON(inputs.UNITS)[inputs.unit].mode }} ${{ fromJSON(inputs.UNITS)[inputs.unit].group }} || rc=$?
+          test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
+          exit "$rc"
+
+      # The Windows legs re-downloaded the Cura installer on every one of
+      # the seventeen, and re-probed the release for it: measured at
+      # 134-180 s of a 219-341 s job, more than half of every Windows leg.
+      # The installer is the same file for every unit on a version, so it
+      # is cached beside the machine, exactly as the container leg caches
+      # its pinned Cura tree. native_harness.ps1 still verifies the
+      # signature of whatever it finds, so a cached installer is trusted
+      # no further than a fresh one.
+      - name: Cache the Windows Cura installer
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cura-installers
+          key: mpf-win-installer-${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}
+
+      - name: Set up the native harness (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        shell: powershell
+        env:
+          SCENARIO: ${{ fromJSON(inputs.UNITS)[inputs.unit].group || fromJSON(inputs.UNITS)[inputs.unit].mode }}
+        run: |
+          # The step's shell sets $ErrorActionPreference = 'Stop', under which
+          # a native command's stderr - the setup script's own warnings, for
+          # instance - is a TERMINATING error in PowerShell 5.1. The exit code
+          # below is the verdict, so the preference is relaxed for the call.
+          $ErrorActionPreference = 'Continue'
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          $env:RUN_DIR_NAME = $env:GALLERY
+          & powershell -ExecutionPolicy Bypass -File tools\native_harness.ps1 `
+              -CuraVersion "${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}" `
+              -Scenario "$env:SCENARIO" -WorkDir $work
+          if ($LASTEXITCODE -ne 0) { throw "native_harness.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Run the unit (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: ${{ fromJSON(inputs.UNITS)[inputs.unit].budget }}
+        shell: powershell
+        run: |
+          # A 15-minute scenario writes plenty to stderr, and under the
+          # step shell's $ErrorActionPreference = 'Stop' the FIRST such byte
+          # from a native command terminates the step in PowerShell 5.1 -
+          # before the exit code or the gallery guard below are ever read.
+          $ErrorActionPreference = 'Continue'
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          . (Join-Path $work 'harness_env.ps1')
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          # -u for the same reason as macOS: a step killed at its timeout
+          # takes its block-buffered stdout with it.
+          $rc = 0
+          & python -u tests\harness\runner.py "${{ fromJSON(inputs.UNITS)[inputs.unit].mode }}" "${{ fromJSON(inputs.UNITS)[inputs.unit].group }}"
+          if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $env:HARNESS_RUN_DIR 'index.html'))) {
+            Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1
+          }
+          if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
+
+      - name: Upload the unit's gallery
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          # the OS is in the name: 51 galleries, and two units of the same
+          # name on different platforms must not collide
+          name: gate-${{ inputs.unit }}-${{ inputs.os }}
+          path: ${{ env.GALLERY }}
+          if-no-files-found: error
+
