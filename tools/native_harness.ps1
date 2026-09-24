@@ -48,9 +48,19 @@ $ErrorActionPreference = 'Stop'
 
 $script:LogFile = $null
 
+# Every line carries its elapsed seconds. Setup was measured at 134-180 s
+# of a 219-341 s Windows job - more than half of every leg, seventeen
+# times a matrix - and the log could not say which of its eleven phases
+# the minutes went to, which is why the first guess at it (the installer
+# download) could not be checked against anything. The stamp is the
+# cheapest way to make the next run answer that: no phase has to
+# remember to time itself, and a stalled phase is visible as a gap.
+$script:PhaseWatch = [Diagnostics.Stopwatch]::StartNew()
+
 function Write-Log([string]$Message) {
-    Write-Host $Message
-    if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $Message -Encoding ASCII }
+    $stamped = "[{0,6:N1}s] {1}" -f $script:PhaseWatch.Elapsed.TotalSeconds, $Message
+    Write-Host $stamped
+    if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $stamped -Encoding ASCII }
 }
 
 function Write-Warn([string]$Message) {
@@ -263,26 +273,54 @@ function Get-CurlFile([string]$Url, [string]$Path) {
 }
 
 Write-Log ""
-Write-Log "--- is each Windows installer published for ${CuraVersion}? ---"
-$exeState = Probe-Asset $ExeUrl
-$msiState = 'not probed'
+# A cached installer is the whole point of the cache the workflow keeps
+# beside this script: every Windows leg used to re-download 150-300 MB
+# and re-HEAD the release, which was 134-180 s of a 219-341 s job - more
+# than half of every Windows leg, seventeen times a matrix. The size
+# floor is what tells a cached file from a truncated one; the signature
+# is still checked below, so a cached installer is trusted exactly as
+# far as a freshly downloaded one is.
+function Get-CachedInstaller([string]$Path, [long]$Floor) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $len = (Get-Item -LiteralPath $Path).Length
+    if ($len -lt $Floor) {
+        Write-Warn "  $(Split-Path -Leaf $Path) is only $len bytes - treating it as truncated, not as a cached installer"
+        return $false
+    }
+    return $true
+}
+
 $useExe = $false
 $useMsi = $false
-if ($exeState -eq 'published') {
-    $useExe = $true
-} elseif ($exeState -eq 'unknown') {
-    Fail "the published-asset probe got no usable status for $ExeName (HTTP $exeState) - refusing to guess whether the URL exists"
+$cachedExe = Get-CachedInstaller $ExePath 20000000
+$cachedMsi = Get-CachedInstaller $MsiPath 20000000
+if ($cachedExe -or $cachedMsi) {
+    $which = if ($cachedExe) { $ExeName } else { $MsiName }
+    Write-Log "--- $which is cached - skipping the published-asset probe and the download ---"
+    $useExe = $cachedExe
+    $useMsi = (-not $cachedExe) -and $cachedMsi
 } else {
-    Write-Log "  the NSIS .exe is not published for this version; the MSI is the only installer left"
-    $msiState = Probe-Asset $MsiUrl
-    if ($msiState -eq 'published') { $useMsi = $true }
-    elseif ($msiState -eq 'unknown') { Fail "the published-asset probe got no usable status for $MsiName" }
-    else { Fail "neither $ExeName nor $MsiName is published for Cura $CuraVersion" }
+    Write-Log "--- is each Windows installer published for ${CuraVersion}? ---"
+    $exeState = Probe-Asset $ExeUrl
+    $msiState = 'not probed'
+    if ($exeState -eq 'published') {
+        $useExe = $true
+    } elseif ($exeState -eq 'unknown') {
+        Fail "the published-asset probe got no usable status for $ExeName (HTTP $exeState) - refusing to guess whether the URL exists"
+    } else {
+        Write-Log "  the NSIS .exe is not published for this version; the MSI is the only installer left"
+        $msiState = Probe-Asset $MsiUrl
+        if ($msiState -eq 'published') { $useMsi = $true }
+        elseif ($msiState -eq 'unknown') { Fail "the published-asset probe got no usable status for $MsiName" }
+        else { Fail "neither $ExeName nor $MsiName is published for Cura $CuraVersion" }
+    }
+}
+if ($useExe -and -not $cachedExe) {
+    if (-not (Get-CurlFile $ExeUrl $ExePath)) { Fail "could not download $ExeUrl" }
 }
 if ($useExe) {
-    if (-not (Get-CurlFile $ExeUrl $ExePath)) { Fail "could not download $ExeUrl" }
     $f = Get-Item -LiteralPath $ExePath
-    Write-Log ("downloaded: {0} ({1:N1} MB)" -f $f.FullName, ($f.Length / 1MB))
+    Write-Log ("installer: {0} ({1:N1} MB)" -f $f.FullName, ($f.Length / 1MB))
     $sig = Get-AuthenticodeSignature -LiteralPath $ExePath
     Write-Log "signature : $($sig.Status) / signer $($sig.SignerCertificate.Subject)"
 }

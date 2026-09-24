@@ -307,6 +307,21 @@ jobs:
           test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
           exit "$rc"
 
+      # The Windows legs re-downloaded the Cura installer on every one of
+      # the seventeen, and re-probed the release for it: measured at
+      # 134-180 s of a 219-341 s job, more than half of every Windows leg.
+      # The installer is the same file for every unit on a version, so it
+      # is cached beside the machine, exactly as the container leg caches
+      # its pinned Cura tree. native_harness.ps1 still verifies the
+      # signature of whatever it finds, so a cached installer is trusted
+      # no further than a fresh one.
+      - name: Cache the Windows Cura installer
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cura-installers
+          key: mpf-win-installer-${{ fromJSON(env.UNITS)[matrix.unit].cura }}
+
       - name: Set up the native harness (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 30
