@@ -63,34 +63,27 @@
 # killed this file's first run: whole-file rule, one check, and a parse of
 # each extracted block before a push rather than after a red run.
 #
-# NON-GATING BY DESIGN. This workflow runs on ordinary CI events so the
-# answer arrives without anyone remembering to ask for it, but it must
-# NEVER be added to a required-check set or a merge gate: its expected
-# failure mode is "the installer would not run on a hosted runner", which
-# is a finding about the runner, not a broken branch. Do not promote it.
-# It stays its own file for the same reason - disposable, trivially
-# deleted, never a job inside ci.yml.
+# NON-GATING BY DESIGN, and dispatch-only. It must NEVER be added to a
+# required-check set or a merge gate: its expected failure mode is "the
+# installer would not run on a hosted runner", which is a finding about the
+# runner, not a broken branch. Do not promote it. It stays its own file for
+# the same reason - disposable, trivially deleted, never a job inside ci.yml.
 #
-# Trigger scope: pull_request is unscoped, so a proposed change gets the
-# answer. push is scoped to main and the release branches on purpose -
-# firing two full GUI legs from every branch tip would put real queue
-# pressure on the scarcest hosted runners for branches nobody is
-# waiting on.
+# Dispatch-only because its questions are answered: the native legs of
+# release.yml ARE the port, and this file is what they were carved from. It
+# and the release gate both ask for macos-latest and windows-latest, the
+# scarcest hosted runners, so an automatic run here takes the slot a gate leg
+# is queueing for - and the gate holds a merge while this, by the paragraph
+# above, decides nothing. Run it by hand when a runner image changes and the
+# installer's behaviour on the new image is worth re-asking.
 #
 #   gh workflow run "Native Harness Spike (disposable)" \
 #     -f cura_version=5.12.0 -f macos_arch=x64
 name: Native Harness Spike (disposable)
 
 on:
-  # Scoped so a branch tip push does not queue two GUI legs per commit.
-  push:
-    branches:
-      - main
-      - "release/**"
-  # Unscoped: every proposed change should get the answer.
-  pull_request:
-  # Kept for deliberate runs; the inputs exist only here, so push and
-  # pull_request need none and use the defaults below.
+  # The only trigger, for the reason in the header: an automatic run here
+  # queues two of the scarcest runners that the merge-blocking gate needs.
   workflow_dispatch:
     inputs:
       cura_version:
@@ -123,13 +116,13 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     env:
-      # github.event.inputs is populated only for workflow_dispatch, so on push
-      # and pull_request these evaluated to the EMPTY STRING. The scripts mostly
-      # default with ${VAR:-5.13.0}, which hides it - but the config seed reads
-      # the version to name the version-stamped config directory, and an empty
-      # one made it skip, which is why Cura came up on its first-run wizard and
-      # would have stalled the harness's own first gate. The default belongs
-      # here, once, where every step sees it.
+      # The inputs exist only on workflow_dispatch, now the only trigger, so
+      # these are populated on every run this file can start; the fallback is
+      # for the one path that would leave them empty. That empty value is what
+      # made the config seed skip: the seed reads the version to name the
+      # version-stamped config directory, so Cura came up on its first-run
+      # wizard, which would have stalled the harness's own first gate. The
+      # default belongs here, once, where every step sees it.
       CURA_VERSION: ${{ github.event.inputs.cura_version || '5.13.0' }}
       CURA_MACOS_ARCH: ${{ github.event.inputs.macos_arch || 'auto' }}
       EVIDENCE: spike-evidence
