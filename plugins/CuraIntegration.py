@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import os
 import time
 
-from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 from UM.Logger import Logger
 from UM.Backend.Backend import BackendState
@@ -46,6 +46,9 @@ class CuraIntegration(QObject):
         self._settle_until = 0.0
         self._writing = self._own_scene_changes = 0
         self._load_lease = None
+        # The replace prompt, held while it is up: a parentless dialog
+        # can be collected out from under its own event loop otherwise.
+        self._confirm_box = None
         self._load_watch_lease = None
         self._watch = QTimer(self)
         self._watch.setInterval(75)
@@ -335,30 +338,53 @@ class CuraIntegration(QObject):
             # step reporting ok with code 16384 sat beside a plugin that
             # had logged nothing at all.
             Logger.log("i", "Moonraker replace confirm: asking")
-            answer = QMessageBox.question(None, "Moonraker Print Follower",
+            # OPEN, not question(). QMessageBox.question() runs its own
+            # nested event loop and blocks the caller until the box is
+            # answered — and on macOS this box can be clicked without
+            # that loop ever ending: measured, the driver answered the
+            # dialog whose text IS this prompt, the code latched at
+            # 16384, and `answer=` was never logged while the app carried
+            # on around the modal for five minutes (autosave timers
+            # firing, stages switching). Everything downstream then reads
+            # a plugin that never loaded. open() shows the SAME dialog
+            # with the same buttons and the same default without
+            # blocking, and `finished` carries the same answer, so the
+            # user sees exactly what they saw before and the plugin is
+            # never parked in a loop it cannot leave.
+            box = QMessageBox(QMessageBox.Icon.Question, "Moonraker Print Follower",
                 "Replace Cura contents?\n\nThis will discard everything currently loaded in Cura and replace it "
                 "with the G-code currently printing in Moonraker.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            # The answer is the whole gate on this load, and a box that
-            # comes back with a code the plugin does not recognise
-            # silently takes the No branch: log the raw code so a
-            # refused replace is never invisible.
-            Logger.log("i", "Moonraker replace confirm: answer=%s yes=%s",
-                       int(answer), int(QMessageBox.StandardButton.Yes))
-            if answer == QMessageBox.StandardButton.Yes:
-                # The answer is the user's and no later Cura scene change
-                # may cancel it. queue()'s stale-token guard does cancel
-                # it — a scene change processed on the next turn (the
-                # stage switch this prompt makes is itself one source of
-                # them) drops the load and the user sees "Yes" do
-                # nothing, with nothing in the log. Deferred one turn for
-                # the same re-entrancy reason, and the callback itself
-                # re-reads Cura's current state, so there is nothing here
-                # for a token to protect.
-                def run():
-                    if not self._closed: callback()
-                QTimer.singleShot(0, run)
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            box.setWindowModality(Qt.WindowModality.ApplicationModal)
+            # Held, or a parentless dialog can be collected while it is up.
+            self._confirm_box = box
+
+            def answered(result):
+                # The answer is the whole gate on this load, and a code
+                # the plugin does not recognise silently takes the No
+                # branch: log the raw code so a refused replace is never
+                # invisible.
+                Logger.log("i", "Moonraker replace confirm: answer=%s yes=%s",
+                           int(result), int(QMessageBox.StandardButton.Yes))
+                self._confirm_box = None
+                if result == int(QMessageBox.StandardButton.Yes):
+                    # The answer is the user's and no later Cura scene
+                    # change may cancel it. queue()'s stale-token guard
+                    # does cancel it — a scene change processed on the
+                    # next turn (the stage switch this prompt makes is
+                    # itself one source of them) drops the load and the
+                    # user sees "Yes" do nothing, with nothing in the
+                    # log. Deferred one turn for the same re-entrancy
+                    # reason, and the callback itself re-reads Cura's
+                    # current state, so there is nothing here for a
+                    # token to protect.
+                    def run():
+                        if not self._closed: callback()
+                    QTimer.singleShot(0, run)
+
+            box.finished.connect(answered)
+            box.open()
         # The prompt is the user's own click and may not ride queue()'s
         # stale-token guard: the stage switch above yields a scene change
         # on the next turn, and one processed before this turn comes

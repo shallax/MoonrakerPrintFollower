@@ -130,6 +130,9 @@ class HarnessSpecTests(unittest.TestCase):
             source = handle.read()
         self.assertIn("def _aim_point(", source)
         self.assertNotIn("scene.x() + target.width() / 2", source)
+        self.assertNotIn("scene.x() + item.width() / 2", source)
+        self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
+                      source)
 
     def test_the_confirm_waits_for_its_box_pumping_the_loop(self):
         # The plugin's replace-confirm defers its prompt: confirm_replace
@@ -171,15 +174,23 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn('"wait_s": float(step.get("wait_s", 15.0))', runner_source)
         self.assertIn('"title": step.get("title", "Moonraker Print Follower")',
                       runner_source)
-        # The title the runner defaults to is the one the plugin uses.
+        # The title the runner defaults to is the one the plugin uses -
+        # and the prompt must not BLOCK. QMessageBox.question() runs its
+        # own nested loop, which on macOS can be left running under a
+        # hidden alert: the driver answered the right dialog, the code
+        # latched, and the plugin never logged an answer while the app
+        # carried on around the modal. open() shows the same dialog
+        # without blocking, with `finished` carrying the same answer.
         cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)))), "plugins", "CuraIntegration.py")
         with open(cura, encoding="utf-8") as handle:
-            self.assertIn('QMessageBox.question(None, "Moonraker Print Follower"',
-                          handle.read())
-        self.assertNotIn("scene.x() + item.width() / 2", source)
-        self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
+            source = handle.read()
+        self.assertIn('QMessageBox(QMessageBox.Icon.Question, "Moonraker Print Follower"',
                       source)
+        self.assertIn("box.finished.connect(answered)", source)
+        self.assertIn("box.open()", source)
+        self.assertNotIn("QMessageBox.question(None", source,
+                         "the blocking form parks the plugin in a loop it cannot leave")
 
     def test_a_confirm_is_pressed_not_driven_as_a_slot(self):
         # The static-recording finding: the visual leg confirmed its
