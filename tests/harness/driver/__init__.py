@@ -1342,17 +1342,6 @@ class HarnessServer(QObject):
                 if standard is None:
                     return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
                 qtest = _import_qtest()
-                # WAIT for the box, pumping the loop. The plugin defers its
-                # prompt - confirm_replace switches the stage and only then
-                # arms QTimer.singleShot(0, ask) - so the box opens a turn
-                # or more after the click that asked for it, and a plain
-                # sleep would never let it appear. Reading the tree once
-                # and giving up is what made this racy: on macOS the stage
-                # switch is slower (the window is frozen and the renderer
-                # is software), so the gap is widest exactly where the legs
-                # were going red. qWait DRIVES the loop, which is the
-                # difference between waiting for the box and waiting out
-                # the timeout with the box still unbuilt.
                 # WAIT for THE box, pumping the loop, and match it by
                 # title. Both halves are load-bearing:
                 #
