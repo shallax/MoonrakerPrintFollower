@@ -2848,10 +2848,21 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             raise RuntimeError("injected render failure")
         with patch.object(module, "render_layer_raster", explode):
             self._window(model, "popover", 5)
-            for _ in range(60):
+            # The arrival is the RETIREMENT, not a turn count. Every
+            # failed render reschedules in the same call that clears
+            # the slot, so the slot is empty only between two
+            # statements of that call — the one empty slot a pump can
+            # see is the persistent-failure retirement, after all five
+            # rounds. A turn is not a unit of time either: the pump's
+            # 5 ms timer may already have expired, and sixty of them
+            # burn in one scheduling slice while the worker waits for a
+            # thread.
+            deadline = time.monotonic() + 30.0
+            while surface.job is not None or surface.desired is not None:
                 self.qt.events(5)
-                if surface.job is None:
-                    break
+                if time.monotonic() >= deadline:
+                    self.fail("the failed worker wedged the surface: %r"
+                              % (surface.job,))
         self.assertIsNone(surface.job, "the failed worker wedged the surface")
         self.assertGreaterEqual(surface.stats["failed"], 1)
         # The persistent failures retired the demand; a fresh seek
