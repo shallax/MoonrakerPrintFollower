@@ -262,8 +262,12 @@ jobs:
           # it: the upload below is `if: always()`, and a run that produced
           # no gallery would otherwise ship a green job with an empty
           # artefact. The runner's verdict still decides the exit code.
+          # -u: the step can be killed at its timeout, and block-buffered
+          # stdout dies with the process - the only macOS run so far left
+          # nothing on stdout but ffmpeg's retries, so what the runner was
+          # waiting for could not be read off the log.
           rc=0
-          python3 tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
+          python3 -u tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
           test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
           exit "$rc"
 
@@ -302,8 +306,10 @@ jobs:
           # it: the upload below is `if: always()`, and a run that produced
           # no gallery would otherwise ship a green job with an empty
           # artefact. The runner's verdict still decides the exit code.
+          # -u for the same reason as macOS: a step killed at its timeout
+          # takes its block-buffered stdout with it.
           $rc = 0
-          & python tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
+          & python -u tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
           if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $env:HARNESS_RUN_DIR 'index.html'))) {
             Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1

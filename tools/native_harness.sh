@@ -437,7 +437,12 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
             return 0
         fi
         [ "$HAVE_BREW" = yes ] || { warn "$cmd is absent and there is no brew to install it with"; return 1; }
-        note "$cmd is absent - installing it (brew install $formula)"
+        # On stderr, because this function's stdout is its return value: on
+        # the cold image the caller captured the note's text along with the
+        # path, and every later use of it was bash trying to execute a
+        # two-line string - "displayplacer: No such file or directory",
+        # exit 127, and the display never moved.
+        note "$cmd is absent - installing it (brew install $formula)" >&2
         HOMEBREW_NO_AUTO_UPDATE=1 brew install "$formula" >/dev/null 2>&1 || true
         path="$(command -v "$cmd" 2>/dev/null || true)"
         [ -n "$path" ] && echo "$path"
