@@ -1365,14 +1365,36 @@ class HarnessServer(QObject):
                 #   .question(None, "Moonraker Print Follower", ...)), which
                 #   is the one selector that says whose dialog this is.
                 wanted_title = str(request.get("title") or "")
+                wanted_text = str(request.get("text") or "")
+
+                def is_the_box(w):
+                    """Whether this is the prompt the caller meant.
+
+                    Matched on TITLE or on the box's own TEXT, and the
+                    text is the one that works everywhere: on macOS this
+                    alert renders natively and windowTitle() comes back
+                    EMPTY even though the plugin set one, so a title-only
+                    match hunted 'Moonraker Print Follower' while the
+                    driver reported `QMessageBox:(untitled)` sitting right
+                    there - it filtered out the box it was looking for.
+                    An untitled box is only accepted when nothing was
+                    asked for, so a stray dialog is still refused."""
+                    title = (w.windowTitle() or "")
+                    if wanted_title and wanted_title.lower() in title.lower():
+                        return True
+                    if wanted_text:
+                        body = f"{w.text()} {w.informativeText()}"
+                        if wanted_text.lower() in body.lower():
+                            return True
+                    return not wanted_title and not wanted_text
+
                 deadline = time.monotonic() + float(request.get("wait_s", 15.0))
                 boxes, seen = [], []
                 while True:
                     up = [w for w in QApplication.topLevelWidgets()
                           if isinstance(w, QMessageBox) and w.isVisible()]
                     seen = [w.windowTitle() for w in up]
-                    boxes = [w for w in up if not wanted_title
-                             or wanted_title.lower() in (w.windowTitle() or "").lower()]
+                    boxes = [w for w in up if is_the_box(w)]
                     if boxes or time.monotonic() >= deadline:
                         break
                     qtest.QTest.qWait(100)

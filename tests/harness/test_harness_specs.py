@@ -158,6 +158,13 @@ class HarnessSpecTests(unittest.TestCase):
         # plugin's own prompt opens after the call has returned.
         self.assertIn('request.get("title"', handler)
         self.assertIn("windowTitle()", handler)
+        # NOT title-only: macOS renders this alert natively and reports an
+        # EMPTY window title, so a title-only match hunts the right box and
+        # rejects it - measured, the driver saw `QMessageBox:(untitled)`
+        # while looking for "Moonraker Print Follower". The box's own text
+        # is the selector that holds on every platform.
+        self.assertIn('request.get("text"', handler)
+        self.assertIn("informativeText()", handler)
         runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner.py")
         with open(runner, encoding="utf-8") as handle:
             runner_source = handle.read()

@@ -3449,6 +3449,11 @@ def suite_step(step):
                      # while the plugin never wrote its `answer=` line,
                      # because the driver had answered another box.
                      "title": step.get("title", "Moonraker Print Follower"),
+                     # The TEXT is the selector that works everywhere:
+                     # macOS renders this alert natively and reports no
+                     # window title at all, so a title-only match hunted
+                     # the right box and rejected it.
+                     "text": step.get("text", "Replace Cura contents?"),
                      "wait_s": float(step.get("wait_s", 15.0))})
         time.sleep(0.5)
         # The code the plugin reads is part of the proof: a box that
