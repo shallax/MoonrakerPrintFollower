@@ -3727,8 +3727,19 @@ jobs:
           # rather than trusting this one's copy.
           $glVars = [ordered]@{
             'QT_OPENGL'               = 'software'
-            'QSG_RHI_BACKEND'         = 'software'
-            'QT_QUICK_BACKEND'        = 'software'
+            # opengl, NOT software. The scene graph's software backend renders
+            # to a CPU buffer and has no GL context at all, which is what Cura's
+            # renderer initialises against - and the log shows it never
+            # initialising on Windows while macOS, which sets neither of these
+            # variables, loads its shaders and draws the plate. They were set
+            # when the runner genuinely had no GL: QT_OPENGL=software cannot
+            # take effect because Cura calls AA_UseDesktopOpenGL first, so
+            # forcing the scene graph onto the CPU was the only way to get a
+            # window at all. Mesa llvmpipe removed that premise - Cura logs
+            # 'OpenGL: Mesa, llvmpipe', 4.6 core, 313 extensions - so the scene
+            # graph can use the GL that now exists.
+            'QSG_RHI_BACKEND'         = 'opengl'
+            'QT_QUICK_BACKEND'        = 'opengl'
             'QT_LOGGING_RULES'        = 'qt.qpa.gl=true'
             'QT_FORCE_STDERR_LOGGING' = '1'
             'GALLIUM_DRIVER'          = 'llvmpipe'
@@ -4082,21 +4093,32 @@ jobs:
           function Get-DisplayNow {
             # [System.Windows.Forms.Screen]::PrimaryScreen.Bounds is cached for
             # the process lifetime and does NOT follow Set-DisplayResolution: it
-            # went on reporting 1024x768 while Get-DisplayResolution and the
-            # virtual screen both said 1920x1080. The change was read as a
-            # failure and the recorder was then sized from the stale number, so
-            # a display that had moved was recorded at the old geometry. These
-            # two sources do refresh; Screen.PrimaryScreen is not used.
+            # went on reporting 1024x768 while two other sources said
+            # 1920x1080, so the change was read as a failure and the recorder
+            # was sized from the stale number. Screen.PrimaryScreen is not read
+            # at all.
+            #
+            # VirtualScreen is asked first because it returns integers and does
+            # refresh - it read 1920x1080 in the same run where PrimaryScreen
+            # still said 1024x768. Get-DisplayResolution is only the fallback:
+            # its output arrives as single characters ("1 0 2 4 x 7 6 8" when
+            # logged), and how -join reassembles them differs between the
+            # PowerShell this was tested on and the 5.1 the runner actually
+            # uses - parsing it as the primary source produced a 1x9 capture
+            # region and a 28-byte recording. Whitespace is stripped so the
+            # join separator cannot matter either way.
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            if (($vs.Width -gt 0) -and ($vs.Height -gt 0)) {
+              return [pscustomobject]@{ Width = $vs.Width; Height = $vs.Height; Source = 'SystemInformation.VirtualScreen' }
+            }
             $g = Get-Command Get-DisplayResolution -ErrorAction SilentlyContinue
             if ($g) {
-              # its output arrives as single characters, so join without spaces
-              $line = ((Get-DisplayResolution 2>$null) -join '')
+              $line = (((Get-DisplayResolution 2>$null) -join '') -replace '\s', '')
               if ($line -match '([0-9]+)[^0-9]+([0-9]+)') {
                 return [pscustomobject]@{ Width = [int]$Matches[1]; Height = [int]$Matches[2]; Source = 'Get-DisplayResolution' }
               }
             }
-            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            return [pscustomobject]@{ Width = $vs.Width; Height = $vs.Height; Source = 'SystemInformation.VirtualScreen' }
+            return [pscustomobject]@{ Width = 0; Height = 0; Source = 'unreadable' }
           }
           $scr = Get-DisplayNow
           $vsNow = [System.Windows.Forms.SystemInformation]::VirtualScreen
