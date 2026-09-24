@@ -669,6 +669,26 @@ Item {
         return layer.prefixSplit;
     }
 
+    function _paintPending(ctx) {
+        // The base marks the unprinted suffix of a PARTIAL layer: a 0%
+        // layer draws nothing (nothing has printed — no boundary to
+        // frame), and a full layer's raster covers it entirely. The
+        // native sibling's arrival hides this fallback (its Image above
+        // takes over).
+        if (!root.available() || mapping._plot == null) {
+            return;
+        }
+        var layer = root.progress.layers.current;
+        if (!_partialBase() || layer == null || _baseOf(layer)) {
+            return;
+        }
+        var current = _scrubVector();
+        if (current == null) {
+            return;
+        }
+        _drawLayer(ctx, current, 0.55, -1, true, -1);
+    }
+
     function _partialBase() {
         // The base marks the unprinted suffix of a PARTIAL layer
         // — 0% included: the whole layer reads as the grey ghost
@@ -965,6 +985,13 @@ Item {
     // covering only that canvas' own inputs, so a toggle repaints
     // only what it touches.
     property string _pendingKey: ""
+    // The key the pending canvas has PAINTED, never the one it was asked
+    // for: _pendingKey is written where the repaint is REQUESTED, so a
+    // starved render thread leaves the previous picture on screen while
+    // the key already reads the new one. The base's own state rides that
+    // key, and a frame that still holds the old base is a picture of the
+    // previous state — which a diff census then counts.
+    property string _lastPendingKey: ""
     property string _progressKey: ""
 
     function _viewKey() {
@@ -1406,23 +1433,11 @@ Item {
                 var ctx = getContext("2d");
                 ctx.reset();
                 ctx.clearRect(0, 0, width, height);
-                if (!root.available() || mapping._plot == null) {
-                    return;
-                }
-                var layer = root.progress.layers.current;
-                // The base marks the unprinted suffix of a PARTIAL layer:
-                // a 0% layer draws nothing (nothing has printed — no
-                // boundary to frame), and a full layer's raster covers
-                // it entirely. The native sibling's arrival hides this
-                // fallback (its Image above takes over).
-                if (!_partialBase() || layer == null || _baseOf(layer)) {
-                    return;
-                }
-                var current = _scrubVector();
-                if (current == null) {
-                    return;
-                }
-                _drawLayer(ctx, current, 0.55, -1, true, -1);
+                _paintPending(ctx);
+                // Landed last, and on every path: the picture the next
+                // frame composites belongs to the key read here, cleared
+                // base included.
+                root._lastPendingKey = root._pendingKey;
             }
         }
 

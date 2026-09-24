@@ -414,6 +414,25 @@ class RealEngineTestCase(unittest.TestCase):
             self.app.processEvents()
             time.sleep(0.01)
 
+    def _wait_until(self, window, predicate, timeout=15.0):
+        """The first grab the predicate holds on.
+
+        A wait that clears on one landmark while the caller asserts
+        another measures the second on a frame its own landmark had not
+        reached yet, so the predicate is the caller's assertions
+        themselves. The timeout is a hang guard, not a budget: the
+        caller's assertions are what fail when the ink never lands.
+        """
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline:
+            if predicate(image):
+                return image
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image
+
     def new_messages(self):
         return [message for message in _APPLICATION["messages"][self._message_start:]
                 if "MoonrakerMonitor.qml" in message or "MoonrakerPreviewCard.qml" in message]
@@ -2072,7 +2091,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         self._pump_ms(300)
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
                              "the docked scale rides inside the CAMERA VIEW, not the pane frame")
-        self._pump_ms(5400)
+        self._wait_until(window, lambda _image: control.x() >= frame.width(),
+                         timeout=8.0)
         self.assertFalse(pane.property("cameraBarDocked"), "five idle seconds park it again")
         self.assertGreaterEqual(control.x(), frame.width(),
                                 "the parked scale clears the picture's own edge")
@@ -2120,10 +2140,22 @@ class CameraFpsControlTests(RealEngineTestCase):
         self._pump_ms(300)
         self.assertTrue(pane.property("cameraBarPinned"), "a held zoom pins the scale")
         self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
-        self._pump_ms(700)
+        # The turn-over is a 190 ms leg, and the scale's return is the
+        # idle five seconds plus that leg back. Both are waited for as
+        # the states they are: the wall clock a starved event loop eats
+        # is not what either assertion is about, and reading them off a
+        # fixed instant measured how busy the runner was (the macOS leg
+        # failed here with the bar mid-turn-over). The timeouts are hang
+        # guards an order of magnitude above what the chain owes.
+        self._wait_until(window, lambda _image: pane.property("cameraBarMode") == "fps",
+                         timeout=2.0)
         self.assertEqual(pane.property("cameraBarMode"), "fps",
                          "the rate card has the bar for now")
-        self._pump_ms(5400)
+        self._wait_until(window,
+                         lambda _image: pane.property("cameraBarMode") == "zoom"
+                         and pane.property("cameraBarShown")
+                         and control.x() + control.width() <= frame.width() + 0.5,
+                         timeout=8.0)
         self.assertEqual(pane.property("cameraBarMode"), "zoom", "the scale comes back")
         self.assertTrue(pane.property("cameraBarShown"), "and it is on screen")
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
@@ -2176,7 +2208,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         self.assertFalse(handle.property("pressed"), "the release is a real release")
         self.assertAlmostEqual(pane.property("cameraFps"), 7.88, delta=0.05,
                                msg="the rate is set where the release occurred")
-        self._pump_ms(5400)
+        self._wait_until(window, lambda _image: not pane.property("cameraBarShown"),
+                         timeout=8.0)
         self.assertFalse(pane.property("cameraBarShown"),
                          "the idle five seconds run from the release")
 
@@ -2399,7 +2432,9 @@ class CameraFpsControlTests(RealEngineTestCase):
         docked = self.rect(control, pane)
         self.assertLessEqual(docked.right(), picture.right() + 0.5,
                              "a rate change docks the control inside the picture")
-        self._pump_ms(5400)
+        self._wait_until(window,
+                         lambda _image: self.rect(control, pane).left() > picture.right(),
+                         timeout=8.0)
         parked = self.rect(control, pane)
         self.assertGreater(parked.left(), picture.right(),
                            "five idle seconds park it past the picture's edge")
@@ -2659,7 +2694,8 @@ class CameraFpsControlTests(RealEngineTestCase):
                     Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
         self.pump(30)
         self.assertIsNone(pane.property("cameraBarHandle"), "the release lets go")
-        self._pump_ms(5400)
+        self._wait_until(window, lambda _image: not pane.property("cameraBarDocked"),
+                         timeout=8.0)
         self.assertFalse(pane.property("cameraBarDocked"),
                          "and the idle clock starts again at the release")
 
@@ -3468,25 +3504,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 if image.pixel(col + dx, row + dy) != baseline.pixel(col + dx, row + dy):
                     return True
         return False
-
-    def _wait_until(self, window, predicate, timeout=15.0):
-        """The first grab the predicate holds on.
-
-        A wait that clears on one landmark while the caller asserts
-        another measures the second on a frame its own landmark had not
-        reached yet, so the predicate is the caller's assertions
-        themselves. The timeout is a hang guard, not a budget: the
-        caller's assertions are what fail when the ink never lands.
-        """
-        deadline = time.monotonic() + timeout
-        image = window.grabWindow()
-        while time.monotonic() < deadline:
-            if predicate(image):
-                return image
-            self.app.processEvents()
-            time.sleep(0.05)
-            image = window.grabWindow()
-        return image
 
     def _wait_diff(self, window, face, baseline, want, timeout=2.5):
         """Wait until the grabbed picture differs from (want=True) or
@@ -6334,12 +6351,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
         face.setProperty("dot", None)
         face.setProperty("showBase", False)
         self.pump(40)
-        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        grid = face.findChild(QQuickItem, "moonrakerPlateCanvas")
+        plot = grid.property("_plot")
         self.assertIsNotNone(plot, "the bed mapping never built")
         # The physical-width model renders the default 0.7 lineScale
         # as a subpixel stroke at this face size; the painter tests
         # pin the same 0.7 px weight the old fixed-width painter used,
         # so the geometry assertions measure a solid line.
+        painted = grid.property("_paints")
         face.setProperty("lineScale", 0.7 / (0.2 * plot.property("sx").toNumber()))
         self.pump(20)
         # The grown popover lays the face out AFTER the first paint;
@@ -6356,7 +6375,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # below then diffs against an empty baseline and passes while
         # proving nothing. The arrival has to be PROVED, on the frame
         # that was returned, before the settle is trusted; a canvas
-        # that never paints now fails here and says so.
+        # that never paints now fails here and says so. The arrival is
+        # the PAINT, never the agreement: the view just set is serviced
+        # a frame late, and a baseline from the previous one is a
+        # census of two different pictures (the 2-CPU rig's "painted as
+        # separate runs", eight blobs where the stroke is one).
+        self._await_painted(face, grid, painted)
         inked = self._grab_when_inked(window, face)
         self.assertTrue(self._ink_rows(inked, face, window),
                         "the baseline was grabbed before the grid painted")
@@ -6405,6 +6429,34 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return [image.pixel(col, row)
                 for row in range(0, image.height(), 7)
                 for col in range(0, image.width(), 7)]
+
+    def _await_painted(self, face, grid, painted, timeout=15.0):
+        """The face once its canvases have painted the state the test
+        just set.
+
+        Both the grid and the base raster on the threaded strategy: the
+        repaint is serviced a frame after it is requested, so a grab
+        taken in between reads the PREVIOUS picture — and a census that
+        diffs one picture against another counts whatever moved with
+        it, which is how one stroke reads as eight runs under load.
+        *painted* is the grid's own count from before the view was set;
+        `_lastPendingKey` is the base canvas's word. Both are arrivals:
+        the key is written by the paint routine, never by the request.
+        """
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        deadline = time.monotonic() + timeout
+        asked = None
+        while time.monotonic() < deadline:
+            asked = QMetaObject.invokeMethod(face, "_pendingKeyOf", Q_RETURN_ARG(QVariant))
+            if grid.property("_paints") != painted \
+                    and face.property("_lastPendingKey") == asked:
+                return
+            self.app.processEvents()
+            time.sleep(0.05)
+        self.fail("the face never painted the view under test: the grid is at "
+                  "%r paints (was %r), the base at %r against %r asked"
+                  % (grid.property("_paints"), painted,
+                     face.property("_lastPendingKey"), asked))
 
     def _settled(self, window, rounds=10):
         """The window's image once two grabs agree: the canvases raster
@@ -6666,31 +6718,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
         span = (int(left[0]) + 4, int(right[0]) - 4)
         box = (int(left[0]) - 8, int(apex[1]) - 8, int(right[0]) + 8, int(far[1]) + 8)
         self._printer.setSplit(1)
-        # The face must have PAINTED split 1 before the absence below is
-        # read: the frame grabbed before that repaint still holds the arc
-        # from the previous split, which is exactly what this asserts is
-        # gone (the rig's one-in-eight failure).
-        # RESTORED to the shipped form after three attempts, the last of
-        # which made this fail deterministically (508 against 568 on the
-        # sibling). The arrival wait that preceded the window is gone with
-        # it: measured, it made the failure MORE frequent (1 run in 8
-        # became 2 in 3), which says the test had been passing BECAUSE of
-        # the race — it grabbed before the split-1 repaint and read the
-        # split-0 frame. See review/DECISIONS.md, 2026-09-24, and the
-        # instrumented dump below, which stays so a recurrence arrives
-        # with its own pictures.
-        _image, added = self._await_ink(window, face, baseline, box, span, timeout=0.4)
-        if added:
-            # The failing pixels are IDENTICAL on every run, so whatever
-            # is painted here is deterministic in content — which means
-            # it can be looked at rather than reasoned about. Save both
-            # frames before the assertion so the next reader has the
-            # pictures (three guesses have already been spent on this
-            # test; the fourth has to be evidence).
-            baseline.save("/tmp/mpf/arc-baseline.png")
-            _image.save("/tmp/mpf/arc-live.png")
-            print("ui_test: arc-split dump written (baseline + live), %d px added"
-                  % len(added))
+        # The absence below is read off a frame the face has PAINTED at
+        # split 1: a grab taken first holds the previous split's picture,
+        # and the wait has to be on the paint rather than on ink — this
+        # claim is that the split paints NOTHING, so a wait for ink can
+        # only burn its budget and hand back whatever the threaded
+        # painter had committed. The dump that lived here is gone with
+        # the cause it was hunting: the baseline was a picture of the
+        # previous state, which `_painted` no longer hands back.
+        self._await_split(face, 1)
+        added = self._added(self._settled(window), baseline, face, window, box)
         self.assertEqual(added, set(), "the split painted the arc before its own motion")
         added = self._printed(2, window, face, baseline, box, span)
         self.assertTrue([row for _col, row in added if abs(row - chord) < 8],

@@ -63,6 +63,12 @@ Item {
     // late attach — or a bed switch — left the map blank or on the
     // previous machine's coordinates until the user resized the pane.
     property var _plot: _plotValue()
+    // The grid's paint word. A repaint is serviced a frame after it is
+    // requested, so a grab taken in between reads the PREVIOUS view —
+    // and a census that diffs one view against another counts whatever
+    // moved with it. This is that arrival, the word `_lastSplit` gives
+    // the progress canvas.
+    property int _paints: 0
 
     function _bedBounds() {
         // The BED-space mapping, mirroring the mesh map's contract:
@@ -304,55 +310,63 @@ Item {
         renderStrategy: Canvas.Threaded
         onPaint: {
             var ctx = getContext("2d");
-            var plot = root._plot;
             ctx.reset();
-            if (plot == null) {
-                return;
-            }
-            if (root.showGrid) {
-                _drawGrid(ctx, plot);
-            }
-            if (root.plate == null) {
-                return;
-            }
-            // Round joins on the object outlines: the default miter
-            // pokes pointed corners that grow with the stroke width
-            // (the live report's red perimeter spikes).
-            ctx.lineJoin = "round";
-            ctx.lineCap = "round";
-            var plate = root.plate;
-            for (var i = 0; i < plate.objects.length; ++i) {
-                var row = plate.objects[i];
-                // The 2 px background halo under every stroke: state
-                // ink sits on arbitrary feature ink otherwise, and no
-                // contrast value holds without it (the UX ruling).
-                // The palette: current reads as Cura's highlight blue,
-                // the passed/printed objects as the green, the
-                // excluded as the red, the pending as the plain text
-                // ink.
-                var ink = row.excluded === true ? MoonrakerTheme.dangerRed : row.current === true ? UM.Theme.getColor("primary") : row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
-                // The mini halves the strokes and the halo: at its
-                // scale a 4 px halo swallows the neighbours (the
-                // live report).
-                var compactScale = root.compact ? 0.5 : 1.0;
-                // The hovered row thickens (the live request): the
-                // hover must read without stealing a state colour.
-                var hovered = row.name === root.hoveredName;
-                var widthPx = (hovered ? 3.0 : row.current === true ? 2.5 : 1.5) * compactScale;
-                ctx.lineWidth = widthPx + 4 * compactScale;
-                ctx.strokeStyle = root.halo;
-                ctx.beginPath();
-                _stroke(ctx, row, plot);
-                ctx.stroke();
-                ctx.lineWidth = widthPx;
-                ctx.strokeStyle = ink;
-                ctx.beginPath();
-                _stroke(ctx, row, plot);
-                ctx.stroke();
-                // No centre ring for the current object: the bounds
-                // highlight IS the indicator (the live ruling — two
-                // current symbols read as two states).
-            }
+            _paintPlate(ctx);
+            // Written on every path, and last: the picture the next
+            // frame composites belongs to the state read here, and an
+            // empty one is still a picture the harness may measure.
+            root._paints += 1;
+        }
+    }
+
+    function _paintPlate(ctx) {
+        var plot = root._plot;
+        if (plot == null) {
+            return;
+        }
+        if (root.showGrid) {
+            _drawGrid(ctx, plot);
+        }
+        if (root.plate == null) {
+            return;
+        }
+        // Round joins on the object outlines: the default miter
+        // pokes pointed corners that grow with the stroke width
+        // (the live report's red perimeter spikes).
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        var plate = root.plate;
+        for (var i = 0; i < plate.objects.length; ++i) {
+            var row = plate.objects[i];
+            // The 2 px background halo under every stroke: state
+            // ink sits on arbitrary feature ink otherwise, and no
+            // contrast value holds without it (the UX ruling).
+            // The palette: current reads as Cura's highlight blue,
+            // the passed/printed objects as the green, the
+            // excluded as the red, the pending as the plain text
+            // ink.
+            var ink = row.excluded === true ? MoonrakerTheme.dangerRed : row.current === true ? UM.Theme.getColor("primary") : row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
+            // The mini halves the strokes and the halo: at its
+            // scale a 4 px halo swallows the neighbours (the
+            // live report).
+            var compactScale = root.compact ? 0.5 : 1.0;
+            // The hovered row thickens (the live request): the
+            // hover must read without stealing a state colour.
+            var hovered = row.name === root.hoveredName;
+            var widthPx = (hovered ? 3.0 : row.current === true ? 2.5 : 1.5) * compactScale;
+            ctx.lineWidth = widthPx + 4 * compactScale;
+            ctx.strokeStyle = root.halo;
+            ctx.beginPath();
+            _stroke(ctx, row, plot);
+            ctx.stroke();
+            ctx.lineWidth = widthPx;
+            ctx.strokeStyle = ink;
+            ctx.beginPath();
+            _stroke(ctx, row, plot);
+            ctx.stroke();
+            // No centre ring for the current object: the bounds
+            // highlight IS the indicator (the live ruling — two
+            // current symbols read as two states).
         }
     }
 
