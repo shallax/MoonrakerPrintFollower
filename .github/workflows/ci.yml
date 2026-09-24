@@ -431,10 +431,15 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        # One action, two report types: codecov-action carries both, and
+        # test-results-action says so itself ("being deprecated in favor
+        # of 'codecov-action' ... with 'report_type: test_results'").
+        # Same version as the coverage upload above, deliberately.
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: tests.junit.xml
+          report_type: test_results
 
   release:
     name: Release
