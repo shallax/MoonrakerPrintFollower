@@ -118,11 +118,16 @@ jobs:
 
   gate:
     needs: release
-    runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    # Every unit runs on every platform a user can run Cura on. The Linux leg
+    # is unchanged; the native legs install Cura themselves and pay for it, so
+    # the timeout is sized for a cold install rather than the container's
+    # cached image.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-26.04, macos-latest, windows-latest]
         unit:
           - smoke-primary
           - group-connection
@@ -184,7 +189,10 @@ jobs:
       # One attempt per unit (the gate ruling): a retried unit would
       # hide flakiness. The gallery is the proof — every unit's
       # evidence lands under this workflow run's root.
-      - name: Run the unit
+      # The Linux leg is the original path, unchanged: the harness container
+      # already holds Cura, so the budget covers the scenario alone.
+      - name: Run the unit (Linux)
+        if: runner.os == 'Linux'
         timeout-minutes: 30
         run: |
           mkdir -p /tmp/mpf
@@ -194,11 +202,69 @@ jobs:
               RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
               ./tools/ui_test.sh
 
+      # The native legs do their own setup: install Cura, seed it, stage the
+      # plugin and the driver, launch, clamp the window. That is why they get
+      # their own timeout - the gate's per-unit budget bounds the SCENARIO, and
+      # on Linux the equivalent work happened in earlier steps. Charging a cold
+      # 170 MB install to the scenario budget would report a slow network as a
+      # scenario failure.
+      - name: Set up the native harness (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
+        run: |
+          RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
+            bash tools/native_harness.sh macos "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" "$SCENARIO"
+
+      - name: Run the unit (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: ${{ fromJSON(env.UNITS)[matrix.unit].budget }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /tmp/mpf-native/harness_env.sh
+          # The upload below is `if: always()`, so a run that produced no
+          # gallery would ship a green job with an empty artefact. Fail here
+          # instead, where the reason is still visible.
+          test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
+          python3 tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }}
+
+      - name: Set up the native harness (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        shell: powershell
+        env:
+          SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          $env:RUN_DIR_NAME = Join-Path $env:RUNNER_TEMP "ui-artifacts\runs\${{ github.run_id }}\${{ matrix.unit }}"
+          & powershell -ExecutionPolicy Bypass -File tools\native_harness.ps1 `
+              -CuraVersion "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" `
+              -Scenario "$env:SCENARIO" -WorkDir $work
+          if ($LASTEXITCODE -ne 0) { throw "native_harness.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Run the unit (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: ${{ fromJSON(env.UNITS)[matrix.unit].budget }}
+        shell: powershell
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          . (Join-Path $work 'harness_env.ps1')
+          if (-not (Test-Path (Join-Path $env:HARNESS_RUN_DIR 'index.html'))) {
+            Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1
+          }
+          & python tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
+          if ($LASTEXITCODE -ne 0) { throw "runner.py failed with exit $LASTEXITCODE" }
+
       - name: Upload the unit's gallery
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gate-${{ matrix.unit }}
+          # the OS is in the name: 51 galleries, and two units of the same
+          # name on different platforms must not collide
+          name: gate-${{ matrix.unit }}-${{ matrix.os }}
           path: /tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}
           if-no-files-found: warn
 

@@ -457,6 +457,24 @@ SEED_VER="${CURA_VERSION%.*}"
 if [ "$SEED_VER" != "5.13" ]; then
     cp -r "$WORK_DIR"/xdg/config/cura/5.13 "$WORK_DIR"/xdg/config/cura/"$SEED_VER"
     cp -r "$WORK_DIR"/xdg/cura/5.13 "$WORK_DIR"/xdg/cura/"$SEED_VER"
+    # The machine fixture is version-stamped, and Cura REJECTS a container
+    # whose setting_version is not the build's own: it logs "outdated. Its
+    # setting version is 27 but it should be 23" and the machine disappears,
+    # which takes every scenario with it. The 5.13 fixture is what gets
+    # copied, so the stamp has to be rewritten from the build actually being
+    # run - exactly what both native harness scripts do. Only setting_version
+    # moves across 5.7-5.13; the stack and instance versions do not.
+    TARGET_SET_VER="$(sed -n 's/^ *SettingVersion *= *\([0-9][0-9]*\).*/\1/p' \
+        "$CURA_ROOT/cura/CuraApplication.py" 2>/dev/null | head -1)"
+    if [ -z "$TARGET_SET_VER" ]; then
+        echo "ui_test: could not read SettingVersion from $CURA_ROOT/cura/CuraApplication.py, so the carried-over seed cannot be stamped for $CURA_VERSION - refusing to boot a seed Cura is guaranteed to reject"
+        exit 1
+    fi
+    # Only the data root carries setting_version; cura.cfg lives in the
+    # config root and its stamps are the preferences format, not this one.
+    find "$WORK_DIR"/xdg/cura/"$SEED_VER" -name '*.cfg' -exec \
+        sed -i "s/^[[:space:]]*setting_version[[:space:]]*=.*/setting_version = $TARGET_SET_VER/" {} +
+    echo "seed carried over to $SEED_VER with setting_version=$TARGET_SET_VER (read from the installed build)"
     # The carry-over copy lands with the same 755 modes (cp -r); the
     # cross-uid chmod above must cover it too.
     chmod -R 777 "$WORK_DIR"/xdg/config/cura/"$SEED_VER" "$WORK_DIR"/xdg/cura/"$SEED_VER"
@@ -508,6 +526,9 @@ cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 # boot's view, the tree the boot actually sees ends up world-writable.
 docker exec "$CONTAINER" chmod -R 777 "$(container_path "$WORK_DIR"/xdg)"
 cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
+# The runner's platform dispatch rides beside it (the staged runner is
+# imported from this directory), so the flat copy keeps working.
+cp "$root/tests/harness/native_host.py" "$WORK_DIR"/native_host.py
 cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py

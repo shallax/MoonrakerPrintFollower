@@ -20,8 +20,25 @@ from PyQt6.QtQuick import QQuickItem, QQuickWindow
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from UM.Application import Application
 
-PORT_FILE = "/tmp/mpf/harness_port.txt"
-TOKEN_FILE = "/tmp/mpf/harness_token.txt"
+# Where the port and the per-run token are published for the runner:
+# ONE variable, because the runner reads them back through it and the
+# two sides must never disagree about the path. The driver runs inside
+# Cura, which inherits the launch environment, so both sides resolve
+# the same value. The default is the Linux container's work dir, which
+# IS /tmp/mpf.
+RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
+PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
+TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
+
+
+def _ensure_rpc_dir():
+    # The natives have no /tmp/mpf: the launcher points HARNESS_RPC_DIR
+    # at a real scratch dir and this creates it. In the container the
+    # work dir already exists, so the call is a no-op.
+    try:
+        os.makedirs(RPC_DIR, exist_ok=True)
+    except OSError:
+        pass
 
 
 def _mint_token():
@@ -53,6 +70,7 @@ class HarnessServer(QObject):
         self._win_events = []
         self._py_clicks = []
         self._buffers = {}
+        _ensure_rpc_dir()
         self._token = _mint_token()
         if not self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
             return

@@ -18,6 +18,11 @@ import subprocess
 import sys
 import time
 
+# The platform dispatch lives beside this file (the container staging
+# copies it next to the runner) and is the ONE place a host platform is
+# chosen.
+import native_host
+
 DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 # One display geometry (the round-2 contract): the screen SIZE, the
 # capture size and the window pin resolve from the environment, set
@@ -26,9 +31,35 @@ DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 SIZE = os.environ.get("HARNESS_GEOMETRY", "1920x1080")
 WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x1040")
 RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-" + time.strftime("%Y-%m-%d-%H%M%S"))
-PORT_FILE = "/tmp/mpf/harness_port.txt"
-TOKEN_FILE = "/tmp/mpf/harness_token.txt"
+# The RPC rendezvous: the driver, inside Cura, writes the port and the
+# per-run token here and the runner reads them back. ONE variable —
+# the two sides then cannot disagree about the path — and the default
+# keeps the Linux container (whose work dir IS /tmp/mpf) unchanged.
+RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
+PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
+TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
 DRIVER_HOST = "127.0.0.1"
+SYSTEM = native_host.current_system()
+
+
+def still_argv(path):
+    """One frame's ffmpeg argv — the capture helper's platform choice.
+    The natives record the display they are given, so the display must
+    already be at HARNESS_GEOMETRY or the frame fails shot()'s own
+    size check, which is the honest reading of a frame that is not the
+    one the run asked for."""
+    return native_host.still_argv(SYSTEM, path, size=SIZE, display=DISPLAY,
+                                  screen_index=native_host.screen_index())
+
+
+def record_argv(path, framerate=15):
+    """A recording's ffmpeg argv: the platform's input device, and the
+    natives' fragmented output flags — a native recorder is stopped by
+    a kill, and a plain mp4 would lose the index that makes it
+    playable."""
+    return native_host.recorder_argv(SYSTEM, path, size=SIZE, display=DISPLAY,
+                                     screen_index=native_host.screen_index(),
+                                     framerate=framerate)
 
 
 def rpc(request, timeout=20.0):
@@ -91,7 +122,7 @@ def shot(name):
     read as a failure — a silently missing image would otherwise fall
     back to a stale frame with the same name (the panel's finding).
     The frame must also match the declared SIZE: a clamped or
-    truncated x11grab still writes a plausible file, and every
+    truncated grab still writes a plausible file, and every
     evidence claim downstream rests on these pixels."""
     path = os.path.join(RUN_DIR, f"{name}.png")
     try:
@@ -99,9 +130,7 @@ def shot(name):
     except FileNotFoundError:
         pass
     try:
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab",
-                        "-video_size", SIZE, "-i", DISPLAY, "-frames:v", "1", path],
-                       check=True, timeout=30)
+        subprocess.run(still_argv(path), check=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as exc:
         return (path, f"capture failed: {exc!r}"[:80])
     if not os.path.exists(path) or os.path.getsize(path) < 100:
@@ -246,8 +275,7 @@ def scenario(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1111,8 +1139,7 @@ def scenario9():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario9.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario9.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario9.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1181,8 +1208,7 @@ def scenario8():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario8.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "5", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario8.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario8.mp4"), framerate=5))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1265,8 +1291,7 @@ def scenario10():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario10.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario10.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario10.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1336,8 +1361,7 @@ def scenario11():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario11.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario11.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario11.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1410,8 +1434,7 @@ def scenario7():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario7.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario7.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario7.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1478,8 +1501,7 @@ def scenario6():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario6.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario6.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario6.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1568,8 +1590,7 @@ def scenario5():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario5.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario5.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario5.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1660,8 +1681,7 @@ def scenario4():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario4.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario4.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario4.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1741,8 +1761,7 @@ def scenario3():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario3.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario3.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario3.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1811,8 +1830,7 @@ def scenario2(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario2.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario2.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario2.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1903,8 +1921,7 @@ def scenario1(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario1.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario1.mp4")])
+        record_argv(os.path.join(RUN_DIR, "scenario1.mp4"), framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2074,8 +2091,7 @@ def first_install1():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall1.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2172,8 +2188,7 @@ def first_install2():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall2.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2306,8 +2321,7 @@ def migration1():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration1.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2407,8 +2421,7 @@ def migration2():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration2.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2521,8 +2534,7 @@ def suite_run(group_id):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2776,8 +2788,7 @@ def real_run():
     video_path = os.path.join(RUN_DIR, "real.mp4")
     video_path = os.path.join(RUN_DIR, "real.mp4")
     video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+        record_argv(video_path, framerate=15))
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
