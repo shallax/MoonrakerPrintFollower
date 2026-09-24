@@ -2328,14 +2328,38 @@ jobs:
                   DPHZ="$(sed -n 's/.*Hertz: *\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
                 fi
                 [ -n "$DPHZ" ] || DPHZ=60
+                # The colour depth has to be one this display actually offers.
+                # Asking for one it does not is an outright refusal - "could
+                # not find res:1920x1080 hz:60 color_depth:8" - and the target
+                # was read from the mode list for exactly that resolution, so
+                # a depth the list does not carry cannot be a valid request.
+                # The current mode's depth is the fallback, not a constant.
+                DPDEPTH=""
+                if [ -n "$WANT_W" ] && [ -n "$WANT_H" ]; then
+                  DPDEPTH="$(sed -n "s/.*res:${WANT_W}x${WANT_H} hz:[0-9][0-9]* color_depth:\([0-9][0-9]*\).*/\1/p" \
+                    "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                fi
+                if [ -z "$DPDEPTH" ]; then
+                  DPDEPTH="$(sed -n 's/^Color Depth: *\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                fi
+                [ -n "$DPDEPTH" ] || DPDEPTH=7
                 if [ -z "$DPID" ]; then
                   DISPLAY_WHY="displayplacer reported no persistent screen id"
                 else
-                  echo "displayplacer: setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz (was ${DISP_BEFORE:-unreadable})"
-                  "$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:8"
-                  echo "displayplacer exit: $?"
+                  echo "displayplacer: setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz color_depth:$DPDEPTH (was ${DISP_BEFORE:-unreadable})"
+                  DP_OUT="$("$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:$DPDEPTH" 2>&1)"
+                  DP_RC=$?
+                  [ -n "$DP_OUT" ] && echo "displayplacer output: $DP_OUT"
+                  echo "displayplacer exit: $DP_RC"
                   sleep 3
-                  DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H}"
+                  # A refusal must not be reported as a success: the previous
+                  # round logged "displayplacer set res:1920x1080" while the
+                  # command had exited 1 and changed nothing.
+                  if [ "$DP_RC" -eq 0 ]; then
+                    DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H}"
+                  else
+                    DISPLAY_WHY="displayplacer REFUSED res:${WANT_W}x${WANT_H} (exit $DP_RC): ${DP_OUT:-no output}"
+                  fi
                 fi
               fi
             fi
