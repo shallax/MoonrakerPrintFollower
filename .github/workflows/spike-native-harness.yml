@@ -1759,12 +1759,19 @@ jobs:
           }
           $py = $pyExes | Select-Object -First 1
           if (-not $py) {
-            $note = if ($pyDlls) {
-              "the build embeds its interpreter as python3*.dll rather than shipping python.exe (searched $dir, depth 5)"
+            # No launcher, but the interpreter can still be right here as the
+            # DLL Cura loads in-process, which is the form the port actually
+            # needs - it injects rather than spawning. Calling that ABSENT said
+            # the port could not work on a build where the interpreter is
+            # plainly present, one layer down.
+            if ($pyDlls) {
+              $dllMain = $pyDlls | Select-Object -First 1
+              $dllVer = "$($dllMain.VersionInfo.FileVersion)"
+              if (-not $dllVer) { $dllVer = '<not readable>' }
+              AR "Cura's bundled Python" $role 'INSTALLED BY US' $dllVer "embedded, not launched: $($dllMain.FullName) is the interpreter Cura loads in-process (searched $dir, depth 5; this build ships no python*.exe)"
             } else {
-              "no python executable and no python3*.dll under the install dir (searched $dir, depth 5)"
+              AR "Cura's bundled Python" $role 'ABSENT' '<none>' "no python executable and no python3*.dll under the install dir (searched $dir, depth 5)"
             }
-            AR "Cura's bundled Python" $role 'ABSENT' '<none>' $note
           } else {
             # run inside a bounded process so a launcher that waits forever
             # cannot consume the job timeout
@@ -1805,6 +1812,7 @@ jobs:
           $pyqtDirs = Get-ChildItem -Path $dir -Recurse -Depth 5 -Directory -Filter 'PyQt6*' -ErrorAction SilentlyContinue
           if ($pyqtDirs) { $pyqtDirs | ForEach-Object { W "  dir: $($_.FullName)" } }
           $distInfo = $pyqtDirs | Where-Object { $_.Name -like 'PyQt6-*.dist-info' } | Select-Object -First 1
+          $pkgDir = $pyqtDirs | Where-Object { $_.Name -eq 'PyQt6' } | Select-Object -First 1
           if ($distInfo) {
             $meta = Join-Path $distInfo.FullName 'METADATA'
             $verLine = if (Test-Path $meta) { (Select-String -Path $meta -Pattern '^Version:' | Select-Object -First 1).Line } else { $null }
@@ -1814,8 +1822,18 @@ jobs:
             } else {
               AR "Cura's bundled PyQt6" 'the binding the port injects through' 'INSTALLED BY US' '<not readable>' "$($distInfo.FullName) has no readable METADATA"
             }
+          } elseif ($pkgDir) {
+            # This build ships the binding as a plain package directory with no
+            # dist-info, so the version comes from the Qt it carries rather
+            # than being reported missing. ABSENT here would have said the port
+            # cannot work on a platform where PyQt6 is plainly installed.
+            $pyd = Get-ChildItem -Path $pkgDir.FullName -Recurse -Depth 3 -File -Filter 'QtCore*.pyd' -ErrorAction SilentlyContinue | Select-Object -First 1
+            $pkgQt = Get-ChildItem -Path $pkgDir.FullName -Recurse -Depth 4 -File -Filter 'Qt6Core.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+            $pv = if ($pkgQt) { "$($pkgQt.VersionInfo.FileVersion)" } else { '<not readable>' }
+            $proof = if ($pyd) { $pyd.FullName } elseif ($pkgQt) { $pkgQt.FullName } else { $pkgDir.FullName }
+            AR "Cura's bundled PyQt6" 'the binding the port injects through' 'INSTALLED BY US' $pv "ships as a package directory with no dist-info: $proof (version is the Qt it carries; searched $dir, depth 5)"
           } else {
-            AR "Cura's bundled PyQt6" 'the binding the port injects through' 'ABSENT' '<none>' "no PyQt6-*.dist-info under the install dir"
+            AR "Cura's bundled PyQt6" 'the binding the port injects through' 'ABSENT' '<none>' "no PyQt6 package directory under the install dir (searched $dir, depth 5)"
           }
           W ""
           W "--- rows so far ---"
