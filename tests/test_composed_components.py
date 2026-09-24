@@ -3860,12 +3860,51 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
             self.assertFalse(escaped.get("timeout"),
                              "the worker escaped the gate: it rendered without "
                              "a release")
+
+            class FirstPump:
+                """`qt.events`, but the waiter's FIRST pump keeps pumping
+                until the watched layer has nothing outstanding.
+
+                The helper samples `seen_pending` before it pumps, and
+                that sample only decides anything if ONE pump delivers
+                the completion — the six-millisecond pump did not: the
+                token outlived it, and the helper's own in-loop
+                re-sample then set the flag the pre-pump sample exists
+                to set. That is why this test passed with the
+                regression restored. Draining the first pump removes
+                the timing from the question and leaves the logic.
+                """
+
+                def __init__(self):
+                    self.first = True
+                    self.drained = None
+
+                def events(self, milliseconds=0):
+                    if not self.first:
+                        return self.qt_events(milliseconds)
+                    self.first = False
+                    deadline = time.monotonic() + 10.0
+                    while True:
+                        self.qt_events(milliseconds)
+                        if surface.tokens.get(layer_number) is None:
+                            self.drained = True
+                            return
+                        if time.monotonic() >= deadline:
+                            self.drained = False
+                            return
+
+            waiter_qt = FirstPump()
+            waiter_qt.qt_events = self.qt.events
             # A split that will NOT be the committed one, so the
             # already-current path cannot answer for the missed token.
             self.assertTrue(
                 self._await_prefix_job(surface, layer_number, committed + 999,
-                                       self.qt),
+                                       waiter_qt),
                 "the waiter missed a job that completed in its first pump")
+            self.assertTrue(waiter_qt.drained,
+                            "the token outlived even a draining first pump, so "
+                            "the pre-pump sample is not what answered and this "
+                            "test no longer forces the race it claims to")
         self._drain_job(model, surface, self.qt)
 
     def test_an_attached_layer_change_bypasses_the_prefix_cadence(self):
