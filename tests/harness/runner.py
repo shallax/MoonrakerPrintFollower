@@ -785,7 +785,11 @@ def _foreground_verdict(foreground, ok, assertion):
     if foreground is None:
         return ok, assertion
     if foreground.get("authority") == "not-applicable":
-        return ok, f"{assertion} · the display guard is off with the capture"
+        # Left unsaid on every assertion, deliberately: the capture
+        # block in evidence.json already records the mode once for the
+        # whole leg, and a suffix on each of 55 steps is noise that
+        # hides the assertion it is appended to.
+        return ok, assertion
     if foreground.get("foreground") is False and foreground.get("authority") not in (
             None, "none", "unreachable"):
         return False, (f"{assertion} · the display was taken from Cura and the "

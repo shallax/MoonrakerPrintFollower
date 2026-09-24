@@ -758,7 +758,10 @@ class CaptureGateTests(unittest.TestCase):
         self.assertEqual(guard["authority"], "not-applicable")
         ok, assertion = runner._foreground_verdict(guard, True, "it landed")
         self.assertTrue(ok)
-        self.assertIn("display guard is off", assertion)
+        # The verdict is untouched AND the assertion is left as it was:
+        # the leg's capture block says the guard stood down once, and a
+        # suffix on every step would bury the assertion it sits on.
+        self.assertEqual(assertion, "it landed")
 
     def test_the_evidence_carries_the_mode_and_the_reason(self):
         runner.CAPTURE = False
