@@ -1568,6 +1568,59 @@ class CuraIntegrationTests(unittest.TestCase):
         self.assertEqual(len(asked), 2)
         self.assertEqual(app.controller.stage, "PreviewStage")
 
+    def test_a_confirmed_replace_survives_a_scene_change_in_the_same_turn(self):
+        """The user's answer outranks a Cura scene generation.
+
+        A scene change processed on the turn after the answer (the stage
+        switch this prompt makes is one source of them) used to reach
+        queue()'s stale-token guard first and drop the load: the user
+        answered Yes and nothing happened, with nothing in the log. The
+        mac 5.12 leg's missing load is this shape.
+        """
+        from PyQt6.QtCore import QTimer
+        app, integration = self.build()
+
+        class MessageBox:
+            StandardButton = SimpleNamespace(Yes=1, No=2)
+
+            @classmethod
+            def question(cls, *args):
+                # The scene change lands while the box is up, so it is
+                # processed before the callback queued after it.
+                QTimer.singleShot(
+                    0, lambda: integration.invalidate("Cura scene structure changed"))
+                return MessageBox.StandardButton.Yes
+
+        with patch.object(self.module, "QMessageBox", MessageBox):
+            ran = []
+            integration.confirm_replace(lambda: ran.append(1))
+            self.assertTrue(self._accept(lambda: bool(ran)),
+                            "the user's answer was dropped, not run")
+        self.assertEqual(ran, [1])
+
+    def test_a_confirmed_replace_does_not_run_the_callback_after_close(self):
+        """The answer is deferred one turn, and shutdown wins that race.
+
+        Dropping the token guard for the confirmed load must not mean
+        running a callback into a closed adapter: the shutdown that
+        lands while the box is up is the one case that still refuses.
+        """
+        app, integration = self.build()
+
+        class MessageBox:
+            StandardButton = SimpleNamespace(Yes=1, No=2)
+
+            @classmethod
+            def question(cls, *args):
+                integration.close()
+                return MessageBox.StandardButton.Yes
+
+        with patch.object(self.module, "QMessageBox", MessageBox):
+            ran = []
+            integration.confirm_replace(lambda: ran.append(1))
+            self._pump(0.1)
+        self.assertEqual(ran, [])
+
     # -- shutdown ---------------------------------------------------------
 
     def test_close_releases_everything_it_owns(self):

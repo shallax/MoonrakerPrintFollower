@@ -1156,7 +1156,7 @@ class TransportLaneTests(TransportCase):
 
     def test_cancelling_a_vanished_reply_does_not_raise(self):
         self.transport._pending["drop::c"] = self.module._PendingRequest(
-            _Vanished(), 1, "GET", "auxiliary", time.monotonic())
+            _Vanished(), 1, "GET", "auxiliary", time.perf_counter())
         self.transport.cancel_owner("drop")
         self.assertEqual(self.transport._pending, {})
 
@@ -1164,7 +1164,7 @@ class TransportLaneTests(TransportCase):
         # Touching the surface of a deleted QNetworkReply raises; the lane
         # must then be reclaimable instead of blocking every future poll.
         self.transport._pending["o::c"] = self.module._PendingRequest(
-            _Vanished(), 1, "GET", "auxiliary", time.monotonic())
+            _Vanished(), 1, "GET", "auxiliary", time.perf_counter())
         self.assertTrue(self.transport.send_json("o", "c", "GET", "/ok", self.callback()))
         self.assertTrue(self.poll(lambda: self.calls), "the lane stayed wedged")
 
@@ -1202,7 +1202,9 @@ class TransportStaleFinishTests(TransportCase):
     already gone when the transport touches it."""
 
     def _pending(self, reply):
-        entry = self.module._PendingRequest(reply, 1, "GET", "auxiliary", time.monotonic())
+        # The transport's own clock: the injected entry stands in for a
+        # request the transport stamped, so it must be the same counter.
+        entry = self.module._PendingRequest(reply, 1, "GET", "auxiliary", time.perf_counter())
         self.transport._pending[self.transport._key("o", "c")] = entry
         return entry
 

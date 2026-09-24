@@ -224,7 +224,10 @@ class MoonrakerHttpTransport(QObject):
         self._request_serial += 1
         request_id = self._request_serial
         category = str(category or "auxiliary")
-        pending = _PendingRequest(reply, request_id, method, category, time.monotonic())
+        # perf_counter for the pair below: the elapsed is a millisecond
+        # diagnostic, and Windows' monotonic clock only advances every
+        # ~15.6 ms, so a sub-tick round trip measures a flat 0 ms there.
+        pending = _PendingRequest(reply, request_id, method, category, time.perf_counter())
         self._pending[key] = pending
         self._metrics[category].started += 1
         generation = self._generation
@@ -243,7 +246,7 @@ class MoonrakerHttpTransport(QObject):
             return
         self._pending.pop(key, None)
 
-        elapsed_ms = max(0.0, (time.monotonic() - pending.started_at) * 1000.0)
+        elapsed_ms = max(0.0, (time.perf_counter() - pending.started_at) * 1000.0)
         metric = self._metrics[pending.category]
         metric.completed += 1
         metric.total_elapsed_ms += elapsed_ms

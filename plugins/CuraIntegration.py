@@ -334,7 +334,19 @@ class CuraIntegration(QObject):
             # refused replace is never invisible.
             Logger.log("i", "Moonraker replace confirm: answer=%s yes=%s",
                        int(answer), int(QMessageBox.StandardButton.Yes))
-            if answer == QMessageBox.StandardButton.Yes: self.queue(callback)
+            if answer == QMessageBox.StandardButton.Yes:
+                # The answer is the user's and no later Cura scene change
+                # may cancel it. queue()'s stale-token guard does cancel
+                # it — a scene change processed on the next turn (the
+                # stage switch this prompt makes is itself one source of
+                # them) drops the load and the user sees "Yes" do
+                # nothing, with nothing in the log. Deferred one turn for
+                # the same re-entrancy reason, and the callback itself
+                # re-reads Cura's current state, so there is nothing here
+                # for a token to protect.
+                def run():
+                    if not self._closed: callback()
+                QTimer.singleShot(0, run)
         self.queue(ask)
 
     def load(self, lease):

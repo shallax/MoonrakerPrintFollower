@@ -1329,7 +1329,11 @@ class ComposedComponentTests(unittest.TestCase):
         # observed printer state (a live print must not read
         # "cancelled" — the e-stop alone owns that assumption).
         module = self.qt.load("PrintStartOwner")
-        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+        # A negative sentinel: the watchdog has already expired. A 0.0
+        # one does not say that on a clock that ticks — Windows' wall
+        # clock advances every ~15.6 ms, so an attempt stamped in the
+        # current tick still reads a zero elapsed.
+        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", -1.0):
             model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
@@ -1385,7 +1389,8 @@ class ComposedComponentTests(unittest.TestCase):
         # must not read as a failed start while the job carries on.
         self.assertIsNotNone(model._file_manager.print_attempt)
         module = self.qt.load("PrintStartOwner")
-        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+        # Already expired, by the same sentinel rule as above.
+        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", -1.0):
             model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
