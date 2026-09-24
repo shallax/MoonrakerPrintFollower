@@ -3,6 +3,6 @@
        UM.ColorImage injects the theme colour into the root svg
        element, so the glyph follows Cura's theme and scaling. -->
   <path d="M11 3h2v9h-2z"/>
-  <path d="M12 9l-4.5 4.5h9z"/>
+  <path d="M12 16.5l-4.5-4.5h9z"/>
   <path d="M4 19h16v2H4z"/>
 </svg>
