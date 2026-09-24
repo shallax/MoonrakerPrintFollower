@@ -191,9 +191,23 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         col = ox + int(self.mapping["offsetX"]
                        + 40.0 * self.mapping["sx"])
         row = oy + self._scene_row(228.0, 1.0)
-        off = image.pixel(col + 6, row)  # clear of the line's own width
-        return max(self._delta(image.pixel(col + step, row), off)
-                   for step in (-1, 0, 1)) > 30
+
+        def inked(sample_row):
+            off = image.pixel(col + 6, sample_row)  # clear of the line's width
+            return max(self._delta(image.pixel(col + step, sample_row), off)
+                       for step in (-1, 0, 1)) > 30
+
+        if not inked(row):
+            return False
+        # EVERY row the spike census reads on this column, not one of
+        # them. This predicate is the BASELINE's arrival proof, and the
+        # census diffs a 16x24 region: a baseline accepted while the
+        # graduation was drawn at the sampled row alone leaves the rest
+        # of that region un-inked, and the diff against the measured
+        # frame then reads the GRID as spike ink — the (78,38) report is
+        # this column. One point cannot establish a region.
+        corner_row = self._scene_row(215.0, 1.0)
+        return all(inked(oy + probe) for probe in range(corner_row - 22, corner_row - 6))
 
     def _grab_from(self, image):
         """The background comes from the SAME frame as the measurement:
@@ -318,9 +332,19 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         # ~160 px. A round join leaves it at baseline.
         corner_row = self._scene_row(215.0, 1.0)
         corner_col = int(35.0 * self.mapping["sx"])
-        for row in range(corner_row - 22, corner_row - 6):
-            for col in range(corner_col + 4, corner_col + 28):
-                self.assertLess(diff(image, col, row), 40, f"miter spike ink at ({col},{row})")
+        spiked = [(col, row) for row in range(corner_row - 22, corner_row - 6)
+                  for col in range(corner_col + 4, corner_col + 28)
+                  if not diff(image, col, row) < 40]
+        if spiked:
+            # The pictures, so the next reader can tell a genuine spike
+            # from a baseline that was accepted before the grid it
+            # subtracts had painted. The census subtracts one and reads
+            # the other, so both belong in the evidence.
+            image.save("/tmp/mpf/miter-measured.png")
+            baseline.save("/tmp/mpf/miter-baseline.png")
+            self.fail("miter spike ink at %s (%d px); frames written to "
+                      "/tmp/mpf/miter-{measured,baseline}.png"
+                      % (spiked[0], len(spiked)))
 
     def test_ghost_pending_printed_share_one_width(self):
         """Test 7: the same geometry renders at one physical width in

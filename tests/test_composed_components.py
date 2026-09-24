@@ -3802,19 +3802,29 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         real_prefix = module.render_layer_prefix
         gate = threading.Event()
         reached = threading.Event()
-        rendered = threading.Event()
+        queued = threading.Event()
+        escaped = {}
         self.addCleanup(gate.set)
 
         def gated_prefix(payload_arg, plot, view, split, **kwargs):
             reached.set()
-            gate.wait(60.0)
-            image = real_prefix(payload_arg, plot, view, split, **kwargs)
-            # The render is DONE and its completion is queued for the
-            # owner thread — which is what makes the commit land inside
-            # the waiter's first pump rather than whenever the pool
-            # happens to get round to it.
-            rendered.set()
-            return image
+            # Checked, not discarded: a timed-out wait would let the
+            # worker render without a release, leaving the park unproven.
+            if not gate.wait(60.0):
+                escaped["timeout"] = True
+            return real_prefix(payload_arg, plot, view, split, **kwargs)
+
+        # The completion is emitted on the WORKER and delivered to the
+        # owner thread as a queued call. A DirectConnection runs this
+        # slot on the emitting thread, at emit time — so it fires once
+        # the completion is genuinely QUEUED for the owner thread, which
+        # is the state the waiter's first pump has to consume. Setting a
+        # flag inside render_layer_prefix would not prove that: the
+        # caller still has to write the PNG and emit.
+        from PyQt6.QtCore import Qt as _Qt
+        model._raster_bridge.done.connect(
+            lambda *args: queued.set(),
+            _Qt.ConnectionType.DirectConnection)
 
         layer_number = 5
         committed = None
@@ -3835,12 +3845,21 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
             self.qt.events(6)
             self.assertIsNotNone(surface.tokens.get(layer_number),
                                  "no pending token to race")
-            # Release, then WAIT for the render to finish without
-            # pumping: the completion signal is now queued, so the
-            # waiter's very first qt.events() delivers it.
+            # Release, then block WITHOUT PUMPING until the worker has
+            # emitted — the completion is then queued and only the first
+            # pump can deliver it, which is the race exactly.
             gate.set()
-            self.assertTrue(rendered.wait(10.0),
-                            "the parked render never finished")
+            self.assertTrue(queued.wait(10.0),
+                            "the worker never emitted its completion")
+            # The token is still there because nothing has been pumped.
+            # (Any same-layer follow-on work is queued behind it and the
+            # helper's loop consumes it too before the deadline.)
+            self.assertIsNotNone(surface.tokens.get(layer_number),
+                                 "the token was consumed before the pump; "
+                                 "this no longer forces the first-pump race")
+            self.assertFalse(escaped.get("timeout"),
+                             "the worker escaped the gate: it rendered without "
+                             "a release")
             # A split that will NOT be the committed one, so the
             # already-current path cannot answer for the missed token.
             self.assertTrue(
