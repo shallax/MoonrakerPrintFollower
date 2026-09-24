@@ -44,6 +44,7 @@ tessellation and feature topology are covered by the geometry suites.
 """
 
 import os
+import pathlib
 import tempfile
 
 from qt_runtime_support import QT_AVAILABLE
@@ -287,6 +288,18 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                     count += 1
         return count
 
+    def _envelope(self, ratio):
+        """The round-join envelope in LOGICAL scene pixels: half the
+        stroke the QML publishes (already logical) plus the
+        antialiasing allowance, which is a DEVICE quantity and so
+        divides by the ratio. Every distance this test measures is in
+        logical scene pixels, and this is the one place the two
+        systems meet — multiplying the width by the ratio here instead
+        is what made the envelope nearly twice as generous at DPR 2,
+        wide enough for a real miter to sit inside it."""
+        return (ZoomInkMassTests._publish_width(self.face) / 2.0
+                + self.AA_DEVICE_PX / ratio)
+
     def _stroke_ink(self, image):
         """Every pixel of the frame that stands off its own backdrop,
         in scene coordinates, with the chrome taken out. With the grid
@@ -429,17 +442,24 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
     def _offending_columns(offenders, ratio):
         """The failing pixels as a compact NUMERIC report: one line per
         column that carries any, with its row span and its worst
-        distance past the envelope, in device pixels. A count says how
-        much; the columns say which element — a graduation is one
-        column over every row, a miter spike is a wedge."""
+        distance past the envelope. A count says how much; the columns
+        say which element — a graduation is one column over every row,
+        a miter spike is a wedge.
+
+        The offenders arrive in logical scene pixels and the report is
+        in DEVICE pixels — the grid the reader sees in the PNG. The
+        conversion happens HERE, once, so a distance is never compared
+        against an envelope measured in the other system."""
         by_column = {}
         for (sx, sy), distance in offenders:
             col = int(round(sx * ratio))
             row = int(round(sy * ratio))
+            past = distance * ratio
             low, high, worst = by_column.get(col, (row, row, 0.0))
-            by_column[col] = (min(low, row), max(high, row), max(worst, distance))
-        return "\n".join("  col %4d: rows %d..%d (%d px), worst %.2f px past "
-                         "the envelope" % (col, low, high, high - low + 1, worst)
+            by_column[col] = (min(low, row), max(high, row), max(worst, past))
+        return "\n".join("  col %4d: rows %d..%d (%d px), worst %.2f device px "
+                         "past the envelope"
+                         % (col, low, high, high - low + 1, worst)
                          for col, (low, high, worst) in sorted(by_column.items()))
 
     def _write_evidence(self, stem, frames, report):
@@ -497,12 +517,14 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
     # surfaced. At 18 degrees the ratio is 6.4, the miter is drawn, and
     # it reaches ~12.7 px past the path where a round join reaches 1.
     MITER_WEDGE = [[15.0, 211.8, 1.0], [35.0, 215.0, 1.0], [15.0, 218.2, 1.0]]
-    # The antialiasing allowance: Qt spreads partial coverage over the
-    # pixel the geometric edge crosses, so ink reaches at most one
-    # device pixel past the envelope, plus the half-pixel between a
-    # pixel's INDEX and its CENTRE. Both are bounded and platform
-    # independent; the mutant clears it by ~8 px.
-    AA_TOLERANCE = 1.5
+    # The antialiasing allowance, in DEVICE pixels: Qt spreads partial
+    # coverage over the pixel the geometric edge crosses, so ink
+    # reaches at most one device pixel past the envelope, plus the
+    # half-pixel between a pixel's INDEX and its CENTRE. It is divided
+    # by the ratio where it is used, because every distance in this
+    # test is measured in logical scene pixels — the allowance is a
+    # property of the rasteriser's grid, not of the scene.
+    AA_DEVICE_PX = 1.5
     # The ink a wedge this size must produce: two arms of ~20 mm at
     # 1.664 px/mm and ~4 px wide is ~270 px of ink, so 40 is positive
     # evidence the stroke rendered without being a width assertion.
@@ -582,10 +604,17 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                 % (len(stray), stray[0], getattr(self, "_frame_chrome", None),
                    self._chrome_boxes(), columns, wrote))
 
-        width = (ZoomInkMassTests._publish_width(self.face)
-                 * float(self.window.devicePixelRatio()))
+        # ONE coordinate system: logical scene pixels. That is what
+        # _stroke_ink returns and what _scene builds the path in, and
+        # the width the QML publishes is already logical. Multiplying
+        # the width by the ratio mixed the two — at DPR 2 the envelope
+        # came out nearly twice as generous, wide enough for a real
+        # miter to sit inside it. Only the antialiasing allowance is a
+        # DEVICE quantity, and it converts by division.
+        ratio = float(self.window.devicePixelRatio())
+        width = ZoomInkMassTests._publish_width(self.face)
         half = width / 2.0
-        envelope = half + self.AA_TOLERANCE
+        envelope = self._envelope(ratio)
         path = [_parent.PlateFaceRenderTests._scene(self.mapping, x, y)
                 for x, y, _ in self.MITER_WEDGE]
 
@@ -609,22 +638,106 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
                      for pixel in inked
                      if self._distance_to_path(pixel[0], pixel[1], path) > envelope]
         if offenders:
-            _, _, ratio = self._device_origin()
+            # Reported in device pixels, converted once, so every number
+            # in the message is in the grid the reader sees in the PNG.
             wrote = self._write_evidence(
                 "miter",
                 (("measured", image), ("isolated", empty)),
-                "stroke width %.2f device px, envelope %.2f, %d px of ink, "
-                "%d outside:\n%s"
-                % (width, envelope, len(inked), len(offenders),
-                   self._offending_columns(offenders, ratio)))
+                "ratio %.2f, stroke width %.2f device px, envelope %.2f "
+                "device px, %d px of ink, %d outside:\n%s"
+                % (ratio, width * ratio, envelope * ratio, len(inked),
+                   len(offenders), self._offending_columns(offenders, ratio)))
             self.fail(
                 "miter spike: %d of %d inked px lie outside the round-join "
-                "envelope (half the stroke's %.2f px, plus %.1f px of "
-                "antialiasing = %.2f px).\ncorner at scene %s, arms from %s "
-                "to %s\nmapping %r\n%s\nframes: %s"
-                % (len(offenders), len(inked), half, self.AA_TOLERANCE, envelope,
-                   path[1], path[0], path[2], self.mapping,
+                "envelope (half the stroke's %.2f device px, plus %.1f "
+                "device px of antialiasing = %.2f device px, at ratio %.2f)."
+                "\ncorner at scene %s, arms from %s to %s\nmapping %r\n%s\n"
+                "frames: %s"
+                % (len(offenders), len(inked), half * ratio, self.AA_DEVICE_PX,
+                   envelope * ratio, ratio, path[1], path[0], path[2],
+                   self.mapping,
                    self._offending_columns(offenders, ratio), wrote))
+
+    def test_the_envelope_stays_logical_at_every_device_ratio(self):
+        """The envelope's two inputs are in different systems, and this
+        is where they meet.
+
+        The stroke width the QML publishes is LOGICAL; the
+        antialiasing allowance is DEVICE. The envelope must come out
+        logical at every ratio. The arithmetic this replaced —
+        `width * ratio / 2 + 1.5` — doubles the width term at DPR 2
+        while leaving the allowance alone, so the permitted region
+        nearly doubles and a real miter fits inside it. The
+        assertions below are the two ratios and the exact value at
+        each; the last one is the shape of the bug."""
+        half = ZoomInkMassTests._publish_width(self.face) / 2.0
+        self.assertGreater(half, 0.0, "no stroke width to build an envelope from")
+        for ratio in (1.0, 2.0):
+            expected = half + self.AA_DEVICE_PX / ratio
+            self.assertAlmostEqual(self._envelope(ratio), expected, places=9)
+        # The specific defect: at DPR 2 the allowance is half a logical
+        # pixel, so the envelope must stay close to the half-width
+        # rather than doubling with it.
+        self.assertLess(self._envelope(2.0), half + 1.0)
+        self.assertLess(self._envelope(2.0), self._envelope(1.0))
+
+    def test_the_miter_holds_when_the_device_is_scaled(self):
+        """The whole census again at DPR 2, in its own process.
+
+        The ratio is fixed when the QGuiApplication is built, so a
+        second process is the only honest way to move it —
+        QT_SCALE_FACTOR is what the offscreen platform honours, and
+        the child reports the ratio it actually ran at so this cannot
+        pass by having the variable ignored."""
+        import subprocess
+        import sys
+        import textwrap
+        root = pathlib.Path(__file__).resolve().parents[1]
+        # The driver must NOT build the application itself: the suite's
+        # _start_application raises SkipTest when one already exists,
+        # so a probe that creates it turns the whole child into
+        # "Ran 0 tests ... OK (skipped=1)" — a green that ran nothing.
+        # Measured: that is exactly what this test did before the
+        # assertions below, and it passed with the miter restored.
+        # The ratio is read AFTER the run, from the application the
+        # suite built.
+        driver = textwrap.dedent("""
+            import sys, unittest
+            import test_zoom_raster_real_engine as module
+            suite = unittest.TestSuite([module.ZoomStrokeTests(
+                "test_no_miter_spike_on_acute_corners")])
+            result = unittest.TextTestRunner(verbosity=2).run(suite)
+            from PyQt6.QtGui import QGuiApplication
+            print("DPR %.2f" % QGuiApplication.primaryScreen().devicePixelRatio(),
+                  flush=True)
+            sys.exit(0 if result.wasSuccessful() else 1)
+            """)
+        script = pathlib.Path(tempfile.gettempdir()) / "mpf-miter-dpr2.py"
+        script.write_text(driver)
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        env["QT_SCALE_FACTOR"] = "2"
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(root / "tests"), str(root), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+        result = subprocess.run([sys.executable, str(script)], cwd=str(root),
+                                env=env, capture_output=True, text=True, timeout=300)
+        # Both streams: TextTestRunner writes its report to stderr, so
+        # a check that reads stdout alone sees the driver's own line
+        # and nothing else.
+        said = (result.stdout or "") + (result.stderr or "")
+        # All three, or the child can report success without having
+        # measured anything: a skipped test passes, and so does a
+        # child that quietly ran at the ambient ratio.
+        self.assertIn("Ran 1 test", said,
+                      "the child did not EXECUTE the census, so it proves "
+                      "nothing:\n%s" % said[-3000:])
+        self.assertNotIn("skipped", said,
+                         "the child skipped the census:\n%s" % said[-3000:])
+        self.assertIn("DPR 2.00", said,
+                      "the child did not run at DPR 2, so it proves nothing:"
+                      "\n%s" % said[-3000:])
+        self.assertEqual(result.returncode, 0,
+                         "the census failed at DPR 2:\n%s" % said[-3000:])
 
     def test_ghost_pending_printed_share_one_width(self):
         """Test 7: the same geometry renders at one physical width in
