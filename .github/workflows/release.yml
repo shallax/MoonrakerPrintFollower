@@ -240,8 +240,28 @@ jobs:
               echo "could not read the base commit - building, so the image stays covered"
             fi
           fi
+          # The build's first line is apt-get against the LIVE archives,
+          # and one hiccup there fails the leg before it has run anything:
+          # measured twice in one matrix at 14:27 and 14:30, "process
+          # apt-get update && apt-get install ... did not complete
+          # successfully: exit code 100", each a 37-second job with no
+          # gallery. The image is deterministic; only the fetch is not, so
+          # the build is retried rather than re-rolled. A failed build
+          # leaves no partial state, which is what makes the retry safe.
+          build_image() {
+            attempt=1
+            while [ "$attempt" -le 3 ]; do
+              if docker build -q -t mpf-cura-harness tools/harness; then
+                return 0
+              fi
+              echo "the harness image build failed (attempt $attempt of 3) - retrying"
+              attempt=$((attempt + 1))
+              sleep $((attempt * 10))
+            done
+            return 1
+          }
           if [ "$HARNESS_CHANGED" = yes ]; then
-            docker build -q -t mpf-cura-harness tools/harness
+            build_image
           elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
             docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" mpf-cura-harness
           elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" >/dev/null 2>&1; then
@@ -249,7 +269,7 @@ jobs:
             docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" mpf-cura-harness
           else
             echo "no published harness image was reachable - building from tools/harness, which needs the apt archive"
-            docker build -q -t mpf-cura-harness tools/harness
+            build_image
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
