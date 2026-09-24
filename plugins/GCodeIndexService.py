@@ -1954,15 +1954,23 @@ class GCodeIndexService(QObject):
         generation = self._generation
         self._busy = kind
         self._busy_generation = generation
-        future = self._executor.submit(work)
-        def done(result):
-            try: value, error = result.result(), None
+        # The terminal is emitted by the WORK ITEM, never by a future
+        # callback. add_done_callback runs its callback on whichever
+        # thread attached it once the work has already finished, and the
+        # pool can finish a fast job (a hot-store restore) before
+        # _submit even reaches the attach — that put the emit, and with
+        # it an auto-connected _finish, on the CALLING thread, inside
+        # the stack of the public call that submitted the work. Emitting
+        # here leaves exactly one thread for the terminal: the one that
+        # ran the work.
+        def run():
+            try: value, error = work(), None
             except Exception as exc: value, error = None, str(exc)
             try:
                 self._completed.emit(generation, kind, value, error, lease)
             except RuntimeError:
                 if lease is not None: lease.close()  # Qt owner destroyed at shutdown.
-        future.add_done_callback(done)
+        self._executor.submit(run)
         self.changed.emit()
 
     def _finish(self, generation, kind, value, error, lease):

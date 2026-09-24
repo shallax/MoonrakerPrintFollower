@@ -323,6 +323,7 @@ class CuraIntegration(QObject):
     def confirm_replace(self, callback):
         self.switch_to_preview()
         def ask():
+            if self._closed: return
             answer = QMessageBox.question(None, "Moonraker Print Follower",
                 "Replace Cura contents?\n\nThis will discard everything currently loaded in Cura and replace it "
                 "with the G-code currently printing in Moonraker.",
@@ -347,7 +348,15 @@ class CuraIntegration(QObject):
                 def run():
                     if not self._closed: callback()
                 QTimer.singleShot(0, run)
-        self.queue(ask)
+        # The prompt is the user's own click and may not ride queue()'s
+        # stale-token guard: the stage switch above yields a scene change
+        # on the next turn, and one processed before this turn comes
+        # round arrived between the guard's token capture and its check —
+        # the box never opened and the click did nothing, with nothing in
+        # the log (the mac configure leg's missing load is this shape).
+        # The load behind the answer already re-reads Cura's state, so
+        # there is nothing here for a token to protect.
+        QTimer.singleShot(0, ask)
 
     def load(self, lease):
         if self._closed:

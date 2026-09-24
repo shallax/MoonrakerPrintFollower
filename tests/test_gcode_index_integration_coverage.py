@@ -1568,6 +1568,36 @@ class CuraIntegrationTests(unittest.TestCase):
         self.assertEqual(len(asked), 2)
         self.assertEqual(app.controller.stage, "PreviewStage")
 
+    def test_a_scene_change_cannot_swallow_the_replace_prompt(self):
+        """The click outranks a Cura scene generation, not just the answer.
+
+        The prompt rode queue()'s token guard while the answer inside it
+        did not: the stage switch the prompt makes yields a scene change
+        on the next turn, and one processed before the prompt's turn
+        arrived between the guard's token capture and its check — the
+        box never opened, the click did nothing and nothing reached the
+        log (the mac configure leg's missing load is this shape). The
+        scene change is forced here rather than waited for, so the drop
+        is reproduced every run instead of when a runner happens to be
+        slow.
+        """
+        app, integration = self.build()
+        asked = []
+
+        class MessageBox:
+            StandardButton = SimpleNamespace(Yes=1, No=2)
+
+            @classmethod
+            def question(cls, *args):
+                asked.append(args)
+                return MessageBox.StandardButton.No
+
+        with patch.object(self.module, "QMessageBox", MessageBox):
+            integration.confirm_replace(lambda: None)
+            integration.invalidate("Cura scene structure changed")
+            self._pump(0.1)
+        self.assertEqual(len(asked), 1, "the prompt never reached the user")
+
     def test_a_confirmed_replace_survives_a_scene_change_in_the_same_turn(self):
         """The user's answer outranks a Cura scene generation.
 

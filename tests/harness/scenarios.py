@@ -2694,8 +2694,13 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
          {"op": "deliver_click", "objectName": "whatsNewCloseButton"},
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
-         # The repo link's press lands (the browser launch is Qt's
-         # own behaviour — outside the harness's claim).
+         # The repo link's press lands. Qt hands the URL to the OS,
+         # which on the natives raises a browser OVER Cura — after
+         # which nothing else in the run is visible. The runner's
+         # foreground guard (before every frame) re-raises Cura and
+         # reads the state back, so the recording stays Cura's and a
+         # display that does not come home fails the step instead of
+         # being scoped away.
          {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
          {"op": "wait_rect", "objectName": "whatsNewRepoLink", "budget": 20},
          {"op": "scroll_into_view", "objectName": "whatsNewRepoLink"},
@@ -3018,28 +3023,30 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
      ]},
     {"id": "x7", "group": "configure",
-     "name": "the collapsed readouts hide whole lines when the window cannot fit them",
+     "name": "the collapsed rails keep their readouts at the smallest window this stage allows",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         # The premise is a window too SHORT for the strip: the step asks
-         # for the application's own minimum height (528 under Xvfb, 624
-         # on native) rather than the old forced 300 — a size no user can
-         # drag to. Measured on Linux the window settles at 1600x880, the
-         # Monitor stage's own pane minimums holding it above the
-         # declared floor, and the strip is then still in the rendered
-         # tree, only scrolled out of its pane. The three absent checks
-         # below therefore stand on a geometry no platform offers, and
-         # their assertion is awaiting a ruling.
+         # The window goes to the application's own minimum height — the
+         # shortest a user can drag it. The strip's hide is measured
+         # against the pane's VISIBLE height, and at MonitorStage the
+         # panes' own minimums (180+190+240+200 * screenScaleFactor plus
+         # chrome) hold the window at 1600x880 under Xvfb, far above the
+         # height that would trip it: the visibility stays ON and each
+         # collapsed rail keeps its readout on screen. Measured on Linux
+         # — all three found by the visibility-filtered walk, all three
+         # in view. The waits below assert that; the absence they
+         # replaced held only at a forced 1600x300, a size the floor
+         # rule refuses and no user can reach.
          {"op": "resize_window", "w": 1600, "h": "min"},
          {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
                                      "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "budget": 15},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "budget": 15},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "budget": 15},
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},

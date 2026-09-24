@@ -90,6 +90,50 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("setMinimumSize", source)
         self.assertIn("below the window minimum", source)
 
+    def test_a_frame_is_captured_only_when_cura_holds_the_display(self):
+        # The evidence records the DISPLAY: a step that hands it to
+        # another process — a link press opening a browser — makes
+        # every frame after it evidence of that process instead (the
+        # owner watched Edge take the screen mid-suite-probe). The
+        # guard must run BEFORE the capture, its verdict must be able
+        # to fail the step, and the driver's answer must read the OS
+        # where the OS can be asked rather than assuming Qt's word.
+        with open(_runner.__file__, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn('"cmd": "foreground"', source)
+        self.assertIn("def foreground_guard(", source)
+        self.assertIn("def _foreground_verdict(", source)
+        guard = source.index("foreground = foreground_guard()")
+        capture = source.index("capture = shot(name)", guard)
+        self.assertLess(guard, capture, "the guard must run before the capture")
+        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "driver", "__init__.py")
+        with open(driver, encoding="utf-8") as handle:
+            driver_source = handle.read()
+        self.assertIn('if cmd == "foreground":', driver_source)
+        self.assertIn("GetWindowThreadProcessId", driver_source)
+        self.assertIn("def _raise_main_window(", driver_source)
+        # A platform with no foreground authority must be recorded,
+        # never failed: the calibration is the observed activation.
+        self.assertIn("_FOREGROUND_SEEN", driver_source)
+        self.assertIn('"none"', driver_source)
+
+    def test_a_press_aims_at_the_body_as_drawn(self):
+        # A rotated control (the collapsed rails run at -90°) must be
+        # aimed at its own centre. Adding w/2, h/2 to the mapped ORIGIN
+        # mixed item axes into scene axes: the aim landed beside the
+        # rail, so every press at one hit empty space and every rail
+        # rect read "NOT in view" while the rail rendered.
+        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "driver", "__init__.py")
+        with open(driver, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("def _aim_point(", source)
+        self.assertNotIn("scene.x() + target.width() / 2", source)
+        self.assertNotIn("scene.x() + item.width() / 2", source)
+        self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
+                      source)
+
     def test_spec_ids_are_unique(self):
         ids = [spec["id"] for spec in _scenarios.SCENARIOS]
         duplicates = sorted({name for name in ids if ids.count(name) > 1})

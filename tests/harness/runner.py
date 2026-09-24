@@ -417,8 +417,49 @@ def _classify(op, delivery):
     return "diagnostic-probe"
 
 
+def foreground_guard():
+    """The display belongs to Cura between steps (the visible-
+    interactions ruling): the evidence records the DISPLAY, so a step
+    that hands it to another process — a link press opening a browser
+    — makes every frame after it evidence of that process instead.
+    The driver re-raises and reads the state back. A platform with no
+    foreground authority (the WM-less Xvfb, before the window has ever
+    been active) answers `none`: recorded, never a failure, because
+    there is no baseline to read a theft against."""
+    try:
+        state = rpc({"id": 1, "cmd": "foreground", "raise": True}, timeout=20)
+    except Exception as exc:
+        return {"authority": "unreachable", "foreground": None,
+                "error": repr(exc)[:120]}
+    if not state.get("ok"):
+        return {"authority": "unreachable", "foreground": None,
+                "error": str(state.get("error"))[:120]}
+    after = state.get("after") or {}
+    before = state.get("before") or {}
+    return {"authority": state.get("authority"),
+            "foreground": state.get("foreground"),
+            "raised": bool(state.get("raised")),
+            "focus": after.get("focus"), "held_by": before.get("focus")}
+
+
+def _foreground_verdict(foreground, ok, assertion):
+    """Fold the guard into a step's verdict: a display that did not
+    come home fails the step (its own frames, and every later one, are
+    evidence of the wrong process); a display that came home is named
+    in the assertion, never hidden."""
+    if foreground is None:
+        return ok, assertion
+    if foreground.get("foreground") is False and foreground.get("authority") not in (
+            None, "none", "unreachable"):
+        return False, (f"{assertion} · the display was taken from Cura and the "
+                       "re-raise did not get it back")
+    if foreground.get("raised"):
+        return ok, f"{assertion} · another window had taken the display; Cura was re-raised"
+    return ok, assertion
+
+
 def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started,
-                    delivery=None, geometry=None, walk=None):
+                    delivery=None, geometry=None, walk=None, foreground=None):
     path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
     op = step.get("op") if isinstance(step, dict) else "boot"
     return {
@@ -442,6 +483,9 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "geometry": geometry,
         "walk": walk,
         "class": _classify(op, delivery),
+        # The foreground record (the visible-interactions ruling): what
+        # the display showed when the step's frame was captured.
+        "foreground": foreground,
     }
 
 
@@ -2799,13 +2843,18 @@ def suite_scenario(spec, step_fn=None):
             delivery = result[3] if len(result) > 3 else None
             geometry = result[4] if len(result) > 4 else None
             walk = result[5] if len(result) > 5 else None
+            # Before the frame: a step that handed the display to
+            # another process gets one chance to bring it home, and
+            # the capture then shows Cura rather than the intruder.
+            foreground = foreground_guard()
+            ok, assertion = _foreground_verdict(foreground, ok, assertion)
             _FRAME_OUTLINE[0] = geometry
             capture = shot(name)
             _FRAME_OUTLINE[0] = None
             steps.append((name, action, assertion, ok, capture))
             EVIDENCE.append(_evidence_entry(spec, index, step, name, ok, action,
                                             assertion, capture, started, delivery,
-                                            geometry, walk))
+                                            geometry, walk, foreground))
         except Exception as exc:
             capture = shot(name)
             steps.append((name, f"{spec['name']}: {step.get('op')}",

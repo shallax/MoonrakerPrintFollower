@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from concurrent.futures import Future
 from http.server import ThreadingHTTPServer
 import json
 import os
@@ -304,6 +305,49 @@ class ComposedComponentTests(unittest.TestCase):
                 break
         self.assertEqual(service._presentation_source(8), "decoded",
                          "the racing scrub's window never hydrated")
+
+    def test_a_finished_worker_never_terminates_inside_the_submitting_call(self):
+        """The terminal is emitted by the thread that ran the work.
+
+        A pool can finish a fast job before _submit has done its own
+        bookkeeping. While the emit rode the future's done-callback,
+        that interleaving ran the callback — and so the emit, with an
+        auto-connected _finish behind it — on the CALLING thread, inside
+        the stack of the public call that submitted the work: the
+        service installed a view and cleared a busy flag mid-call,
+        while the scrub race above rests on nothing having installed
+        the view yet. The worker here finishes and joins before
+        submit() returns, so the interleaving happens on every run
+        rather than when a runner happens to be slow.
+        """
+        service = self.parts.index
+
+        class EagerPool:
+            """A pool that runs the work to completion on its own thread."""
+
+            def submit(self, work):
+                worker = threading.Thread(target=work)
+                worker.start()
+                worker.join()
+                future = Future()
+                future.set_result(None)
+                return future
+
+            def shutdown(self, **kwargs):
+                pass
+
+        real, service._executor = service._executor, EagerPool()
+        try:
+            service._submit("hydrate", lambda: None, None)
+            self.assertEqual(service._busy, "hydrate",
+                             "the terminal ran inside the submitting call")
+        finally:
+            service._executor = real
+        for _ in range(200):
+            self.qt.events(5)
+            if not service._busy:
+                break
+        self.assertEqual(service._busy, "", "the terminal never arrived")
 
     def test_a_stale_completion_never_clears_the_new_jobs_busy(self):
         # The review's cache-clear finding: a stale worker's terminal

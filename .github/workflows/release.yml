@@ -210,14 +210,39 @@ jobs:
           # fallback. The push itself is gated to dispatch/tag runs,
           # where the token can write packages.
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
-          # The sha tag exists only for runs that pushed one, and the push is
-          # gated to non-PR runs - so on a PR that pull could only ever fail,
-          # and every Linux leg fell through to a docker build that runs
-          # apt-get against the live archives. One archive hiccup then killed
-          # a leg before it ran anything. :latest is published by every
-          # dispatch/tag run, so it is tried before building, and the build
-          # stays the last resort it was meant to be.
-          if docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
+          # Pull the published image rather than rebuilding it. The sha tag
+          # exists only for runs that pushed one, and the push is gated to
+          # non-PR runs, so on a PR that pull could only ever fail and every
+          # Linux leg fell through to a docker build that runs apt-get against
+          # the live archives: seventeen rolls of those dice per run, and one
+          # hiccup killed a leg before it ran anything.
+          #
+          # But pulling always would mean a Dockerfile change is never
+          # exercised, so a PR that touches tools/harness builds regardless.
+          # If the base commit cannot be read, build too - that is the safe
+          # direction, because it keeps the image covered.
+          HARNESS_CHANGED=yes
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            # "unchanged" is only claimed when the base is READABLE and the
+            # diff actually ran. A failed fetch that still resolves locally
+            # would otherwise skip the diff and report unchanged, which is
+            # the unsafe direction.
+            if [ -n "$BASE" ] && git fetch -q --depth=1 origin "$BASE" 2>/dev/null \
+               && git rev-parse -q --verify "$BASE^{commit}" >/dev/null 2>&1; then
+              if git diff --name-only "$BASE" HEAD -- tools/harness | grep -q .; then
+                echo "tools/harness changed in this PR - the image must be built"
+              else
+                echo "tools/harness unchanged in this PR - the published image is used"
+                HARNESS_CHANGED=no
+              fi
+            else
+              echo "could not read the base commit - building, so the image stays covered"
+            fi
+          fi
+          if [ "$HARNESS_CHANGED" = yes ]; then
+            docker build -q -t mpf-cura-harness tools/harness
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
             docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" mpf-cura-harness
           elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" >/dev/null 2>&1; then
             echo "pulled the published :latest harness image (no image for this sha)"

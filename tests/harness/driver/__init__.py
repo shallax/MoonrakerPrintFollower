@@ -229,17 +229,26 @@ class HarnessServer(QObject):
         # own position for screen coordinates (mapToGlobal proved
         # desynced under a WM-less Xvfb after an X-level move).
         try:
-            scene = item.mapToScene(QPointF(0, 0))
             window = item.window()
             origin = window.position() if window is not None else None
+            width, height = float(item.width()), float(item.height())
+            corners = [item.mapToScene(QPointF(px, py))
+                       for px, py in ((0.0, 0.0), (width, 0.0), (0.0, height), (width, height))]
         except Exception:
-            scene, origin = None, None
-        if scene is None or origin is None:
+            corners, origin = None, None
+        if not corners or origin is None:
             top_left = item.mapToGlobal(QPointF(0, 0))
             return {"x": round(top_left.x()), "y": round(top_left.y()),
                     "w": round(item.width()), "h": round(item.height())}
-        return {"x": round(scene.x() + origin.x()), "y": round(scene.y() + origin.y()),
-                "w": round(item.width()), "h": round(item.height())}
+        # The mapped corners, not width()/height(): a rotated control
+        # (the collapsed rails run at -90°) occupies its bounding box
+        # on screen, and reporting the unrotated size put the box
+        # across the wrong axis — a rect the evidence then read as
+        # somewhere the item is not.
+        xs = [point.x() for point in corners]
+        ys = [point.y() for point in corners]
+        return {"x": round(min(xs) + origin.x()), "y": round(min(ys) + origin.y()),
+                "w": round(max(xs) - min(xs)), "h": round(max(ys) - min(ys))}
 
     def _handle(self, request):
         request_id = request.get("id")
@@ -389,6 +398,34 @@ class HarnessServer(QObject):
                              "visible": bool(window.isVisible()),
                              "title": window.title() or ""})
             return {"id": request_id, "ok": True, "windows": rows}
+        if cmd == "foreground":
+            # The foreground guard (the visible-interactions ruling):
+            # evidence records the DISPLAY, so a step that hands the
+            # foreground to another process — a link press opening a
+            # browser — makes every frame after it evidence of that
+            # process instead. Ask, re-raise when the display is not
+            # Cura's, and answer with what the raise actually got.
+            try:
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                before = _foreground_state(window)
+                raised = False
+                if not before["foreground"] and request.get("raise", True):
+                    raised = True
+                    # A lost foreground sometimes needs two attempts
+                    # (Windows consumes the first clearing the lock).
+                    for _ in range(2):
+                        _raise_main_window(window)
+                        _settle(request.get("settle_ms", 250))
+                        if _foreground_state(window)["foreground"]:
+                            break
+                after = _foreground_state(window)
+                return {"id": request_id, "ok": True, "authority": after["authority"],
+                        "foreground": after["foreground"], "raised": raised,
+                        "before": before, "after": after}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "find":
             for window in visible_windows:
                 for item in self._items(window):
@@ -643,9 +680,12 @@ class HarnessServer(QObject):
                     if target is None:
                         return {"id": request_id, "ok": False, "error": "stage button not found",
                                 "stage": stage_target}
-                    scene = target.mapToScene(QPointF(0, 0))
-                    x = round(scene.x() + target.width() / 2)
-                    y = round(scene.y() + target.height() / 2)
+                    aim = _aim_point(target)
+                    if aim is None:
+                        return {"id": request_id, "ok": False,
+                                "error": "the stage button carries no mappable centre",
+                                "stage": stage_target}
+                    x, y = aim
                     label = target.property("text")
                 else:
                     row = getattr(self, "_mounted_switch", None)
@@ -895,9 +935,11 @@ class HarnessServer(QObject):
                     control = _nearest_control(target)
                     if control is not None:
                         target = control
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre", "text": wanted}
+                x, y = aim
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
@@ -939,9 +981,12 @@ class HarnessServer(QObject):
                     return {"id": request_id, "ok": True, "aim": "clicked.emit()",
                             "objectName": wanted,
                             "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre",
+                            "objectName": wanted}
+                x, y = aim
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
@@ -989,9 +1034,11 @@ class HarnessServer(QObject):
                 if target is None:
                     return {"id": request_id, "ok": False,
                             "error": "no visible item with that name/text", "wanted": wanted}
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre", "wanted": wanted}
+                x, y = aim
                 # An aim that provably cannot land refuses HERE: a
                 # press at empty space used to report as an ordinary
                 # unaccepted click, which reads like a stolen click.
@@ -1930,6 +1977,112 @@ def _main_window():
     return best
 
 
+def _settle(milliseconds):
+    """Let the display catch up after a raise — on the GUI thread, so
+    the events that carry the activation are actually processed."""
+    try:
+        qtest = _import_qtest()
+        if qtest:
+            qtest.QTest.qWait(int(milliseconds))
+            return
+    except Exception:
+        pass
+    time.sleep(max(0.0, float(milliseconds) / 1000.0))
+
+
+def _window_handle(window):
+    """The window's native handle where the OS can be asked about it:
+    Windows is the one platform whose foreground this process reads
+    back directly. Elsewhere the answer is None and the guard falls
+    back to Qt's own activation state."""
+    try:
+        import ctypes
+        if not hasattr(ctypes, "windll"):
+            return None
+        return int(window.winId())
+    except Exception:
+        return None
+
+
+def _os_foreground_owner():
+    """The display's foreground window and the process that owns it,
+    where the OS answers. The OWNER is what the guard reads: Cura's
+    own modal dialogs are Cura on screen, and raising the main window
+    over one of them would break the step that is driving it."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        value = int(user32.GetForegroundWindow())
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(value, ctypes.byref(owner))
+        return value, int(owner.value)
+    except Exception:
+        return None, None
+
+
+# A platform that never granted the window activation — the WM-less
+# Xvfb — has no baseline to read a theft against, so the guard records
+# "no authority" instead of failing every step of the run. One
+# observation of the window active is enough to arm it.
+_FOREGROUND_SEEN = [False]
+
+
+def _foreground_state(window):
+    """Whether the DISPLAY shows this application — its own dialogs
+    included: the evidence records the display, so a step that hands
+    the foreground to another process makes every later frame
+    evidence of that other process instead."""
+    focus = QGuiApplication.focusWindow()
+    handle = _window_handle(window)
+    if handle is not None:
+        authority = "os"
+        value, owner = _os_foreground_owner()
+        # The owning process is the honest test: a modal dialog of
+        # this app is this app on screen.
+        held = (owner == os.getpid()) if owner else (value == handle)
+    else:
+        authority = "qt"
+        held = bool(window.isActive() or focus is not None)
+        if not _FOREGROUND_SEEN[0]:
+            authority = "none"
+    state = {"authority": authority, "foreground": bool(held),
+             "active": bool(window.isActive()),
+             "focus": (focus.title() or focus.objectName()) if focus is not None else None,
+             "app_windows": len([w for w in QGuiApplication.topLevelWindows()
+                                 if w.isVisible()]),
+             "platform": QGuiApplication.platformName()}
+    if state["active"] or held:
+        _FOREGROUND_SEEN[0] = True
+    return state
+
+
+def _raise_main_window(window):
+    """Reclaim the display for Cura: Qt's raise+activate, then — on
+    Windows, where a process that lost the foreground cannot take it
+    back with SetForegroundWindow alone (the foreground lock) — the
+    topmost round-trip that clears it. Nothing here is assumed: the
+    caller reads the state back and fails the step when the display
+    did not come home."""
+    try:
+        window.raise_()
+        window.requestActivate()
+    except Exception:
+        pass
+    handle = _window_handle(window)
+    if handle is None:
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        flags = 0x0001 | 0x0002  # SWP_NOSIZE | SWP_NOMOVE
+        user32.SetWindowPos(handle, -1, 0, 0, 0, 0, flags)   # HWND_TOPMOST
+        user32.SetWindowPos(handle, -2, 0, 0, 0, 0, flags)   # HWND_NOTOPMOST
+        user32.BringWindowToTop(handle)
+        user32.SetForegroundWindow(handle)
+    except Exception:
+        pass
+
+
 def _click_windows():
     # The click walks' window union: EVERY QQuickWindow, not the
     # visibility-filtered list — a popup's window reports isVisible
@@ -2124,6 +2277,22 @@ def _viewport_blocker(window, target, x, y):
     return None
 
 
+def _aim_point(item):
+    # The item's own centre, in the window content's coordinates — the
+    # space _viewport_blocker() judges and _deliver_press() presses in.
+    # mapToScene(w/2, h/2) is the centre of the body AS DRAWN: adding
+    # w/2, h/2 to the mapped ORIGIN mixed item axes into scene axes, so
+    # a rotated control (the collapsed rails run at -90°) was aimed off
+    # its own body — every press at a rail landed beside it, and every
+    # rail rect was reported "NOT in view" while the rail rendered.
+    try:
+        centre = item.mapToScene(QPointF(float(item.width()) / 2.0,
+                                         float(item.height()) / 2.0))
+    except Exception:
+        return None
+    return (round(centre.x()), round(centre.y()))
+
+
 def _aim_in_view(item):
     # Whether a press at the item's centre could actually land — the
     # observation half of _viewport_blocker, reported with every rect
@@ -2131,12 +2300,12 @@ def _aim_in_view(item):
     # in the evidence instead of passing as visible.
     try:
         window = item.window()
-        scene = item.mapToScene(QPointF(0, 0))
-        x = round(scene.x() + item.width() / 2)
-        y = round(scene.y() + item.height() / 2)
     except Exception:
         return None
-    return _viewport_blocker(window, item, x, y) is None
+    aim = _aim_point(item)
+    if aim is None:
+        return None
+    return _viewport_blocker(window, item, aim[0], aim[1]) is None
 
 
 def _deliver_press(window, x, y, button, target=None):
