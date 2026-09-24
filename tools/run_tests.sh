@@ -41,7 +41,25 @@ run_once() {
     name="$1"
     shift
     echo "== $name =="
-    if "$@" >"$log" 2>&1; then
+    heartbeat=0
+    # The leg's output goes to the scratch log (a failing run must not
+    # have to be re-run to be read), which leaves a CI log dead still
+    # for as long as the leg takes — minutes, for the container leg.
+    # A heartbeat every 10 s is the difference between "working" and
+    # "hung" for whoever is watching, and it costs four lines a minute.
+    "$@" >"$log" 2>&1 &
+    leg_pid=$!
+    started=$(date +%s)
+    while kill -0 "$leg_pid" 2>/dev/null; do
+        sleep 2
+        kill -0 "$leg_pid" 2>/dev/null || break
+        now=$(date +%s)
+        if [ $((now - started)) -ge $((heartbeat + 10)) ]; then
+            heartbeat=$((now - started))
+            echo "   ... $name still running (${heartbeat}s)"
+        fi
+    done
+    if wait "$leg_pid"; then
         # A green exit that ran nothing is a false pass: an empty worker
         # list or a -p pattern matching no file both exit 0 before
         # 3.12 (which added the "NO TESTS RAN" failure). Demand a count.

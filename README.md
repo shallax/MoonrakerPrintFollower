@@ -679,6 +679,12 @@ The once-per-version what's-new popup: the new release's items open
 at the top, previous versions in collapsed sections, the project link
 at the bottom.
 
+![File manager](screenshots/09-file-manager.png)
+
+The file manager: recent prints, breadcrumb navigation, filters and a
+sortable table of every file on the printer with its slicer metadata,
+size and print history.
+
 ## Moonraker transport
 
 Follower live status uses a Moonraker websocket subscription by default, with HTTP polling selectable per printer (and the automatic fallback where subscriptions are unavailable).

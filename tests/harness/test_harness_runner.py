@@ -820,6 +820,20 @@ class CaptureGateTests(unittest.TestCase):
             data = json.load(handle)
         self.assertEqual(data["frames_stalled"], ["g1"])
 
+    def test_the_verdict_lines_survive_a_cp1252_stdout(self):
+        # CI's Windows runners give Python a cp1252 stdout. The verdict
+        # lines carry a tick and a cross, so printing one raised
+        # UnicodeEncodeError and took the whole leg down — the Windows
+        # suite failed on "PASSED \u2705" itself, not on anything it was
+        # reporting. Both writers ask for UTF-8 up front.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn('_stream.reconfigure(encoding="utf-8", errors="replace")', source)
+        # Before the first print, or it has already raised.
+        self.assertLess(source.index("reconfigure(encoding="),
+                        source.index("def progress(message):"))
+        summary = (ROOT / "tools" / "gate_summary.py").read_text(encoding="utf-8")
+        self.assertIn('stream.reconfigure(encoding="utf-8", errors="replace")', summary)
+
     def test_a_long_leg_reports_progress_as_it_runs(self):
         # A leg that says nothing until it ends is unreadable while it
         # runs, and a leg killed at its timeout dies with whatever is

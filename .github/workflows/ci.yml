@@ -9,6 +9,18 @@ on:
     - cron: "23 7 * * 3"
 
 
+# Every python process in these jobs runs unbuffered. A step whose
+# output lands only when the process exits is unreadable while it runs —
+# and on a matrix of 51 legs that is most of the wait. Set as an
+# environment variable rather than -u at each call site so it reaches
+# the nested ones too (docker_dev.sh's container, the harness scripts).
+env:
+  PYTHONUNBUFFERED: "1"
+  # Python's UTF-8 mode: on the Windows runners the default stdio codec
+  # is cp1252, which cannot encode the tick and cross every verdict line
+  # carries. This is the declarative half; the runners also reconfigure
+  # their own streams so they hold wherever they are invoked.
+  PYTHONUTF8: "1"
 jobs:
   cross-platform-suites:
     # The host suites on the OSes the plugin ships to: Windows and
@@ -488,6 +500,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
 
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v7
@@ -522,8 +535,8 @@ jobs:
                 && python3 tools/capture_preview.py dist/screenshots \
                 && python3 tools/capture_settings.py dist/screenshots \
                 && python3 tools/capture_upload.py dist/screenshots \
-                && python3 tools/capture_whatsnew.py dist/screenshots"
-
+                && python3 tools/capture_whatsnew.py dist/screenshots \
+                && python3 tools/capture_filemanager.py dist/screenshots"
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
         # committed-compare above only has a CHANCE of catching a

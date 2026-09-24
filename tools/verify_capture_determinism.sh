@@ -59,6 +59,7 @@ capture_leg() {
     python3 tools/capture_settings.py "$tmp/\$leg"
     python3 tools/capture_upload.py "$tmp/\$leg"
     python3 tools/capture_whatsnew.py "$tmp/\$leg"
+    python3 tools/capture_filemanager.py "$tmp/\$leg"
 }
 capture_leg run1 cura-light >"$tmp/run1.log" 2>&1 & p1=\$!
 capture_leg run2 cura-light >"$tmp/run2.log" 2>&1 & p2=\$!

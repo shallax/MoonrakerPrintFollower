@@ -17,6 +17,18 @@ import shutil
 import socket
 import subprocess
 import sys
+
+# Every verdict line carries a tick or a cross, and CI's Windows runners
+# give Python a cp1252 stdout: printing one raised UnicodeEncodeError and
+# took the whole leg down (measured - the Windows suite failed on
+# "PASSED \u2705" itself, not on anything it was reporting). Ask for
+# UTF-8 once, here, rather than avoiding the characters.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 import time
 
 # The platform dispatch lives beside this file (the container staging

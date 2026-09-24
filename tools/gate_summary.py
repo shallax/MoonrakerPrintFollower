@@ -113,6 +113,14 @@ def render(run_dir, label=""):
 
 
 def main(argv):
+    # The panel is Markdown full of ticks and crosses, and the Windows
+    # runners give Python a cp1252 stdout: writing one raised
+    # UnicodeEncodeError there. Ask for UTF-8 rather than drop them.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     run_dir = argv[1] if len(argv) > 1 else "."
     label = argv[2] if len(argv) > 2 else os.path.basename(os.path.abspath(run_dir))
     try:

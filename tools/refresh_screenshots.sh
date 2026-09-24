@@ -31,5 +31,6 @@ tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
     && python3 tools/capture_preview.py dist/screenshots \
     && python3 tools/capture_settings.py dist/screenshots \
     && python3 tools/capture_upload.py dist/screenshots \
-    && python3 tools/capture_whatsnew.py dist/screenshots"
+    && python3 tools/capture_whatsnew.py dist/screenshots \
+    && python3 tools/capture_filemanager.py dist/screenshots"
 cp dist/screenshots/*.png screenshots/
