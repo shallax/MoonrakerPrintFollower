@@ -1687,21 +1687,27 @@ jobs:
           Get-Content $audit | ForEach-Object { W $_ }
           exit 0
 
-      - name: "Q2 evidence: stop Cura raising the macOS local-network prompt"
-        # macOS raises a TCC consent alert ("... to find devices on local
-        # networks") as soon as an app starts mDNS discovery, and nothing on
-        # a runner can answer it: it stays on top of the window, so a
-        # scenario click would land on the dialog instead of Cura. Cura
-        # raises it from UM3NetworkPrinting, the one plugin in the bundle
-        # that imports an mDNS stack, and its register() builds the
-        # discovery client on the spot. A plugin on the registry's disabled
-        # list is never registered (Uranium's PluginRegistry.loadPlugin
-        # returns before register() runs), so the prompt is prevented rather
-        # than answered - twice over: the id goes into the seeded
-        # cura.cfg's general/disabled_plugins, and the plugin directory
-        # leaves the bundle. Neither route is assumed to have worked: the
-        # launch step reads the registry's own plugins.json back and reports
-        # what Cura actually disabled.
+      - name: "Q2 evidence: seed Cura's config (macOS: the local-network prompt, the machine)"
+        # Two jobs, one writer. macOS raises a TCC consent alert ("... to
+        # find devices on local networks") as soon as an app starts mDNS
+        # discovery, and nothing on a runner can answer it: it stays on top
+        # of the window, so a scenario click would land on the dialog instead
+        # of Cura. Cura raises it from UM3NetworkPrinting, the one plugin in
+        # the bundle that imports an mDNS stack, and its register() builds
+        # the discovery client on the spot. A plugin on the registry's
+        # disabled list is never registered (Uranium's
+        # PluginRegistry.loadPlugin returns before register() runs), so the
+        # prompt is prevented rather than answered - twice over: the id goes
+        # into the seeded cura.cfg's general/disabled_plugins, and the plugin
+        # directory leaves the bundle. Neither route is assumed to have
+        # worked: the launch step reads the registry's own plugins.json back
+        # and reports what Cura actually disabled.
+        # The same file also carries the machine seed: Cura's first-run
+        # "Welcome to UltiMaker Cura" wizard is shown exactly when there is
+        # no active machine, and runner.py's first gate asserts it absent, so
+        # a run without a machine stalls at that dialog. Both halves of the
+        # restore are written here (see section 3), and whether it took is
+        # reported by the launch step's welcome= line rather than assumed.
         if: runner.os == 'macOS'
         continue-on-error: true
         shell: bash
@@ -1722,6 +1728,8 @@ jobs:
             if [ ! -d "$APP" ]; then
               echo "no bundle at $APP - nothing can be disabled here"
               echo "SPIKE-Q2: tcc-prevention=NONE (no bundle; the prompt is expected)" \
+                | tee -a "$EVIDENCE/verdict.txt"
+              echo "SPIKE-Q2: seed=SKIPPED (no bundle: the file-format versions can only be read out of the installed Cura, and nothing is installed)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               printf 'NONE' >"$STATE"
               exit 0
@@ -1786,39 +1794,58 @@ jobs:
             else
               echo "no UM/Preferences.py in the bundle - the format version is unknown"
             fi
-            # The application name is a build-time constant ("cura", per the
-            # captured Linux config tree) and the macOS config root is
-            # ~/Library/Application Support; both spellings are seeded
-            # instead of one being assumed, and the launch step reads back
-            # which one Cura actually used.
+            # The application name is a build-time constant ("cura") and the
+            # macOS config root is ~/Library/Application Support. The launch
+            # step's own log read back "Config storage path is
+            # ~/Library/Application Support/cura/<major.minor>" on the run
+            # that recorded the wizard, so that one spelling is written: the
+            # runner's filesystem is case-insensitive, which is why the
+            # earlier run reported a "Cura/..." config as already present -
+            # it was this same file, seen again under the other spelling.
+            MACHINE="FDM Printer Base Description"
+            MACHINE_FILE="FDM+Printer+Base+Description"
+            EXTRUDER="fdmextruder #2"
+            EXTRUDER_FILE="fdmextruder+%232"
+            DIR="$HOME/Library/Application Support/cura/$MM"
+            CFG="$DIR/cura.cfg"
             CONFIG_FILES=""
             PRE_EXISTED=""
-            for root in cura Cura; do
-              DIR="$HOME/Library/Application Support/$root/$MM"
-              CFG="$DIR/cura.cfg"
-              if [ -z "$PREF_VER" ]; then
-                echo "  $CFG: skipped - the preferences format version is unknown"
-                continue
+            CFG_APPENDED=""
+            CFG_OK=""
+            if [ -e "$CFG" ]; then
+              # Nothing runs Cura before this step, so a config that is
+              # already there is an anomaly. It is reported rather than
+              # rewritten: the keys already in it are what decide Cura's
+              # behaviour. Only the section this step owns is added, and only
+              # when it is absent - a second [cura] section would make Cura's
+              # preferences parser reject the whole file.
+              echo "  $CFG: ALREADY PRESENT before the launch - reported, not rewritten"
+              PRE_EXISTED="$PRE_EXISTED $CFG"
+              if grep -q '^\[cura\]' "$CFG" 2>/dev/null; then
+                AM="$(sed -n 's/^ *active_machine *= *//p' "$CFG" | head -1)"
+                echo "  it already carries a [cura] section: active_machine='$AM' (left as it stands)"
+                # The machine is named under whichever id it is named: a
+                # different one there is a seed that will not do what it says.
+                [ "$AM" = "$MACHINE" ] && CFG_OK=yes
+              else
+                printf '\n[cura]\nactive_machine = %s\n' "$MACHINE" >>"$CFG" \
+                  && CFG_APPENDED=yes && CONFIG_FILES="$CONFIG_FILES $CFG" && CFG_OK=yes
               fi
-              if [ -e "$CFG" ]; then
-                # Nothing runs Cura before this step, so a config that is
-                # already there is an anomaly. It is reported rather than
-                # rewritten: the keys already in it are what decide Cura's
-                # behaviour, and the bundle move covers this case anyway.
-                echo "  $CFG: ALREADY PRESENT before the launch - reported, not rewritten"
-                PRE_EXISTED="$PRE_EXISTED $CFG"
-                continue
-              fi
+            elif [ -z "$PREF_VER" ]; then
+              echo "  $CFG: skipped - the preferences format version is unknown"
+            else
               mkdir -p "$DIR" 2>/dev/null
-              printf '[general]\nversion = %s\ndisabled_plugins = %s\n' \
-                "$PREF_VER" "$IDS" >"$CFG"
+              printf '[general]\nversion = %s\ndisabled_plugins = %s\n\n[cura]\nactive_machine = %s\n' \
+                "$PREF_VER" "$IDS" "$MACHINE" >"$CFG"
               if [ -s "$CFG" ]; then
-                echo "  $CFG: written (version = $PREF_VER, disabled_plugins = $IDS)"
+                echo "  $CFG: written (version = $PREF_VER, disabled_plugins = $IDS, active_machine = $MACHINE)"
                 CONFIG_FILES="$CONFIG_FILES $CFG"
+                CFG_OK=yes
               else
                 echo "  $CFG: COULD NOT be written - the bundle move carries this alone"
               fi
-            done
+            fi
+            [ -n "$CFG_APPENDED" ] && echo "  $CFG: the [cura] section was appended to the file already there"
             [ -n "$PRE_EXISTED" ] && echo "left alone (pre-existing):${PRE_EXISTED}"
 
             echo
@@ -1839,6 +1866,164 @@ jobs:
             done
             echo "moved out of the bundle:${MOVED:-<none>}"
 
+            echo
+            echo "=== 3. the machine seed (the Welcome wizard's precondition) ==="
+            # runner.py's first gate asserts "welcome absent", and Cura shows
+            # the wizard exactly when shouldShowWelcomeDialog() is true. That
+            # predicate is "activeMachine is None" on every version this spike
+            # ranges over (5.7 up) - there is no "seen" flag to set - so the
+            # only way to keep the wizard down is to have a machine. The run
+            # that recorded the wizard says exactly that in its own log: "No
+            # active machine, nothing to check." and never the error-check
+            # lines that follow once a machine is loaded.
+            # MachineManager.setInitialActiveMachine - reached from a
+            # callLater inside CuraApplication.run, before the QML decides the
+            # wizard's visibility - restores a machine only when BOTH halves
+            # are there: cura/active_machine names one, and a stack with that
+            # id can be found. The preferences half is written above; the
+            # stack is written here, in the shape Cura itself writes it -
+            # machine_instances/<name>.global.cfg plus every container its
+            # [containers] list names, because a name Cura cannot resolve
+            # makes ContainerStack.deserialize raise and then there is no
+            # machine at all. The container harness gets this from its driver
+            # (addMachine over RPC, which is what wrote the file this layout
+            # was copied from); this leg has no RPC.
+            # general/last_run_version is deliberately NOT written: empty
+            # means "this version" to QtApplication, so the What's New dialog
+            # stays off, where an older value would turn it on.
+            CURA_PY="${PREF_PY%/UM/Preferences.py}"
+            CS_VER=""
+            IC_VER=""
+            SET_VER=""
+            if [ -n "$CURA_PY" ]; then
+              CS_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/ContainerStack.py" 2>/dev/null | head -1)"
+              IC_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/InstanceContainer.py" 2>/dev/null | head -1)"
+              SET_VER="$(sed -n 's/^ *SettingVersion *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/cura/CuraApplication.py" 2>/dev/null | head -1)"
+            fi
+            echo "the installed build's own file-format versions: preferences=${PREF_VER:-<unreadable>} stack=${CS_VER:-<unreadable>} instance=${IC_VER:-<unreadable>} setting=${SET_VER:-<unreadable>}"
+            SEED_COUNT=0
+            seed_file() {
+              # lines are arguments, not a here-document: a block scalar cannot
+              # carry one at column one without ending itself
+              SEED_PATH="$1"
+              shift
+              mkdir -p "$(dirname "$SEED_PATH")" 2>/dev/null
+              if printf '%s\n' "$@" >"$SEED_PATH" && [ -s "$SEED_PATH" ]; then
+                echo "  $SEED_PATH: written ($(wc -c <"$SEED_PATH" | tr -d ' ') bytes)"
+                SEED_COUNT=$((SEED_COUNT + 1))
+                return 0
+              fi
+              echo "  $SEED_PATH: COULD NOT be written"
+              return 1
+            }
+            SEED_MODE=""
+            if [ -z "$PREF_VER" ] || [ -z "$CS_VER" ] || [ -z "$IC_VER" ] || [ -z "$SET_VER" ]; then
+              SEED_MODE=SKIPPED
+              echo "the machine seed is SKIPPED: a file-format version could not be read out of the installed build."
+              echo "  a container file written with the wrong version is rejected outright (ContainerStack.deserialize raises), so nothing is written rather than something invalid"
+            else
+              SEED_MODE=PARTIAL
+              # the six files are Cura's own output for this machine, copied
+              # from a working 5.13 profile; only the versions are per-build,
+              # and the group id is Cura's own per-install random uuid
+              # (GlobalStack assigns one whenever the file carries none)
+              seed_file "$DIR/machine_instances/$MACHINE_FILE.global.cfg" \
+                "[general]" \
+                "version = $CS_VER" \
+                "name = $MACHINE" \
+                "id = $MACHINE" \
+                "" \
+                "[metadata]" \
+                "setting_version = $SET_VER" \
+                "type = machine" \
+                "group_id = 374276e7-a0b1-41d8-b5a5-56c7dad1c04f" \
+                "" \
+                "[containers]" \
+                "0 = ${MACHINE}_user" \
+                "1 = empty_quality_changes" \
+                "2 = empty_intent" \
+                "3 = normal" \
+                "4 = empty_material" \
+                "5 = empty_variant" \
+                "6 = ${MACHINE}_settings" \
+                "7 = fdmprinter"
+              seed_file "$DIR/extruders/$EXTRUDER_FILE.extruder.cfg" \
+                "[general]" \
+                "version = $CS_VER" \
+                "name = Extruder" \
+                "id = $EXTRUDER" \
+                "" \
+                "[metadata]" \
+                "setting_version = $SET_VER" \
+                "type = extruder_train" \
+                "position = 0" \
+                "machine = $MACHINE" \
+                "" \
+                "[containers]" \
+                "0 = ${EXTRUDER}_user" \
+                "1 = empty_quality_changes" \
+                "2 = empty_intent" \
+                "3 = normal" \
+                "4 = generic_pla" \
+                "5 = empty_variant" \
+                "6 = ${EXTRUDER}_settings" \
+                "7 = fdmextruder"
+              seed_file "$DIR/definition_changes/${MACHINE_FILE}_settings.inst.cfg" \
+                "[general]" \
+                "version = $IC_VER" \
+                "name = ${MACHINE}_settings" \
+                "definition = fdmprinter" \
+                "" \
+                "[metadata]" \
+                "type = definition_changes" \
+                "setting_version = $SET_VER" \
+                "" \
+                "[values]" \
+                "extruders_enabled_count = 1"
+              seed_file "$DIR/definition_changes/${EXTRUDER_FILE}_settings.inst.cfg" \
+                "[general]" \
+                "version = $IC_VER" \
+                "name = ${EXTRUDER}_settings" \
+                "definition = fdmextruder" \
+                "" \
+                "[metadata]" \
+                "type = definition_changes" \
+                "setting_version = $SET_VER" \
+                "" \
+                "[values]"
+              seed_file "$DIR/user/${MACHINE_FILE}_user.inst.cfg" \
+                "[general]" \
+                "version = $IC_VER" \
+                "name = ${MACHINE}_user" \
+                "definition = fdmprinter" \
+                "" \
+                "[metadata]" \
+                "type = user" \
+                "setting_version = $SET_VER" \
+                "machine = $MACHINE" \
+                "" \
+                "[values]"
+              seed_file "$DIR/user/${EXTRUDER_FILE}_user.inst.cfg" \
+                "[general]" \
+                "version = $IC_VER" \
+                "name = ${EXTRUDER}_user" \
+                "definition = fdmprinter" \
+                "" \
+                "[metadata]" \
+                "type = user" \
+                "setting_version = $SET_VER" \
+                "extruder = $EXTRUDER" \
+                "" \
+                "[values]"
+              echo "seed read back from $CFG: $(sed -n 's/^ *\(version\|active_machine\) *= *\(.*\)/\1=\2/p' "$CFG" 2>/dev/null | tr '\n' ' ')"
+              echo "seed read back from the machine stack: $(sed -n 's/^ *\(id\|type\) *= *\(.*\)/\1=\2/p' "$DIR/machine_instances/$MACHINE_FILE.global.cfg" 2>/dev/null | tr '\n' ' ')"
+              if [ "$SEED_COUNT" -ge 6 ] && [ -n "$CFG_OK" ]; then
+                SEED_MODE=OK
+              elif [ "$SEED_COUNT" -eq 0 ]; then
+                SEED_MODE=FAILED
+              fi
+            fi
+
             MECH=""
             [ -n "$CONFIG_FILES" ] && MECH="config"
             [ -n "$MOVED" ] && MECH="${MECH:+$MECH+}bundle"
@@ -1849,6 +2034,8 @@ jobs:
             echo "bundle     :${MOVED:- <none moved>} -> $STASH"
             printf '%s' "${MECH:-NONE}" >"$STATE"
             echo "SPIKE-Q2: tcc-prevention=${MECH:-NONE} (ids=$IDS, config=${CONFIG_FILES:-none}, pre-existing=${PRE_EXISTED:-none}, bundle-moved=${MOVED:-none})" \
+              | tee -a "$EVIDENCE/verdict.txt"
+            echo "SPIKE-Q2: seed=${SEED_MODE:-FAILED} (machine '$MACHINE' and extruder '$EXTRUDER' seeded under ${DIR:-<no config root>}: ${SEED_COUNT}/6 stack files written, active_machine seeded=${CFG_OK:-no}; the launch step's welcome= line reports whether Cura loaded it)" \
               | tee -a "$EVIDENCE/verdict.txt"
           } 2>&1 | tee "$LOG"
           exit 0
@@ -1889,71 +2076,89 @@ jobs:
             # A full-screen capture is only comparable with the Linux leg
             # if the screen is the harness's size: runner.py records
             # -video_size SIZE (HARNESS_GEOMETRY, 1920x1080) of an Xvfb
-            # display, and avfoundation records the display it is given -
-            # run 35934260021 recorded 1024x768 here while the argv asked
-            # for 1920x1080. So the resolution is READ, moved to the pinned
-            # geometry when it differs, and READ AGAIN; both readings are
-            # logged, and a runner that cannot be moved is a FINDING
-            # rather than a silent capture at whatever size it has.
+            # display, and avfoundation IGNORES -video_size and records the
+            # display it is given - run 35934260021 recorded 1024x768 here
+            # while the argv asked for 1920x1080. So the argv cannot decide
+            # the geometry, this reading cannot either, and the authority is
+            # a frame ffmpeg actually produced: the set below is attempted on
+            # this reading, and the verdict comes from the probe further down
+            # (and from the recorded frame size after the run).
             WANT_W="${VIDEO_SIZE%%x*}"
             WANT_H="${VIDEO_SIZE##*x}"
-            DISP_BEFORE="$(system_profiler SPDisplaysDataType 2>&1 | sed -n 's/^ *Resolution: *//p' | head -1)"
-            echo "display before: ${DISP_BEFORE:-<unreadable>} (system_profiler)"
+            # Read by function: displayplacer prints one Resolution line per
+            # screen and is the tool the set below uses, system_profiler
+            # prints the same value with spaces around the x on the images
+            # that print it at all (the runner that reported "unreadable" had
+            # a system_profiler that reported no resolution at all).
+            read_res() {
+              OUT=""
+              if [ -n "$DP" ]; then
+                OUT="$(sed -n 's/.*Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' \
+                  "$EVIDENCE/displayplacer-list.txt" 2>/dev/null | head -1)"
+                [ -n "$OUT" ] && { echo "$OUT"; return; }
+              fi
+              OUT="$(system_profiler SPDisplaysDataType 2>&1 | \
+                sed -n 's/^ *Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' | head -1)"
+              [ -n "$OUT" ] && { echo "$OUT"; return; }
+              echo ""
+            }
+            DP="$(command -v displayplacer)"
+            if [ -n "$DP" ]; then
+              "$DP" list >"$EVIDENCE/displayplacer-list.txt" 2>&1
+              echo "--- displayplacer list ---"
+              cat "$EVIDENCE/displayplacer-list.txt"
+            else
+              echo "displayplacer: ABSENT (the set below provisions it if Homebrew is here)"
+            fi
+            DISP_BEFORE="$(read_res)"
+            echo "display before: ${DISP_BEFORE:-<unreadable>}"
             echo "the harness geometry this run is pinned to: $VIDEO_SIZE"
             DISPLAY_WHY="not attempted"
-            case "$DISP_BEFORE" in
-              "$WANT_W x $WANT_H"*)
-                DISPLAY_WHY="already at the pinned geometry" ;;
-              "")
-                DISPLAY_WHY="system_profiler reported no resolution" ;;
-              *)
+            if [ "$DISP_BEFORE" = "$VIDEO_SIZE" ]; then
+              DISPLAY_WHY="already at the pinned geometry"
+            else
+              # The set is attempted whenever the reading is not the pinned
+              # geometry - INCLUDING when the reading is empty, which is the
+              # case that skipped the set altogether and left the recording at
+              # whatever the runner had.
+              if [ -z "$DP" ] && command -v brew >/dev/null 2>&1; then
+                echo "displayplacer: ABSENT - provisioning it (brew install displayplacer)"
+                HOMEBREW_NO_AUTO_UPDATE=1 brew install displayplacer
+                echo "brew install displayplacer exit: $?"
                 DP="$(command -v displayplacer)"
-                if [ -z "$DP" ] && command -v brew >/dev/null 2>&1; then
-                  echo "displayplacer: ABSENT - provisioning it (brew install displayplacer)"
-                  HOMEBREW_NO_AUTO_UPDATE=1 brew install displayplacer
-                  echo "brew install displayplacer exit: $?"
-                  DP="$(command -v displayplacer)"
-                  if [ -n "$DP" ]; then
-                    AU="$EVIDENCE/dependency-audit.tsv"
-                    [ -s "$AU" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AU"
-                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "macOS/$RUNNER_ARCH" "displayplacer" \
-                      "moves the display to the harness geometry for the full-screen capture" \
-                      "INSTALLED BY US" "$(displayplacer --version 2>&1 | head -1)" \
-                      "installed by the launch step: the audit step did not provision it" >>"$AU"
-                  fi
+                if [ -n "$DP" ]; then
+                  AU="$EVIDENCE/dependency-audit.tsv"
+                  [ -s "$AU" ] || printf 'platform\tcomponent\trole\tstatus\tversion\tnotes\n' >"$AU"
+                  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "macOS/$RUNNER_ARCH" "displayplacer" \
+                    "moves the display to the harness geometry for the full-screen capture" \
+                    "INSTALLED BY US" "$(displayplacer --version 2>&1 | head -1)" \
+                    "installed by the launch step: the audit step did not provision it" >>"$AU"
                 fi
-                if [ -z "$DP" ]; then
-                  DISPLAY_WHY="no displayplacer and no Homebrew to provision one, so the display cannot be moved"
+              fi
+              if [ -z "$DP" ]; then
+                DISPLAY_WHY="no displayplacer and no Homebrew to provision one, so the display cannot be moved"
+              else
+                [ -s "$EVIDENCE/displayplacer-list.txt" ] || "$DP" list >"$EVIDENCE/displayplacer-list.txt" 2>&1
+                DPID="$(sed -n 's/.*Persistent screen id: *\([^ ]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                DPHZ="$(sed -n 's/.*hz:\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                if [ -z "$DPHZ" ]; then
+                  DPHZ="$(sed -n 's/.*Hertz: *\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
+                fi
+                [ -n "$DPHZ" ] || DPHZ=60
+                if [ -z "$DPID" ]; then
+                  DISPLAY_WHY="displayplacer reported no persistent screen id"
                 else
-                  "$DP" list >"$EVIDENCE/displayplacer-list.txt" 2>&1
-                  echo "--- displayplacer list (tail) ---"
-                  tail -12 "$EVIDENCE/displayplacer-list.txt"
-                  DPID="$(sed -n 's/.*Persistent screen id: *\([^ ]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
-                  DPHZ="$(sed -n 's/.*hz:\([0-9][0-9]*\).*/\1/p' "$EVIDENCE/displayplacer-list.txt" | head -1)"
-                  [ -n "$DPHZ" ] || DPHZ=60
-                  if [ -z "$DPID" ]; then
-                    DISPLAY_WHY="displayplacer reported no persistent screen id"
-                  else
-                    echo "displayplacer: setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz"
-                    "$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:8"
-                    echo "displayplacer exit: $?"
-                    sleep 3
-                    DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H}"
-                  fi
+                  echo "displayplacer: setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz (was ${DISP_BEFORE:-unreadable})"
+                  "$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:8"
+                  echo "displayplacer exit: $?"
+                  sleep 3
+                  DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H}"
                 fi
-                ;;
-            esac
-            DISP_AFTER="$(system_profiler SPDisplaysDataType 2>&1 | sed -n 's/^ *Resolution: *//p' | head -1)"
+              fi
+            fi
+            DISP_AFTER="$(read_res)"
             echo "display after: ${DISP_AFTER:-<unreadable>} ($DISPLAY_WHY)"
-            case "$DISP_AFTER" in
-              "$WANT_W x $WANT_H"*)
-                echo "SPIKE-Q2: display=OK (${DISP_AFTER:-unreadable}, $DISPLAY_WHY)" \
-                  | tee -a "$EVIDENCE/verdict.txt" ;;
-              *)
-                echo "SPIKE-Q2: display=MISMATCH (pinned $VIDEO_SIZE, this runner is ${DISP_AFTER:-unreadable}, $DISPLAY_WHY)" \
-                  | tee -a "$EVIDENCE/verdict.txt"
-                echo "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently" ;;
-            esac
+            echo "the reading above is what the tools say; what decides the verdict is the frame below, because avfoundation ignores the requested size"
 
             # The recorder is ffmpeg on every platform, matching
             # tests/harness/runner.py:247-250 exactly - same flags, same
@@ -2010,6 +2215,39 @@ jobs:
                 SCREEN_INDEX=1
               fi
               echo "screen device index: $SCREEN_INDEX"
+              echo
+              echo "=== display geometry, measured (the only authority) ==="
+              # The reading above is a tool's opinion and avfoundation ignores
+              # the requested size, so what the recording will be is decided by
+              # a frame ffmpeg produces from the SAME input spec the recorder
+              # uses. One second, read back with ffprobe, and the display
+              # verdict is that number - so the verdict and the recording
+              # cannot disagree, and a runner whose display cannot be moved
+              # says so in the size it will actually record.
+              PROBE="$EVIDENCE/display-probe.mp4"
+              ffmpeg -y -loglevel error -f avfoundation \
+                -video_size "$VIDEO_SIZE" -framerate 15 \
+                -i "${SCREEN_INDEX}:none" -t 1 "$PROBE" \
+                >"$EVIDENCE/display-probe.log" 2>&1
+              PROBE_RC=$?
+              PROBE_BYTES="$(wc -c <"$PROBE" 2>/dev/null | tr -d ' ')"
+              echo "display probe: ffmpeg exit $PROBE_RC, ${PROBE_BYTES:-0} bytes (${WANT_W}x${WANT_H} requested, and avfoundation ignores that)"
+              PROBE_DIMS="$(ffprobe -v error -select_streams v:0 \
+                -show_entries stream=width,height -of csv=p=0:s=x \
+                "$PROBE" 2>/dev/null | head -1 | tr -d '\r')"
+              echo "display probe frame size: ${PROBE_DIMS:-<unreadable>} (ffprobe on a frame avfoundation produced)"
+              case "$PROBE_DIMS" in
+                "${WANT_W}x${WANT_H}")
+                  echo "SPIKE-Q2: display=OK (${PROBE_DIMS} recorded, $DISPLAY_WHY)" \
+                    | tee -a "$EVIDENCE/verdict.txt" ;;
+                "")
+                  echo "SPIKE-Q2: display=UNKNOWN (the probe produced no readable frame: ffmpeg exit $PROBE_RC, ${PROBE_BYTES:-0} bytes; $DISPLAY_WHY - the recorded frame size is printed below)" \
+                    | tee -a "$EVIDENCE/verdict.txt" ;;
+                *)
+                  echo "SPIKE-Q2: display=MISMATCH (pinned $VIDEO_SIZE, this runner records ${PROBE_DIMS}, $DISPLAY_WHY)" \
+                    | tee -a "$EVIDENCE/verdict.txt"
+                  echo "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently" ;;
+              esac
               echo "--- recorder argv ---"
               echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none $VIDEO"
               ffmpeg -y -loglevel error -f avfoundation \
@@ -2172,14 +2410,36 @@ jobs:
             # window out of bounds opts out with SPIKE_OFFSCREEN_WINDOW=allow.
             BOUNDS_POLICY="${SPIKE_OFFSCREEN_WINDOW:-clamp}"
             echo "window bounds policy: $BOUNDS_POLICY (SPIKE_OFFSCREEN_WINDOW; 'allow' leaves a deliberately off-screen window where the test put it)"
-            # The display the window is compared against: the one the run's
-            # capture is of, read above rather than assumed.
-            DISP_W="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^\([0-9][0-9]*\) *x.*/\1/p')"
-            DISP_H="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^[0-9][0-9]* *x *\([0-9][0-9]*\).*/\1/p')"
+            # The display the window is compared against: the size the
+            # recording actually is, from the probe above, because that is the
+            # area a clipped window would be clipped out of. Never the pinned
+            # geometry - a runner that could not be moved to the pinned size
+            # would then have its window reported as fitting inside a display
+            # it does not have, which is what the 1024x768 run's
+            # "inside the 1920x1080 display" line claimed.
+            DISP_W="${PROBE_DIMS%%x*}"
+            DISP_H="${PROBE_DIMS##*x}"
+            DISP_SRC="the frame the recorder produces (ffprobe on the probe)"
+            if [ -z "$DISP_W" ] || [ -z "$DISP_H" ] || [ "$DISP_W" = "$PROBE_DIMS" ]; then
+              # No probe frame: the desktop bounds System Events reports are
+              # still a measurement of the screen rather than of the argv.
+              DESKTOP="$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>&1)"
+              DISP_W="$(printf '%s' "$DESKTOP" | cut -d, -f3 | tr -dc '0-9')"
+              DISP_H="$(printf '%s' "$DESKTOP" | cut -d, -f4 | tr -dc '0-9')"
+              DISP_SRC="the desktop bounds (System Events: ${DESKTOP:-unreadable})"
+            fi
             if [ -z "$DISP_W" ] || [ -z "$DISP_H" ]; then
-              DISP_W="$WANT_W"
-              DISP_H="$WANT_H"
-              echo "window bounds: the display size could not be parsed, so the pinned geometry ${DISP_W}x${DISP_H} is used as the bound"
+              DISP_W="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^\([0-9][0-9]*\)x.*/\1/p')"
+              DISP_H="$(printf '%s' "${DISP_AFTER:-}" | sed -n 's/^[0-9][0-9]*x\([0-9][0-9]*\).*/\1/p')"
+              DISP_SRC="the display reading (${DISP_AFTER:-unreadable}, ${DISPLAY_WHY})"
+            fi
+            case "${DISP_W}${DISP_H}" in
+              ''|*[!0-9]*) DISP_W=""; DISP_H="" ;;
+            esac
+            if [ -z "$DISP_W" ] || [ -z "$DISP_H" ]; then
+              echo "window bounds: neither a recorded frame nor the desktop bounds nor the display reading gave a size, so the window cannot be checked against the area the recording covers - the verdict below is UNKNOWN, not a fit against a geometry this runner may not have"
+            else
+              echo "window bounds: the display the window is checked against is ${DISP_W}x${DISP_H}, from ${DISP_SRC}"
             fi
             WPROC="$(osascript -e 'tell application "System Events" to get name of every process whose name contains "Cura"' 2>&1 | tr ',' '\n' | sed -n '/[Cc]ura/p' | head -1 | sed 's/^ *//;s/ *$//')"
             WFRONT=""
@@ -2227,7 +2487,11 @@ jobs:
                 ''|*[!0-9-]*)
                   echo "window bounds: the rectangle could not be read, so it cannot be checked against the display" ;;
                 *)
-                  if [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
+                  if [ -z "$DISP_W" ] || [ -z "$DISP_H" ]; then
+                    echo "window bounds: the display this run records could not be measured, so the window is not checked against it and no clamp is attempted (moving a window against an invented bound is worse than saying the bound is unknown)"
+                    echo "SPIKE-Q2: window-bounds=UNKNOWN ($WPX,$WPY ${WPW}x${WPH}; the display this run records could not be measured)" \
+                      | tee -a "$EVIDENCE/verdict.txt"
+                  elif [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
                      [ $((WPX + WPW)) -le "$DISP_W" ] && [ $((WPY + WPH)) -le "$DISP_H" ]; then
                     echo "window bounds: in-bounds ($WPX,$WPY ${WPW}x${WPH} inside ${DISP_W}x${DISP_H})"
                     echo "SPIKE-Q2: window-bounds=OK ($WPX,$WPY ${WPW}x${WPH} inside the ${DISP_W}x${DISP_H} display, nothing clipped)" \
@@ -2282,6 +2546,71 @@ jobs:
                   | tee -a "$EVIDENCE/verdict.txt"
                 echo "FINDING: Cura's window could not be shown to be frontmost, unminimised and readable, so the full-screen recording may be of whatever covers it - reported rather than assumed, and the recording continues because a whole-display capture needs no rectangle to start" ;;
             esac
+
+            echo
+            echo "=== the Welcome wizard (runner.py's first gate asserts it absent) ==="
+            # Cura shows "Welcome to UltiMaker Cura" exactly when there is no
+            # active machine, and it has no "seen" flag to set: the wizard is
+            # in-window QML whose visibility is decided once, at
+            # initializationFinished. So the machine is what keeps it down,
+            # and the machine is visible in Cura's own log, in lines only the
+            # error checker writes: "Error check finished, result" and "New
+            # error check scheduled." appear only while a machine is active
+            # and repeat every ~10 s, where "No active machine, nothing to
+            # check." is written once when there is none - and that last one
+            # appears in WORKING runs too, in the moment before the machine is
+            # restored, so an active-machine line settles it and the
+            # no-machine line alone is the weaker, inferred case.
+            WELCOME_LOGS=""
+            WELCOME_AC=""
+            WELCOME_NA=""
+            # Read line by line rather than over a word-split list: the
+            # directory this searches is "Application Support", so a split
+            # would hand every path in it over in two pieces.
+            WELCOME_CANDIDATES="$(printf '%s\n%s\n' \
+              "$(find "$HOME/Library/Application Support" -maxdepth 5 -type f -name 'cura.log*' 2>/dev/null | sort)" \
+              "$EVIDENCE/cura-launch.log")"
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              [ -f "$f" ] || continue
+              WELCOME_LOGS="$WELCOME_LOGS $f"
+              WELCOME_AC_N="$(grep -c -e 'Error check finished, result' -e 'New error check scheduled' "$f" 2>/dev/null)"
+              WELCOME_NA_N="$(grep -c 'No active machine, nothing to check' "$f" 2>/dev/null)"
+              echo "  $f: active-machine lines ${WELCOME_AC_N:-0}, no-active-machine lines ${WELCOME_NA_N:-0}"
+              [ "${WELCOME_AC_N:-0}" -gt 0 ] && WELCOME_AC="$WELCOME_AC $f"
+              [ "${WELCOME_NA_N:-0}" -gt 0 ] && WELCOME_NA="$WELCOME_NA $f"
+            done <<< "$WELCOME_CANDIDATES"
+            [ -n "$WELCOME_LOGS" ] || echo "  no Cura log could be read (neither its own nor the launch capture): nothing to read a machine state out of"
+            # The one direct look: the wizard's own words in the window. It can
+            # only ever prove PRESENT - an ungranted Automation permission or a
+            # Qt build that exposes no text reads as nothing, never as absent.
+            WELCOME_TEXT=""
+            if [ -n "$WPROC" ]; then
+              WELCOME_TEXT="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get value of every static text of window 1" 2>&1)"
+              echo "  window text probe: ${WELCOME_TEXT:-<no output>}"
+            else
+              echo "  window text probe: not attempted (no Cura process name was readable)"
+            fi
+            WELCOME_MODE=UNKNOWN
+            WELCOME_WHY="no readable source carried a machine-state marker (logs read:${WELCOME_LOGS:- <none>}; window text: ${WELCOME_TEXT:-<none>})"
+            case "$WELCOME_TEXT" in
+              *"Welcome to UltiMaker Cura"*|*"set up UltiMaker Cura"*|*"Get started"*)
+                WELCOME_MODE=PRESENT
+                WELCOME_WHY="the wizard's own words are in Cura's window right now: $(printf '%s' "$WELCOME_TEXT" | tr -d '\r\n' | cut -c1-100)" ;;
+              *)
+                if [ -n "$WELCOME_AC" ]; then
+                  WELCOME_MODE=ABSENT
+                  WELCOME_WHY="Cura's own log shows an active machine (active-machine lines in${WELCOME_AC}); the wizard's visibility is decided at startup from exactly that, so it was never shown"
+                elif [ -n "$WELCOME_NA" ]; then
+                  WELCOME_MODE=PRESENT
+                  WELCOME_WHY="no wizard text was readable, but Cura's log has only the no-active-machine line (in${WELCOME_NA}) - the wizard's precondition holds, so it is on screen and runner.py's first gate would stall"
+                fi ;;
+            esac
+            echo "SPIKE-Q2: welcome=$WELCOME_MODE ($WELCOME_WHY)" \
+              | tee -a "$EVIDENCE/verdict.txt"
+            if [ "$WELCOME_MODE" != "ABSENT" ]; then
+              echo "FINDING: the welcome= line above is not ABSENT - either the wizard is up, or the state could not be read. The seed= lines in the config step name what was written and read back (cura.cfg's active_machine, the machine stack's id); runner.py's first gate asserts the wizard absent, so this has to read ABSENT before the integration phase can run a scenario"
+            fi
 
             echo
             echo "=== still capture (inside the recording window) ==="
@@ -2416,6 +2745,295 @@ jobs:
             fi
           } 2>&1 | tee "$LOG"
           exit 0
+      - name: "Q2 evidence: seed Cura's config (Windows: the machine that keeps the wizard down)"
+        # runner.py's first gate asserts "welcome absent", and Cura puts the
+        # "Welcome to UltiMaker Cura" wizard up exactly when there is no
+        # active machine: shouldShowWelcomeDialog is "activeMachine is None"
+        # on every version this spike ranges over, and there is no "seen" flag
+        # to set. A run without a machine therefore stalls at that dialog
+        # before a scenario can do anything.
+        # MachineManager.setInitialActiveMachine - reached from a callLater
+        # inside CuraApplication.run, before the QML decides the wizard's
+        # visibility - restores a machine only when BOTH halves are there:
+        # cura/active_machine names one, and a stack with that id can be
+        # found. The preferences half is cura.cfg; the stack half is Cura's
+        # own machine_instances/<name>.global.cfg plus every container its
+        # [containers] list names, because a name Cura cannot resolve makes
+        # ContainerStack.deserialize raise and then there is no machine at
+        # all. Each file's format version is read out of the installed build
+        # rather than assumed. Whether the seed took is reported by the
+        # launch step's welcome= line, not assumed from this step's success.
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $EVIDENCE = $env:EVIDENCE
+          New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
+          $EVIDENCE = (Resolve-Path -LiteralPath $EVIDENCE).Path
+          $log = Join-Path $EVIDENCE 'config-seed-windows.txt'
+          $verdict = Join-Path $EVIDENCE 'verdict.txt'
+          function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
+          function V($m) { W $m; Add-Content -Path $verdict -Value $m }
+          $machine = 'FDM Printer Base Description'
+          $machineFile = 'FDM+Printer+Base+Description'
+          $extruder = 'fdmextruder #2'
+          $extruderFile = 'fdmextruder+%232'
+          W "=== the machine seed (the Welcome wizard's precondition) ==="
+
+          # The install dir, from the install step's own record. Every format
+          # version is read out of the tree that will consume it.
+          $pathFile = Join-Path $EVIDENCE 'binary-path.txt'
+          $binary = if (Test-Path $pathFile) { Get-Content $pathFile -First 1 } else { $null }
+          if (-not $binary -or -not (Test-Path -LiteralPath $binary)) {
+            W "no installed binary on record - the file-format versions cannot be read, so nothing is seeded"
+            V "SPIKE-Q2: seed=SKIPPED (no install: those versions are read out of the installed build, and nothing is installed)"
+            exit 0
+          }
+          $dir = Split-Path -Parent $binary
+          W "install dir: $dir"
+          function Find-Under($root, $name, $parentName) {
+            # The package tree sits under the install root on this build, but
+            # the search does not assume it: the first file of that name whose
+            # parent directory is the package is the one that is read.
+            $hit = Get-ChildItem -LiteralPath $root -Recurse -Depth 6 -File -Filter $name -ErrorAction SilentlyContinue |
+              Where-Object { $_.Directory.Name -eq $parentName } | Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+            return ''
+          }
+          $prefPy = Find-Under $dir 'Preferences.py' 'UM'
+          $stackPy = Find-Under $dir 'ContainerStack.py' 'Settings'
+          $instPy = Find-Under $dir 'InstanceContainer.py' 'Settings'
+          $curaAppPy = Find-Under $dir 'CuraApplication.py' 'cura'
+          function Get-VersionConst($path, $name) {
+            if (-not $path -or -not (Test-Path -LiteralPath $path)) { return '' }
+            $m = Select-String -LiteralPath $path -Pattern ("^\s*" + $name + "\s*=\s*([0-9]+)") -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($m) { return $m.Matches[0].Groups[1].Value }
+            return ''
+          }
+          $prefVer = Get-VersionConst $prefPy 'Version'
+          $csVer = Get-VersionConst $stackPy 'Version'
+          $icVer = Get-VersionConst $instPy 'Version'
+          $setVer = Get-VersionConst $curaAppPy 'SettingVersion'
+          W ("preferences format version : {0}  (from {1})" -f $(if ($prefVer) { $prefVer } else { '<unreadable>' }), $prefPy)
+          W ("container stack version    : {0}  (from {1})" -f $(if ($csVer) { $csVer } else { '<unreadable>' }), $stackPy)
+          W ("instance container version : {0}  (from {1})" -f $(if ($icVer) { $icVer } else { '<unreadable>' }), $instPy)
+          W ("setting version            : {0}  (from {1})" -f $(if ($setVer) { $setVer } else { '<unreadable>' }), $curaAppPy)
+
+          # The config root: APPDATA on Windows (Uranium's
+          # _getConfigStorageRootPath), with the application identifier and the
+          # major.minor of the installed build below it; LOCALAPPDATA held this
+          # only before 4.x. Both are listed, so a tree Cura already made shows
+          # up here rather than being guessed at.
+          $verInfo = (Get-Item -LiteralPath $binary).VersionInfo
+          $bundleVer = $verInfo.ProductVersion
+          if (-not $bundleVer) { $bundleVer = $verInfo.FileVersion }
+          if (-not $bundleVer) { $bundleVer = $env:CURA_VERSION }
+          $mm = ''
+          if ($bundleVer -match '^([0-9]+)\.([0-9]+)') { $mm = $matches[1] + '.' + $matches[2] }
+          if (-not $mm -and $env:CURA_VERSION -match '^([0-9]+)\.([0-9]+)') { $mm = $matches[1] + '.' + $matches[2] }
+          if (-not $mm) {
+            W "the installed version could not be read (ProductVersion, FileVersion and CURA_VERSION are all empty)"
+            V "SPIKE-Q2: seed=SKIPPED (no version: the config directory is version-stamped, and writing the wrong one is worse than writing none)"
+            exit 0
+          }
+          foreach ($e in @('APPDATA', 'LOCALAPPDATA')) {
+            $v = [System.Environment]::GetEnvironmentVariable($e)
+            if ($v) {
+              $p = Join-Path (Join-Path $v 'cura') $mm
+              W ("{0} root: {1} exists={2}" -f $e, $p, (Test-Path -LiteralPath $p))
+            }
+          }
+          $cfgDir = Join-Path (Join-Path $env:APPDATA 'cura') $mm
+          $cfgPath = Join-Path $cfgDir 'cura.cfg'
+          W "installed version: $bundleVer -> config dir $cfgDir"
+
+          $seedCount = 0
+          function Set-SeedFile($path, $lines, [ref]$count) {
+            $parent = Split-Path -Parent $path
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            try {
+              # ASCII: a BOM would make Cura's configparser read the first key
+              # as garbage, and nothing written here needs more than ASCII.
+              Set-Content -LiteralPath $path -Value $lines -Encoding ASCII -ErrorAction Stop
+            } catch {
+              W ("  {0}: could not be written ({1})" -f $path, $_.Exception.Message)
+              return $false
+            }
+            if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).Length -gt 0) {
+              $count.Value = $count.Value + 1
+              W ("  {0}: written ({1} bytes)" -f $path, (Get-Item -LiteralPath $path).Length)
+              return $true
+            }
+            W ("  {0}: COULD NOT be written" -f $path)
+            return $false
+          }
+
+          $seedMode = 'FAILED'
+          $cfgOk = $false
+          if (-not $prefVer -or -not $csVer -or -not $icVer -or -not $setVer) {
+            $seedMode = 'SKIPPED'
+            W "the machine seed is SKIPPED: a file-format version could not be read out of the installed build."
+            W "  a container file written with the wrong version is rejected outright (ContainerStack.deserialize raises), so nothing is written rather than something invalid"
+          } else {
+            $seedMode = 'PARTIAL'
+            # The preferences half. Nothing runs Cura before this step, so a
+            # config already here would be an anomaly: it is reported, and only
+            # the section this step owns is added, because a second [cura]
+            # section would make the parser reject the whole file.
+            if (Test-Path -LiteralPath $cfgPath) {
+              W ("  {0}: ALREADY PRESENT before the launch - reported, not rewritten" -f $cfgPath)
+              $hasCura = Select-String -LiteralPath $cfgPath -Pattern '^\[cura\]' -ErrorAction SilentlyContinue
+              if ($hasCura) {
+                $am = (Select-String -LiteralPath $cfgPath -Pattern '^\s*active_machine\s*=' -ErrorAction SilentlyContinue |
+                  Select-Object -First 1)
+                $amValue = ''
+                if ($am) { $amValue = (($am.Line -split '=', 2)[1]).Trim() }
+                W ("  it already carries a [cura] section: active_machine='{0}' (left as it stands)" -f $amValue)
+                if ($amValue -eq $machine) { $cfgOk = $true }
+              } else {
+                Add-Content -LiteralPath $cfgPath -Value "`r`n[cura]`r`nactive_machine = $machine" -Encoding ASCII
+                $seedCount++
+                $cfgOk = $true
+                W "  the [cura] section was appended to the file already there"
+              }
+            } else {
+              if (Set-SeedFile $cfgPath @(
+                  '[general]',
+                  "version = $prefVer",
+                  '',
+                  '[cura]',
+                  "active_machine = $machine"
+                ) ([ref]$seedCount)) {
+                $cfgOk = $true
+              } else {
+                W "  the preferences half is missing, so the machine cannot be restored"
+              }
+            }
+            # The stack half, in the shape Cura itself writes it. The versions
+            # are the installed build's own; the group id is Cura's own
+            # per-install random uuid (GlobalStack assigns one when the file
+            # carries none), so the constant here is only a valid uuid.
+            Set-SeedFile (Join-Path $cfgDir "machine_instances\$machineFile.global.cfg") @(
+              '[general]',
+              "version = $csVer",
+              "name = $machine",
+              "id = $machine",
+              '',
+              '[metadata]',
+              "setting_version = $setVer",
+              'type = machine',
+              'group_id = 374276e7-a0b1-41d8-b5a5-56c7dad1c04f',
+              '',
+              '[containers]',
+              "0 = ${machine}_user",
+              '1 = empty_quality_changes',
+              '2 = empty_intent',
+              '3 = normal',
+              '4 = empty_material',
+              '5 = empty_variant',
+              "6 = ${machine}_settings",
+              '7 = fdmprinter'
+            ) ([ref]$seedCount) | Out-Null
+            Set-SeedFile (Join-Path $cfgDir "extruders\$extruderFile.extruder.cfg") @(
+              '[general]',
+              "version = $csVer",
+              'name = Extruder',
+              "id = $extruder",
+              '',
+              '[metadata]',
+              "setting_version = $setVer",
+              'type = extruder_train',
+              'position = 0',
+              "machine = $machine",
+              '',
+              '[containers]',
+              "0 = ${extruder}_user",
+              '1 = empty_quality_changes',
+              '2 = empty_intent',
+              '3 = normal',
+              '4 = generic_pla',
+              '5 = empty_variant',
+              "6 = ${extruder}_settings",
+              '7 = fdmextruder'
+            ) ([ref]$seedCount) | Out-Null
+            Set-SeedFile (Join-Path $cfgDir "definition_changes\${machineFile}_settings.inst.cfg") @(
+              '[general]',
+              "version = $icVer",
+              "name = ${machine}_settings",
+              'definition = fdmprinter',
+              '',
+              '[metadata]',
+              'type = definition_changes',
+              "setting_version = $setVer",
+              '',
+              '[values]',
+              'extruders_enabled_count = 1'
+            ) ([ref]$seedCount) | Out-Null
+            Set-SeedFile (Join-Path $cfgDir "definition_changes\${extruderFile}_settings.inst.cfg") @(
+              '[general]',
+              "version = $icVer",
+              "name = ${extruder}_settings",
+              'definition = fdmextruder',
+              '',
+              '[metadata]',
+              'type = definition_changes',
+              "setting_version = $setVer",
+              '',
+              '[values]'
+            ) ([ref]$seedCount) | Out-Null
+            Set-SeedFile (Join-Path $cfgDir "user\${machineFile}_user.inst.cfg") @(
+              '[general]',
+              "version = $icVer",
+              "name = ${machine}_user",
+              'definition = fdmprinter',
+              '',
+              '[metadata]',
+              'type = user',
+              "setting_version = $setVer",
+              "machine = $machine",
+              '',
+              '[values]'
+            ) ([ref]$seedCount) | Out-Null
+            Set-SeedFile (Join-Path $cfgDir "user\${extruderFile}_user.inst.cfg") @(
+              '[general]',
+              "version = $icVer",
+              "name = ${extruder}_user",
+              'definition = fdmprinter',
+              '',
+              '[metadata]',
+              'type = user',
+              "setting_version = $setVer",
+              "extruder = $extruder",
+              '',
+              '[values]'
+            ) ([ref]$seedCount) | Out-Null
+            W "--- read back ---"
+            if (Test-Path -LiteralPath $cfgPath) {
+              Select-String -LiteralPath $cfgPath -Pattern '^\s*(version|active_machine)\s*=' -ErrorAction SilentlyContinue |
+                ForEach-Object { W ("  cura.cfg: " + $_.Line.Trim()) }
+            }
+            $miPath = Join-Path $cfgDir "machine_instances\$machineFile.global.cfg"
+            if (Test-Path -LiteralPath $miPath) {
+              Select-String -LiteralPath $miPath -Pattern '^\s*(id|type)\s*=' -ErrorAction SilentlyContinue |
+                ForEach-Object { W ("  machine stack: " + $_.Line.Trim()) }
+            }
+            if ($cfgOk -and $seedCount -ge 6) { $seedMode = 'OK' }
+            elseif ($seedCount -eq 0) { $seedMode = 'FAILED' }
+          }
+          W "--- what is under the config dir now ---"
+          if (Test-Path -LiteralPath $cfgDir) {
+            Get-ChildItem -LiteralPath $cfgDir -Recurse -Depth 2 -File -ErrorAction SilentlyContinue |
+              ForEach-Object { W ("  " + $_.FullName.Substring($cfgDir.Length + 1) + " (" + $_.Length + " bytes)") }
+          } else {
+            W "  the config dir does not exist"
+          }
+          V "SPIKE-Q2: seed=$seedMode (machine '$machine' and extruder '$extruder' seeded under $cfgDir : $seedCount/7 files written, active_machine seeded=$cfgOk; the launch step's welcome= line reports whether Cura loaded it)"
+          if ($seedMode -ne 'OK') {
+            W "FINDING: the machine seed is not OK, so the Welcome wizard is expected to be up when Cura starts - see the seed= line above and the launch step's welcome= line"
+          }
+
 
       - name: "Q2 evidence: launch Cura and capture the screen (Windows)"
         if: runner.os == 'Windows'
@@ -2451,16 +3069,65 @@ jobs:
           # A build failure is reported rather than fatal: the teardown then
           # falls back to the force, and the video verdict already names a
           # missing index as its own fault.
+          # The structs are TOP-LEVEL, never nested in the class below. A
+          # nested type is addressed by its CLR name (Outer+Inner); the
+          # dotted spelling that reads naturally in PowerShell does not
+          # resolve, so New-Object returns nothing and every [ref] handed to
+          # an out parameter fails to convert. That is what a 0x0 window
+          # rectangle and an empty DEVMODE size both were: the same silent
+          # null, not two bugs in the API calls.
           $csSrc = @(
             'using System;',
+            'using System.Text;',
             'using System.Runtime.InteropServices;',
+            '[StructLayout(LayoutKind.Sequential)]',
+            'public struct MpfRect { public int Left; public int Top; public int Right; public int Bottom; }',
+            '[StructLayout(LayoutKind.Sequential)]',
+            'public struct MpfPoint { public int X; public int Y; }',
+            # Windows defines DEVMODE as 220 bytes. That needs the Unicode
+            # layout (EnumDisplaySettingsW/ChangeDisplaySettingsW), the two
+            # fixed character arrays as ByValTStr of CCHDEVICENAME and
+            # CCHFORMNAME (32 wide characters each) and the default packing
+            # of 8. The caller measures this struct before it is used.
+            '[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 8)]',
+            'public struct MpfDevMode {',
+            '  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;',
+            '  public ushort dmSpecVersion;',
+            '  public ushort dmDriverVersion;',
+            '  public ushort dmSize;',
+            '  public ushort dmDriverExtra;',
+            '  public uint dmFields;',
+            '  public int dmUnionWord0;',
+            '  public int dmUnionWord1;',
+            '  public int dmUnionWord2;',
+            '  public int dmUnionWord3;',
+            '  public short dmColor;',
+            '  public short dmDuplex;',
+            '  public short dmYResolution;',
+            '  public short dmTTOption;',
+            '  public short dmCollate;',
+            '  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;',
+            '  public ushort dmLogPixels;',
+            '  public uint dmBitsPerPel;',
+            '  public uint dmPelsWidth;',
+            '  public uint dmPelsHeight;',
+            '  public uint dmDisplayFlags;',
+            '  public uint dmDisplayFrequency;',
+            '  public uint dmICMMethod;',
+            '  public uint dmICMIntent;',
+            '  public uint dmMediaType;',
+            '  public uint dmDitherType;',
+            '  public uint dmReserved1;',
+            '  public uint dmReserved2;',
+            '  public uint dmPanningWidth;',
+            '  public uint dmPanningHeight;',
+            '}',
             'public static class SpikeNative {',
-            '  [StructLayout(LayoutKind.Sequential)]',
-            '  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }',
-            '  [StructLayout(LayoutKind.Sequential)]',
-            '  public struct POINT { public int X; public int Y; }',
+            '  public delegate bool MpfEnumProc(IntPtr hwnd, IntPtr lparam);',
             '  [DllImport("user32.dll", SetLastError = true)]',
-            '  public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);',
+            '  public static extern bool GetWindowRect(IntPtr hwnd, out MpfRect rect);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool IsWindow(IntPtr hwnd);',
             '  [DllImport("user32.dll", SetLastError = true)]',
             '  public static extern bool IsWindowVisible(IntPtr hwnd);',
             '  [DllImport("user32.dll", SetLastError = true)]',
@@ -2474,11 +3141,25 @@ jobs:
             '  [DllImport("user32.dll", SetLastError = true)]',
             '  public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);',
             '  [DllImport("user32.dll", SetLastError = true)]',
-            '  public static extern IntPtr WindowFromPoint(POINT point);',
+            '  public static extern IntPtr WindowFromPoint(MpfPoint point);',
             '  [DllImport("user32.dll", SetLastError = true)]',
             '  public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);',
             '  [DllImport("user32.dll", SetLastError = true)]',
             '  public static extern int GetSystemMetrics(int index);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern bool EnumWindows(MpfEnumProc callback, IntPtr lparam);',
+            '  [DllImport("user32.dll", SetLastError = true)]',
+            '  public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);',
+            '  [DllImport("user32.dll", EntryPoint = "GetWindowTextLengthW", CharSet = CharSet.Unicode, SetLastError = true)]',
+            '  public static extern int GetWindowTextLength(IntPtr hwnd);',
+            '  [DllImport("user32.dll", EntryPoint = "GetWindowTextW", CharSet = CharSet.Unicode, SetLastError = true)]',
+            '  public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);',
+            '  [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode, SetLastError = true)]',
+            '  public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int max);',
+            # A window that is not DWM-composited has no extended frame bounds;
+            # the call then fails and GetWindowRect is the right answer.
+            '  [DllImport("dwmapi.dll")]',
+            '  public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out MpfRect value, int size);',
             '  [DllImport("kernel32.dll", SetLastError = true)]',
             '  public static extern bool AttachConsole(uint pid);',
             '  [DllImport("kernel32.dll", SetLastError = true)]',
@@ -2489,43 +3170,95 @@ jobs:
             '  public static extern bool GenerateConsoleCtrlEvent(uint evt, uint group);',
             '  [DllImport("kernel32.dll", SetLastError = true)]',
             '  public static extern uint GetConsoleProcessList(uint[] list, uint count);',
-            '  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]',
-            '  public struct DEVMODE {',
-            '    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;',
-            '    public ushort dmSpecVersion;',
-            '    public ushort dmDriverVersion;',
-            '    public ushort dmSize;',
-            '    public ushort dmDriverExtra;',
-            '    public uint dmFields;',
-            '    public int dmUnionWord0;',
-            '    public int dmUnionWord1;',
-            '    public int dmUnionWord2;',
-            '    public int dmUnionWord3;',
-            '    public short dmColor;',
-            '    public short dmDuplex;',
-            '    public short dmYResolution;',
-            '    public short dmTTOption;',
-            '    public short dmCollate;',
-            '    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;',
-            '    public ushort dmLogPixels;',
-            '    public uint dmBitsPerPel;',
-            '    public uint dmPelsWidth;',
-            '    public uint dmPelsHeight;',
-            '    public uint dmDisplayFlags;',
-            '    public uint dmDisplayFrequency;',
-            '    public uint dmICMMethod;',
-            '    public uint dmICMIntent;',
-            '    public uint dmMediaType;',
-            '    public uint dmDitherType;',
-            '    public uint dmReserved1;',
-            '    public uint dmReserved2;',
-            '    public uint dmPanningWidth;',
-            '    public uint dmPanningHeight;',
-            '  }',
+            '  [DllImport("kernel32.dll", SetLastError = true)]',
+            '  public static extern IntPtr GetConsoleWindow();',
             '  [DllImport("user32.dll", EntryPoint = "EnumDisplaySettingsW", CharSet = CharSet.Unicode, SetLastError = true)]',
-            '  public static extern bool EnumDisplaySettings(string device, int mode, ref DEVMODE devmode);',
+            '  public static extern bool EnumDisplaySettings(string device, int mode, ref MpfDevMode devmode);',
             '  [DllImport("user32.dll", EntryPoint = "ChangeDisplaySettingsW", CharSet = CharSet.Unicode, SetLastError = true)]',
-            '  public static extern int ChangeDisplaySettings(ref DEVMODE devmode, int flags);',
+            '  public static extern int ChangeDisplaySettings(ref MpfDevMode devmode, int flags);',
+            '  public static string DevModeLayout() {',
+            '    Type t = typeof(MpfDevMode);',
+            '    return string.Format("size={0} dmDeviceName@{1} dmSize@{2} dmFields@{3} dmFormName@{4} dmLogPixels@{5} dmBitsPerPel@{6} dmPelsWidth@{7} dmPelsHeight@{8}", Marshal.SizeOf(t), Marshal.OffsetOf(t, "dmDeviceName"), Marshal.OffsetOf(t, "dmSize"), Marshal.OffsetOf(t, "dmFields"), Marshal.OffsetOf(t, "dmFormName"), Marshal.OffsetOf(t, "dmLogPixels"), Marshal.OffsetOf(t, "dmBitsPerPel"), Marshal.OffsetOf(t, "dmPelsWidth"), Marshal.OffsetOf(t, "dmPelsHeight"));',
+            '  }',
+            '  public static bool DevModeOk() {',
+            '    Type t = typeof(MpfDevMode);',
+            '    return Marshal.SizeOf(t) == 220 && (int)Marshal.OffsetOf(t, "dmSize") == 68 && (int)Marshal.OffsetOf(t, "dmFields") == 72 && (int)Marshal.OffsetOf(t, "dmPelsWidth") == 172 && (int)Marshal.OffsetOf(t, "dmPelsHeight") == 176;',
+            '  }',
+            '  public static string DevModeText(MpfDevMode dm) {',
+            '    return string.Format("{0}x{1} {2}bpp {3}Hz fields=0x{4:X}", dm.dmPelsWidth, dm.dmPelsHeight, dm.dmBitsPerPel, dm.dmDisplayFrequency, dm.dmFields);',
+            '  }',
+            '  public static string WindowTitle(IntPtr hwnd) {',
+            '    int n = GetWindowTextLength(hwnd);',
+            '    StringBuilder sb = new StringBuilder(n + 2);',
+            '    GetWindowText(hwnd, sb, sb.Capacity);',
+            '    return sb.ToString();',
+            '  }',
+            '  public static string WindowClass(IntPtr hwnd) {',
+            '    StringBuilder sb = new StringBuilder(256);',
+            '    GetClassName(hwnd, sb, sb.Capacity);',
+            '    return sb.ToString();',
+            '  }',
+            '  public static uint WindowPid(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd, out pid); return pid; }',
+            '  public static string RectText(IntPtr hwnd) {',
+            '    MpfRect r;',
+            '    if (!GetWindowRect(hwnd, out r)) { return "unreadable"; }',
+            '    return string.Format("{0},{1} {2}x{3}", r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);',
+            '  }',
+            '  public static bool FrameRect(IntPtr hwnd, out MpfRect rect) {',
+            '    rect = new MpfRect();',
+            '    if (hwnd == IntPtr.Zero) { return false; }',
+            '    try {',
+            '      return DwmGetWindowAttribute(hwnd, 9, out rect, Marshal.SizeOf(typeof(MpfRect))) == 0;',
+            '    } catch {',
+            '      rect = new MpfRect();',
+            '      return false;',
+            '    }',
+            '  }',
+            # The main window handle of the launched pid is not always Cura's
+            # (a launcher can own it), so the handle is chosen from an
+            # enumeration and the row that won is printed with its score.
+            '  private static IntPtr windowPick = IntPtr.Zero;',
+            '  public static IntPtr LastPick() { return windowPick; }',
+            '  public static string WindowReport(uint pid, string titleHint) {',
+            '    windowPick = IntPtr.Zero;',
+            '    StringBuilder rows = new StringBuilder();',
+            '    int bestScore = 0;',
+            '    EnumWindows(delegate(IntPtr hwnd, IntPtr lparam) {',
+            '      string title = WindowTitle(hwnd);',
+            '      string cls = WindowClass(hwnd);',
+            '      uint wpid = WindowPid(hwnd);',
+            '      bool visible = IsWindowVisible(hwnd);',
+            '      bool iconic = IsIconic(hwnd);',
+            '      bool owned = GetWindow(hwnd, 4) != IntPtr.Zero;',
+            '      bool hint = titleHint.Length > 0 && title.IndexOf(titleHint, StringComparison.OrdinalIgnoreCase) >= 0;',
+            '      bool cura = title.Length > 0 && title.IndexOf("cura", StringComparison.OrdinalIgnoreCase) >= 0;',
+            '      int score = 0;',
+            '      if (title.Length > 0) {',
+            '        if (wpid == pid) { score += 4; }',
+            '        if (hint) { score += 4; }',
+            '        if (visible) { score += 1; }',
+            '        if (!iconic) { score += 1; }',
+            '        if (!owned) { score += 1; }',
+            '      }',
+            '      if (score > bestScore) { bestScore = score; windowPick = hwnd; }',
+            '      bool interesting = wpid == pid || cura || hint;',
+            '      if (interesting) {',
+            '        MpfRect frame;',
+            '        bool framed = FrameRect(hwnd, out frame);',
+            '        rows.Append(string.Format("hwnd=0x{0:X} pid={1} class={2} visible={3} minimised={4} owned={5} rect={6} dwmframe={7} score={8} title=[{9}]", hwnd.ToInt64(), wpid, cls, visible, iconic, owned, RectText(hwnd), framed ? string.Format("{0},{1} {2}x{3}", frame.Left, frame.Top, frame.Right - frame.Left, frame.Bottom - frame.Top) : "-", score, title));',
+            '        rows.Append("\n");',
+            '      }',
+            '      return true;',
+            '    }, IntPtr.Zero);',
+            '    if (windowPick == IntPtr.Zero) {',
+            '      rows.Append("chosen=none (no titled top-level window matched this pid or title)\n");',
+            '    } else {',
+            '      MpfRect frame;',
+            '      bool framed = FrameRect(windowPick, out frame);',
+            '      rows.Append(string.Format("chosen=0x{0:X} pid={1} class={2} rect={3} dwmframe={4} title=[{5}]", windowPick.ToInt64(), WindowPid(windowPick), WindowClass(windowPick), RectText(windowPick), framed ? string.Format("{0},{1} {2}x{3}", frame.Left, frame.Top, frame.Right - frame.Left, frame.Bottom - frame.Top) : "-", WindowTitle(windowPick)));',
+            '    }',
+            '    return rows.ToString();',
+            '  }',
             '}'
           ) -join "`n"
           $nativeOk = $false
@@ -2762,6 +3495,23 @@ jobs:
           function Test-ProbeTitle($t) {
             foreach ($m in $markers) { if ($t -like ("*" + $m + "*")) { return $true } }
             return $false
+          }
+          # One rectangle reader for every call site: the DWM frame bounds
+          # when the compositor has them (that is the rectangle actually
+          # drawn), GetWindowRect for a window that is not composited, and
+          # $null when neither answers. The source is returned with the
+          # rectangle so a reading can be traced to the call that produced it.
+          function Get-WindowRect([IntPtr]$handle) {
+            $r = New-Object MpfRect
+            if ($null -eq $r) { return $null }
+            if ([SpikeNative]::FrameRect($handle, [ref]$r) -and
+                (($r.Right - $r.Left) -gt 0) -and (($r.Bottom - $r.Top) -gt 0)) {
+              return @{ X = $r.Left; Y = $r.Top; W = $r.Right - $r.Left; H = $r.Bottom - $r.Top; Source = 'DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)' }
+            }
+            if ([SpikeNative]::GetWindowRect($handle, [ref]$r)) {
+              return @{ X = $r.Left; Y = $r.Top; W = $r.Right - $r.Left; H = $r.Bottom - $r.Top; Source = 'GetWindowRect' }
+            }
+            return $null
           }
           function Audit-Row($component, $role, $status, $version, $notes) {
             # The audit table is owned by the audit step; this step adds rows
@@ -3085,53 +3835,72 @@ jobs:
           } elseif (-not $nativeOk) {
             $displayWhy = 'the native helper did not compile, so no mode can be set'
           } else {
-            $dmNow = New-Object SpikeNative.DEVMODE
-            $dmSize = [System.Runtime.InteropServices.Marshal]::SizeOf($dmNow)
-            if ($dmSize -ne 220) {
-              # Windows defines DEVMODE as 220 bytes; a struct that
-              # marshals to any other size would hand the display API a
-              # buffer it does not own, so the call is not made at all.
-              $displayWhy = ("the DEVMODE this helper marshals is {0} bytes, not the 220 Windows defines" -f $dmSize)
+            $dmNow = New-Object MpfDevMode
+            if (-not $dmNow) {
+              # A type that does not resolve leaves $null here, and every call
+              # built on it then fails non-terminating under this step's
+              # Continue preference - which is how an empty DEVMODE size got
+              # reported as a marshalling bug once already.
+              $displayWhy = 'the DEVMODE type did not resolve in PowerShell (New-Object MpfDevMode gave nothing)'
             } else {
-              $found = $null
-              $modes = 0
-              $i = 0
-              while ($i -lt 4096) {
-                $cand = New-Object SpikeNative.DEVMODE
-                if (-not [SpikeNative]::EnumDisplaySettings($null, $i, [ref]$cand)) { break }
-                $modes++
-                if (($cand.dmPelsWidth -eq $wantW) -and ($cand.dmPelsHeight -eq $wantH) -and ($cand.dmBitsPerPel -ge 32)) {
-                  $found = $cand
-                  break
-                }
-                $i++
-              }
-              W ("display modes this adapter reports: {0} (looking for {1}x{2} at 32 bpp)" -f $modes, $wantW, $wantH)
-              if (-not $found) {
-                $displayWhy = ("no {0}x{1} mode in this adapter's list" -f $wantW, $wantH)
+              $dmLayout = [SpikeNative]::DevModeLayout()
+              W ("DEVMODE type {0} marshals as {1}" -f $dmNow.GetType().FullName, $dmLayout)
+              if (-not [SpikeNative]::DevModeOk()) {
+                # Windows defines DEVMODE as 220 bytes; a struct that
+                # marshals to any other size would hand the display API a
+                # buffer it does not own, so the call is not made at all.
+                $displayWhy = ("the DEVMODE this helper marshals is not the Windows layout: {0}" -f $dmLayout)
               } else {
-                # DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
-                $found.dmFields = 0x00040000 -bor 0x00080000 -bor 0x00100000 -bor 0x00400000
-                $rc = [SpikeNative]::ChangeDisplaySettings([ref]$found, 0)
-                W ("ChangeDisplaySettings({0}x{1}, dynamic) returned {2} (0 = DISP_CHANGE_SUCCESSFUL)" -f $wantW, $wantH, $rc)
-                if ($rc -eq 0) {
-                  $displayWhy = ("moved from {0}x{1} by ChangeDisplaySettings" -f $scr.Width, $scr.Height)
-                  Start-Sleep -Seconds 3
+                $found = $null
+                $modes = 0
+                $i = 0
+                while ($i -lt 4096) {
+                  $cand = New-Object MpfDevMode
+                  if (-not [SpikeNative]::EnumDisplaySettings($null, $i, [ref]$cand)) { break }
+                  $modes++
+                  if (($cand.dmPelsWidth -eq $wantW) -and ($cand.dmPelsHeight -eq $wantH) -and ($cand.dmBitsPerPel -ge 32)) {
+                    $found = $cand
+                    break
+                  }
+                  $i++
+                }
+                W ("display modes this adapter reports: {0} (looking for {1}x{2} at 32 bpp)" -f $modes, $wantW, $wantH)
+                if (-not $found) {
+                  $displayWhy = ("no {0}x{1} mode in this adapter's list" -f $wantW, $wantH)
                 } else {
-                  $displayWhy = ("ChangeDisplaySettings returned {0}" -f $rc)
+                  # DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+                  $found.dmFields = 0x00040000 -bor 0x00080000 -bor 0x00100000 -bor 0x00400000
+                  $rc = [SpikeNative]::ChangeDisplaySettings([ref]$found, 0)
+                  W ("ChangeDisplaySettings({0}x{1}, dynamic) returned {2} (0 = DISP_CHANGE_SUCCESSFUL)" -f $wantW, $wantH, $rc)
+                  if ($rc -eq 0) {
+                    $displayWhy = ("moved from {0}x{1} by ChangeDisplaySettings" -f $scr.Width, $scr.Height)
+                    Start-Sleep -Seconds 3
+                  } else {
+                    $displayWhy = ("ChangeDisplaySettings returned {0}" -f $rc)
+                  }
                 }
               }
             }
           }
           $scr2 = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $vs2 = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          W ("display after: primary {0}x{1}; virtual screen {2}x{3} ({4})" -f `
-              $scr2.Width, $scr2.Height, $vs2.Width, $vs2.Height, $displayWhy)
+          # The read-back the setting has to answer to comes from the same API
+          # that was asked to change it, so a WinForms value that is stale or
+          # scaled cannot be mistaken for the mode the recorder will capture.
+          $apiMode = 'unreadable'
+          $dmBack = New-Object MpfDevMode
+          if ($nativeOk -and $dmBack) {
+            if ([SpikeNative]::EnumDisplaySettings($null, -1, [ref]$dmBack)) {
+              $apiMode = [SpikeNative]::DevModeText($dmBack)
+            }
+          }
+          W ("display after: primary {0}x{1}; virtual screen {2}x{3}; EnumDisplaySettings says {4} ({5})" -f `
+              $scr2.Width, $scr2.Height, $vs2.Width, $vs2.Height, $apiMode, $displayWhy)
           if (($scr2.Width -eq $wantW) -and ($scr2.Height -eq $wantH)) {
-            V ("SPIKE-Q2: display=OK ({0}x{1}, {2})" -f $scr2.Width, $scr2.Height, $displayWhy)
+            V ("SPIKE-Q2: display=OK ({0}x{1}, {2}; {3})" -f $scr2.Width, $scr2.Height, $displayWhy, $apiMode)
           } else {
-            V ("SPIKE-Q2: display=MISMATCH (pinned {0}, this runner has {1}x{2}, {3})" -f `
-                $wantGeo, $scr2.Width, $scr2.Height, $displayWhy)
+            V ("SPIKE-Q2: display=MISMATCH (pinned {0}, this runner has {1}x{2}, {3}; {4})" -f `
+                $wantGeo, $scr2.Width, $scr2.Height, $displayWhy, $apiMode)
             W "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently"
           }
 
@@ -3312,25 +4081,59 @@ jobs:
           $front = $false
           $topPid = 0
           $hwnd = [IntPtr]::Zero
+          $handledBy = 'none'
           for ($k = 0; $k -lt 12; $k++) {
             $p.Refresh()
             $hwnd = $p.MainWindowHandle
             if ($hwnd -ne [IntPtr]::Zero) { break }
             Start-Sleep -Seconds 2
           }
-          W ("window handle: {0} (MainWindowHandle of pid {1})" -f $hwnd, $p.Id)
+          W ("MainWindowHandle of pid {0}: {1}" -f $p.Id, $hwnd)
+          $titleHint = "$realTitle"
+          if (-not $titleHint) { $titleHint = 'UltiMaker Cura' }
+          if ($nativeOk) {
+            # The handle is ENUMERATED rather than taken on trust: a launcher
+            # can own the top-level window this process reports, and a handle
+            # that is not the app's window measures a rectangle that says
+            # nothing about the recording. Every top-level window of this pid
+            # or carrying the app's name is printed with its class, geometry
+            # and score, and the row that won is repeated on its own line.
+            $winTable = [SpikeNative]::WindowReport([uint32]$p.Id, $titleHint)
+            foreach ($row in ($winTable -split "`n")) {
+              if ($row -and $row.Trim()) { W ("window row: {0}" -f $row.TrimEnd()) }
+            }
+            $picked = [SpikeNative]::LastPick()
+            if ($picked -ne [IntPtr]::Zero) {
+              $hwnd = $picked
+              $handledBy = 'the enumerated window table'
+            } elseif ($hwnd -ne [IntPtr]::Zero) {
+              $handledBy = 'MainWindowHandle (no enumerated row won)'
+            } else {
+              $handledBy = 'nowhere (no top-level window of this pid and no MainWindowHandle)'
+            }
+          } else {
+            $handledBy = 'MainWindowHandle (the native helper did not compile, so nothing can be enumerated)'
+          }
+          $hwndTitle = ''
+          $hwndClass = ''
+          if ($nativeOk -and ($hwnd -ne [IntPtr]::Zero)) {
+            $hwndTitle = [SpikeNative]::WindowTitle($hwnd)
+            $hwndClass = [SpikeNative]::WindowClass($hwnd)
+          }
+          W ("window handle: {0} (pid {1}, title '{2}', class '{3}', from {4})" -f `
+              $hwnd, $p.Id, $hwndTitle, $hwndClass, $handledBy)
           if (($hwnd -ne [IntPtr]::Zero) -and (-not $nativeOk)) {
             $rectWhy = 'the native helper did not compile, so GetWindowRect cannot be called'
           } elseif ($hwnd -ne [IntPtr]::Zero) {
-            $wr = New-Object SpikeNative.RECT
-            if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wr)) {
-              $winX = $wr.Left
-              $winY = $wr.Top
-              $winW = $wr.Right - $wr.Left
-              $winH = $wr.Bottom - $wr.Top
-              $rectWhy = 'GetWindowRect'
+            $rc = Get-WindowRect $hwnd
+            if ($rc) {
+              $winX = $rc.X
+              $winY = $rc.Y
+              $winW = $rc.W
+              $winH = $rc.H
+              $rectWhy = $rc.Source
             } else {
-              $rectWhy = ('GetWindowRect failed (win32 error {0})' -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+              $rectWhy = ('no rectangle could be read from this window (GetWindowRect win32 error {0})' -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
             }
           }
           $wantWin = "$env:HARNESS_WINDOW"
@@ -3373,12 +4176,12 @@ jobs:
               W ("window out of bounds: moving {0},{1} -> {2},{3} (SetWindowPos, size kept at {4}x{5})" -f $winX, $winY, $nx, $ny, $winW, $winH)
               if ($moved) {
                 Start-Sleep -Seconds 2
-                $wrC = New-Object SpikeNative.RECT
-                if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wrC)) {
-                  $winX = $wrC.Left
-                  $winY = $wrC.Top
-                  $winW = $wrC.Right - $wrC.Left
-                  $winH = $wrC.Bottom - $wrC.Top
+                $rcC = Get-WindowRect $hwnd
+                if ($rcC) {
+                  $winX = $rcC.X
+                  $winY = $rcC.Y
+                  $winW = $rcC.W
+                  $winH = $rcC.H
                 }
                 $inBounds = (($winW -gt 0) -and ($winH -gt 0) -and ($winX -ge 0) -and ($winY -ge 0) -and
                              (($winX + $winW) -le $capW) -and (($winY + $winH) -le $capH))
@@ -3406,12 +4209,14 @@ jobs:
             $visible = [SpikeNative]::IsWindowVisible($hwnd)
             $minimised = [SpikeNative]::IsIconic($hwnd)
             $front = ([SpikeNative]::GetForegroundWindow() -eq $hwnd)
-            $probe = New-Object SpikeNative.POINT
-            $probe.X = [int]($winX + ($winW / 2))
-            $probe.Y = [int]($winY + ($winH / 2))
-            $topHwnd = [SpikeNative]::WindowFromPoint($probe)
+            $probe = New-Object MpfPoint
             $topPid = 0
-            [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+            if ($null -ne $probe) {
+              $probe.X = [int]($winX + ($winW / 2))
+              $probe.Y = [int]($winY + ($winH / 2))
+              $topHwnd = [SpikeNative]::WindowFromPoint($probe)
+              [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+            }
             W ("visibility: IsWindowVisible={0} IsIconic={1} foreground={2} topmost window at the rectangle centre belongs to pid {3} (Cura is pid {4})" -f `
                 $visible, $minimised, $front, $topPid, $p.Id)
             if ((-not $front) -or $minimised) {
@@ -3422,21 +4227,23 @@ jobs:
               [void][SpikeNative]::SetForegroundWindow($hwnd)
               Start-Sleep -Seconds 3
               $p.Refresh()
-              $wr = New-Object SpikeNative.RECT
-              if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wr)) {
-                $winX = $wr.Left
-                $winY = $wr.Top
-                $winW = $wr.Right - $wr.Left
-                $winH = $wr.Bottom - $wr.Top
+              $rcF = Get-WindowRect $hwnd
+              if ($rcF) {
+                $winX = $rcF.X
+                $winY = $rcF.Y
+                $winW = $rcF.W
+                $winH = $rcF.H
               }
               $visible = [SpikeNative]::IsWindowVisible($hwnd)
               $minimised = [SpikeNative]::IsIconic($hwnd)
               $front = ([SpikeNative]::GetForegroundWindow() -eq $hwnd)
-              $probe.X = [int]($winX + ($winW / 2))
-              $probe.Y = [int]($winY + ($winH / 2))
-              $topHwnd = [SpikeNative]::WindowFromPoint($probe)
-              $topPid = 0
-              [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+              if ($null -ne $probe) {
+                $probe.X = [int]($winX + ($winW / 2))
+                $probe.Y = [int]($winY + ($winH / 2))
+                $topHwnd = [SpikeNative]::WindowFromPoint($probe)
+                $topPid = 0
+                [void][SpikeNative]::GetWindowThreadProcessId($topHwnd, [ref]$topPid)
+              }
               W ("visibility after bringing it forward: IsWindowVisible={0} IsIconic={1} foreground={2} topmost pid {3}" -f `
                   $visible, $minimised, $front, $topPid)
             }
@@ -3657,6 +4464,57 @@ jobs:
           if ($glDiagErr.Count -gt 0) { W "  note: Qt reported GL errors without a probe dialog - see the error lines above" }
 
           W ""
+          W "=== the Welcome wizard (runner.py's first gate asserts it absent) ==="
+          # Cura puts "Welcome to UltiMaker Cura" up exactly when there is no
+          # active machine, and it has no "seen" flag to set: the wizard is
+          # in-window QML, decided once at initializationFinished. What the
+          # machine manager reached is in Cura's own log, in lines only the
+          # error checker writes: "Error check finished, result" and "New
+          # error check scheduled." only while a machine is active, and "No
+          # active machine, nothing to check." once when there is none - that
+          # last one appears in working runs too, in the moment before a
+          # machine is restored, so an active-machine line settles it.
+          $welcomeFiles = @()
+          foreach ($f in (@($curaOut, $curaErr) + @($curaLogs))) {
+            if ($f -and (Test-Path $f)) { $welcomeFiles += $f }
+          }
+          $welcomeAc = @()
+          $welcomeNa = @()
+          foreach ($f in $welcomeFiles) {
+            $acN = 0
+            $naN = 0
+            try {
+              $acN = @(Select-String -Path $f -SimpleMatch -ErrorAction Stop `
+                -Pattern 'Error check finished, result', 'New error check scheduled').Count
+              $naN = @(Select-String -Path $f -SimpleMatch -ErrorAction Stop `
+                -Pattern 'No active machine, nothing to check').Count
+            } catch {
+              W "could not scan $f for a machine-state marker: $($_.Exception.Message)"
+            }
+            W ("  {0}: active-machine lines {1}, no-active-machine lines {2}" -f $f, $acN, $naN)
+            if ($acN -gt 0) { $welcomeAc += $f }
+            if ($naN -gt 0) { $welcomeNa += $f }
+          }
+          if ($welcomeFiles.Count -eq 0) {
+            W "  no Cura log or captured stream could be read: nothing to read a machine state out of"
+          }
+          $welcomeList = '<none>'
+          if ($welcomeFiles.Count -gt 0) { $welcomeList = ($welcomeFiles -join '; ') }
+          $welcomeMode = 'UNKNOWN'
+          $welcomeWhy = "no readable source carried a machine-state marker (files read: $welcomeList)"
+          if ($welcomeAc.Count -gt 0) {
+            $welcomeMode = 'ABSENT'
+            $welcomeWhy = ("Cura's own log shows an active machine (active-machine lines in {0}); the wizard's visibility is decided at startup from exactly that, so it was never shown" -f ($welcomeAc -join '; '))
+          } elseif ($welcomeNa.Count -gt 0) {
+            $welcomeMode = 'PRESENT'
+            $welcomeWhy = ("Cura's log has only the no-active-machine line (in {0}) - the wizard's precondition holds, so it is on screen and runner.py's first gate would stall" -f ($welcomeNa -join '; '))
+          }
+          V ("SPIKE-Q2: welcome={0} ({1})" -f $welcomeMode, $welcomeWhy)
+          if ($welcomeMode -ne 'ABSENT') {
+            W "FINDING: the welcome= line above is not ABSENT - either the wizard is up, or the state could not be read. The seed= line in the Windows config step names what was written and read back; runner.py's first gate asserts the wizard absent, so this has to read ABSENT before the integration phase can run a scenario"
+          }
+
+          W ""
           W "=== screen geometry ==="
           $vs = $null
           try {
@@ -3719,12 +4577,12 @@ jobs:
           # window the run moved after the bounds check above shows up here
           # rather than in someone's eye later.
           if (($hwnd -ne [IntPtr]::Zero) -and $nativeOk) {
-            $wrL = New-Object SpikeNative.RECT
-            if ([SpikeNative]::GetWindowRect($hwnd, [ref]$wrL)) {
-              $lx = $wrL.Left
-              $ly = $wrL.Top
-              $lw = $wrL.Right - $wrL.Left
-              $lh = $wrL.Bottom - $wrL.Top
+            $rcL = Get-WindowRect $hwnd
+            if ($rcL) {
+              $lx = $rcL.X
+              $ly = $rcL.Y
+              $lw = $rcL.W
+              $lh = $rcL.H
               $lIn = (($lw -gt 0) -and ($lh -gt 0) -and ($lx -ge 0) -and ($ly -ge 0) -and
                       (($lx + $lw) -le $capW) -and (($ly + $lh) -le $capH))
               W ("window rectangle at the still, vs the capture area (0,0 {0}x{1}): in-bounds={2} rect={3},{4} {5}x{6}" -f `
@@ -3753,12 +4611,17 @@ jobs:
           # receive is a WM_CLOSE, which is all taskkill posts without /F, and
           # that is why run 35934448026 ended with 524336 bytes of frames and
           # no index: the capture worked and the stop was a kill.
-          # So: the console control event, aimed at the console the recorder
-          # is attached to, then the harness's own 10 s bounded wait, then the
-          # force as the last resort. CTRL_BREAK_EVENT is the event that can
-          # be aimed (a targeted CTRL_C_EVENT is not delivered to a process
-          # group by design), and group 0 means every process sharing the
-          # console the event is generated on.
+          # A console control event is aimed at a CONSOLE, never at a pid, so
+          # sending one is not the same as delivering it: the event is raised
+          # on this step's console unless this step first attaches to the
+          # recorder's own. Every run so far raised it on the step's console
+          # and reported it sent - the recorder was on a console of its own,
+          # and the event reached nobody. So: read which console the recorder
+          # is on, raise the event there, then the harness's own 10 s bounded
+          # wait, then the force as the last resort. CTRL_BREAK_EVENT is the
+          # event that can be aimed (a targeted CTRL_C_EVENT is not delivered
+          # to a process group by design), and group 0 means every process
+          # sharing the console the event is generated on.
           $stopWhy = 'not attempted'
           if ($rec -and (-not $rec.Process.HasExited)) {
             if (-not $nativeOk) {
@@ -3769,37 +4632,72 @@ jobs:
               # of NULL and TRUE, the calling process ignores the console
               # control events it generates.
               [void][SpikeNative]::SetConsoleCtrlHandler([IntPtr]::Zero, $true)
-              $attached = $false
+              $recPid = [uint32]$rec.Process.Id
+              $stopRoute = 'none'
+              # Which console the recorder is on decides where the event has to
+              # be raised, and the answer is read rather than assumed. The
+              # event is generated on the CONSOLE, not on a pid: a child that
+              # was given a console of its own is not on this step's console at
+              # all, and an event raised here is sent-and-not-delivered - which
+              # is exactly how a run ended with 524336 bytes of frames and no
+              # index. GetConsoleProcessList names the processes on this step's
+              # console, so the recorder's absence from that list is what says
+              # its own console has to be attached.
               $consolePids = @()
+              $buf = New-Object 'uint32[]' 64
+              $n = [SpikeNative]::GetConsoleProcessList($buf, [uint32]64)
+              $listErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+              for ($c = 0; $c -lt [Math]::Min([int]$n, 64); $c++) { $consolePids += $buf[$c] }
+              W ("this step's console holds processes: {0} (list call returned {1}, win32 error {2}); the recorder is pid {3}" -f `
+                  $(if ($consolePids.Count -gt 0) { $consolePids -join ', ' } else { 'none readable' }), $n, $listErr, $recPid)
               try {
-                $attached = [SpikeNative]::AttachConsole([uint32]$rec.Process.Id)
-                if ($attached) {
-                  W "attached to the recorder's own console (it has one of its own)"
+                if ($consolePids -contains $recPid) {
+                  # Shared console: group 0 is every process attached to this
+                  # console, the recorder among them, and this process ignores
+                  # the event by the handler above.
+                  $sent = [SpikeNative]::GenerateConsoleCtrlEvent(0x1, 0)
+                  $sentErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                  W ("GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) on this step's own console returned {0} (win32 error {1})" -f $sent, $sentErr)
+                  if ($sent) { $stopRoute = 'this step''s console, which the recorder shares' }
                 } else {
-                  # No console of its own: it inherited this step's, which is
-                  # the case the target list below is read for - so the
-                  # processes the event will reach are named rather than
-                  # assumed.
-                  $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                  $buf = New-Object 'uint32[]' 64
-                  $n = [SpikeNative]::GetConsoleProcessList($buf, [uint32]64)
-                  for ($c = 0; $c -lt [Math]::Min([int]$n, 64); $c++) { $consolePids += $buf[$c] }
-                  W ("AttachConsole failed (win32 error {0}) - the recorder shares this step's console; processes on it: {1}" -f $err, ($consolePids -join ', '))
-                }
-                $sent = [SpikeNative]::GenerateConsoleCtrlEvent(0x1, 0)
-                $sentErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                W ("GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) returned {0} (win32 error {1})" -f $sent, $sentErr)
-                if ($sent) {
-                  $stopWhy = 'the console control event was sent'
-                } else {
-                  $stopWhy = ("GenerateConsoleCtrlEvent failed (win32 error {0})" -f $sentErr)
+                  # A console of its own. AttachConsole fails while this
+                  # process holds a console, so this step's own is given up
+                  # first; the console it then has is the recorder's, and an
+                  # event raised there reaches the recorder and nothing else.
+                  # CREATE_NO_WINDOW is what creates that console, and it is
+                  # why the pid has to be attached to rather than signalled.
+                  [void][SpikeNative]::FreeConsole()
+                  $attached = [SpikeNative]::AttachConsole($recPid)
+                  if ($attached) {
+                    W ("the recorder has a console of its own; attached to pid {0}" -f $recPid)
+                    # The targeted event first: a process that owns its
+                    # console is the root of that console's process group,
+                    # and CTRL_BREAK is the one that can be aimed (a targeted
+                    # CTRL_C_EVENT is not delivered to a process group by
+                    # design). Group 0 on the same console is the fallback,
+                    # and it can only reach the recorder either way.
+                    $targeted = [SpikeNative]::GenerateConsoleCtrlEvent(0x1, $recPid)
+                    $targetedErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    W ("GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, {0}) returned {1} (win32 error {2})" -f $recPid, $targeted, $targetedErr)
+                    $broad = [SpikeNative]::GenerateConsoleCtrlEvent(0x1, 0)
+                    $broadErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    W ("GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) on the recorder's own console returned {0} (win32 error {1})" -f $broad, $broadErr)
+                    if ($targeted -or $broad) { $stopRoute = 'the console the recorder owns' }
+                    [void][SpikeNative]::FreeConsole()
+                  } else {
+                    $attErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    W ("AttachConsole({0}) failed (win32 error {1}) and the recorder was not on this step's console, so no console carrying the recorder could be reached" -f $recPid, $attErr)
+                  }
                 }
               } catch {
-                $stopWhy = ('the console control event threw: ' + $_.Exception.Message)
-                W $stopWhy
-              } finally {
-                if ($attached) { [void][SpikeNative]::FreeConsole() }
+                W ('the console control event threw: ' + $_.Exception.Message)
               }
+              if ($stopRoute -eq 'none') {
+                $stopWhy = 'no console carrying the recorder could be reached, so the event was not delivered'
+              } else {
+                $stopWhy = ("the console control event was sent on {0}" -f $stopRoute)
+              }
+              W $stopWhy
             }
             # The bounded wait the harness uses: video.wait(timeout=10) in
             # runner.py, so a recorder that is writing its index is given the
