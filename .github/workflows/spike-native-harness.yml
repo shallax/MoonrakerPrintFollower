@@ -46,6 +46,14 @@
 # artifact uploads under `if: always()` so a failed leg still ships the
 # log that says WHY.
 #
+# The installer is the one thing that is NOT evidence: ~160-170 MB per
+# platform, regenerable from its pinned release URL, and ~99% of every
+# upload. It is downloaded into the runner's temp dir (never uploaded)
+# and consumed from there; only the small facts that describe it - the
+# asset URL, its size, its sha256 and the arch decision - are written
+# into spike-evidence/. Evidence earns its keep while it decides
+# something, and those bytes never decide anything.
+#
 # ASCII ONLY in this file, and the PowerShell steps are why: they run under
 # shell: powershell, which is Windows PowerShell 5.1, and it reads the
 # runner's temp .ps1 with the ANSI codepage rather than UTF-8. A UTF-8 em
@@ -115,8 +123,15 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     env:
-      CURA_VERSION: ${{ github.event.inputs.cura_version }}
-      CURA_MACOS_ARCH: ${{ github.event.inputs.macos_arch }}
+      # github.event.inputs is populated only for workflow_dispatch, so on push
+      # and pull_request these evaluated to the EMPTY STRING. The scripts mostly
+      # default with ${VAR:-5.13.0}, which hides it - but the config seed reads
+      # the version to name the version-stamped config directory, and an empty
+      # one made it skip, which is why Cura came up on its first-run wizard and
+      # would have stalled the harness's own first gate. The default belongs
+      # here, once, where every step sees it.
+      CURA_VERSION: ${{ github.event.inputs.cura_version || '5.13.0' }}
+      CURA_MACOS_ARCH: ${{ github.event.inputs.macos_arch || 'auto' }}
       EVIDENCE: spike-evidence
     steps:
       - name: Check out the source
@@ -713,10 +728,17 @@ jobs:
           VERSION="${CURA_VERSION:-5.13.0}"
           REQUEST="${CURA_MACOS_ARCH:-auto}"
           LOG="$EVIDENCE/download-macos.txt"
-          API="https://api.github.com/repos/Ultimaker/Cura/releases/tags/${VERSION}"
           BASE="https://github.com/Ultimaker/Cura/releases/download/${VERSION}"
-          ASSETS="$EVIDENCE/cura-assets.txt"
           DECISION="$EVIDENCE/macos-arch.txt"
+          # The installer is ~170 MB, regenerable from the pinned URL below,
+          # and would otherwise ride every upload. It goes to the runner's
+          # temp dir, which is not uploaded, and is left there for the
+          # install step to consume (nothing deletes it mid-run, so a retry
+          # or a later step still finds it). Only the small facts about it -
+          # URL, size, sha256 - are written as evidence.
+          INSTALLER_DIR="${RUNNER_TEMP:-/tmp}/cura-installers"
+          mkdir -p "$INSTALLER_DIR"
+          INSTALLER_TXT="$EVIDENCE/cura-installer.txt"
           case "$REQUEST" in
             auto|arm64|x64) ;;
             *) REQUEST=auto ;;
@@ -725,19 +747,60 @@ jobs:
             echo "requested version : $VERSION"
             echo "requested arch    : ${CURA_MACOS_ARCH:-auto} (auto | arm64 | x64)"
             echo
-            echo "--- every asset the release actually publishes ---"
-            curl -sSL --fail --max-time 60 "$API" >"$EVIDENCE/cura-release.json"
-            if [ ! -s "$EVIDENCE/cura-release.json" ]; then
-              echo "release listing unavailable - the arch policy cannot be applied"
-              echo "SPIKE-Q1: download=FAILED (release listing unavailable)" \
+            echo "--- the two assets the arch policy asks about ---"
+            # The policy needs one bit per arch - is this file published? - and
+            # a HEAD on the public download URL answers exactly that, from the
+            # same host the installer itself comes from, consuming no REST
+            # budget. The API listing it replaces was a single point of failure
+            # for the whole leg: one 403 there meant no arch, no download, no
+            # install, no launch and no evidence, on every run.
+            # 200/302 means the frontend will hand the file over; 404 means the
+            # release does not publish it. --fail stays off deliberately: the
+            # status code is the answer here, and --fail discards it.
+            ARM64_ASSET="UltiMaker-Cura-${VERSION}-macos-ARM64.dmg"
+            X64_ASSET="UltiMaker-Cura-${VERSION}-macos-X64.dmg"
+            PROBE_STATE=""
+            probe_asset() {
+              # retries only what a throttle or a transient error produces, and
+              # logs every go, so a retry is visible rather than hidden
+              local asset="$1" attempt=0 code=""
+              for wait_s in 0 5 15; do
+                if [ "$wait_s" -gt 0 ]; then
+                  echo "  ${asset}: retrying in ${wait_s}s (last status: ${code:-none})"
+                  sleep "$wait_s"
+                fi
+                attempt=$((attempt + 1))
+                code="$(curl -sSI -o /dev/null -w '%{http_code}' \
+                  --max-time 60 "$BASE/$asset")"
+                echo "  ${asset}: HTTP ${code:-none} (attempt ${attempt})"
+                case "$code" in
+                  200|302) PROBE_STATE=published; return 0 ;;
+                  404) PROBE_STATE=absent; return 0 ;;
+                esac
+              done
+              PROBE_STATE=unknown
+              return 1
+            }
+            ARM64_STATE=unknown
+            X64_STATE=unknown
+            probe_asset "$ARM64_ASSET" && ARM64_STATE="$PROBE_STATE"
+            probe_asset "$X64_ASSET" && X64_STATE="$PROBE_STATE"
+            echo "arm64 dmg published: $ARM64_STATE"
+            echo "x64 dmg published  : $X64_STATE"
+            if [ "$ARM64_STATE" = unknown ] || [ "$X64_STATE" = unknown ]; then
+              echo "SPIKE-Q1: download=FAILED (the published-asset probe returned no usable status: arm64=${ARM64_STATE} x64=${X64_STATE})" \
                 | tee -a "$EVIDENCE/verdict.txt"
+              echo "::error title=SPIKE-Q1 macOS download FAILED::the published-asset probe got no usable HTTP status after 3 attempt(s) (arm64=${ARM64_STATE}, x64=${X64_STATE}) - there is no arch decision, so nothing was downloaded; see $LOG"
               exit 1
             fi
-            grep -oE 'https://github\.com/Ultimaker/Cura/releases/download/[^"]*' \
-              "$EVIDENCE/cura-release.json" | sort | tee "$ASSETS"
+            HAS_ARM64=no
+            HAS_X64=no
+            if [ "$ARM64_STATE" = published ]; then HAS_ARM64=yes; fi
+            if [ "$X64_STATE" = published ]; then HAS_X64=yes; fi
             echo
-            # The macOS arch policy, driven by the RUNTIME asset list of the
-            # requested version - never by a hardcoded per-version table.
+            # The macOS arch policy, driven by what the release actually
+            # publishes for the requested version - never by a hardcoded
+            # per-version table (the probe above read that out).
             # The sweep spans 5.7-5.13 and the published assets differ
             # across it, so this rule is exactly what the eventual fetch
             # layer needs per version: the spike is the seed of it, not a
@@ -747,14 +810,6 @@ jobs:
             #   arm64  force it; fail loudly when the version has none
             #   x64    force it; fail loudly when the version has none
             #          (forcing x64 on an arm64 host IS the Rosetta probe)
-            ARM64_ASSET="UltiMaker-Cura-${VERSION}-macos-ARM64.dmg"
-            X64_ASSET="UltiMaker-Cura-${VERSION}-macos-X64.dmg"
-            HAS_ARM64=no
-            HAS_X64=no
-            if grep -qF "$ARM64_ASSET" "$ASSETS"; then HAS_ARM64=yes; fi
-            if grep -qF "$X64_ASSET" "$ASSETS"; then HAS_X64=yes; fi
-            echo "arm64 dmg published: $HAS_ARM64"
-            echo "x64 dmg published  : $HAS_X64"
             echo
             ARCH_TAG=""
             WHY=""
@@ -819,24 +874,40 @@ jobs:
             fi
             ASSET="UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
             URL="${BASE}/${ASSET}"
+            INSTALLER="$INSTALLER_DIR/$ASSET"
             echo
             echo "--- download: $URL ---"
             curl -L --fail --retry 3 --retry-delay 5 \
               --connect-timeout 30 --max-time 900 \
               -w "http_code=%{http_code} bytes=%{size_download}\n" \
-              -o "$EVIDENCE/$ASSET" "$URL"
+              -o "$INSTALLER" "$URL"
             rc=$?
             echo "curl exit: $rc"
             if [ "$rc" -ne 0 ]; then
               echo "SPIKE-Q1: download=FAILED (curl exit $rc)" \
                 | tee -a "$EVIDENCE/verdict.txt"
+              echo "::error title=SPIKE-Q1 macOS download FAILED::$URL returned curl exit $rc after 3 retries - no installer on disk; see $LOG"
               exit 1
             fi
-            echo "--- what landed ---"
-            ls -l "$EVIDENCE/$ASSET"
-            du -h "$EVIDENCE/$ASSET"
-            file "$EVIDENCE/$ASSET"
-            echo "SPIKE-Q1: download=OK ($(du -h "$EVIDENCE/$ASSET" | cut -f1))" \
+            echo "--- what landed (in RUNNER_TEMP, not uploaded) ---"
+            ls -l "$INSTALLER"
+            du -h "$INSTALLER"
+            file "$INSTALLER"
+            # The bytes are regenerable and stay out of the upload; these
+            # lines are what the installer was, and they are the evidence.
+            SIZE="$(wc -c <"$INSTALLER" | tr -d ' ')"
+            SHA="$(shasum -a 256 "$INSTALLER" 2>/dev/null | cut -d' ' -f1)"
+            {
+              echo "asset       : $ASSET"
+              echo "url         : $URL"
+              echo "file        : $INSTALLER (in RUNNER_TEMP, never uploaded)"
+              echo "size        : $SIZE bytes ($(du -h "$INSTALLER" | cut -f1))"
+              echo "sha256      : ${SHA:-unavailable (no shasum)}"
+              echo "arch policy : $ARCH_TAG - $WHY"
+              echo "host arch   : $(uname -m)"
+            } >"$INSTALLER_TXT"
+            cat "$INSTALLER_TXT"
+            echo "SPIKE-Q1: download=OK ($(du -h "$INSTALLER" | cut -f1), sha256 ${SHA:-unavailable})" \
               | tee -a "$EVIDENCE/verdict.txt"
           } 2>&1 | tee "$LOG"
           # The pipeline's status belongs to tee, so the verdict is
@@ -849,6 +920,12 @@ jobs:
       - name: "Q1 evidence: download the pinned Cura (Windows)"
         if: runner.os == 'Windows'
         continue-on-error: true
+        env:
+          # Same reason as the macOS leg: the release listing is a GitHub API
+          # call and is rate-limited per source IP when it is anonymous, so
+          # it goes out with the run's own token. contents: read is enough
+          # and is not widened here.
+          GH_TOKEN: ${{ github.token }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Continue'
@@ -857,6 +934,16 @@ jobs:
           New-Item -ItemType Directory -Force $EVIDENCE | Out-Null
           $log = Join-Path $EVIDENCE 'download-windows.txt'
           $verdict = Join-Path $EVIDENCE 'verdict.txt'
+          # The installer is ~160 MB, regenerable from the pinned URL below,
+          # and would otherwise ride every upload. It goes to the runner's
+          # temp dir, which is not uploaded, and stays there for the install
+          # step to consume (nothing deletes it mid-run, so a retry or a
+          # later step still finds it). Only the small facts about it - URL,
+          # size, sha256, signature - are written as evidence.
+          $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+          $installerDir = Join-Path $tempRoot 'cura-installers'
+          New-Item -ItemType Directory -Force $installerDir | Out-Null
+          $installerTxt = Join-Path $EVIDENCE 'cura-installer.txt'
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
           $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
@@ -870,8 +957,21 @@ jobs:
 
           W ""
           W "--- every download URL the release actually publishes ---"
+          # The listing is the rate-limited call here too, so it carries the
+          # run's token. Unlike the macOS leg it decides nothing - the
+          # installer URL is fixed by version - so a failure is reported and
+          # the download still proceeds, but the HTTP status is named rather
+          # than left to be inferred from a curl error nobody read.
+          $apiUrl = "https://api.github.com/repos/Ultimaker/Cura/releases/tags/$ver"
+          $apiHeaders = @{}
+          $authNote = 'unauthenticated: no token'
+          if ($env:GH_TOKEN) {
+            $apiHeaders['Authorization'] = "Bearer $env:GH_TOKEN"
+            $authNote = 'authenticated'
+          }
+          W "listing url      : $apiUrl ($authNote)"
           try {
-            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/Ultimaker/Cura/releases/tags/$ver" -TimeoutSec 60
+            $rel = Invoke-RestMethod -Uri $apiUrl -Headers $apiHeaders -TimeoutSec 60
             W "release $($rel.tag_name): $($rel.assets.Count) assets"
             foreach ($a in $rel.assets) {
               W ("  {0}  {1:N1} MB" -f $a.name, ($a.size / 1MB))
@@ -880,26 +980,47 @@ jobs:
             W "pinned installer present: $($names -contains $exeName)"
             W "msi fallback present    : $($names -contains $msiName)"
           } catch {
-            W "release listing FAILED: $($_.Exception.Message)"
+            $code = ''
+            if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+              $code = [int]$_.Exception.Response.StatusCode
+            }
+            $codeNote = if ($code) { "$code" } else { '<no status>' }
+            W "release listing FAILED: HTTP $codeNote ($authNote) - $($_.Exception.Message)"
+            W "no asset URL was taken from the listing; the pinned URL below is used as it is"
           }
 
           W ""
           W "--- download ---"
-          $exePath = Join-Path $EVIDENCE $exeName
+          $exePath = Join-Path $installerDir $exeName
           & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 -o "$exePath" "$exeUrl" 2>&1 |
             ForEach-Object { W $_ }
           $rc = $LASTEXITCODE
           W "curl.exe exit: $rc"
           if ($rc -ne 0) {
             V "SPIKE-Q1: download=FAILED (curl exit $rc)"
+            Write-Host "::error title=SPIKE-Q1 Windows download FAILED::$exeUrl returned curl.exe exit $rc after 3 retries - no installer on disk; see $log"
             exit 1
           }
-          $f = Get-Item $exePath
+          $f = Get-Item -LiteralPath $exePath
           W "landed: $($f.FullName)"
-          W ("size  : {0:N1} MB ({1} bytes)" -f ($f.Length / 1MB), $f.Length)
+          $mb = '{0:N1}' -f ($f.Length / 1MB)
+          W "size  : $mb MB ($($f.Length) bytes)"
           $sig = Get-AuthenticodeSignature $exePath
           W "signature: $($sig.Status) / signer $($sig.SignerCertificate.Subject)"
-          V ("SPIKE-Q1: download=OK ({0:N1} MB)" -f ($f.Length / 1MB))
+          # The bytes are regenerable and stay out of the upload; what the
+          # installer was is the evidence, so it is written down here.
+          $sha = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLower()
+          @(
+            "asset       : $exeName"
+            "url         : $exeUrl"
+            "file        : $exePath (in RUNNER_TEMP, never uploaded)"
+            "size        : $($f.Length) bytes ($mb MB)"
+            "sha256      : $sha"
+            "signature   : $($sig.Status)"
+            "signer      : $($sig.SignerCertificate.Subject)"
+          ) | Set-Content -LiteralPath $installerTxt
+          Get-Content -LiteralPath $installerTxt | ForEach-Object { W $_ }
+          V "SPIKE-Q1: download=OK ($mb MB, sha256 $sha)"
           exit 0
 
       - name: "Q1 evidence: silent install (macOS - mount the dmg, copy the .app)"
@@ -921,7 +1042,12 @@ jobs:
               | tee -a "$EVIDENCE/verdict.txt"
             exit 0
           fi
-          DMG="$EVIDENCE/UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
+          # The download step put the dmg in the runner's temp dir - same
+          # RUNNER_TEMP, same name - so this step uses it from there and the
+          # ~170 MB image never rides the upload. Name and temp dir are both
+          # deterministic, so the two steps cannot disagree about which dmg
+          # is on disk.
+          DMG="${RUNNER_TEMP:-/tmp}/cura-installers/UltiMaker-Cura-${VERSION}-macos-${ARCH_TAG}.dmg"
           MNT="$(pwd)/$EVIDENCE/mnt"
           APP=/Applications/UltiMaker-Cura.app
           # The licence-stripped copy is the last rung's mount path and lives
@@ -1040,6 +1166,7 @@ jobs:
             echo "installing the ${ARCH_TAG} dmg the download step selected"
             if [ ! -f "$DMG" ]; then
               echo "no dmg downloaded - install cannot proceed"
+              echo "expected at: $DMG"
               echo "SPIKE-Q1: install=SKIPPED (no dmg)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 0
@@ -1290,8 +1417,15 @@ jobs:
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
           $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
-          $exePath = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.exe"
-          $msiPath = Join-Path $EVIDENCE "UltiMaker-Cura-$ver-win64-X64.msi"
+          # Both installers live in the download step's temp dir, never in
+          # the evidence directory: ~160 MB each, regenerable from their
+          # pinned URLs, so the bytes are not evidence. RUNNER_TEMP is
+          # absolute and is not uploaded.
+          $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+          $installerDir = Join-Path $tempRoot 'cura-installers'
+          New-Item -ItemType Directory -Force $installerDir | Out-Null
+          $exePath = Join-Path $installerDir "UltiMaker-Cura-$ver-win64-X64.exe"
+          $msiPath = Join-Path $installerDir "UltiMaker-Cura-$ver-win64-X64.msi"
           $msiUrl = "https://github.com/Ultimaker/Cura/releases/download/$ver/UltiMaker-Cura-$ver-win64-X64.msi"
           $msiLog = Join-Path $EVIDENCE 'msi-install.log'
           $exeResult = 'not attempted'
@@ -1448,6 +1582,7 @@ jobs:
 
           if (-not (Test-Path -LiteralPath $exePath) -and -not (Test-Path -LiteralPath $msiPath)) {
             W "neither installer is on disk - install cannot proceed"
+            W "looked in: $installerDir"
             V "SPIKE-Q1: install=SKIPPED (no installer on disk)"
             exit 0
           }
@@ -2249,10 +2384,16 @@ jobs:
                   echo "FINDING: this runner's display cannot be moved to the harness geometry, so its recording is not the size the Linux leg records and the pinned window cannot fit - reported here rather than recorded silently" ;;
               esac
               echo "--- recorder argv ---"
-              echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none $VIDEO"
+              # Fragmented, so the moov is written up front and every fragment
+              # is self-contained. A plain mp4 keeps its index at the end, so a
+              # recorder that is killed rather than stopped leaves an mdat with
+              # no moov - unplayable, which is exactly what the Windows leg
+              # produced. This costs nothing when the stop is clean.
+              echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none -movflags +frag_keyframe+empty_moov+default_base_moof $VIDEO"
               ffmpeg -y -loglevel error -f avfoundation \
                 -video_size "$VIDEO_SIZE" -framerate 15 \
-                -i "${SCREEN_INDEX}:none" "$VIDEO" \
+                -i "${SCREEN_INDEX}:none" \
+                -movflags +frag_keyframe+empty_moov+default_base_moof "$VIDEO" \
                 >"$EVIDENCE/recorder.log" 2>&1 &
               REC_PID=$!
               echo "recorder pid: $REC_PID (started BEFORE the launch)"
@@ -3937,8 +4078,14 @@ jobs:
             W "no recorder available - the video leg cannot run on this image"
           } else {
             W "recorder: ffmpeg $($ff.Source)"
+            # Fragmented: the moov goes up front and each fragment stands
+            # alone, so the recording survives being killed rather than
+            # stopped. The previous round's plain mp4 came back with an mdat
+            # and no moov - an unplayable file that no reader could open.
             $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs +
-                      @('-framerate', '15', '-i', 'desktop', "`"$video`"")
+                      @('-framerate', '15', '-i', 'desktop',
+                        '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+                        "`"$video`"")
             W "recorder argv: ffmpeg $($ffArgs -join ' ')"
             # The launch mechanism, recorded because the next run has to be
             # readable without re-deriving it: System.Diagnostics.Process with
@@ -4164,7 +4311,55 @@ jobs:
             } elseif ($hwnd -eq [IntPtr]::Zero) {
               $clampWhy = 'there is no window handle to move'
             } elseif (($winW -gt $capW) -or ($winH -gt $capH)) {
-              $clampWhy = ("the window is larger than the capture area ({0}x{1}), so it cannot be brought fully inside it" -f $winW, $winH)
+              # The window cannot fit this display at its pinned size (1840x1040
+              # on a 1024x768 runner). Refusing to touch it left it clipped, and
+              # a full-display capture then omits part of the window silently.
+              # Shrinking it keeps every pixel in frame: the window pin is a
+              # target, not a precondition, and a complete smaller window is
+              # usable evidence where a clipped one is not.
+              # SWP_NOZORDER | SWP_NOACTIVATE: resize and move only, so the
+              # stacking and the focus stay as they were and the visibility
+              # check below reads what this move did and nothing else.
+              $nw = [Math]::Min($winW, $capW)
+              $nh = [Math]::Min($winH, $capH)
+              $moved = [SpikeNative]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, $nw, $nh, 0x0014)
+              W ("window larger than the capture area: resizing {0}x{1} -> {2}x{3} at 0,0" -f $winW, $winH, $nw, $nh)
+              if ($moved) {
+                Start-Sleep -Seconds 2
+                $rcC = Get-WindowRect $hwnd
+                if ($rcC) {
+                  $winX = $rcC.X
+                  $winY = $rcC.Y
+                  $winW = $rcC.W
+                  $winH = $rcC.H
+                }
+                # The DWM frame carries an invisible border, so a resize to the
+                # exact display size still overflows by it. Shrink by the
+                # overflow this move actually measured rather than by a guess.
+                if ((($winX + $winW) -gt $capW) -or (($winY + $winH) -gt $capH)) {
+                  $ow = [Math]::Max(0, ($winX + $winW) - $capW)
+                  $oh = [Math]::Max(0, ($winY + $winH) - $capH)
+                  $nw2 = [Math]::Max(1, $winW - $ow)
+                  $nh2 = [Math]::Max(1, $winH - $oh)
+                  W ("the frame border overflowed by {0}x{1}: resizing again to {2}x{3}" -f $ow, $oh, $nw2, $nh2)
+                  if ([SpikeNative]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, $nw2, $nh2, 0x0014)) {
+                    Start-Sleep -Seconds 2
+                    $rcC2 = Get-WindowRect $hwnd
+                    if ($rcC2) {
+                      $winX = $rcC2.X
+                      $winY = $rcC2.Y
+                      $winW = $rcC2.W
+                      $winH = $rcC2.H
+                    }
+                  }
+                }
+                $inBounds = (($winW -gt 0) -and ($winH -gt 0) -and ($winX -ge 0) -and ($winY -ge 0) -and
+                             (($winX + $winW) -le $capW) -and (($winY + $winH) -le $capH))
+                $clampWhy = ("resized to {0}x{1} at {2},{3} to fit the {4}x{5} display" -f `
+                    $winW, $winH, $winX, $winY, $capW, $capH)
+              } else {
+                $clampWhy = ("SetWindowPos could not resize the window (win32 error {0})" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+              }
             } else {
               $nx = [Math]::Max(0, [Math]::Min($winX, $capW - $winW))
               $ny = [Math]::Max(0, [Math]::Min($winY, $capH - $winH))
