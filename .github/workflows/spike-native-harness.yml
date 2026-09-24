@@ -810,7 +810,6 @@ jobs:
             #   arm64  force it; fail loudly when the version has none
             #   x64    force it; fail loudly when the version has none
             #          (forcing x64 on an arm64 host IS the Rosetta probe)
-            echo
             ARCH_TAG=""
             WHY=""
             case "$REQUEST" in
@@ -837,7 +836,7 @@ jobs:
                 ;;
             esac
             if [ -z "$ARCH_TAG" ]; then
-              echo "SPIKE-Q1: macos-arch=FAILED (${REQUEST} is unpublished for ${VERSION} - see the list above)" \
+              echo "SPIKE-Q1: macos-arch=FAILED (${REQUEST} is unpublished for ${VERSION} - see the probe above)" \
                 | tee -a "$EVIDENCE/verdict.txt"
               exit 1
             fi
@@ -1341,9 +1340,23 @@ jobs:
             find "$APP" -type d -name 'python3.*' 2>/dev/null | head -10
             find "$APP" -type d -name 'Python.framework' 2>/dev/null | head -5
             PY="$(find "$APP" -type f -name 'python3*' -perm -u+x 2>/dev/null | head -1)"
-            if [ -z "$PY" ]; then
+            # The interpreter is not always a launcher: this bundle links
+            # CPython in-process, so the shared library IS the interpreter the
+            # port would inject through. Cura's own log names it either way -
+            # 'cpython': {'version': ...} in its dependency dump.
+            PYADD="$(find "$APP" -type f -name 'libpython3*' 2>/dev/null | head -10)"
+            [ -n "$PYADD" ] && printf '%s\n' "$PYADD" | head -10
+            PYLIB="$(printf '%s\n' "$PYADD" | head -1)"
+            if [ -z "$PY" ] && [ -n "$PYLIB" ]; then
+              # Embedded, not launched - which is the form the port needs,
+              # since it injects rather than spawning.
+              LIBV="$(printf '%s' "${PYLIB##*/}" | sed -n 's/^libpython\([0-9][0-9.]*\).*/\1/p' | sed 's/\.*$//')"
               ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
-                "ABSENT" "<none>" "no python3* executable found anywhere under $APP"
+                "INSTALLED BY US" "Python ${LIBV:-<version not readable>}" \
+                "embedded, not launched: $PYLIB is the interpreter Cura loads in-process (this bundle ships no python3* executable)"
+            elif [ -z "$PY" ]; then
+              ar "Cura's bundled Python" "runs anything inside Cura's process (the port injects through it)" \
+                "ABSENT" "<none>" "no python3* executable, no libpython3* and no Python.framework found anywhere under $APP"
             else
               PYV="$("$PY" --version 2>&1 | head -1)"
               echo "candidate interpreter: $PY ($PYV)"
@@ -1384,6 +1397,7 @@ jobs:
             echo "--- PyQt6 inside the bundle ---"
             find "$APP" -maxdepth 8 -type d -name 'PyQt6*' -print 2>/dev/null | head -10
             DI="$(find "$APP" -maxdepth 8 -type d -name 'PyQt6-*.dist-info' -print -quit 2>/dev/null)"
+            PKG="$(find "$APP" -maxdepth 8 -type d -name 'PyQt6' -print -quit 2>/dev/null)"
             if [ -n "$DI" ] && [ -f "$DI/METADATA" ]; then
               PV="$(grep -m1 '^Version:' "$DI/METADATA" | cut -d' ' -f2)"
               ar "Cura's bundled PyQt6" "the binding the port injects through" "INSTALLED BY US" \
@@ -1391,9 +1405,25 @@ jobs:
             elif [ -n "$DI" ]; then
               ar "Cura's bundled PyQt6" "the binding the port injects through" "INSTALLED BY US" \
                 "<not readable>" "$DI has no METADATA"
+            elif [ -n "$PKG" ]; then
+              # This bundle ships the binding as plain package directories with
+              # no dist-info, so the version comes from the Qt it carries rather
+              # than being reported missing. ABSENT here said the port cannot
+              # work on a bundle where PyQt6 is plainly installed - the probe
+              # printed those very directories on the line above.
+              PKGQT="$(find "$PKG" -maxdepth 6 -name 'QtCore.framework' -print -quit 2>/dev/null)"
+              PKQV=""
+              for plist in "$PKGQT/Resources/Info.plist" "$PKGQT/Versions/A/Resources/Info.plist"; do
+                if [ -f "$plist" ]; then
+                  PKQV="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null)"
+                  [ -n "$PKQV" ] && break
+                fi
+              done
+              ar "Cura's bundled PyQt6" "the binding the port injects through" "INSTALLED BY US" \
+                "${PKQV:-<not readable>}" "ships as a package directory with no dist-info: ${PKGQT:-$PKG} (version is the Qt it carries)"
             else
               ar "Cura's bundled PyQt6" "the binding the port injects through" "ABSENT" "<none>" \
-                "no PyQt6-*.dist-info anywhere under $APP"
+                "no PyQt6 package directory anywhere under $APP"
             fi
             echo
             echo "--- rows so far ---"
@@ -2407,11 +2437,16 @@ jobs:
               # recorder that is killed rather than stopped leaves an mdat with
               # no moov - unplayable, which is exactly what the Windows leg
               # produced. This costs nothing when the stop is clean.
-              echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none -movflags +frag_keyframe+empty_moov+default_base_moof $VIDEO"
+              # -g 30 is what makes it useful rather than merely valid:
+              # +frag_keyframe flushes on a keyframe, and ffmpeg's default
+              # interval is 250 frames - 16.7 s at 15 fps - so a kill at any
+              # other moment loses everything after the last one. Two seconds
+              # bounds that loss.
+              echo "ffmpeg -y -loglevel error -f avfoundation -video_size $VIDEO_SIZE -framerate 15 -i ${SCREEN_INDEX}:none -g 30 -movflags +frag_keyframe+empty_moov+default_base_moof $VIDEO"
               ffmpeg -y -loglevel error -f avfoundation \
                 -video_size "$VIDEO_SIZE" -framerate 15 \
                 -i "${SCREEN_INDEX}:none" \
-                -movflags +frag_keyframe+empty_moov+default_base_moof "$VIDEO" \
+                -g 30 -movflags +frag_keyframe+empty_moov+default_base_moof "$VIDEO" \
                 >"$EVIDENCE/recorder.log" 2>&1 &
               REC_PID=$!
               echo "recorder pid: $REC_PID (started BEFORE the launch)"
@@ -2660,9 +2695,46 @@ jobs:
                     echo "SPIKE-Q2: window-bounds=CLIPPED-ON-PURPOSE ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}; the test moved it out and the run allowed it)" \
                       | tee -a "$EVIDENCE/verdict.txt"
                   elif [ "$WPW" -gt "$DISP_W" ] || [ "$WPH" -gt "$DISP_H" ]; then
-                    echo "window bounds: OUT of bounds and the window (${WPW}x${WPH}) is larger than the display (${DISP_W}x${DISP_H}), so it cannot be brought fully inside it"
-                    echo "SPIKE-Q2: window-bounds=CLIPPED ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}: part of the window is outside the display, so the full-screen recording omits it)" \
-                      | tee -a "$EVIDENCE/verdict.txt"
+                    # The window cannot fit this display at its pinned size.
+                    # Refusing to touch it left it clipped, and a whole-display
+                    # capture then omits part of it silently. Shrinking keeps
+                    # every pixel in frame: the window pin is a target, not a
+                    # precondition. Size and position are set separately and
+                    # the result is re-read, because System Events reports the
+                    # content size against a frame the menu bar offsets.
+                    NEWW="$WPW"
+                    [ "$NEWW" -gt "$DISP_W" ] && NEWW="$DISP_W"
+                    NEWH="$WPH"
+                    [ "$NEWH" -gt "$DISP_H" ] && NEWH="$DISP_H"
+                    echo "window bounds: OUT of bounds and the window (${WPW}x${WPH}) is larger than the display (${DISP_W}x${DISP_H}); resizing it to ${NEWW}x${NEWH} at 0,0"
+                    SIZE_OUT="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to set size of window 1 to {$NEWW, $NEWH}" 2>&1)"
+                    echo "set size result: ${SIZE_OUT:-<no output>}"
+                    POS_OUT="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to set position of window 1 to {0, 0}" 2>&1)"
+                    echo "set position result: ${POS_OUT:-<no output>}"
+                    sleep 2
+                    read_window
+                    if ! { [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
+                           [ $((WPX + WPW)) -le "$DISP_W" ] && [ $((WPY + WPH)) -le "$DISP_H" ]; }; then
+                      # shrink by the overflow this move actually measured
+                      # rather than by a guess about the menu bar
+                      OVERW=$((WPX + WPW - DISP_W)); [ "$OVERW" -lt 0 ] && OVERW=0
+                      OVERH=$((WPY + WPH - DISP_H)); [ "$OVERH" -lt 0 ] && OVERH=0
+                      NEWW2=$((WPW - OVERW)); [ "$NEWW2" -lt 1 ] && NEWW2=1
+                      NEWH2=$((WPH - OVERH)); [ "$NEWH2" -lt 1 ] && NEWH2=1
+                      echo "the window still overflowed by ${OVERW}x${OVERH}: resizing again to ${NEWW2}x${NEWH2}"
+                      osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to set size of window 1 to {$NEWW2, $NEWH2}" >/dev/null 2>&1
+                      sleep 2
+                      read_window
+                    fi
+                    if [ "$WPX" -ge 0 ] && [ "$WPY" -ge 0 ] && \
+                       [ $((WPX + WPW)) -le "$DISP_W" ] && [ $((WPY + WPH)) -le "$DISP_H" ]; then
+                      echo "SPIKE-Q2: window-bounds=OK (resized to $WPX,$WPY ${WPW}x${WPH} inside ${DISP_W}x${DISP_H} by System Events)" \
+                        | tee -a "$EVIDENCE/verdict.txt"
+                    else
+                      echo "SPIKE-Q2: window-bounds=CLIPPED ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H}: the window is larger than the display and resizing it did not bring it inside)" \
+                        | tee -a "$EVIDENCE/verdict.txt"
+                      echo "FINDING: the window is larger than the display and could not be shrunk into it, so the recording is clipped - reported here rather than left to be noticed by eye"
+                    fi
                   else
                     echo "window bounds: OUT of bounds ($WPX,$WPY ${WPW}x${WPH} against ${DISP_W}x${DISP_H})"
                     NEWX="$WPX"
@@ -4100,8 +4172,15 @@ jobs:
             # alone, so the recording survives being killed rather than
             # stopped. The previous round's plain mp4 came back with an mdat
             # and no moov - an unplayable file that no reader could open.
+            # -g 30 is what makes it useful rather than merely valid:
+            # +frag_keyframe flushes on a keyframe, and ffmpeg's default
+            # interval is 250 frames - 16.7 s at 15 fps - so a kill at any
+            # other moment loses everything after the last one. The previous
+            # round's recording was exactly 16.67 s for that reason. Two
+            # seconds bounds the loss.
             $ffArgs = @('-y', '-loglevel', 'error', '-f', 'gdigrab') + $captureArgs +
                       @('-framerate', '15', '-i', 'desktop',
+                        '-g', '30',
                         '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
                         "`"$video`"")
             W "recorder argv: ffmpeg $($ffArgs -join ' ')"
