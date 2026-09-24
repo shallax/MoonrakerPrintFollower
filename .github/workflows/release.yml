@@ -158,10 +158,41 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build the plugin package
+      # Where this job's gallery lands. One definition, because the
+      # native scripts write it and the upload reads it back — the two
+      # must not drift, and Windows has no /tmp. The Windows value is
+      # forward-slashed so the same string is valid for the script, for
+      # PowerShell and for upload-artifact.
+      - name: Set the gallery root
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            root="${RUNNER_TEMP//\\//}/ui-artifacts"
+          else
+            root=/tmp/mpf/ui-artifacts
+          fi
+          echo "GALLERY=$root/runs/${{ github.run_id }}/${{ matrix.unit }}" >> "$GITHUB_ENV"
+
+      # The Linux leg builds both artifacts through the Makefile, as it
+      # always has. `make` is not on the Windows image and the native
+      # legs need only the .curapackage, so they build that one directly.
+      - name: Build the plugin package (Linux)
+        if: runner.os == 'Linux'
         run: make package >/dev/null
 
+      - name: Build the plugin package (native)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          py=python3
+          command -v python3 >/dev/null 2>&1 || py=python
+          "$py" tools/build_curapackage.py
+
+      # Everything below is the container leg's alone: the native legs
+      # install Cura themselves, so a Cura tree fetch and a harness image
+      # would be wasted work (and there is no docker on macOS).
       - name: Restore the pinned Cura tree
+        if: runner.os == 'Linux'
         id: cura-cache
         uses: actions/cache@v6
         with:
@@ -169,9 +200,11 @@ jobs:
           key: mpf-cura-${{ fromJSON(env.UNITS)[matrix.unit].cura }}
 
       - name: Fetch the pinned Cura
+        if: runner.os == 'Linux'
         run: python3 tools/fetch_cura.py "${{ fromJSON(env.UNITS)[matrix.unit].cura }}"
 
       - name: Pull the harness image and start the container
+        if: runner.os == 'Linux'
         run: |
           # PR runs have no pushed image for this sha; the build is the
           # fallback. The push itself is gated to dispatch/tag runs,
@@ -199,7 +232,7 @@ jobs:
           timeout "${{ fromJSON(env.UNITS)[matrix.unit].budget }}m" env \
               CURA_VERSION="${{ fromJSON(env.UNITS)[matrix.unit].cura }}" \
               MODE="${{ fromJSON(env.UNITS)[matrix.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
-              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
+              RUN_DIR_NAME="$GALLERY" \
               ./tools/ui_test.sh
 
       # The native legs do their own setup: install Cura, seed it, stage the
@@ -215,7 +248,7 @@ jobs:
         env:
           SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
         run: |
-          RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
+          RUN_DIR_NAME="$GALLERY" \
             bash tools/native_harness.sh macos "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" "$SCENARIO"
 
       - name: Run the unit (macOS)
@@ -225,11 +258,14 @@ jobs:
         run: |
           set -euo pipefail
           . /tmp/mpf-native/harness_env.sh
-          # The upload below is `if: always()`, so a run that produced no
-          # gallery would ship a green job with an empty artefact. Fail here
-          # instead, where the reason is still visible.
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          rc=0
+          python3 tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
           test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
-          python3 tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }}
+          exit "$rc"
 
       - name: Set up the native harness (Windows)
         if: runner.os == 'Windows'
@@ -239,7 +275,7 @@ jobs:
           SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
         run: |
           $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
-          $env:RUN_DIR_NAME = Join-Path $env:RUNNER_TEMP "ui-artifacts\runs\${{ github.run_id }}\${{ matrix.unit }}"
+          $env:RUN_DIR_NAME = $env:GALLERY
           & powershell -ExecutionPolicy Bypass -File tools\native_harness.ps1 `
               -CuraVersion "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" `
               -Scenario "$env:SCENARIO" -WorkDir $work
@@ -252,11 +288,17 @@ jobs:
         run: |
           $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
           . (Join-Path $work 'harness_env.ps1')
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          $rc = 0
+          & python tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
+          if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $env:HARNESS_RUN_DIR 'index.html'))) {
             Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1
           }
-          & python tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
-          if ($LASTEXITCODE -ne 0) { throw "runner.py failed with exit $LASTEXITCODE" }
+          if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
 
       - name: Upload the unit's gallery
         if: always()
@@ -265,8 +307,8 @@ jobs:
           # the OS is in the name: 51 galleries, and two units of the same
           # name on different platforms must not collide
           name: gate-${{ matrix.unit }}-${{ matrix.os }}
-          path: /tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}
-          if-no-files-found: warn
+          path: ${{ env.GALLERY }}
+          if-no-files-found: error
 
   publish:
     needs: [release, gate]
