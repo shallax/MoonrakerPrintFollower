@@ -83,6 +83,16 @@ disk.
 - **The preparation pass shows its progress.** The Print-job bar
   carries a teal sweep for the background optimisation's share,
   and it vanishes when the pass completes.
+- **The background pass stops holding the interface.** The G-code
+  parse and the preparation workers hand the interpreter back on a
+  wall-clock gate instead of a line count, so a dense file no longer
+  starves the UI thread for the length of the pass — what a frozen
+  window measures is the time between hand-backs, and that no longer
+  grows with the layer. A layer the follower demands is written to the
+  prepared store by the worker that encoded it rather than by the
+  interface thread, and a running pass publishes its progress at the
+  rate the bar reads while the full refresh is kept for the phase, the
+  completion and the failures.
 - **The temperature chart's own clock.** The chart samples on a fixed
   one-second cadence instead of following the auxiliary delivery
   slider, whose fast settings used to cut the advertised 30-minute
