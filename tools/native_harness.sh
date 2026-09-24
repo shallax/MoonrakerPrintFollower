@@ -569,6 +569,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         system_profiler SPDisplaysDataType 2>&1 | sed -n '1,40p' || true
     fi
 
+    # What GL the guest can reach, printed once per leg: the app's renderer
+    # here is Apple's software one, because a VM exposes no GPU to the
+    # guest's GL stack, and that single fact is what makes Cura's own probe
+    # take the macOS-only 2.x fallback the config seed below pins away from.
+    echo "--- gpu ---"
+    sysctl -n kern.hv_vmm_present 2>/dev/null | sed 's/^/hypervisor present: /' || true
+    system_profiler SPDisplaysDataType 2>&1 | sed -n '1,20p' || true
+
     # --- 5. seed Cura's config -------------------------------------------
     # Two jobs, one writer.
     # (a) The Welcome wizard comes up exactly when there is no active
@@ -710,13 +718,30 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # under [general], which is where Uranium reads it.
     awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" '
         BEGIN { sec = "" }
-        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids; next }
+        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
+                if (sec == "[view]") print "opengl_version_detect = force_modern"; next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
+        sec == "[view]" && /^opengl_version_detect = / { next }
         { print }
     ' "$CONFIG_DIR_FILE" >"$CONFIG_DIR_FILE.tmp" || die "could not rewrite $CONFIG_DIR_FILE"
     mv "$CONFIG_DIR_FILE.tmp" "$CONFIG_DIR_FILE"
+    # Cura's own GL probe (UM/View/GL/OpenGLContext.py, CURA-6092) throws a
+    # software-backed 4.1 core context away ON macOS ONLY and boots 2.1 "No
+    # profile" instead: it is gated on Platform.isOSX(), so the same build
+    # reports 4.1 core on Linux and Windows. The runner's GL is Apple's
+    # software renderer - a VM exposes no GPU to the guest's GL stack - so
+    # every macOS leg takes that fallback, and on the 2.x path the window
+    # stops presenting after a stage switch: the recordings freeze while the
+    # steps keep passing. A Mac with a GPU gets 4.1 core, so this pins the
+    # leg to the version real users get rather than the downgrade the missing
+    # GPU provokes; force_modern is Uranium's own value for "skip the probe".
+    if ! grep -q '^\[view\]' "$CONFIG_DIR_FILE"; then
+        printf '\n[view]\nopengl_version_detect = force_modern\n' >>"$CONFIG_DIR_FILE"
+    fi
+    grep -q '^opengl_version_detect = force_modern$' "$CONFIG_DIR_FILE" ||
+        die "cura.cfg does not carry the modern OpenGL pin, so this leg would boot on Cura's macOS 2.x fallback"
     if ! grep -q '^active_machine = ' "$CONFIG_DIR_FILE"; then
         # A second [cura] section would make Cura's parser reject the whole
         # file, and no active machine is the wizard, so this is fatal.
@@ -985,6 +1010,24 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         exit 1
     fi
     note "driver up: $RPC_FILE"
+
+    # --- 8b. the renderer the boot actually got ---------------------------
+    # The cura.cfg pin is the mechanism; this is the outcome, read out of
+    # Cura's own log rather than assumed from the pin having landed. Boot
+    # on the 2.x fallback and the window stops presenting after a stage
+    # switch: every step still passes, so the leg would spend its scenarios
+    # painting one still frame that reads as a product failure. Stop here
+    # instead, where the cause is unambiguous.
+    GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
+        "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
+    case "$GL_LINE" in
+        *"4.1 Core profile"*)
+            note "renderer: ${GL_LINE##*: }" ;;
+        "")
+            die "no OpenGL context line in $CONFIG_DIR/cura.log (the file is absent or Cura never logged one), so this boot's renderer cannot be read and a fallback to 2.x would go unnoticed" ;;
+        *)
+            die "the boot is on '${GL_LINE##*: }' rather than the pinned 4.1 Core profile - cura.cfg's view/opengl_version_detect did not take, and a 2.x context is what freezes the window" ;;
+    esac
 
     # --- 9. keep the window inside the capture area -----------------------
     # The capture is the whole display, so a window hanging off the edge
