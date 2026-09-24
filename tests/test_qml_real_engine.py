@@ -2140,13 +2140,11 @@ class CameraFpsControlTests(RealEngineTestCase):
         self._pump_ms(300)
         self.assertTrue(pane.property("cameraBarPinned"), "a held zoom pins the scale")
         self._wheel(window, frame, modifiers=Qt.KeyboardModifier.ShiftModifier)
-        # The turn-over is a 190 ms leg, and the scale's return is the
-        # idle five seconds plus that leg back. Both are waited for as
-        # the states they are: the wall clock a starved event loop eats
-        # is not what either assertion is about, and reading them off a
-        # fixed instant measured how busy the runner was (the macOS leg
-        # failed here with the bar mid-turn-over). The timeouts are hang
-        # guards an order of magnitude above what the chain owes.
+        # Both waits are the states the assertions are about. Read off
+        # a fixed instant instead, they measured how much wall clock the
+        # event loop had eaten — how the macOS leg failed, with the bar
+        # mid-turn-over. The timeouts are hang guards, an order of
+        # magnitude above what the chain owes.
         self._wait_until(window, lambda _image: pane.property("cameraBarMode") == "fps",
                          timeout=2.0)
         self.assertEqual(pane.property("cameraBarMode"), "fps",
@@ -6873,36 +6871,67 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertFalse(self.find(monitor, "moonrakerFollowerJump").property("enabled"),
                          "the jump is live with no valid toolhead position")
 
+    def _settle(self, face, text):
+        """Evaluate *text* against the face's own settle Timer.
+
+        The Timer is the face's own object, reached through its context
+        because a property alias hands back a void pointer rather than
+        the item.
+        """
+        from PyQt6.QtQml import QQmlEngine, QQmlExpression
+        expression = QQmlExpression(QQmlEngine.contextForObject(face), face,
+                                    "settleTimer." + text)
+        expression.setNotifyOnValueChanged(False)
+        value = expression.evaluate()
+        self.assertFalse(expression.hasError(), expression.error().toString())
+        # PyQt6 pairs the result with its undefined flag.
+        return value[0] if isinstance(value, tuple) else value
+
     def test_a_pan_settles_before_it_re_rasters(self):
         # The native-raster era's pan: the pan stays a paint input
         # (the middle-canvas ghosting killed the translate), but the
-        # re-raster fires at the SETTLE — 150 ms after the last pan
-        # change — never per drag tick (the awful-panning report).
+        # re-raster fires at the SETTLE — after the last pan change —
+        # never per drag tick (the awful-panning report).
         monitor, window, face = self._follower_popover()
         face.setProperty("dot", None)
         rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
         self.assertTrue(rows, "the follower painted nothing")
+        # The counter's own arrival, not the ink's: the wait above
+        # clears on ANY canvas's ink and the grid covers the same rect,
+        # so it says nothing about this accumulation.
+        deadline = time.monotonic() + 15.0
+        while face.property("_paintsSinceReset") < 1 and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.05)
         self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
                                 "the accumulation never painted")
-        # Let the mount's own settle pass first, then hold the
-        # counter still.
-        import time
-        time.sleep(0.25)
-        self.pump(30)
+        self.assertEqual(self._settle(face, "interval"), 60,
+                         "the settle's own interval")
+        latch = face.property("_progressKey")
         paints = face.property("_paintsSinceReset")
         face.setProperty("viewPanY", 36.0)
-        self.pump(5)
+        # The window the pan has to survive is CLOSED, not timed: with
+        # the settle stopped, no length of pumping can let it in, so
+        # the counter below can only have moved if the PAN re-rastered
+        # — which is the claim. Read off a fixed window it was a
+        # machine-speed question, and a loaded run re-rastered inside
+        # it.
+        self._settle(face, "stop()")
+        self.pump(30)
         self.assertEqual(face.property("_paintsSinceReset"), paints,
                          "a pan re-rasters before the settle")
         self.assertEqual(face.property("_view").property("panY").toNumber(), 36.0,
                          "the painter's carrier lost the pan")
-        # The settle's reset is the timer's synchronous effect, and
-        # it fires after the timer's interval (the pump alone never
-        # advances the clock past 150 ms).
-        time.sleep(0.25)
-        self.pump(30)
+        # The reset is the timer's synchronous effect, and the read is
+        # in the turn that fired it: _lastSplit is -1 only until that
+        # reset's own re-raster lands, and no paint lands inside a JS
+        # evaluation — so the reset's work is what is read, not
+        # whatever the machine had time for.
+        self._settle(face, "triggered()")
+        self.assertNotEqual(face.property("_progressKey"), latch,
+                            "the settle never reset the stack")
         self.assertEqual(face.property("_lastSplit"), -1,
-                         "the settle never reset the stack")
+                         "the settle's reset left the stack split")
 
     def test_detaching_freezes_the_layer_and_hides_the_dot(self):
         monitor, window, face = self._follower_popover()
