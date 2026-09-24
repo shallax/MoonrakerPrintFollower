@@ -732,7 +732,35 @@ Write-Log ""
 Write-Log "--- Mesa llvmpipe $MesaVersion (the software OpenGL Cura needs) ---"
 New-Item -ItemType Directory -Force -Path $MesaRoot | Out-Null
 if (-not (Test-Path -LiteralPath $MesaArchive)) {
-    if (-not (Get-CurlFile $MesaUrl $MesaArchive)) { Write-Warn "Mesa download failed: the archive is not on disk (the curl exit code is logged above)" }
+    # A third-party release asset, and it 500s. Measured on run
+    # 36061865605: the helper's own four curl attempts all landed
+    # inside 75 s and all returned 500, so the archive never reached
+    # the disk; Cura then booted on the image's opengl32 - "GDI
+    # Generic", OpenGL 1.1 - which the QML scene graph cannot use, and
+    # the leg died with "the driver never came up" and no gallery. The
+    # retry is spread over minutes rather than seconds so a short
+    # outage is ridden out instead of failing the leg. Caching the
+    # archive beside the Cura installer would take the fetch off the
+    # critical path entirely; that is a workflow change and is not
+    # made here.
+    # Bounded as a whole: the helper's own --retry-max-time is 600 s
+    # per call, so three unbounded attempts could outlive the setup
+    # step's 30-minute timeout and report a timeout with no reason.
+    $mesaDeadline = (Get-Date).AddMinutes(5)
+    $attempt = 1
+    while ($attempt -le 3) {
+        if (Get-CurlFile $MesaUrl $MesaArchive) { break }
+        if ((Get-Date) -ge $mesaDeadline) {
+            Write-Warn "Mesa fetch: giving up after $attempt attempts (the 5-minute budget is spent)"
+            break
+        }
+        Write-Warn "Mesa fetch attempt $attempt of 3 failed"
+        if ($attempt -lt 3) { Start-Sleep -Seconds (30 * $attempt) }
+        $attempt = $attempt + 1
+    }
+    if (-not (Test-Path -LiteralPath $MesaArchive)) {
+        Write-Warn "Mesa download failed: the archive is not on disk (the curl exit codes are logged above)"
+    }
 }
 $mesaHash = ''
 if (Test-Path -LiteralPath $MesaArchive) {
