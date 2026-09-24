@@ -3499,9 +3499,21 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # still crosses the cadence, and the next poll's checkpoint
         # paints it — a window's lag is the cadence's design, a
         # stranded prefix is not.
+        # The final checkpoint's ARRIVAL is the prefix render STARTING
+        # again — a positive signal that does not presuppose the value
+        # asserted below. Draining alone is not enough: an empty queue is
+        # also observable in the gap between the wake handler finishing
+        # and the checkpoint being submitted, and the assertion then
+        # reads the PREVIOUS poll's split (556 against 568, on a loaded
+        # Windows runner, while the same commit passed on the push run).
+        started_before = len(starts["prefix"])
         clock.t += 5.0
         self._poll(model, surface, payload, 5, final_split, clock, armed,
                    self.qt)
+        deadline = time.monotonic() + 15.0
+        while (len(starts["prefix"]) <= started_before
+               and time.monotonic() < deadline):
+            self.qt.events(6)
         self._drain_job(model, surface, self.qt)
         wrapped = surface.layers[5]
         self.assertGreater(wrapped.prefixSplit, 0,

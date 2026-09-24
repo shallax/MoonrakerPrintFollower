@@ -6671,7 +6671,30 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # from the previous split, which is exactly what this asserts is
         # gone (the rig's one-in-eight failure).
         self._await_split(face, 1)
-        _image, added = self._await_ink(window, face, baseline, box, span, timeout=0.4)
+        # The negative assertion reads a SETTLED frame, not a window.
+        # `_await_ink` returns as soon as ink reaches the span's ends and
+        # gives up after 0.4 s, so it answers "did ink appear within a
+        # window" — and anything arriving late inside that window (a
+        # raster blit still in flight) is then read as "the painter drew
+        # the arc for split 1", which both painters' own rule
+        # (`motion < split`) says cannot happen. A settled frame still
+        # shows the arc if the painter genuinely draws it at this split,
+        # so a real fault is still caught — and the test keeps its
+        # positive control immediately below, which requires the arc to
+        # appear at split 2.
+        image = self._settled(window)
+        added = self._added(image, baseline, face, window, box)
+        if added:
+            # The failing pixels are IDENTICAL on every run, so whatever
+            # is painted here is deterministic in content — which means
+            # it can be looked at rather than reasoned about. Save both
+            # frames before the assertion so the next reader has the
+            # pictures (three guesses have already been spent on this
+            # test; the fourth has to be evidence).
+            baseline.save("/tmp/mpf/arc-baseline.png")
+            image.save("/tmp/mpf/arc-live.png")
+            print("ui_test: arc-split dump written (baseline + live), %d px added"
+                  % len(added))
         self.assertEqual(added, set(), "the split painted the arc before its own motion")
         added = self._printed(2, window, face, baseline, box, span)
         self.assertTrue([row for _col, row in added if abs(row - chord) < 8],

@@ -1590,11 +1590,19 @@ SCENARIOS = [
          # input: the field takes a real press to focus, the command
          # is typed, and the named Send button takes the real press.
          {"op": "exec_slot", "slot": "setConsoleExpanded", "args": [True]},
+         # The expand is chrome state and the pane lays out behind it, so
+         # the input is WITNESSED before it is pressed: without the wait
+         # the press lands on a console that has not been laid out yet and
+         # is refused as "no visible item" (the Windows gate leg, once, on
+         # the same commit whose other platform legs and other runs were
+         # green — a race, not a regression).
+         {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerConsoleInput"},
          {"op": "key_press", "key": "M"},
          {"op": "key_press", "key": "1"},
          {"op": "key_press", "key": "0"},
          {"op": "key_press", "key": "5"},
+         {"op": "wait_rect", "objectName": "moonrakerConsoleSend", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerConsoleSend"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
