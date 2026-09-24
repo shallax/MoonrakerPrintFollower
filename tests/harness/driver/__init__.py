@@ -1457,7 +1457,14 @@ class HarnessServer(QObject):
                             "clicked": clicked, "results": results,
                             "titles": [w.windowTitle() for w in boxes]}
                 return {"id": request_id, "ok": True, "clicked": clicked,
-                        "results": results, "titles": [w.windowTitle() for w in boxes]}
+                        "results": results, "titles": [w.windowTitle() for w in boxes],
+                        # The box's own text, because the title is not
+                        # enough to say WHICH dialog was answered on a
+                        # platform that reports none - and "answered a
+                        # box" and "answered the plugin's prompt" are
+                        # different claims that a code alone cannot tell
+                        # apart.
+                        "texts": [(w.text() or "")[:70] for w in boxes]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":

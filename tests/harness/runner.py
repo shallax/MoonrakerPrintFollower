@@ -3461,6 +3461,12 @@ def suite_step(step):
         # an answered dialog.
         results = reply.get("results") or []
         note = "answered" if not results else f"answered with code {results[0]}"
+        if reply.get("texts"):
+            # WHICH dialog was answered. A code alone cannot say whether
+            # the driver answered the plugin's prompt or some other box
+            # that happened to carry a Yes button, and those two leave a
+            # leg in completely different states.
+            note += f" on {reply['texts']}"
         if not reply.get("ok"):
             # The driver's error NAMES what it saw, which is the whole
             # diagnosis when the prompt never arrives: a bare "answered"
