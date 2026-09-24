@@ -3463,7 +3463,13 @@ def suite_step(step):
             # [...])" behind a word that reads like success.
             note = str(reply.get("error") or "not answered")
             if reply.get("titles"):
-                note += f" · up: {reply['titles']}"
+                note += f" · boxes: {reply['titles']}"
+            if reply.get("top_level"):
+                # Everything visible, not only message boxes: whether the
+                # plugin opened its prompt at all is answered by a box
+                # under another title or by nothing, and those two need
+                # different fixes.
+                note += f" · top level: {reply['top_level']}"
         return reply.get("ok") is True, f"the {button} on the plugin's QMessageBox", note
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])

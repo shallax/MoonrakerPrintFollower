@@ -1377,11 +1377,18 @@ class HarnessServer(QObject):
                         break
                     qtest.QTest.qWait(100)
                 if not boxes:
+                    # What was up when the prompt never arrived, and it
+                    # is not only message boxes: the question "did the
+                    # plugin open its prompt at all" is answered by
+                    # seeing either the box with a different title or
+                    # nothing at all, and the two need different fixes.
+                    up = [f"{type(w).__name__}:{w.windowTitle() or '(untitled)'}"
+                          for w in QApplication.topLevelWidgets() if w.isVisible()]
                     return {"id": request_id, "ok": False,
                             "error": ("no QMessageBox up" if not seen else
                                       f"no box titled {wanted_title!r} (saw {seen})"),
                             "waited_s": round(float(request.get("wait_s", 15.0)), 1),
-                            "titles": seen}
+                            "titles": seen, "top_level": up[:8]}
                 clicked = 0
                 results = []
                 for box in boxes:
