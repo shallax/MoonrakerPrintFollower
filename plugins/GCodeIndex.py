@@ -76,6 +76,30 @@ _TYPE_COMMENT = re.compile(rb"^\s*;TYPE:\s*(\S.*?)\s*$")
 # line's offset resolves to that layer through the block ranges.
 _PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
 
+# The background workers' passive yield. Their loops are tight and their
+# per-item work is small, so nothing but an explicit hand-back stops a
+# worker holding the GIL for a whole pass. The gate is WALL-CLOCK, never
+# an iteration count: one layer's cost varies by orders of magnitude
+# across files, and a count that frees the UI thread on a sparse file
+# starves it on the dense ones where it matters. The sleep is a real
+# syscall on Windows, where an unscheduled hand-back does not reliably
+# wake a waiting thread, and a bare yield elsewhere, where it does.
+_PASSIVE_YIELD_S = 0.006
+_YIELD_SLEEP_S = 0.001 if sys.platform == "win32" else 0.0
+
+
+def passive_yield(now: float, last: float) -> float:
+    """Hand the interpreter back once per _PASSIVE_YIELD_S of wall time.
+
+    *last* is the caller's own watermark and the return is the updated
+    one — each loop keeps it in its own frame, so the gate costs one
+    comparison on the iterations that do not fire.
+    """
+    if now - last < _PASSIVE_YIELD_S:
+        return last
+    time.sleep(_YIELD_SLEEP_S)
+    return time.monotonic()
+
 _CACHE_MAGIC = b"MPFI110\0"
 # The header is a length-prefixed JSON blob inside the container, so the
 # reader's bound is also the writer's: a longer header is a blob the
@@ -729,17 +753,18 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     type_lookup: Dict[str, int] = {}
     type_names: List[str] = []
 
+    yield_at = time.monotonic()
     with open(path, "rb") as handle:
         while True:
             if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
                 return LayerMotionIndex()
             if (line_number & 0xFFF) == 0 and line_number:
-                # Release the GIL every 4096 lines: the parse is a
-                # tight Python loop, and without periodic yields the
-                # UI thread starves for the whole indexing duration
-                # on large files. The same beat reports the
+                # Release the GIL on the workers' own wall-clock gate:
+                # the parse is a tight Python loop, and what starves the
+                # UI thread is the TIME between hand-backs, not the line
+                # count that separates them. The same beat reports the
                 # byte-offset progress.
-                time.sleep(0)
+                yield_at = passive_yield(time.monotonic(), yield_at)
                 if progress is not None:
                     _emit_progress(handle, progress)
             offset = handle.tell()
