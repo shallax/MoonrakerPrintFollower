@@ -323,7 +323,18 @@ class CuraIntegration(QObject):
     def confirm_replace(self, callback):
         self.switch_to_preview()
         def ask():
-            if self._closed: return
+            if self._closed:
+                Logger.log("i", "Moonraker replace confirm: not asked, the plugin is closed")
+                return
+            # Logged BEFORE the question as well as after it. The pair is
+            # what separates the two ways this prompt can fail to produce
+            # an answer, and they need different fixes: an "asking" with
+            # no "answer=" is a box that opened and was never answered,
+            # while neither line is an ask() that never ran. Without the
+            # first line both look identical in the log - which is how a
+            # step reporting ok with code 16384 sat beside a plugin that
+            # had logged nothing at all.
+            Logger.log("i", "Moonraker replace confirm: asking")
             answer = QMessageBox.question(None, "Moonraker Print Follower",
                 "Replace Cura contents?\n\nThis will discard everything currently loaded in Cura and replace it "
                 "with the G-code currently printing in Moonraker.",

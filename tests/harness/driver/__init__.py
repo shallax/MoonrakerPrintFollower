@@ -1413,13 +1413,31 @@ class HarnessServer(QObject):
                             "titles": seen, "top_level": up[:8]}
                 clicked = 0
                 results = []
-                for box in boxes:
-                    button = box.button(standard)
-                    if button is None:
-                        continue
-                    button.click()
-                    clicked += 1
-                    results.append(int(box.result()))
+                # Keep answering for a moment after the first box. The
+                # plugin's prompt is created by a DEFERRED call, so it can
+                # arrive after the driver has already found and closed
+                # something else - and then it sits there unanswered while
+                # the step reports a success it did not have. Measured on
+                # the macOS legs: `confirm_box ok=True` with code 16384,
+                # and the plugin's own log with no `answer=` line at all.
+                # A short settle that answers anything matching is the
+                # difference between answering A box and answering THE
+                # prompt.
+                for _ in range(15):
+                    for box in boxes:
+                        button = box.button(standard)
+                        if button is None:
+                            continue
+                        button.click()
+                        clicked += 1
+                        results.append(int(box.result()))
+                    qtest.QTest.qWait(100)
+                    fresh = [w for w in QApplication.topLevelWidgets()
+                             if isinstance(w, QMessageBox) and w.isVisible()
+                             and is_the_box(w)]
+                    if not fresh:
+                        break
+                    boxes = fresh
                 qtest.QTest.qWait(120)
                 still = [w for w in QApplication.topLevelWidgets()
                          if isinstance(w, QMessageBox) and w.isVisible()]
