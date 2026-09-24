@@ -12,7 +12,7 @@ import json
 import os
 import time
 
-from PyQt6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QTimer, Qt, QUrl, pyqtSlot
+from PyQt6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QSize, QTimer, Qt, QUrl, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
@@ -66,6 +66,9 @@ class HarnessServer(QObject):
         self._server.newConnection.connect(self._accept)
         self._pending = []  # (request_id, deadline, predicate, reply_builder)
         self._mounted_switch = None
+        # The window's own minimum size, remembered only while a forced
+        # resize holds it clear of the way (see the resize verb).
+        self._window_minimum = None
         self._clicked_flag = False
         self._win_events = []
         self._py_clicks = []
@@ -446,6 +449,16 @@ class HarnessServer(QObject):
             # reverted by a late boot-pin reapply (the stale-read
             # class window_pin was rewritten to fix), so the verb
             # keeps applying until the read-back holds.
+            #
+            # `force` drops the window's own minimum while the resize
+            # holds. Windows enforces that minimum on setGeometry
+            # (measured 624px tall at the runner's scale), so a
+            # scenario whose premise is a window too SHORT for the
+            # layout it exercises could never build it there — the
+            # layout rule itself is the same code on every platform.
+            # The minimum is put back by the next resize that does not
+            # force, so no later unit inherits the relaxed geometry,
+            # and the reply carries the pre-relax value.
             try:
                 window = _main_window()
                 if window is None:
@@ -453,15 +466,27 @@ class HarnessServer(QObject):
                 _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
                 want = [int(request.get("w", int(_win[0]))),
                         int(request.get("h", int(_win[1])))]
+                force = bool(request.get("force"))
+                minimum = window.minimumSize()
+                held = self._window_minimum if self._window_minimum is not None else minimum
+                if force:
+                    self._window_minimum = held
+                    window.setMinimumSize(QSize(0, 0))
+                elif self._window_minimum is not None:
+                    window.setMinimumSize(self._window_minimum)
+                    self._window_minimum = None
                 got = [0, 0]
                 for _attempt in range(5):
+                    if force:
+                        window.setMinimumSize(QSize(0, 0))
                     window.setGeometry(0, 0, want[0], want[1])
                     time.sleep(0.8)
                     got = [window.width(), window.height()]
                     if got == want:
                         break
                 return {"id": request_id, "ok": True, "size": got,
-                        "wanted": want}
+                        "wanted": want, "forced": force,
+                        "minimum": [held.width(), held.height()]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
@@ -1222,10 +1247,15 @@ class HarnessServer(QObject):
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "confirm_box":
-            # Native modal QMessageBoxes block the application until
-            # answered (the plugin's replace-confirm uses one). QTest
-            # clicks the QPushButton directly — the classic widget
-            # path, immune to the QML overlay delivery quirks.
+            # Modal QMessageBoxes block the application until answered
+            # (the plugin's replace-confirm uses one). The button is
+            # activated PROGRAMMATICALLY: Qt's test module cannot drive
+            # a native dialog, and on macOS this box renders natively,
+            # so the QTest press it used to send was swallowed while
+            # the driver reported success — the box then sat over the
+            # scenario and every later step failed (the macOS legs).
+            # The dialog is verified GONE afterwards: an unanswered box
+            # is a failed press, never a quiet pass.
             try:
                 wanted = str(request.get("button") or "Yes")
                 standard = {"Yes": QMessageBox.StandardButton.Yes,
@@ -1234,7 +1264,8 @@ class HarnessServer(QObject):
                             "Cancel": QMessageBox.StandardButton.Cancel}.get(wanted)
                 if standard is None:
                     return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
-                boxes = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMessageBox)]
+                boxes = [w for w in QApplication.topLevelWidgets()
+                         if isinstance(w, QMessageBox) and w.isVisible()]
                 if not boxes:
                     return {"id": request_id, "ok": False, "error": "no QMessageBox up"}
                 qtest = _import_qtest()
@@ -1243,9 +1274,19 @@ class HarnessServer(QObject):
                     button = box.button(standard)
                     if button is None:
                         continue
-                    qtest.QTest.mouseClick(button, Qt.MouseButton.LeftButton)
-                    qtest.QTest.qWait(80)
+                    button.click()
                     clicked += 1
+                qtest.QTest.qWait(120)
+                still = [w for w in QApplication.topLevelWidgets()
+                         if isinstance(w, QMessageBox) and w.isVisible()]
+                if still:
+                    return {"id": request_id, "ok": False,
+                            "error": f"the box is still up after {clicked} click(s)",
+                            "clicked": clicked, "remaining": len(still)}
+                if not clicked:
+                    return {"id": request_id, "ok": False,
+                            "error": f"no {wanted} button on the box",
+                            "titles": [w.windowTitle() for w in boxes]}
                 return {"id": request_id, "ok": True, "clicked": clicked}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
@@ -2233,6 +2274,16 @@ _server = None
 def register(app):
     """Uranium plugin entry: the driver lives for the process lifetime."""
     global _server
+    # The plugin's modal boxes must be NON-native: macOS shows
+    # QMessageBox through the platform's own dialog, which Qt's test
+    # module cannot reach — the press went nowhere and the box stayed
+    # up over the rest of the scenario (the macOS legs). The attribute
+    # is read when a dialog is SHOWN, so setting it at plugin load
+    # (long before any scenario press) is enough.
+    try:
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
+    except Exception:
+        pass
     if _server is None:
         _server = HarnessServer(app)
         _attach_qml_warnings(app)

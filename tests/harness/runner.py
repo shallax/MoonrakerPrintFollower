@@ -940,10 +940,22 @@ if target is None:
     result["error"] = "no visible LayerSlider"
 else:
     # The layer slider is the VERTICAL bar on the preview's right
-    # edge; the layer changes by dragging its UPPER handle (the
-    # 16x16 Rectangle whose MouseArea drives setCurrentLayer).
+    # edge; the layer changes by dragging its UPPER handle (the square
+    # Rectangle whose MouseArea drives setCurrentLayer). Its size is
+    # asked of the theme the QML itself reads (LayerSlider.qml:
+    # handleSize = UM.Theme.getSize("slider_handle").width) — a
+    # literal 16 is only right at a screen scale of 1, and the Windows
+    # and macOS runners scale the theme up, where the handles are 22 px
+    # and the size test matched nothing at all.
+    try:
+        from UM.Qt.Bindings.Theme import Theme
+        handle_size = float(Theme.getInstance().getSize("slider_handle").width())
+    except Exception:
+        handle_size = 16.0
+    if handle_size <= 0:
+        handle_size = 16.0
     handles = [child for child in target.childItems()
-               if abs(child.width() - 16) < 2 and abs(child.height() - 16) < 2 and bool(child.isVisible())]
+               if abs(child.width() - handle_size) < 2 and abs(child.height() - handle_size) < 2 and bool(child.isVisible())]
     if not handles:
         result = {"error": "no slider handles"}
     else:
@@ -3475,10 +3487,18 @@ def suite_step(step):
         return True, f"visible items matching {needle!r}", brief or "no matches"
 
     if op == "resize_window":
-        reply = rpc({"id": 1, "cmd": "resize", "w": int(step["w"]), "h": int(step["h"])})
+        reply = rpc({"id": 1, "cmd": "resize", "w": int(step["w"]), "h": int(step["h"]),
+                     "force": bool(step.get("force"))})
         if not reply.get("ok"):
             return (False, f"resize to {step['w']}x{step['h']}", f"driver: {reply.get('error')}")
-        return True, f"the window resized to {step['w']}x{step['h']}", f"actual {reply['size']}"
+        note = f"actual {reply['size']}"
+        if reply.get("forced"):
+            # The window's own minimum is a platform policy, not the
+            # layout under test: the evidence says it was moved aside
+            # and what it was, so the short-window premise reads as
+            # built-to-order rather than free.
+            note += f" · forced past the window minimum {reply.get('minimum')}"
+        return True, f"the window resized to {step['w']}x{step['h']}", note
 
     if op == "sim_set_current_print":
         # The running-job state the load needs, with the sim's REAL

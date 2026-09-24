@@ -583,6 +583,68 @@ if (-not $pythonOk) { Write-Warn "no working python: tests/harness/runner.py can
 
 # ffmpeg is the harness's recorder and its still capture (runner.py).
 $null = Provision-Choco 'ffmpeg' 'ffmpeg'
+# No runner image carries ffmpeg, so this is the one tool that depends on
+# the community feed - and that feed sometimes answers "installed 0/0
+# packages" with exit 0, which reads as success until the first scenario
+# dies inside subprocess.Popen. The fallback is a pinned artefact instead
+# of a second feed: a PyPI file is immutable and its sha256 is published,
+# and the binary the wheel carries is ffmpeg 7.1 with gdigrab, the capture
+# device this platform's argv names.
+$FfmpegRoot = Join-Path $tempRoot 'ffmpeg-pinned'
+$FfmpegDir = Join-Path $FfmpegRoot 'bin'
+$FfmpegExe = Join-Path $FfmpegDir 'ffmpeg.exe'
+$FfmpegUrl = 'https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl'
+$FfmpegSha256 = '02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a'
+# Expand-Archive takes a path ending in .zip, and a wheel is a zip: the
+# pinned file is fetched under the name the extractor accepts.
+$FfmpegZip = Join-Path $FfmpegRoot 'imageio-ffmpeg-0.6.0-win_amd64.zip'
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Log "ffmpeg: absent - falling back to the pinned feed"
+    New-Item -ItemType Directory -Force -Path $FfmpegDir | Out-Null
+    if (-not (Test-Path -LiteralPath $FfmpegZip)) {
+        if (-not (Get-CurlFile $FfmpegUrl $FfmpegZip)) {
+            Write-Warn 'the pinned ffmpeg download failed (the curl exit code is logged above)'
+        }
+    }
+    $ffmpegHash = ''
+    if (Test-Path -LiteralPath $FfmpegZip) {
+        $ffmpegHash = (Get-FileHash -LiteralPath $FfmpegZip -Algorithm SHA256).Hash.ToLower()
+        Write-Log ("ffmpeg archive: {0:N0} bytes, sha256 {1}" -f (Get-Item -LiteralPath $FfmpegZip).Length, $ffmpegHash)
+    }
+    if ($ffmpegHash -eq $FfmpegSha256) {
+        $ffmpegUnpacked = Join-Path $FfmpegRoot 'unpacked'
+        try {
+            Expand-Archive -LiteralPath $FfmpegZip -DestinationPath $ffmpegUnpacked -Force -ErrorAction Stop
+            Copy-Item -LiteralPath (Join-Path $ffmpegUnpacked 'imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe') -Destination $FfmpegExe -Force -ErrorAction Stop
+        } catch {
+            Write-Warn "the pinned ffmpeg could not be unpacked: $($_.Exception.Message)"
+        }
+    } elseif ($ffmpegHash) {
+        Write-Warn 'the pinned ffmpeg archive does not match its pin - it was not unpacked'
+    } else {
+        Write-Warn 'the pinned ffmpeg download produced no archive'
+    }
+    # The runner is a later process that resolves the bare name 'ffmpeg'
+    # through PATH, so the directory is put in front of this process's copy
+    # and into harness_env.ps1 below, where that process picks it up.
+    if (Test-Path -LiteralPath $FfmpegExe) { $env:Path = "$FfmpegDir;$env:Path" }
+}
+# A missing recorder is not survivable: the first record_argv reaches
+# subprocess.Popen and dies with a FileNotFoundError inside a scenario,
+# which is a failure with no reason in it. Naming it here costs the leg
+# its run and saves the next reader the whole evidence trail.
+$ffmpegExe = $FfmpegExe
+$ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+if ($ffmpegCmd) { $ffmpegExe = $ffmpegCmd.Source }
+if (-not (Test-Path -LiteralPath $ffmpegExe)) {
+    Fail "ffmpeg is on neither PATH nor the pinned fallback - the harness cannot record a video or take a still without it"
+}
+$ErrorActionPreference = 'Continue'
+$ffmpegVer = ((& $ffmpegExe -version 2>&1) | Select-Object -First 1)
+$ErrorActionPreference = 'Stop'
+Write-Log "ffmpeg: $ffmpegExe"
+Write-Log "  $ffmpegVer"
+if ($LASTEXITCODE -ne 0) { Fail "the ffmpeg at $ffmpegExe answers no -version (exit $LASTEXITCODE)" }
 $null = Provision-Choco '7z' '7zip'
 
 # --- 4. software OpenGL: Mesa llvmpipe ------------------------------------
@@ -1653,6 +1715,11 @@ foreach ($k in @($glVars.Keys)) {
 }
 if ($mesaOk) {
     Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:Path = '$MesaDir;' + `$env:Path"
+}
+# Same reason, for the recorder: runner.py's argv names ffmpeg bare, and
+# the runner is this file's consumer, not this process.
+if (Test-Path -LiteralPath $FfmpegExe) {
+    Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:Path = '$FfmpegDir;' + `$env:Path"
 }
 if ($RunnerGroup) {
     Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:SCENARIO_GROUP = '$RunnerGroup'"

@@ -971,10 +971,30 @@ class ControlHandler(tornado.web.RequestHandler):
             except Exception:
                 body = {}
             if body.pop("webcam_bridged", False):
-                # The container's own (non-loopback) IP plus this
+                # The host's own (non-loopback) IP plus this
                 # request's port: the exact URL the bridge will fetch.
+                # The address comes from a UDP connect, never a
+                # hostname lookup: gethostbyname resolves through
+                # DNS/mDNS, and macOS's local-network consent gate
+                # blocks that with a prompt no runner can answer, so
+                # the call never returns and wedges this single sim
+                # thread (the s5 leg died with a reset timeout and no
+                # gallery). The connect sends no packet — it only
+                # asks the routing table which local address it would
+                # use.
                 import socket
-                ip = socket.gethostbyname(socket.gethostname())
+                probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    probe.connect(("192.0.2.1", 9))
+                    ip = probe.getsockname()[0]
+                except OSError:
+                    # No route (an isolated container): the loopback
+                    # answer keeps the sim responsive; the bridge then
+                    # fetches over loopback, which no consent gate
+                    # covers.
+                    ip = "127.0.0.1"
+                finally:
+                    probe.close()
                 port = str(self.request.host).rsplit(":", 1)[-1]
                 self._printer.webcam_bridged_base = f"http://{ip}:{port}"
             self._printer.unknown_keys = []

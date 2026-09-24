@@ -741,8 +741,19 @@ for item in _walk(window.contentItem()):
 if target is None:
     result["error"] = "no visible LayerSlider"
 else:
+    # The bounds are the theme's, not a literal: LayerSlider.qml sizes
+    # the handles from UM.Theme.getSize("slider_handle"), and that is
+    # 16 px only at a screen scale of 1 — the Windows and macOS runners
+    # scale it up (22 px there), where a hard-coded 16 matched nothing.
+    try:
+        from UM.Qt.Bindings.Theme import Theme
+        handle_size = float(Theme.getInstance().getSize("slider_handle").width())
+    except Exception:
+        handle_size = 16.0
+    if handle_size <= 0:
+        handle_size = 16.0
     handles = [child for child in target.childItems()
-               if abs(child.width() - 16) < 2 and abs(child.height() - 16) < 2 and bool(child.isVisible())]
+               if abs(child.width() - handle_size) < 2 and abs(child.height() - handle_size) < 2 and bool(child.isVisible())]
     if not handles:
         result = {"error": "no slider handles"}
     else:
@@ -869,6 +880,13 @@ for e in app.getExtensions():
         if state is not None:
             result["attached"] = bool(state.attached)
             result["expected_layer"] = state.expected_layer
+        # The attach drops ride the toolpath: a stage switch restores
+        # the follow only while Cura still HAS a toolpath to drive
+        # (the ruling), so a drop reads as either "the toolpath left
+        # and stayed away" or "the restore missed it" — the two need
+        # opposite fixes and the states tell them apart.
+        result["toolpath"] = bool(getattr(rt.cura, "has_toolpath", False))
+        result["user_detached"] = bool(getattr(rt.coordinator, "_user_detached", False))
         break
 """
 
@@ -2945,7 +2963,15 @@ SCENARIOS = [
      "name": "the collapsed readouts hide whole lines when the window cannot fit them",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "resize_window", "w": 1600, "h": 300},
+         # The premise is a window too SHORT for the strip, and Windows
+         # enforces the window's own minimum height on setGeometry
+         # (measured 624px at the runner's scale), so the requested 300
+         # was silently clamped there and the readout stayed legitimately
+         # visible — the step failed on a window the premise never
+         # reached. The layout rule under test is the same code on every
+         # platform, so the window minimum is forced aside for this
+         # resize only; the reply records the value it moved.
+         {"op": "resize_window", "w": 1600, "h": 300, "force": True},
          {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
                                      "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
