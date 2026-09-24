@@ -214,6 +214,13 @@ $MsiPath = Join-Path $InstallerDir $MsiName
 # there used to cost a whole platform leg. --fail stays off - the status
 # code IS the answer.
 function Probe-Asset([string]$Url) {
+    # Same rule as Get-CurlFile below: once a native command's stderr is
+    # redirected it is an error record, and 'Stop' ends the script on the
+    # first one - here it would kill the run before the retry loop and the
+    # "refusing to guess" verdict it exists for. -s keeps curl quiet on
+    # success; the redirect is only for the failure text, which must not
+    # become the answer.
+    $ErrorActionPreference = 'Continue'
     $code = ''
     foreach ($attempt in 1, 2, 3) {
         if ($attempt -gt 1) {
@@ -230,15 +237,32 @@ function Probe-Asset([string]$Url) {
     return 'unknown'
 }
 
-function Get-Asset([string]$Url, [string]$Path) {
-    & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 -o $Path $Url 2>&1 |
+# A native command's stderr is a terminating error under
+# $ErrorActionPreference = 'Stop' in PowerShell 5.1, and curl writes
+# there (its progress meter, and its error text when a transfer
+# fails). The download would die as a NativeCommandError before
+# curl's own verdict was ever read - which is exactly how the first
+# Windows leg ended. The preference is relaxed inside this function,
+# where the assignment is function-scoped, so the caller's 'Stop'
+# still stands, and the verdict is $LASTEXITCODE. -sS keeps the
+# progress meter off the stream while leaving real errors on it.
+function Get-CurlFile([string]$Url, [string]$Path) {
+    $ErrorActionPreference = 'Continue'
+    # The retry sequence is bounded as a whole, not per attempt: four
+    # attempts at --max-time 900 could outlive the setup step's own
+    # 30-minute timeout, which reports a step timeout and no reason.
+    & curl.exe -sS -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 `
+        --max-time 300 --retry-max-time 600 -o $Path $Url 2>&1 |
         ForEach-Object { Write-Log "  $_" }
-    if ($LASTEXITCODE -ne 0) { return $false }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "  curl exited $LASTEXITCODE fetching $(Split-Path -Leaf $Url)"
+        return $false
+    }
     return (Test-Path -LiteralPath $Path)
 }
 
 Write-Log ""
-Write-Log "--- is each Windows installer published for $CuraVersion? ---"
+Write-Log "--- is each Windows installer published for ${CuraVersion}? ---"
 $exeState = Probe-Asset $ExeUrl
 $msiState = 'not probed'
 $useExe = $false
@@ -255,7 +279,7 @@ if ($exeState -eq 'published') {
     else { Fail "neither $ExeName nor $MsiName is published for Cura $CuraVersion" }
 }
 if ($useExe) {
-    if (-not (Get-Asset $ExeUrl $ExePath)) { Fail "could not download $ExeUrl" }
+    if (-not (Get-CurlFile $ExeUrl $ExePath)) { Fail "could not download $ExeUrl" }
     $f = Get-Item -LiteralPath $ExePath
     Write-Log ("downloaded: {0} ({1:N1} MB)" -f $f.FullName, ($f.Length / 1MB))
     $sig = Get-AuthenticodeSignature -LiteralPath $ExePath
@@ -363,7 +387,7 @@ if (-not $binary) {
             Fail "no Cura binary after the NSIS install (NSIS: $exeResult) and the MSI is not published for $CuraVersion"
         }
         if (-not (Test-Path -LiteralPath $MsiPath)) {
-            if (-not (Get-Asset $MsiUrl $MsiPath)) { Fail "could not download $MsiUrl" }
+            if (-not (Get-CurlFile $MsiUrl $MsiPath)) { Fail "could not download $MsiUrl" }
         }
         $msiAbs = (Resolve-Path -LiteralPath $MsiPath).Path
         $msiLog = Join-Path $WorkDir 'msi-install.log'
@@ -415,10 +439,24 @@ Write-Log "install dir     : $curaDir"
 # --- 3. tools this host does not necessarily have -------------------------
 function Refresh-Path {
     # An installer writes the machine PATH for later processes, not for this
-    # one, so the two roots are read back and this process's copy rebuilt.
+    # one, so the two roots are read back and this process's copy rebuilt -
+    # APPENDED to, not replaced by: the job's own PATH is in neither
+    # registry value, and the python this job runs on comes from the
+    # toolcache on $env:GITHUB_PATH, so substituting took the interpreter
+    # away and left the seed step calling a name that no longer resolved.
     $machine = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [System.Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = "$machine;$user"
+    $env:Path = "$machine;$user;$env:Path"
+}
+
+# The WindowsApps alias stub answers --version on stderr, and that is also
+# the redirect which turns a native command's stderr into a terminating
+# error under 'Stop' - so the probe has to survive the very answer this
+# branch exists to catch. Function-scoped, so the caller's preference
+# stands.
+function Get-PythonVersion([string]$Exe) {
+    $ErrorActionPreference = 'Continue'
+    return ((& $Exe --version 2>&1) -join ' ').Trim()
 }
 
 Write-Log ""
@@ -450,6 +488,11 @@ function Provision-Choco([string]$Command, [string]$Package) {
         return $null
     }
     Write-Log "$Command : absent - provisioning it (choco install $Package)"
+    # Chocolatey and the installers it drives both write to stderr; under
+    # 'Stop' the first such line would end the script mid-install, as a
+    # NativeCommandError instead of the warnings below. The verdict is
+    # $LASTEXITCODE, which the pipeline leaves alone.
+    $ErrorActionPreference = 'Continue'
     & choco install $Package -y --no-progress 2>&1 | Select-Object -Last 6 | ForEach-Object { Write-Log "  $_" }
     Write-Log "choco install $Package exit: $LASTEXITCODE"
     Refresh-Path
@@ -463,7 +506,7 @@ function Provision-Choco([string]$Command, [string]$Package) {
 $pythonOk = $false
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) {
-    $pyVer = ((& python --version 2>&1) -join ' ').Trim()
+    $pyVer = Get-PythonVersion 'python'
     if ($pyVer) {
         Write-Log "python: $pyVer ($($py.Source))"
         $pythonOk = $true
@@ -475,7 +518,7 @@ if (-not $pythonOk) {
     $null = Provision-Choco 'python' 'python3'
     $py = Get-Command python -ErrorAction SilentlyContinue
     if ($py) {
-        $pyVer = ((& python --version 2>&1) -join ' ').Trim()
+        $pyVer = Get-PythonVersion 'python'
         if ($pyVer) {
             Write-Log "python: $pyVer ($($py.Source))"
             $pythonOk = $true
@@ -505,13 +548,27 @@ $MesaFiles = @('opengl32.dll', 'libgallium_wgl.dll', 'dxil.dll')
 $mesaOk = $false
 $mesaWhy = 'not attempted'
 
+# Both extractors report progress and warnings on stderr, which the redirect
+# below turns into error records: under 'Stop' the extraction would end the
+# script instead of reaching the member check that decides whether Mesa is
+# usable. The verdict is what is on disk, so the preference is relaxed
+# inside this function only.
+function Expand-MesaArchive([string]$Tool, [string]$Archive, [string]$Target) {
+    $ErrorActionPreference = 'Continue'
+    if ($Tool -eq '7z') {
+        & 7z x -y ("-o" + $Target) $Archive 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
+            Select-Object -Last 4 | ForEach-Object { Write-Log "  $_" }
+    } else {
+        & tar.exe -xf $Archive -C $Target 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
+            Select-Object -Last 4 | ForEach-Object { Write-Log "  $_" }
+    }
+}
+
 Write-Log ""
 Write-Log "--- Mesa llvmpipe $MesaVersion (the software OpenGL Cura needs) ---"
 New-Item -ItemType Directory -Force -Path $MesaRoot | Out-Null
 if (-not (Test-Path -LiteralPath $MesaArchive)) {
-    & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 -o $MesaArchive $MesaUrl 2>&1 |
-        ForEach-Object { Write-Log "  $_" }
-    if ($LASTEXITCODE -ne 0) { Write-Warn "Mesa download failed (curl exit $LASTEXITCODE)" }
+    if (-not (Get-CurlFile $MesaUrl $MesaArchive)) { Write-Warn "Mesa download failed: the archive is not on disk (the curl exit code is logged above)" }
 }
 $mesaHash = ''
 if (Test-Path -LiteralPath $MesaArchive) {
@@ -522,13 +579,11 @@ if ($mesaHash -eq $MesaSha256) {
     $extractTool = $null
     if (Get-Command 7z -ErrorAction SilentlyContinue) {
         $extractTool = '7z'
-        & 7z x -y ("-o" + $MesaRoot) $MesaArchive 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
-            Select-Object -Last 4 | ForEach-Object { Write-Log "  $_" }
+        Expand-MesaArchive '7z' $MesaArchive $MesaRoot
     } elseif (Get-Command tar.exe -ErrorAction SilentlyContinue) {
         # bsdtar reads 7z through libarchive; the members are named by path.
         $extractTool = 'tar.exe'
-        & tar.exe -xf $MesaArchive -C $MesaRoot 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/dxil.dll' 2>&1 |
-            Select-Object -Last 4 | ForEach-Object { Write-Log "  $_" }
+        Expand-MesaArchive 'tar.exe' $MesaArchive $MesaRoot
     }
     $missing = @($MesaFiles[0..1] | Where-Object { -not (Test-Path -LiteralPath (Join-Path $MesaDir $_)) })
     if ($extractTool -and $missing.Count -eq 0) {
@@ -609,6 +664,11 @@ Write-Log "--- display geometry (the harness pins one screen size) ---"
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 
 function Get-DisplayNow {
+    # The fallback below is a cmdlet whose failure is terminating under
+    # 'Stop', and this function's answer is a size or 'unreadable' - never
+    # the error. Relaxed here so the fallback can be tried rather than
+    # ending the script on the image where it is not installed.
+    $ErrorActionPreference = 'Continue'
     $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
     if (($vs.Width -gt 0) -and ($vs.Height -gt 0)) {
         return [pscustomobject]@{ Width = $vs.Width; Height = $vs.Height; Source = 'SystemInformation.VirtualScreen' }
@@ -868,6 +928,11 @@ if (-not $atGeometry) {
             if (-not $found) {
                 $displayWhy = "$displayWhy, and this adapter has no ${wantW}x${wantH} mode"
             } else {
+                # DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT |
+                # DM_DISPLAYFREQUENCY, as the spike's verified call set them:
+                # ChangeDisplaySettings applies only the members its dmFields
+                # names, so without this the call can succeed as a no-op.
+                $found.dmFields = 0x00040000 -bor 0x00080000 -bor 0x00100000 -bor 0x00400000
                 $rc = [MpfNative]::ChangeDisplaySettings([ref]$found, 0)
                 Write-Log ("ChangeDisplaySettings({0}) returned {1} (0 = DISP_CHANGE_SUCCESSFUL)" -f [MpfNative]::DevModeText($found), $rc)
                 Start-Sleep -Seconds 3
@@ -1027,6 +1092,21 @@ foreach ($dc in $dcFiles) {
 Write-Log "machine seed: machine '$machine' from $FixtureDir"
 Write-Log "  $seedFiles container files + cura.cfg (from $PrefFixtureDir) under $ConfigDir"
 Write-Log "  build volume $seedVolume | setting_version $setVer"
+
+# The two-boot legs boot from a state the committed fixture is NOT: the
+# first-install leg's first boot must be a machine that has never run the
+# plugin, and the migration leg's first boot must still carry the v1 blob.
+# The transform is the container leg's own (tests\harness\seed_variants.py),
+# applied to this platform's config dir, and it fails a leg that would
+# otherwise boot the fixture and prove nothing.
+$seedVariant = ''
+if ($Scenario -eq 'firstinstall') { $seedVariant = 'clean' }
+elseif ($Scenario -eq 'migration') { $seedVariant = 'premigration' }
+if ($seedVariant) {
+    if (-not $pythonOk) { Fail "the $seedVariant seed needs python (no working python on this host)" }
+    & python (Join-Path $Root 'tests\harness\seed_variants.py') $seedVariant $ConfigDir
+    if ($LASTEXITCODE -ne 0) { Fail "could not apply the $seedVariant seed" }
+}
 
 # --- 7. stage the plugin and the driver -----------------------------------
 # Both halves are what the harness drives: the built plugin under test, and
@@ -1309,11 +1389,30 @@ $EnvFile = Join-Path $WorkDir 'harness_env.ps1'
     "`$env:HARNESS_GEOMETRY = '$Geometry'",
     "`$env:HARNESS_WINDOW = '$WindowPin'",
     "`$env:HARNESS_RUN_DIR = '$ArtifactDir'",
+    # The two-boot legs relaunch the app between their boots, and the
+    # runner is the only process left to do it: the binary and the
+    # directory it must run in, read back from the launch above.
+    "`$env:HARNESS_CURA_BIN = '$($binary.FullName)'",
+    "`$env:HARNESS_CURA_CWD = '$curaDir'",
+    # Where Cura keeps its own log: the runner harvests it next to the
+    # evidence (there is no ui_test.sh on this host to do it), and a
+    # driver that never answered is read out of that file.
+    "`$env:HARNESS_CURA_CONFIG = '$ConfigDir'",
     "`$env:MPF_WORK_DIR = '$WorkDir'",
     "`$env:CURA_VERSION = '$CuraVersion'",
     "`$env:PLUGIN_VERSION = '$PluginVersion'",
     "`$env:HARNESS_MODE = '$RunnerMode'"
 ) | Set-Content -LiteralPath $EnvFile -Encoding ASCII
+# And the environment the app itself was launched with, which Start-Process
+# only ever got because it inherited this process's block: a relaunched
+# second boot without the GL variables (or without Mesa's directory on
+# PATH) is an app that cannot render.
+foreach ($k in @($glVars.Keys)) {
+    Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:$k = '$($glVars[$k])'"
+}
+if ($mesaOk) {
+    Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:Path = '$MesaDir;' + `$env:Path"
+}
 if ($RunnerGroup) {
     Add-Content -LiteralPath $EnvFile -Encoding ASCII -Value "`$env:SCENARIO_GROUP = '$RunnerGroup'"
 }

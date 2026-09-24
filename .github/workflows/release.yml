@@ -274,6 +274,11 @@ jobs:
         env:
           SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
         run: |
+          # The step's shell sets $ErrorActionPreference = 'Stop', under which
+          # a native command's stderr - the setup script's own warnings, for
+          # instance - is a TERMINATING error in PowerShell 5.1. The exit code
+          # below is the verdict, so the preference is relaxed for the call.
+          $ErrorActionPreference = 'Continue'
           $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
           $env:RUN_DIR_NAME = $env:GALLERY
           & powershell -ExecutionPolicy Bypass -File tools\native_harness.ps1 `
@@ -286,6 +291,11 @@ jobs:
         timeout-minutes: ${{ fromJSON(env.UNITS)[matrix.unit].budget }}
         shell: powershell
         run: |
+          # A 15-minute scenario writes plenty to stderr, and under the
+          # step shell's $ErrorActionPreference = 'Stop' the FIRST such byte
+          # from a native command terminates the step in PowerShell 5.1 -
+          # before the exit code or the gallery guard below are ever read.
+          $ErrorActionPreference = 'Continue'
           $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
           . (Join-Path $work 'harness_env.ps1')
           # The gallery is the runner's own output, so the guard sits after

@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -60,6 +61,35 @@ def record_argv(path, framerate=15):
     return native_host.recorder_argv(SYSTEM, path, size=SIZE, display=DISPLAY,
                                      screen_index=native_host.screen_index(),
                                      framerate=framerate)
+
+
+def harvest_cura_log(dest_dir, suffix=""):
+    """Cura's own log, kept beside the evidence.
+
+    The container leg harvests this from the seeded XDG roots; a native
+    leg has no ui_test.sh behind it, so its setup script hands the
+    config directory over as HARNESS_CURA_CONFIG and the copy happens
+    here. It is the file that says why a driver never answered, and it
+    is deliberately taken more than once on the two-boot legs: the
+    relaunch truncates cura.log, so boot 1's log has to be lifted
+    before the second launch starts.
+    """
+    src = os.environ.get("HARNESS_CURA_CONFIG", "")
+    if not src or not os.path.isdir(src) or not os.path.isdir(dest_dir):
+        return 0
+    kept = 0
+    for name in sorted(os.listdir(src)):
+        if not name.startswith("cura.log"):
+            continue
+        try:
+            shutil.copyfile(os.path.join(src, name),
+                            os.path.join(dest_dir, name + suffix))
+        except OSError:
+            continue
+        kept += 1
+    if kept:
+        print(f"ui_test: kept {kept} Cura log file(s) in {dest_dir}")
+    return kept
 
 
 def rpc(request, timeout=20.0):
@@ -2058,10 +2088,11 @@ def document_of(reply):
 
 
 def cura_process_alive():
-    """Cura's own process, by full command line (the bracket keeps
-    pgrep from matching its own argv — the harness's standing idiom)."""
+    """Cura's own process, through the platform dispatch. The call was
+    a bare pgrep, which on Windows raises OSError and reads as "still
+    running" — a clean quit then reports as a failed one."""
     try:
-        done = subprocess.run(["pgrep", "-f", "UltiMaker-Cur[a]"],
+        done = subprocess.run(native_host.process_alive_argv(SYSTEM),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         return True
@@ -2239,6 +2270,111 @@ def first_install2():
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
+
+
+# ---- the two-boot legs on a native host (modes firstinstall / migration) ----
+#
+# On Linux tools/ui_test.sh drives the pair: it owns the launch there, so
+# the between-boots work (stop the first app, clear the rendezvous, boot
+# again) lives in that script. A native host's setup script launches ONCE
+# per job, so that same work has no shell to live in and happens here.
+#
+# Each boot is the SAME runner entry point the container leg calls, run as
+# a subprocess: the gallery, the video and the verdict come from identical
+# code, and the boots stay as isolated as they are on Linux. The mode
+# itself stops being a fall-through to scenario(), which is what a job
+# asking for "firstinstall" used to get on a native host.
+
+TWO_BOOT_MODES = {"firstinstall": ("firstinstall1", "firstinstall2"),
+                  "migration": ("migration1", "migration2")}
+
+# The natives' own setup scripts wait 300 ticks for the driver's port
+# file; the second boot starts from the same cold cache (no OS file
+# cache for Cura's bundle is shared across processes) and gets the same
+# budget.
+SECOND_BOOT_DEADLINE_S = 300.0
+
+
+def boot_env(run_dir, boot1_document):
+    """The environment one boot runs with: where its gallery lands and
+    the document boot 1 leaves for boot 2 to diff against."""
+    env = dict(os.environ)
+    env["HARNESS_RUN_DIR"] = run_dir
+    env["HARNESS_BOOT1_DOC"] = boot1_document
+    return env
+
+
+def wait_for_driver(deadline_s):
+    """The driver ANSWERING — which is not the same as the port file
+    existing: the file outlives the process, so boot 1's port would
+    pass the check while the socket behind it is dead."""
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        try:
+            reply = rpc({"id": 1, "cmd": "hello"}, timeout=10)
+        except RuntimeError:
+            continue
+        if reply.get("ok"):
+            return reply
+    return None
+
+
+def two_boot_run(mode):
+    """The two-boot legs, both boots, from the mode the workflow names."""
+    boot1_mode, boot2_mode = TWO_BOOT_MODES[mode]
+    runner = os.path.abspath(__file__)
+    boot1_document = os.path.join(RUN_DIR, "boot1-document.json")
+
+    print(f"ui_test: {mode}: boot 1 ({boot1_mode}) -> {RUN_DIR}")
+    rc1 = subprocess.call([sys.executable, runner, boot1_mode],
+                          env=boot_env(RUN_DIR, boot1_document))
+    # Boot 1's log before boot 2's launch truncates it.
+    harvest_cura_log(RUN_DIR, suffix="-boot1")
+
+    # Boot 2 needs the tree to itself: whatever the first boot left
+    # running goes first, and the rendezvous files go with it (a stale
+    # port would send the second boot to a dead socket). The kill is
+    # unconditional — a runner that crashed mid-scenario must not leave
+    # an app behind that the second boot then races.
+    subprocess.call(native_host.kill_command(SYSTEM),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1)
+    for name in ("harness_port.txt", "harness_token.txt"):
+        try:
+            os.remove(os.path.join(RPC_DIR, name))
+        except OSError:
+            pass
+
+    binary = os.environ.get("HARNESS_CURA_BIN", "")
+    if not binary:
+        print("ui_test: HARNESS_CURA_BIN is unset - the native setup script must export it, "
+              "or the second boot has no app to launch")
+        return rc1 or 1
+    command = native_host.launch_command(SYSTEM, binary,
+                                         working_dir=os.environ.get("HARNESS_CURA_CWD") or None)
+    # start_new_session: the app must outlive this process (the capture,
+    # not the launcher, is what keeps it alive), and it inherits this
+    # process's environment — the one the setup script exported, GL
+    # variables included.
+    subprocess.Popen(command["argv"], cwd=command["cwd"], start_new_session=True)
+    print(f"ui_test: {mode}: relaunched {binary} for boot 2")
+
+    hello = wait_for_driver(SECOND_BOOT_DEADLINE_S)
+    if hello is None:
+        print(f"ui_test: the second boot's driver never came up within "
+              f"{SECOND_BOOT_DEADLINE_S:.0f}s - Cura did not load the staged plugin")
+        return 1
+
+    boot2_dir = os.path.join(RUN_DIR, "boot2")
+    print(f"ui_test: {mode}: boot 2 ({boot2_mode}) -> {boot2_dir}")
+    rc2 = subprocess.call([sys.executable, runner, boot2_mode],
+                          env=boot_env(boot2_dir, boot1_document))
+    # The second boot's gallery is half this leg's evidence, and the
+    # workflow's guard only knows about the first boot's directory.
+    if not os.path.isfile(os.path.join(boot2_dir, "index.html")):
+        print(f"ui_test: EVIDENCE MISSING - boot 2 wrote no gallery at {boot2_dir}/index.html")
+        return rc2 or 1
+    return rc1 or rc2
 
 
 # ---- The migration leg (modes migration1 / migration2) ----
@@ -3817,6 +3953,12 @@ def main():
         return first_install1()
     if mode == "firstinstall2":
         return first_install2()
+    if mode in TWO_BOOT_MODES:
+        # Both boots, driven from here: only a native host reaches this
+        # (tools/ui_test.sh runs the container's pair itself), and
+        # without it "firstinstall" fell through to scenario() below —
+        # a different leg wearing the mode's name.
+        return two_boot_run(mode)
     if mode == "migration1":
         return migration1()
     if mode == "migration2":
@@ -3837,4 +3979,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        _rc = main()
+    finally:
+        # In a finally: a run that raised is the one whose log is worth
+        # reading, and a native leg has nowhere else to keep it.
+        harvest_cura_log(RUN_DIR)
+    sys.exit(_rc)

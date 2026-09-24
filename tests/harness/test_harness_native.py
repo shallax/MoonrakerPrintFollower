@@ -285,6 +285,46 @@ class LaunchTests(unittest.TestCase):
         self.assertIsNone(native_host.parse_launch_pid(native_host.WINDOWS, "no pid"))
 
 
+class ProcessControlTests(unittest.TestCase):
+    """The app's liveness and its stop: the two calls the two-boot legs
+    make between their boots."""
+
+    def test_the_unix_half_asks_pgrep_for_the_bracketed_name(self):
+        for system in (native_host.LINUX, native_host.MACOS):
+            alive = native_host.process_alive_argv(system)
+            self.assertEqual(alive[:2], ["pgrep", "-f"])
+            # The bracket is what keeps pgrep from matching its own argv.
+            self.assertIn("UltiMaker-Cur[a]", alive[2])
+
+    def test_windows_asks_get_process_and_never_pgrep(self):
+        # Windows has no pgrep: the call raised OSError there, which the
+        # runner read as "still running" — a clean quit then reports as
+        # a failed one.
+        alive = native_host.process_alive_argv(native_host.WINDOWS)
+        self.assertEqual(alive[:3], ["powershell", "-NoProfile", "-NonInteractive"])
+        script = alive[-1]
+        self.assertIn("Get-Process -Name 'UltiMaker-Cura'", script)
+        self.assertIn("exit 1", script)
+        self.assertNotIn("pgrep", script)
+
+    def test_the_kill_is_forceful_and_always_succeeds(self):
+        kill = native_host.kill_command(native_host.MACOS)
+        self.assertEqual(kill[:3], ["pkill", "-9", "-f"])
+        self.assertIn("UltiMaker-Cur[a]", kill[3])
+        # The same call on both Unix halves: the container leg's own
+        # kill (tools/ui_test.sh) is the third copy of it.
+        self.assertEqual(kill, native_host.kill_command(native_host.LINUX))
+        script = native_host.kill_command(native_host.WINDOWS)[-1]
+        self.assertIn("Stop-Process -Force", script)
+        # A stop that fails must not fail the run that only wanted the
+        # process gone — the second boot is what proves it went.
+        self.assertTrue(script.rstrip().endswith("; exit 0"))
+
+    def test_a_name_cannot_break_out_of_the_powershell_script(self):
+        script = native_host.kill_command(native_host.WINDOWS, name="a'b")[-1]
+        self.assertIn("'a''b'", script)
+
+
 class DispatchIsInOnePlaceTests(unittest.TestCase):
     """The static half: the platform choice lives in native_host.py, and
     the two sides of the RPC rendezvous agree on one variable."""

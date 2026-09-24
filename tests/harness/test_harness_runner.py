@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 import tempfile
 import unittest
@@ -271,6 +272,219 @@ class EvidenceRecordTests(unittest.TestCase):
         self.assertEqual(record["schema"], 1)
         self.assertEqual(record["title"], "test run")
         self.assertEqual(record["steps"][0]["scenario"], "f1")
+
+
+class _FakeSubprocess:
+    """subprocess.call/Popen, recorded. The second boot's gallery is
+    written by whichever call the test says writes it."""
+
+    DEVNULL = -3
+
+    def __init__(self, log, return_codes, galley_dir=None):
+        self.log = log
+        self.return_codes = list(return_codes)
+        self.gallery_dir = galley_dir
+
+    def call(self, argv, env=None, **kwargs):
+        self.log.append(("call", list(argv), dict(env or {})))
+        if argv[0] != sys.executable:
+            # The kill between the boots: no exit code of its own to
+            # spend, and no gallery of its own to write.
+            return 0
+        if self.gallery_dir and argv[2].endswith("2"):
+            os.makedirs(self.gallery_dir, exist_ok=True)
+            with open(os.path.join(self.gallery_dir, "index.html"), "w",
+                      encoding="utf-8") as handle:
+                handle.write("<html></html>")
+        return self.return_codes.pop(0) if self.return_codes else 0
+
+    def Popen(self, argv, cwd=None, **kwargs):
+        self.log.append(("popen", list(argv), cwd))
+        return object()
+
+
+class _FakeHost:
+    """The dispatch's two calls, named so the test can see them."""
+
+    def kill_command(self, system, **kwargs):
+        return ["kill", system]
+
+    def launch_command(self, system, binary, working_dir=None, **kwargs):
+        return {"argv": ["launch", binary], "cwd": working_dir}
+
+
+class TwoBootRunTests(unittest.TestCase):
+    """The two-boot legs' orchestration, pinned without an app.
+
+    On a native host this is the whole pair — each boot is the same
+    runner entry point the container leg calls, and the work between
+    them (stop the first app, clear the rendezvous, launch the second)
+    has no shell to live in — so what each boot sees is pinned here.
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        self.log = []
+        self._old = {name: getattr(runner, name)
+                     for name in ("RUN_DIR", "RPC_DIR", "subprocess",
+                                  "native_host", "wait_for_driver")}
+        self._old_env = os.environ.get("HARNESS_CURA_BIN")
+        os.environ["HARNESS_CURA_BIN"] = "/Applications/Cura.app/Contents/MacOS/UltiMaker-Cura"
+        os.environ["HARNESS_CURA_CWD"] = "/Applications/Cura.app/Contents/MacOS"
+        runner.RUN_DIR = SCRATCH
+        runner.RPC_DIR = SCRATCH
+        runner.native_host = _FakeHost()
+        runner.wait_for_driver = lambda deadline_s: {"ok": True}
+
+    def tearDown(self):
+        for name, value in self._old.items():
+            setattr(runner, name, value)
+        os.environ.pop("HARNESS_CURA_CWD", None)
+        if self._old_env is None:
+            os.environ.pop("HARNESS_CURA_BIN", None)
+        else:
+            os.environ["HARNESS_CURA_BIN"] = self._old_env
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+
+    def _set_subprocess(self, return_codes=(0, 0), gallery=True):
+        runner.subprocess = _FakeSubprocess(
+            self.log, return_codes,
+            galley_dir=os.path.join(SCRATCH, "boot2") if gallery else None)
+
+    def _boot_calls(self):
+        """The boots alone — the kill between them is a call too, and
+        it must not be what a test reads as boot 1."""
+        return [entry for entry in self.log
+                if entry[0] == "call" and entry[1][0] == sys.executable]
+
+    def test_boot_two_gets_its_own_gallery_and_the_same_handoff_document(self):
+        self._set_subprocess()
+        self.assertEqual(runner.two_boot_run("firstinstall"), 0)
+        boots = self._boot_calls()
+        self.assertEqual(len(boots), 2)
+        self.assertEqual([entry[1][2] for entry in boots],
+                         ["firstinstall1", "firstinstall2"])
+        first, second = (entry[2] for entry in boots)
+        self.assertEqual(first["HARNESS_RUN_DIR"], SCRATCH)
+        # Boot 2's gallery is its own directory (the container leg's
+        # layout), and the document it diffs against is boot 1's.
+        self.assertEqual(second["HARNESS_RUN_DIR"], os.path.join(SCRATCH, "boot2"))
+        document = os.path.join(SCRATCH, "boot1-document.json")
+        self.assertEqual(first["HARNESS_BOOT1_DOC"], document)
+        self.assertEqual(second["HARNESS_BOOT1_DOC"], document)
+
+    def test_the_first_boot_is_stopped_and_the_rendezvous_cleared_before_the_second(self):
+        self._set_subprocess()
+        for name in ("harness_port.txt", "harness_token.txt"):
+            with open(os.path.join(SCRATCH, name), "w", encoding="utf-8") as handle:
+                handle.write("stale")
+        self.assertEqual(runner.two_boot_run("migration"), 0)
+        launches = [entry for entry in self.log if entry[0] == "popen"]
+        self.assertEqual(len(launches), 1)
+        # The app is launched with the binary and directory the setup
+        # script exported, and the stale rendezvous is gone — a stale
+        # port would send boot 2 straight to a dead socket.
+        self.assertEqual(launches[0][1], ["launch", os.environ["HARNESS_CURA_BIN"]])
+        self.assertEqual(launches[0][2], os.environ["HARNESS_CURA_CWD"])
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "harness_port.txt")))
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "harness_token.txt")))
+
+    def test_the_modes_are_the_two_boot_pairs(self):
+        self.assertEqual(runner.TWO_BOOT_MODES["firstinstall"],
+                         ("firstinstall1", "firstinstall2"))
+        self.assertEqual(runner.TWO_BOOT_MODES["migration"], ("migration1", "migration2"))
+
+    def test_the_first_failing_boot_decides_the_verdict(self):
+        self._set_subprocess(return_codes=(3, 0))
+        self.assertEqual(runner.two_boot_run("firstinstall"), 3)
+        self._set_subprocess(return_codes=(0, 4))
+        self.assertEqual(runner.two_boot_run("firstinstall"), 4)
+
+    def test_a_second_boot_without_a_gallery_fails_the_leg(self):
+        # The workflow's EVIDENCE MISSING guard watches the first
+        # boot's directory only, so the second boot's gallery has to be
+        # defended here.
+        self._set_subprocess(gallery=False)
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+
+    def test_a_host_that_exports_no_binary_cannot_relaunch(self):
+        # An older setup script leaves the leg unable to boot twice:
+        # that is a failure with a name, not a silent second boot of
+        # the same app.
+        self._set_subprocess(return_codes=(0, 0))
+        os.environ.pop("HARNESS_CURA_BIN")
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+        self.assertEqual([entry for entry in self.log if entry[0] == "popen"], [])
+
+    def test_a_driver_that_never_answers_stops_the_leg(self):
+        # Without an answer there is nothing for boot 2 to drive: the
+        # leg fails here rather than in a traceback five minutes later.
+        self._set_subprocess()
+        runner.wait_for_driver = lambda deadline_s: None
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+        self.assertEqual(len(self._boot_calls()), 1)
+
+    def test_boot_ones_log_is_lifted_before_the_second_launch(self):
+        # The relaunch truncates cura.log, so boot 1's half of the
+        # evidence has to be taken between the boots, not at the end.
+        self._set_subprocess()
+        config = Path(tempfile.mkdtemp(prefix="two-boot-config-", dir="/tmp/mpf"))
+        (config / "cura.log").write_text("boot one", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(config)
+        try:
+            self.assertEqual(runner.two_boot_run("firstinstall"), 0)
+        finally:
+            os.environ.pop("HARNESS_CURA_CONFIG", None)
+            shutil.rmtree(config, ignore_errors=True)
+        self.assertTrue(os.path.isfile(os.path.join(SCRATCH, "cura.log-boot1")))
+
+
+class HarvestCuraLogTests(unittest.TestCase):
+    """Cura's own log is kept beside the evidence.
+
+    A native host has no ui_test.sh to harvest it, and that file is
+    what says why a driver never answered — so it is copied out of the
+    config directory the setup script exported, rotated files included.
+    """
+
+    def setUp(self):
+        self.src = Path(tempfile.mkdtemp(prefix="harvest-config-", dir="/tmp/mpf"))
+        self.dest = Path(tempfile.mkdtemp(prefix="harvest-dest-", dir="/tmp/mpf"))
+        self._old = os.environ.get("HARNESS_CURA_CONFIG")
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("HARNESS_CURA_CONFIG", None)
+        else:
+            os.environ["HARNESS_CURA_CONFIG"] = self._old
+        shutil.rmtree(self.src, ignore_errors=True)
+        shutil.rmtree(self.dest, ignore_errors=True)
+
+    def test_the_log_and_its_rotated_neighbour_are_both_kept(self):
+        (self.src / "cura.log").write_text("newest", encoding="utf-8")
+        (self.src / "cura.log.1").write_text("older", encoding="utf-8")
+        (self.src / "cura.cfg").write_text("not a log", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 2)
+        self.assertEqual(sorted(p.name for p in self.dest.iterdir()),
+                         ["cura.log", "cura.log.1"])
+
+    def test_the_boot_a_log_came_from_is_in_its_name(self):
+        (self.src / "cura.log").write_text("boot one", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest), suffix="-boot1"), 1)
+        self.assertEqual((self.dest / "cura.log-boot1").read_text(encoding="utf-8"),
+                         "boot one")
+
+    def test_a_host_without_a_config_dir_is_not_an_error(self):
+        # The container leg exports no HARNESS_CURA_CONFIG: ui_test.sh
+        # harvests the seeded roots itself.
+        os.environ.pop("HARNESS_CURA_CONFIG", None)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 0)
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src / "absent")
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 0)
+        self.assertEqual(list(self.dest.iterdir()), [])
 
 
 if __name__ == "__main__":

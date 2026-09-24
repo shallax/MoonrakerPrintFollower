@@ -113,6 +113,7 @@ if [ "${LEGS:-all}" = "host" ]; then
     run_once "stdlib suite" run_files
     run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
     run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+    run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
     run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
     echo "host legs passed"
     exit 0
@@ -125,6 +126,7 @@ run_once "stdlib suite" run_files
 # directly.
 run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
 run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
 run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
 run_once "real-Qt suite (dev container, $jobs workers)" run_files_container
 

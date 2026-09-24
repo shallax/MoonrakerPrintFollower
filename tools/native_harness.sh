@@ -30,14 +30,24 @@
 # <work-dir>/harness_env.sh.
 #
 # ASCII only: this file is read by tools that assume it.
-set -euo pipefail
+set -Eeuo pipefail
 
 note() { echo "native_harness: $*"; }
 warn() { echo "native_harness: $*" >&2; }
 die() { echo "native_harness: $*" >&2; exit 1; }
+# A `set -e` death is otherwise silent: the step fails with a bare exit
+# code and the log stops mid-sentence, which is how the first live macOS
+# run died (the killer line had to be inferred from the timing). -E
+# extends this into the function bodies and the background subshells,
+# where nearly all of the work happens; $BASH_COMMAND names the command
+# that failed, so a silent stop is diagnosable from the job log alone.
+trap 'echo "native_harness: command failed at line $LINENO: $BASH_COMMAND (status $?)" >&2' ERR
 
 usage() {
-    sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+    # The header, up to the first non-comment line: the range used to be a
+    # fixed line count, which silently truncated --help as the header grew
+    # past it.
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 OS_ARG=""
@@ -222,7 +232,13 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     if [ -f "$DMG" ]; then
         echo "installer already downloaded: $DMG ($(du -h "$DMG" | cut -f1))"
     else
-        curl -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 \
+        # The whole retry sequence is bounded, not just one attempt: four
+        # attempts at --max-time 900 could outlive the setup step's own
+        # 30-minute timeout, which reports a step timeout and no reason.
+        # The dmg measures ~20 s here, so 300 s an attempt and 600 s of
+        # retrying is a wide margin with a named failure at the end.
+        curl -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 \
+            --max-time 300 --retry-max-time 600 \
             -w "http_code=%{http_code} bytes=%{size_download}\n" \
             -o "$DMG" "$BASE/UltiMaker-Cura-${CURA_VERSION}-macos-${ARCH_TAG}.dmg" ||
             die "the dmg download failed"
@@ -285,7 +301,12 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         ) >"$out" 2>&1 &
         pid=$!
         while [ "$waited" -lt 60 ]; do
-            state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d ' \n')"
+            # `ps` exits 1 for a pid that is gone, and under `set -e` +
+            # pipefail that killed this script silently on the first
+            # iteration after the attach finished — the poll's own exit
+            # condition read as a fatal error. The empty state below IS
+            # the answer; the pipeline's status must not be.
+            state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d ' \n' || true)"
             if [ -z "$state" ] || [ "${state#Z}" != "$state" ]; then
                 break
             fi
@@ -295,12 +316,29 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         if [ "$waited" -ge 60 ]; then
             warn "attach '$label' is still running after 60s - killing it (a licence viewer waiting for a click looks like this)"
             kill -9 "$pid" 2>/dev/null || true
-            pkill -9 -f 'hdiutil attac[h]' 2>/dev/null || true
+            # sudo, because the attach runs under sudo: killing another
+            # user's process is EPERM otherwise, and the `|| true` below
+            # would hide a backstop that never fired.
+            sudo pkill -9 -f 'hdiutil attac[h]' 2>/dev/null || true
         fi
-        wait "$pid" 2>/dev/null || true
-        rc=$?
-        MOUNTED="$(mountpoints_of "$out" | head -1)"
-        if [ -z "$MOUNTED" ] && mount | grep -qF " on $MNT "; then
+        # `rc=0` first: `wait ... || true` followed by `rc=$?` would
+        # report the status of `true`, not of the attach, and the line
+        # this feeds is evidence about whether the mount worked.
+        rc=0
+        wait "$pid" 2>/dev/null || rc=$?
+        # `head -1` closes the pipe, and a producer still writing into it
+        # takes SIGPIPE — under pipefail that is a fatal status for the
+        # assignment. Reading the first line is the intent either way.
+        MOUNTED="$(mountpoints_of "$out" | head -1 || true)"
+        # mount(8) reports the resolved mount point, and this work dir sits
+        # under /tmp, which is a symlink to /private/tmp on macOS - so the
+        # plist parse is tried first, and the fallback asks for the path
+        # the kernel would print rather than the one we asked for.
+        MNT_REAL="$MNT"
+        if [ -d "$MNT" ]; then
+            MNT_REAL="$(cd "$MNT" && pwd -P)"
+        fi
+        if [ -z "$MOUNTED" ] && mount | grep -qF " on $MNT_REAL "; then
             MOUNTED="$MNT"
         fi
         if [ -n "$MOUNTED" ]; then
@@ -416,13 +454,29 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     echo "--- display ---"
     DP_LIST="$WORK_DIR/displayplacer-list.txt"
     read_res() {
+        # The mode list is re-read here, never taken from the capture made
+        # before the move: that file was the read-back's only source, and a
+        # read-back of a file written before the change answers with the
+        # pre-change mode - the log said "display after: 1024x768" while the
+        # recording came out at the pinned 1920x1080, and the window section
+        # below then shrank Cura's window to fit a display that was not
+        # there.
+        #
+        # Both reads end in `head -1`, which closes the pipe while the
+        # producer is still writing: system_profiler's output easily
+        # overruns the pipe buffer, and the SIGPIPE status is fatal to
+        # the assignment under pipefail. Reading the first line is the
+        # intent either way.
+        if [ -n "$DP" ]; then
+            "$DP" list >"$DP_LIST" 2>&1 || true
+        fi
         local out=""
         if [ -n "$DP" ] && [ -s "$DP_LIST" ]; then
-            out="$(sed -n 's/.*Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' "$DP_LIST" | head -1)"
+            out="$(sed -n 's/.*Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' "$DP_LIST" | head -1 || true)"
             [ -n "$out" ] && { echo "$out"; return 0; }
         fi
         out="$(system_profiler SPDisplaysDataType 2>&1 |
-            sed -n 's/^ *Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' | head -1)"
+            sed -n 's/^ *Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' | head -1 || true)"
         echo "$out"
     }
     if [ -n "$DP" ]; then
@@ -503,17 +557,21 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     MM="$(printf '%s' "$BUNDLE_VER" | awk -F. 'NF >= 2 && $2 != "" { print $1 "." $2; exit }')"
     [ -n "$MM" ] || MM="$(printf '%s' "$CURA_VERSION" | awk -F. '{ print $1 "." $2 }')"
     echo "bundle version $BUNDLE_VER -> config dir $MM"
-    PREF_PY="$(find "$APP/Contents" -path '*/UM/Preferences.py' -print -quit 2>/dev/null)"
+    # `|| true` on every read below: a missing file makes the pipeline
+    # fail, and under errexit that ends the script at the read - before
+    # the sentence written for exactly this case ("the installed build did
+    # not give up its file-format versions") can be printed.
+    PREF_PY="$(find "$APP/Contents" -path '*/UM/Preferences.py' -print -quit 2>/dev/null || true)"
     CURA_PY="${PREF_PY%/UM/Preferences.py}"
     PREF_VER=""
     CS_VER=""
     IC_VER=""
     SET_VER=""
     if [ -n "$PREF_PY" ]; then
-        PREF_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$PREF_PY" | head -1)"
-        CS_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/ContainerStack.py" 2>/dev/null | head -1)"
-        IC_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/InstanceContainer.py" 2>/dev/null | head -1)"
-        SET_VER="$(sed -n 's/^ *SettingVersion *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/cura/CuraApplication.py" 2>/dev/null | head -1)"
+        PREF_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$PREF_PY" | head -1 || true)"
+        CS_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/ContainerStack.py" 2>/dev/null | head -1 || true)"
+        IC_VER="$(sed -n 's/^ *Version *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/UM/Settings/InstanceContainer.py" 2>/dev/null | head -1 || true)"
+        SET_VER="$(sed -n 's/^ *SettingVersion *= *\([0-9][0-9]*\).*/\1/p' "$CURA_PY/cura/CuraApplication.py" 2>/dev/null | head -1 || true)"
     fi
     echo "file-format versions read out of the installed build: preferences=${PREF_VER:-<unreadable>} stack=${CS_VER:-<unreadable>} instance=${IC_VER:-<unreadable>} setting=${SET_VER:-<unreadable>}"
     if [ -z "$PREF_VER" ] || [ -z "$CS_VER" ] || [ -z "$IC_VER" ] || [ -z "$SET_VER" ]; then
@@ -577,7 +635,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     cp -R "$FIXTURE_DIR/." "$CONFIG_DIR/" || die "could not copy the machine seed from $FIXTURE_DIR"
     # The machine the fixture seeds, read out of the fixture rather than
     # repeated here: the stack's own id is what cura.cfg must name.
-    MACHINE_CFG="$(find "$CONFIG_DIR/machine_instances" -name '*.global.cfg' -print -quit)"
+    MACHINE_CFG="$(find "$CONFIG_DIR/machine_instances" -name '*.global.cfg' -print -quit || true)"
     [ -n "$MACHINE_CFG" ] || die "the machine seed carries no machine_instances/*.global.cfg"
     MACHINE_FILE="$(basename "$MACHINE_CFG" .global.cfg)"
     MACHINE="$(sed -n 's/^id = //p' "$MACHINE_CFG" | head -1)"
@@ -629,6 +687,23 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     echo "  $SEED_FILES container files + cura.cfg (from $PREF_FIXTURE_DIR) under $CONFIG_DIR"
     echo "  build volume ${SEED_VOLUME:-<unset>} | setting_version $SET_VER | disabled_plugins=$IDS"
 
+    # The two-boot legs boot from a state the committed fixture is NOT:
+    # the first-install leg's first boot must be a machine that has never
+    # run the plugin, and the migration leg's first boot must still carry
+    # the v1 blob. The transform is the container leg's own
+    # (tests/harness/seed_variants.py), applied to this platform's config
+    # dir, and it fails a leg that would otherwise boot the fixture and
+    # prove nothing.
+    case "$SCENARIO" in
+        firstinstall) SEED_VARIANT=clean ;;
+        migration) SEED_VARIANT=premigration ;;
+        *) SEED_VARIANT="" ;;
+    esac
+    if [ -n "$SEED_VARIANT" ]; then
+        python3 "$ROOT/tests/harness/seed_variants.py" "$SEED_VARIANT" "$CONFIG_DIR" ||
+            die "could not apply the $SEED_VARIANT seed"
+    fi
+
     mkdir -p "$STASH"
     MOVED=""
     while IFS= read -r tree; do
@@ -661,7 +736,8 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         die "could not unzip $PACKAGE"
     cp -R "$WORK_DIR/pkg_stage/files/plugins/MoonrakerPrintFollower" "$PLUGIN_DIR/" ||
         die "the package carried no files/plugins/MoonrakerPrintFollower"
-    cp -R "$ROOT/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
+    cp -R "$ROOT/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver" ||
+        die "tests/harness/driver could not be staged as HarnessDriver"
     find "$PLUGIN_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
     [ -f "$PLUGIN_DIR/MoonrakerPrintFollower/plugin.json" ] ||
         die "the staged plugin has no plugin.json"
@@ -760,6 +836,13 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
             local wpos wsize
             wpos="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get position of window 1" 2>&1 || true)"
             wsize="$(osascript -e "tell application \"System Events\" to tell process \"$WPROC\" to get size of window 1" 2>&1 || true)"
+            # An osascript refusal answers with words - "Invalid index.
+            # (-1719)" - and `tr -dc '0-9-'` would keep the error code as
+            # if it were a coordinate, which the digits-only guard below
+            # accepts. An answer with a letter in it is no answer.
+            case "$wpos$wsize" in
+                *[A-Za-z]*) wpos=""; wsize="" ;;
+            esac
             WPX="$(printf '%s' "$wpos" | cut -d, -f1 | tr -dc '0-9-')"
             WPY="$(printf '%s' "$wpos" | cut -d, -f2 | tr -dc '0-9-')"
             WPW="$(printf '%s' "$wsize" | cut -d, -f1 | tr -dc '0-9-')"
@@ -842,6 +925,15 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         echo "export HARNESS_GEOMETRY='$HARNESS_GEOMETRY'"
         echo "export HARNESS_WINDOW='$HARNESS_WINDOW'"
         echo "export HARNESS_RUN_DIR='$ARTIFACT_DIR'"
+        # The two-boot legs relaunch the app between their boots, and the
+        # runner is the only process left to do it: the binary and the
+        # directory it must run in, both read back from the launch above.
+        echo "export HARNESS_CURA_BIN='$BIN'"
+        echo "export HARNESS_CURA_CWD='$(dirname "$BIN")'"
+        # Where Cura keeps its own log: the runner harvests it next to the
+        # evidence (there is no ui_test.sh on this host to do it), and a
+        # driver that never answered is read out of that file.
+        echo "export HARNESS_CURA_CONFIG='$CONFIG_DIR'"
         echo "export MPF_WORK_DIR='$WORK_DIR'"
         echo "export CURA_VERSION='$CURA_VERSION'"
         echo "export PLUGIN_VERSION='$PLUGIN_VERSION'"

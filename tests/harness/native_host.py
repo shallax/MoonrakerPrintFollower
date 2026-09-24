@@ -29,10 +29,12 @@ Three things genuinely differ between the platforms:
     -g that keyframe is up to the default 250-frame interval away
     (16.7 s at 15 fps), so a kill would lose everything after the last
     one. Linux stops its recorder gracefully and keeps its flags.
-  * LAUNCHING Cura and FINDING its window. Under Xvfb the harness
-    launches through the container and reads the window in-process
-    through the driver's Qt; the natives need the platform's own call
-    for each (System Events / the DWM frame rectangle).
+  * LAUNCHING Cura, FINDING its window and STOPPING it. Under Xvfb the
+    harness launches through the container and reads the window
+    in-process through the driver's Qt; the natives need the platform's
+    own call for each (System Events / the DWM frame rectangle), and
+    the same holds for the process itself — Windows has no pgrep, and
+    its absence reads as "still running" if it is not dispatched.
 """
 from __future__ import annotations
 
@@ -230,6 +232,43 @@ def parse_launch_pid(system, text):
         return None
     value = (text or "").strip()
     return int(value) if value.isdigit() else None
+
+
+# The app, by the name its process carries. pgrep matches the full
+# command line with the bracket so it can never match its own argv (the
+# harness's standing idiom); Windows has no pgrep, and Get-Process
+# knows the image name instead.
+_PROCESS_NAME = "UltiMaker-Cura"
+_PROCESS_MATCH = "UltiMaker-Cur[a]"
+
+
+def process_alive_argv(system, *, name=_PROCESS_NAME):
+    """The argv that exits 0 while Cura's process is alive.
+
+    Windows is the reason this exists: a bare `pgrep` raises OSError
+    there, which reads as "alive" and makes a clean quit look failed.
+    """
+    _checked(system)
+    if system == WINDOWS:
+        return _powershell("if (Get-Process -Name %s -ErrorAction SilentlyContinue) "
+                           "{ exit 0 } else { exit 1 }" % _quote(name))
+    return ["pgrep", "-f", _PROCESS_MATCH]
+
+
+def kill_command(system, *, name=_PROCESS_NAME):
+    """The argv that force-stops Cura, exiting 0 either way.
+
+    The two-boot legs need the first app GONE before the second one
+    starts: a survivor holds the config tree and the rendezvous file,
+    and the second boot would race it. The natives' own setup scripts
+    kill through the same two calls.
+    """
+    _checked(system)
+    if system == WINDOWS:
+        return _powershell(
+            "Get-Process -Name %s -ErrorAction SilentlyContinue | "
+            "Stop-Process -Force -ErrorAction SilentlyContinue; exit 0" % _quote(name))
+    return ["pkill", "-9", "-f", _PROCESS_MATCH]
 
 
 # ─── finding the window ──────────────────────────────────────────
