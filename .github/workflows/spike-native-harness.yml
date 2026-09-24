@@ -4059,10 +4059,46 @@ jobs:
               $scr.Width, $scr.Height, $scr.X, $scr.Y, $vsNow.Width, $vsNow.Height, $vsNow.X, $vsNow.Y)
           W "the harness geometry this run is pinned to: $wantGeo"
           $displayWhy = 'not attempted'
+          # Set-DisplayResolution ships with the image and is what a working
+          # hosted workflow uses to reach 1920x1080: it throws unless the
+          # screen really reports that size afterwards. It is tried BEFORE the
+          # DEVMODE route below, which reported "0 modes" for an adapter that
+          # demonstrably has them - the mode list was never empty, the probe
+          # was.
+          $movedByCmdlet = $false
+          if (($wantW -gt 0) -and -not (($scr.Width -eq $wantW) -and ($scr.Height -eq $wantH))) {
+            $setCmd = Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue
+            if ($setCmd) {
+              W ("Set-DisplayResolution available from {0}" -f $setCmd.Source)
+              $getCmd = Get-Command Get-DisplayResolution -ErrorAction SilentlyContinue
+              if ($getCmd) { W ("display before (Get-DisplayResolution): {0}" -f ((Get-DisplayResolution) -join ' ')) }
+              try {
+                Set-DisplayResolution -Width $wantW -Height $wantH -Force -ErrorAction Stop
+                Start-Sleep -Seconds 3
+                $scrRe = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $vsRe = [System.Windows.Forms.SystemInformation]::VirtualScreen
+                W ("display after: primary {0}x{1}; virtual screen {2}x{3}" -f $scrRe.Width, $scrRe.Height, $vsRe.Width, $vsRe.Height)
+                if ($getCmd) { W ("display after (Get-DisplayResolution): {0}" -f ((Get-DisplayResolution) -join ' ')) }
+                if (($scrRe.Width -eq $wantW) -and ($scrRe.Height -eq $wantH)) {
+                  $movedByCmdlet = $true
+                  $displayWhy = ("moved from {0}x{1} by Set-DisplayResolution" -f $scr.Width, $scr.Height)
+                } else {
+                  $displayWhy = ("Set-DisplayResolution returned but the screen reports {0}x{1}" -f $scrRe.Width, $scrRe.Height)
+                }
+              } catch {
+                $displayWhy = ("Set-DisplayResolution failed: {0}" -f $_.Exception.Message)
+                W "Set-DisplayResolution failed: $($_.Exception.Message)"
+              }
+            } else {
+              $displayWhy = 'Set-DisplayResolution is not on this image, so the DEVMODE route below is the only one left'
+            }
+          }
           if ($wantW -le 0) {
             $displayWhy = "the pinned geometry '$wantGeo' is not WxH"
           } elseif (($scr.Width -eq $wantW) -and ($scr.Height -eq $wantH)) {
             $displayWhy = 'already at the pinned geometry'
+          } elseif ($movedByCmdlet) {
+            # Set-DisplayResolution moved it; $displayWhy already says so
           } elseif (-not $nativeOk) {
             $displayWhy = 'the native helper did not compile, so no mode can be set'
           } else {
@@ -4087,6 +4123,13 @@ jobs:
                 $i = 0
                 while ($i -lt 4096) {
                   $cand = New-Object MpfDevMode
+                  # EnumDisplaySettings requires dmSize to hold sizeof(DEVMODE)
+                  # on entry and returns FALSE at once when it is zero, so a
+                  # zeroed struct reports an adapter with no modes at all -
+                  # which is exactly the "0 modes" this probe printed for a
+                  # display that demonstrably has them.
+                  $cand.dmSize = 220
+                  $cand.dmDriverExtra = 0
                   if (-not [SpikeNative]::EnumDisplaySettings($null, $i, [ref]$cand)) { break }
                   $modes++
                   if (($cand.dmPelsWidth -eq $wantW) -and ($cand.dmPelsHeight -eq $wantH) -and ($cand.dmBitsPerPel -ge 32)) {
@@ -4100,6 +4143,8 @@ jobs:
                   $displayWhy = ("no {0}x{1} mode in this adapter's list" -f $wantW, $wantH)
                 } else {
                   # DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+                  $found.dmSize = 220
+                  $found.dmDriverExtra = 0
                   $found.dmFields = 0x00040000 -bor 0x00080000 -bor 0x00100000 -bor 0x00400000
                   $rc = [SpikeNative]::ChangeDisplaySettings([ref]$found, 0)
                   W ("ChangeDisplaySettings({0}x{1}, dynamic) returned {2} (0 = DISP_CHANGE_SUCCESSFUL)" -f $wantW, $wantH, $rc)
