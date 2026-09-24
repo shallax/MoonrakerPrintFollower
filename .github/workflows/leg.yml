@@ -1,0 +1,62 @@
+# One gate leg, on demand.
+#
+# The release matrix runs 51 legs and takes about forty-five minutes, so
+# reading one of them - "is this the commit that broke it, or is it
+# flaky" - used to cost a whole matrix to answer. This runs one unit on
+# one platform, and it calls the SAME reusable workflow the release gate
+# calls, so a leg read here is a leg read there: there is no second copy
+# of the steps to drift.
+#
+# It takes a Cura version of its own, which the release gate cannot: the
+# gate is pinned to the matrix's versions, and this exists precisely to
+# ask what one unit does on a version the gate does not run.
+name: Leg
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "the platform to run on"
+        type: choice
+        options:
+          - macos-latest
+          - ubuntu-26.04
+          - windows-latest
+        default: macos-latest
+      unit:
+        description: "the unit, as the release matrix names it"
+        type: string
+        required: true
+        default: "group-preview"
+      cura:
+        description: "the Cura version to install and run"
+        type: string
+        required: true
+        default: "5.13.0"
+      mode:
+        description: "the runner mode: suite, firstinstall, migration..."
+        type: string
+        default: "suite"
+      group:
+        description: "the scenario group, for a suite mode"
+        type: string
+        default: "preview"
+      budget:
+        description: "the unit's budget in minutes"
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  leg:
+    uses: ./.github/workflows/gate-leg.yml
+    with:
+      os: ${{ inputs.os }}
+      unit: ${{ inputs.unit }}
+      # A one-unit declaration in the gate's own shape, so the reusable
+      # workflow reads it exactly as it reads the release matrix's.
+      UNITS: >-
+        {"${{ inputs.unit }}": {"mode": "${{ inputs.mode }}", "budget": ${{ inputs.budget }}, "cura": "${{ inputs.cura }}", "group": "${{ inputs.group }}"}}
