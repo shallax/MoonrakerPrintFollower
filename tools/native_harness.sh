@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The macOS half of the UI harness host: install Cura, seed its config,
-# move the display, stage the plugin and the driver, launch Cura and
-# leave it running so tests/harness/runner.py can drive it.
+# move the display, stage the plugin and the driver, start the simulator
+# the plugin talks to, launch Cura and leave both running so
+# tests/harness/runner.py can drive them.
 #
 # Usage:
 #   tools/native_harness.sh macos <cura-version> <scenario> [options]
@@ -479,6 +480,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
             sed -n 's/^ *Resolution: *\([0-9][0-9]*\) *x *\([0-9][0-9]*\).*/\1x\2/p' | head -1 || true)"
         echo "$out"
     }
+    read_id() {
+        # Stops at its first hit: a second online display would otherwise
+        # contribute its id to the same field, and awk ends the read itself
+        # where `head -1` would hand the producer a SIGPIPE that pipefail
+        # makes fatal to the assignment.
+        awk '/Persistent screen id:/ { sub(/^.*Persistent screen id: */, ""); print; exit }' \
+            "$DP_LIST" 2>/dev/null || true
+    }
     if [ -n "$DP" ]; then
         "$DP" list >"$DP_LIST" 2>&1 || true
     else
@@ -493,37 +502,67 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         DISPLAY_WHY="no displayplacer, so the display cannot be moved"
         warn "the display is not at $HARNESS_GEOMETRY and cannot be moved: the recording will be another size and the window pin may not fit"
     else
-        DPID="$(sed -n 's/.*Persistent screen id: *\([^ ]*\).*/\1/p' "$DP_LIST" | head -1)"
-        DPHZ="$(sed -n 's/.*hz:\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1)"
-        [ -n "$DPHZ" ] || DPHZ="$(sed -n 's/.*Hertz: *\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1)"
+        # The mode list is polled before it is parsed. This section runs
+        # seconds into the job, and a hosted runner's display can still be
+        # coming up then: the first live macOS run read an empty list and
+        # reported it as "no persistent screen id" while the same image had
+        # moved the display minutes later in the spike. An empty read is not
+        # the same answer as a display that refuses to move.
+        DPID=""
+        for _ in $(seq 1 60); do
+            DPID="$(read_id)"
+            [ -n "$DPID" ] && break
+            sleep 2
+            "$DP" list >"$DP_LIST" 2>&1 || true
+        done
+        DPHZ="$(sed -n 's/.*hz:\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1 || true)"
+        [ -n "$DPHZ" ] || DPHZ="$(sed -n 's/.*Hertz: *\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1 || true)"
         [ -n "$DPHZ" ] || DPHZ=60
         # The colour depth must be one this display actually offers:
         # asking for one it does not is an outright refusal ("could not
         # find res:1920x1080 hz:60 color_depth:8"), so it is read from
         # the mode list for the target resolution, and the current mode's
         # depth is only the fallback.
-        DPDEPTH="$(sed -n "s/.*res:${WANT_W}x${WANT_H} hz:[0-9][0-9]* color_depth:\([0-9][0-9]*\).*/\1/p" "$DP_LIST" | head -1)"
-        [ -n "$DPDEPTH" ] || DPDEPTH="$(sed -n 's/^Color Depth: *\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1)"
+        DPDEPTH="$(sed -n "s/.*res:${WANT_W}x${WANT_H} hz:[0-9][0-9]* color_depth:\([0-9][0-9]*\).*/\1/p" "$DP_LIST" | head -1 || true)"
+        [ -n "$DPDEPTH" ] || DPDEPTH="$(sed -n 's/^Color Depth: *\([0-9][0-9]*\).*/\1/p' "$DP_LIST" | head -1 || true)"
         [ -n "$DPDEPTH" ] || DPDEPTH=7
-        if [ -z "$DPID" ]; then
-            DISPLAY_WHY="displayplacer reported no persistent screen id"
-        else
-            echo "setting ${WANT_W}x${WANT_H} on id $DPID at ${DPHZ} Hz color_depth:$DPDEPTH (was ${DISPLAY_BEFORE:-unreadable})"
-            DP_OUT="$("$DP" "id:$DPID res:${WANT_W}x${WANT_H} hz:$DPHZ color_depth:$DPDEPTH" 2>&1)" && DP_RC=0 || DP_RC=$?
+        # displayplacer defaults to the only active screen when no id is
+        # given, so the id-less form is the second attempt rather than a
+        # dead end: it is what moves the display when the list cannot be
+        # parsed at all.
+        DP_SPEC="res:${WANT_W}x${WANT_H} hz:${DPHZ} color_depth:${DPDEPTH}"
+        [ -n "$DPID" ] && DP_SPEC="id:$DPID $DP_SPEC"
+        echo "setting ${WANT_W}x${WANT_H} at ${DPHZ} Hz color_depth:$DPDEPTH on ${DPID:-the only active screen} (was ${DISPLAY_BEFORE:-unreadable})"
+        DP_OUT="$("$DP" "$DP_SPEC" 2>&1)" && DP_RC=0 || DP_RC=$?
+        [ -n "$DP_OUT" ] && echo "displayplacer output: $DP_OUT"
+        if [ "$DP_RC" -ne 0 ] && [ -n "$DPID" ]; then
+            echo "displayplacer refused the id (exit $DP_RC); retrying without one"
+            DP_OUT="$("$DP" "res:${WANT_W}x${WANT_H} hz:${DPHZ} color_depth:${DPDEPTH}" 2>&1)" && DP_RC=0 || DP_RC=$?
             [ -n "$DP_OUT" ] && echo "displayplacer output: $DP_OUT"
-            # A refusal must not be reported as a success - the set used
-            # to exit 1 while the log said it had moved the display.
-            if [ "$DP_RC" -eq 0 ]; then
-                DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H} color_depth:$DPDEPTH"
-                sleep 3
-            else
-                DISPLAY_WHY="displayplacer REFUSED res:${WANT_W}x${WANT_H} (exit $DP_RC): ${DP_OUT:-no output}"
-                warn "$DISPLAY_WHY"
-            fi
+        fi
+        # A refusal must not be reported as a success - the set used
+        # to exit 1 while the log said it had moved the display.
+        if [ "$DP_RC" -eq 0 ]; then
+            DISPLAY_WHY="displayplacer set res:${WANT_W}x${WANT_H} color_depth:$DPDEPTH"
+            sleep 3
+        else
+            DISPLAY_WHY="displayplacer REFUSED res:${WANT_W}x${WANT_H} (exit $DP_RC): ${DP_OUT:-no output}"
+            warn "$DISPLAY_WHY"
         fi
     fi
     DISPLAY_AFTER="$(read_res)"
     echo "display after: ${DISPLAY_AFTER:-<unreadable>} ($DISPLAY_WHY)"
+    if [ -z "$DISPLAY_AFTER" ]; then
+        # An unreadable display is the difference between a recording of the
+        # pinned size and one of something else, so the raw reads are kept:
+        # without them the only fact a failed run leaves behind is that the
+        # read found nothing, which is not a diagnosis.
+        echo "--- raw display reads ---"
+        echo "displayplacer list ($DP_LIST):"
+        sed -n '1,40p' "$DP_LIST" 2>/dev/null || true
+        echo "system_profiler SPDisplaysDataType:"
+        system_profiler SPDisplaysDataType 2>&1 | sed -n '1,40p' || true
+    fi
 
     # --- 5. seed Cura's config -------------------------------------------
     # Two jobs, one writer.
@@ -745,7 +784,51 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         die "the staged driver has no plugin.json"
     echo "staged $PLUGIN_DIR/MoonrakerPrintFollower and $PLUGIN_DIR/HarnessDriver"
 
-    # --- 7. launch --------------------------------------------------------
+    # --- 7. the plugin's network peer -------------------------------------
+    # The seeded machine records point at 127.0.0.1:7125, and the runner's
+    # own /harness/* calls go to the same port. The simulator has to be up
+    # BEFORE Cura boots - the plugin connects during its own startup, and
+    # the runner's boot gate waits for the discovery chain that needs it.
+    # tools/ui_test.sh starts it on the Linux leg; nothing did here, and
+    # every native leg died on the runner's first simulator call with the
+    # port refused.
+    SIM_PORT=7125
+    PYTHON="$(command -v python3 2>/dev/null || echo python3)"
+    if [ "$SCENARIO" = "real" ]; then
+        note "real mode: no simulator - the seeded record points at the real host"
+    else
+        # A stale instance from an earlier run would keep serving old code.
+        pkill -f 'simulator_serve[.]py' 2>/dev/null || true
+        sleep 0.5
+        if ! "$PYTHON" -c 'import tornado' >/dev/null 2>&1; then
+            note "tornado is absent - installing it (the simulator's only dependency)"
+            "$PYTHON" -m pip install --quiet --disable-pip-version-check tornado || true
+        fi
+        # The checkout's own simulator, not a staged copy: it is the version
+        # under test and this host has the tree.
+        nohup "$PYTHON" "$ROOT/tests/harness/simulator_serve.py" "$SIM_PORT" \
+            >"$WORK_DIR/simulator.log" 2>&1 &
+        SIM_UP="no"
+        for _ in $(seq 1 50); do
+            if "$PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$SIM_PORT/ledger', timeout=2)" >/dev/null 2>&1; then
+                SIM_UP="yes"
+                break
+            fi
+            sleep 0.2
+        done
+        # Readiness by check, not by luck, and a failure here is fatal: every
+        # scenario would otherwise run against a dead peer and fail somewhere
+        # far from the cause. The log goes to the job's output with the
+        # verdict - the file itself is not part of the uploaded evidence.
+        if [ "$SIM_UP" != yes ]; then
+            warn "--- $WORK_DIR/simulator.log (tail) ---"
+            tail -20 "$WORK_DIR/simulator.log" 2>/dev/null || true
+            die "the simulator never answered on 127.0.0.1:$SIM_PORT"
+        fi
+        note "simulator up on 127.0.0.1:$SIM_PORT (log: $WORK_DIR/simulator.log)"
+    fi
+
+    # --- 8. launch --------------------------------------------------------
     echo
     echo "--- launching Cura ---"
     # A stale instance shares the config tree and the port file, and
@@ -805,7 +888,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     fi
     note "driver up: $RPC_FILE"
 
-    # --- 8. keep the window inside the capture area -----------------------
+    # --- 9. keep the window inside the capture area -----------------------
     # The capture is the whole display, so a window hanging off the edge
     # is CLIPPED and nothing in the recording says so. If it cannot fit
     # at its pinned size it is SHRUNK to fit: a complete smaller window
@@ -906,7 +989,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         esac
     fi
 
-    # --- 9. hand over to the runner ---------------------------------------
+    # --- 10. hand over to the runner --------------------------------------
     # The mode the third argument names: a runner mode is used as it
     # stands, anything else is a suite group.
     RUNNER_MODE="suite"
@@ -917,7 +1000,6 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         scenario[0-9]|scenario1[01]) RUNNER_MODE="$SCENARIO" ;;
         *) RUNNER_GROUP="$SCENARIO" ;;
     esac
-    PYTHON="$(command -v python3 2>/dev/null || echo python3)"
     ENV_FILE="$WORK_DIR/harness_env.sh"
     {
         echo "# source this before running tests/harness/runner.py"

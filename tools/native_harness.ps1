@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 # The Windows half of the UI harness host: install Cura, seed its config,
-# move the display, stage the plugin and the driver, launch Cura and leave
-# it running so tests/harness/runner.py can drive it.
+# move the display, stage the plugin and the driver, start the simulator the
+# plugin talks to, launch Cura and leave both running so tests/harness/runner.py
+# can drive them.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
@@ -459,6 +460,38 @@ function Get-PythonVersion([string]$Exe) {
     return ((& $Exe --version 2>&1) -join ' ').Trim()
 }
 
+# The simulator's dependency and its readiness probe. Both answer by state,
+# and both relax the preference for the same reason: pip's progress and a
+# missing module's traceback arrive on stderr, which the redirect turns into
+# a terminating error under 'Stop'. Relaxed inside the functions only.
+function Test-PyModule([string]$Module) {
+    $ErrorActionPreference = 'Continue'
+    & python -c "import $Module" 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Install-PyModule([string]$Module) {
+    $ErrorActionPreference = 'Continue'
+    & python -m pip install --quiet --disable-pip-version-check $Module 2>&1 |
+        Select-Object -Last 2 | ForEach-Object { Write-Log "  $_" }
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Test-Simulator([int]$Port) {
+    # A .NET request rather than Invoke-WebRequest: a refused connection is
+    # the expected answer here, and this turns it into $false without the
+    # cmdlet's error records.
+    try {
+        $req = [System.Net.WebRequest]::Create("http://127.0.0.1:$Port/ledger")
+        $req.Timeout = 2000
+        $res = $req.GetResponse()
+        $res.Close()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 Write-Log ""
 Write-Log "--- the tools the rest of the run needs ---"
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
@@ -623,20 +656,38 @@ if ($mesaOk) {
             Write-Warn "could not place $f beside Cura's executable: $($_.Exception.Message)"
         }
     }
-    # System32 is the file Cura's desktop GL path actually loads.
+    # System32 is the file Cura's desktop GL path actually loads: it calls
+    # AA_UseDesktopOpenGL and blanks QT_OPENGL_DLL before PyQt6 is imported,
+    # so neither the environment nor a copy beside the executable is consulted.
+    # That file is owned by TrustedInstaller, and a plain copy is refused
+    # (the first live Windows leg got "Access to the path is denied" and Cura
+    # then hung on GDI Generic OpenGL 1.1 with a dialog); ownership and a
+    # write grant come first, then the bytes, verified by hash rather than
+    # assumed.
     $sysGl = Join-Path $env:SystemRoot 'System32\opengl32.dll'
     $mesaGl = Join-Path $MesaDir 'opengl32.dll'
     if (Test-Path -LiteralPath $sysGl) {
+        $mesaHash = (Get-FileHash -LiteralPath $mesaGl -Algorithm SHA256).Hash.ToLower()
+        $deployedHash = ''
         try {
+            & takeown.exe /f "$sysGl" 2>&1 | Select-Object -Last 2 | ForEach-Object { Write-Log "  $_" }
+            Write-Log "takeown exit: $LASTEXITCODE"
+            & icacls.exe "$sysGl" /grant '*S-1-5-32-544:F' 2>&1 | Select-Object -Last 2 | ForEach-Object { Write-Log "  $_" }
+            Write-Log "icacls exit: $LASTEXITCODE"
             Copy-Item -LiteralPath $mesaGl -Destination $sysGl -Force -ErrorAction Stop
+            Write-Log "placed system-wide: $sysGl"
             foreach ($f in @('libgallium_wgl.dll', 'dxil.dll')) {
                 $src = Join-Path $MesaDir $f
-                if (Test-Path -LiteralPath $src) {
+                if (-not (Test-Path -LiteralPath $src)) { continue }
+                try {
                     Copy-Item -LiteralPath $src -Destination (Join-Path $env:SystemRoot ('System32\' + $f)) -Force -ErrorAction Stop
+                    Write-Log "placed system-wide: $env:SystemRoot\System32\$f"
+                } catch {
+                    Write-Warn "could not place System32\$f ($($_.Exception.Message)) - Mesa resolves it beside Cura's executable or on PATH instead"
                 }
             }
             $deployedHash = (Get-FileHash -LiteralPath $sysGl -Algorithm SHA256).Hash.ToLower()
-            if ($deployedHash -eq (Get-FileHash -LiteralPath $mesaGl -Algorithm SHA256).Hash.ToLower()) {
+            if ($deployedHash -eq $mesaHash) {
                 $mesaWhy = "$mesaWhy; Mesa is deployed as System32\opengl32.dll (sha256 verified)"
             } else {
                 $mesaWhy = "$mesaWhy; the System32 replacement is NOT Mesa (sha256 $deployedHash)"
@@ -1142,7 +1193,59 @@ foreach ($name in 'MoonrakerPrintFollower', 'HarnessDriver') {
 }
 Write-Log "staged $PluginDir\MoonrakerPrintFollower and $PluginDir\HarnessDriver"
 
-# --- 8. launch ------------------------------------------------------------
+# --- 8. the plugin's network peer -----------------------------------------
+# The seeded machine records point at 127.0.0.1:7125, and the runner's own
+# /harness/* calls go to the same port. The simulator has to be up BEFORE
+# Cura boots - the plugin connects during its own startup, and the runner's
+# boot gate waits for the discovery chain that needs it. tools/ui_test.sh
+# starts it on the Linux leg; nothing did here, and every native leg died on
+# the runner's first simulator call with the port refused.
+$SimPort = 7125
+if (-not $pythonOk) { Fail "the simulator needs python, and this host has no working interpreter" }
+if ($Scenario -eq 'real') {
+    Write-Log "real mode: no simulator - the seeded record points at the real host"
+} else {
+    # A stale instance from an earlier run would keep serving old code. The
+    # match is on the command line, which is the only place the script's name
+    # appears.
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like '*simulator_serve.py*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 500
+    if (-not (Test-PyModule 'tornado')) {
+        Write-Log "tornado is absent - installing it (the simulator's only dependency)"
+        if (-not (Install-PyModule 'tornado')) {
+            Write-Warn "tornado could not be installed - the simulator will not start"
+        }
+    }
+    # The checkout's own simulator, not a staged copy: it is the version
+    # under test and this host has the tree.
+    $simScript = Join-Path $Root 'tests\harness\simulator_serve.py'
+    $simDir = Join-Path $Root 'tests\harness'
+    $simLog = Join-Path $WorkDir 'simulator.log'
+    $simErrLog = Join-Path $WorkDir 'simulator.err.log'
+    $simProc = Start-Process -FilePath $py.Source -ArgumentList @($simScript, "$SimPort") `
+        -WorkingDirectory $simDir -PassThru -RedirectStandardOutput $simLog -RedirectStandardError $simErrLog
+    Write-Log "simulator: $($py.Source) $simScript $SimPort (pid $($simProc.Id)), log $simLog"
+    $simUp = $false
+    foreach ($i in 1..50) {
+        if (Test-Simulator $SimPort) { $simUp = $true; break }
+        Start-Sleep -Milliseconds 200
+    }
+    # Readiness by check, not by luck, and a failure here is fatal: every
+    # scenario would otherwise run against a dead peer and fail somewhere far
+    # from the cause. The log goes to the job's output with the verdict - the
+    # file itself is not part of the uploaded evidence.
+    if (-not $simUp) {
+        Write-Warn "--- $simLog (tail) ---"
+        if (Test-Path -LiteralPath $simLog) { Get-Content -LiteralPath $simLog -Tail 20 | ForEach-Object { Write-Warn "  $_" } }
+        if (Test-Path -LiteralPath $simErrLog) { Get-Content -LiteralPath $simErrLog -Tail 20 | ForEach-Object { Write-Warn "  $_" } }
+        Fail "the simulator never answered on 127.0.0.1:$SimPort"
+    }
+    Write-Log "simulator up on 127.0.0.1:$SimPort"
+}
+
+# --- 9. launch ------------------------------------------------------------
 Write-Log ""
 Write-Log "--- launching Cura ---"
 # A stale instance shares the config tree and the port file, and fights over
@@ -1223,7 +1326,7 @@ if (-not $rpcFile) {
 }
 Write-Log "driver up: $rpcFile (after $([int]((Get-Date) - $started).TotalSeconds)s)"
 
-# --- 9. keep the window inside the capture area ---------------------------
+# --- 10. keep the window inside the capture area --------------------------
 # The capture is the whole display, so a window hanging off the edge is
 # CLIPPED and nothing in the recording says so. If it cannot fit at its
 # pinned size it is SHRUNK to fit: a complete smaller window is usable
@@ -1370,7 +1473,7 @@ if (-not $nativeOk) {
     }
 }
 
-# --- 10. hand over to the runner -----------------------------------------
+# --- 11. hand over to the runner -----------------------------------------
 # The mode the -Scenario argument names: a runner mode is used as it stands,
 # anything else is a suite group.
 $RunnerMode = 'suite'
