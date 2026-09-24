@@ -3456,8 +3456,14 @@ def suite_step(step):
         # an answered dialog.
         results = reply.get("results") or []
         note = "answered" if not results else f"answered with code {results[0]}"
-        if not reply.get("ok") and reply.get("error") == "no QMessageBox up":
-            note = f"no box within {reply.get('waited_s')}s"
+        if not reply.get("ok"):
+            # The driver's error NAMES what it saw, which is the whole
+            # diagnosis when the prompt never arrives: a bare "answered"
+            # here hid "no box titled 'Moonraker Print Follower' (saw
+            # [...])" behind a word that reads like success.
+            note = str(reply.get("error") or "not answered")
+            if reply.get("titles"):
+                note += f" · up: {reply['titles']}"
         return reply.get("ok") is True, f"the {button} on the plugin's QMessageBox", note
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])
