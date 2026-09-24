@@ -210,9 +210,20 @@ jobs:
           # fallback. The push itself is gated to dispatch/tag runs,
           # where the token can write packages.
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
-          if docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} >/dev/null 2>&1; then
-            docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
+          # The sha tag exists only for runs that pushed one, and the push is
+          # gated to non-PR runs - so on a PR that pull could only ever fail,
+          # and every Linux leg fell through to a docker build that runs
+          # apt-get against the live archives. One archive hiccup then killed
+          # a leg before it ran anything. :latest is published by every
+          # dispatch/tag run, so it is tried before building, and the build
+          # stays the last resort it was meant to be.
+          if docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" mpf-cura-harness
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" >/dev/null 2>&1; then
+            echo "pulled the published :latest harness image (no image for this sha)"
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" mpf-cura-harness
           else
+            echo "no published harness image was reachable - building from tools/harness, which needs the apt archive"
             docker build -q -t mpf-cura-harness tools/harness
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
