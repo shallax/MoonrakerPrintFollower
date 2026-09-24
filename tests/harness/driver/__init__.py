@@ -1353,18 +1353,46 @@ class HarnessServer(QObject):
                 # were going red. qWait DRIVES the loop, which is the
                 # difference between waiting for the box and waiting out
                 # the timeout with the box still unbuilt.
-                deadline = time.monotonic() + float(request.get("wait_s", 10.0))
-                boxes = []
+                # WAIT for THE box, pumping the loop, and match it by
+                # title. Both halves are load-bearing:
+                #
+                # * Waiting, because the plugin defers its prompt -
+                #   confirm_replace switches the stage and only then arms
+                #   QTimer.singleShot(0, ask) - so the box opens a turn or
+                #   more after the click that asked for it. Reading the
+                #   tree once made the step racy, and on the macOS legs
+                #   (slowest stage switch, software renderer) the gap is
+                #   widest.
+                # * Pumping (qWait), because a plain sleep never lets the
+                #   deferred prompt be built: the wait would time out every
+                #   time and turn a flake into a guaranteed failure.
+                # * The title, because answering ANY visible QMessageBox is
+                #   how this failed silently: the suite's step reported ok
+                #   with code 16384 while the plugin never wrote its
+                #   `answer=` line - the driver had answered some OTHER box
+                #   that happened to carry a Yes button, and the plugin's
+                #   own prompt opened after the call had already returned.
+                #   The plugin titles its box (CuraIntegration: QMessageBox
+                #   .question(None, "Moonraker Print Follower", ...)), which
+                #   is the one selector that says whose dialog this is.
+                wanted_title = str(request.get("title") or "")
+                deadline = time.monotonic() + float(request.get("wait_s", 15.0))
+                boxes, seen = [], []
                 while True:
-                    boxes = [w for w in QApplication.topLevelWidgets()
-                             if isinstance(w, QMessageBox) and w.isVisible()]
+                    up = [w for w in QApplication.topLevelWidgets()
+                          if isinstance(w, QMessageBox) and w.isVisible()]
+                    seen = [w.windowTitle() for w in up]
+                    boxes = [w for w in up if not wanted_title
+                             or wanted_title.lower() in (w.windowTitle() or "").lower()]
                     if boxes or time.monotonic() >= deadline:
                         break
                     qtest.QTest.qWait(100)
                 if not boxes:
                     return {"id": request_id, "ok": False,
-                            "error": "no QMessageBox up",
-                            "waited_s": round(float(request.get("wait_s", 10.0)), 1)}
+                            "error": ("no QMessageBox up" if not seen else
+                                      f"no box titled {wanted_title!r} (saw {seen})"),
+                            "waited_s": round(float(request.get("wait_s", 15.0)), 1),
+                            "titles": seen}
                 clicked = 0
                 results = []
                 for box in boxes:

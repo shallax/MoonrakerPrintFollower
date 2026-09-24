@@ -153,10 +153,23 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertLess(handler.index("qWait("), handler.index("button.click()"),
                         "the wait must come before the click")
         self.assertIn('request.get("wait_s"', handler)
+        # And it must answer THE box, not any box: matching by title is
+        # what stops the driver answering a stray dialog while the
+        # plugin's own prompt opens after the call has returned.
+        self.assertIn('request.get("title"', handler)
+        self.assertIn("windowTitle()", handler)
         runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner.py")
         with open(runner, encoding="utf-8") as handle:
             runner_source = handle.read()
         self.assertIn('"wait_s": float(step.get("wait_s", 15.0))', runner_source)
+        self.assertIn('"title": step.get("title", "Moonraker Print Follower")',
+                      runner_source)
+        # The title the runner defaults to is the one the plugin uses.
+        cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "plugins", "CuraIntegration.py")
+        with open(cura, encoding="utf-8") as handle:
+            self.assertIn('QMessageBox.question(None, "Moonraker Print Follower"',
+                          handle.read())
         self.assertNotIn("scene.x() + item.width() / 2", source)
         self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
                       source)

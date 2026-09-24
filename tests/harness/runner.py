@@ -3443,6 +3443,12 @@ def suite_step(step):
         # and a load that never ran.
         button = step.get("button", "Yes")
         reply = rpc({"id": 1, "cmd": "confirm_box", "button": button,
+                     # The plugin titles its prompt, and the title is what
+                     # says whose dialog this is: answering any visible
+                     # QMessageBox let a leg report ok with code 16384
+                     # while the plugin never wrote its `answer=` line,
+                     # because the driver had answered another box.
+                     "title": step.get("title", "Moonraker Print Follower"),
                      "wait_s": float(step.get("wait_s", 15.0))})
         time.sleep(0.5)
         # The code the plugin reads is part of the proof: a box that
