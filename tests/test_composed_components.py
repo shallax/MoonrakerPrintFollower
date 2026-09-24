@@ -3365,6 +3365,43 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
             model._nav_wake(surface, deadline)
 
     @staticmethod
+    def _await_prefix_job(surface, layer_number, final_split, qt, timeout=15.0):
+        """Await the prefix job a demand started, by its TOKEN.
+
+        `surface.tokens` is keyed by the LAYER NUMBER — the same key as
+        `surface.layers`, whose VALUE is the PlateLayer wrapper
+        (`wrapped = surface.layers.get(layer)` in _schedule_surface). The
+        token is bumped when a job is submitted and popped when it
+        commits, so its disappearance is the completion signal;
+
+            layer = surface.layers[5]      # a PlateLayer
+            surface.tokens.get(layer)      # ALWAYS None — wrong key
+
+        answers None immediately, which skips the wait and passes the
+        completion assertion unconditionally.
+
+        Absence alone is not completion, so this watches the TRANSITION:
+        a token seen pending for this layer must be gone. A demand that
+        needs no render — the split is already current — never assigns
+        one, and is accepted as such rather than waited on. A DISCARDED
+        job leaves its token behind (_raster_committed returns before the
+        pop on that path), so this times out and the caller fails loudly
+        instead of reading a discard as a commit.
+        """
+        deadline = time.monotonic() + timeout
+        seen_pending = False
+        while time.monotonic() < deadline:
+            qt.events(6)
+            if surface.tokens.get(layer_number) is not None:
+                seen_pending = True
+                continue
+            if seen_pending:
+                return True                      # the watched job committed
+            if surface.layers[layer_number].prefixSplit == final_split:
+                return True                      # already current: no render due
+        return False
+
+    @staticmethod
     def _drain_job(model, surface, qt, timeout=400):
         for _ in range(timeout):
             qt.events(6)
@@ -3517,9 +3554,10 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # after the advance at all; taking the max then respects a
         # deadline armed by whatever did commit.
         self._drain_job(model, surface, self.qt)
-        layer = surface.layers[5]
+        layer_number = 5
+        wrapped = surface.layers[layer_number]
         clock.t = max(clock.t + 5.0,
-                      getattr(layer, "_prefix_checkpoint_at", 0.0))
+                      getattr(wrapped, "_prefix_checkpoint_at", 0.0))
         # The final demand, on the frozen split. Its completion is awaited
         # by the layer's TOKEN — bumped when a job is submitted and popped
         # when it commits — not by a render-start count (which cannot say
@@ -3527,15 +3565,14 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # in the gap before a job is submitted). A split that is already
         # current needs no render, and then no token is pending either.
         model._qt_window(surface, {"prev": None, "current": payload,
-                                   "next": None}, 5, "motion index", final_split)
+                                   "next": None}, layer_number, "motion index",
+                             final_split)
         self._fire_due_wakes(model, armed, clock)
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline and surface.tokens.get(layer) is not None:
-            self.qt.events(6)
-        self.assertIsNone(surface.tokens.get(layer),
-                          "the final checkpoint's render never completed")
+        self.assertTrue(
+            self._await_prefix_job(surface, layer_number, final_split, self.qt),
+            "the final checkpoint's render never completed")
         self._drain_job(model, surface, self.qt)
-        wrapped = surface.layers[5]
+        wrapped = surface.layers[layer_number]
         self.assertGreater(wrapped.prefixSplit, 0,
                            "the attached prefix never checkpointed")
         self.assertEqual(wrapped.prefixSplit, final_split,
@@ -3571,13 +3608,21 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         real_prefix = module.render_layer_prefix
         hold = {"armed": False, "used": False}
         gate = threading.Event()
+        reached = threading.Event()
+        # Always release: a failed assertion above must not leave a
+        # worker parked on the gate for the rest of the run.
+        self.addCleanup(gate.set)
 
         def gated_prefix(payload_arg, plot, view, split, **kwargs):
             # Hold the first prefix render submitted after the polls —
             # whichever split it is for; the cadence decides when one is
-            # wanted, so naming a split here would hold nothing.
+            # wanted, so naming a split here would hold nothing. The
+            # `reached` event witnesses the worker ARRIVING, so the
+            # ordering is established by the barrier and not by a runner
+            # happening to be slow.
             if hold["armed"] and not hold["used"]:
                 hold["used"] = True
+                reached.set()
                 gate.wait(10.0)
             return real_prefix(payload_arg, plot, view, split, **kwargs)
 
@@ -3589,48 +3634,53 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                 hold["armed"] = True
                 self._poll(model, surface, payload, 5, split, clock, armed,
                            self.qt)
-            # Release the held render from a timer, so its commit lands
-            # after the advance below — the interleaving, forced.
+            # The worker must be PARKED on the gate before the advance,
+            # or the ordering below is not the one being forced.
+            self.assertTrue(reached.wait(10.0),
+                            "no prefix render reached the gate; the ordering "
+                            "this test exists to force did not happen")
+
+            # THE NAIVE ORDERING: advance, submit, then settle — the
+            # release comes after the advance, so the stale commit lands
+            # after it and re-arms past it.
+            clock.t += 5.0
+            layer_number = 5
+            wrapped = surface.layers[layer_number]
+            model._qt_window(surface, {"prev": None, "current": payload,
+                                       "next": None}, layer_number,
+                             "motion index", final_split)
+            self._fire_due_wakes(model, armed, clock)
+            # Released from a timer, so the commit lands DURING the
+            # settle — after the advance, as the defect requires.
             from PyQt6.QtCore import QTimer
             timer = QTimer()
             timer.setSingleShot(True)
             timer.timeout.connect(gate.set)
-            timer.start(30)
-
-            # THE NAIVE ORDERING: advance, submit, then settle. The stale
-            # commit arrives during the settle and re-arms past the
-            # advance.
-            clock.t += 5.0
-            model._qt_window(surface, {"prev": None, "current": payload,
-                                       "next": None}, 5, "motion index",
-                             final_split)
-            self._fire_due_wakes(model, armed, clock)
+            timer.start(10)
             self._drain_job(model, surface, self.qt)
-            layer = surface.layers[5]
             self.assertTrue(hold["used"],
                             "no prefix render was held; the ordering this "
                             "test exists to force did not happen")
-            self.assertGreater(layer._prefix_checkpoint_at, clock.t,
+            self.assertGreater(wrapped._prefix_checkpoint_at, clock.t,
                                "the stale commit did not re-arm past the "
                                "advance; the ordering is no longer reproduced")
-            self.assertNotEqual(layer.prefixSplit, final_split,
+            self.assertNotEqual(wrapped.prefixSplit, final_split,
                                 "the naive advance reached the frozen split; "
                                 "this ordering no longer demonstrates the defect")
 
             # THE CORRECTION: respect the deadline the commit armed, then
-            # demand the frozen split again. The job's completion is
-            # awaited by the layer's token, not by a start count or an
-            # empty queue.
+            # demand the frozen split again and await the job the demand
+            # starts — by its token, and asserted rather than assumed.
             clock.t = max(clock.t + 5.0,
-                          getattr(layer, "_prefix_checkpoint_at", 0.0))
+                          getattr(wrapped, "_prefix_checkpoint_at", 0.0))
             model._qt_window(surface, {"prev": None, "current": payload,
-                                       "next": None}, 5, "motion index",
-                             final_split)
+                                       "next": None}, layer_number,
+                             "motion index", final_split)
             self._fire_due_wakes(model, armed, clock)
-            deadline = time.monotonic() + 15.0
-            while (time.monotonic() < deadline
-                   and surface.tokens.get(layer) is not None):
-                self.qt.events(6)
+            self.assertTrue(
+                self._await_prefix_job(surface, layer_number, final_split,
+                                       self.qt),
+                "the corrected demand's render never completed")
             self._drain_job(model, surface, self.qt)
 
         wrapped = surface.layers[5]
