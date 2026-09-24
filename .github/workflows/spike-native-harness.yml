@@ -1142,7 +1142,7 @@ jobs:
             if [ -n "$MOUNTED" ]; then
               ATTACH_WINNER="$label"
               echo "  mounted at: $MOUNTED"
-              ls -la "$MOUNTED" | sed 's/^/  | /'
+              find "$MOUNTED" -maxdepth 1 -mindepth 1 -exec ls -ld {} + | sed 's/^/  | /'
             else
               echo "  nothing was mounted by this attempt"
             fi
@@ -1207,9 +1207,11 @@ jobs:
               echo "carries no agreement and mounts without a prompt"
               echo "cmd: sudo hdiutil convert -quiet -format UDTO -o \"$CDR\" \"$DMG\""
               rm -f "$CDR" "$CDR.cdr"
-              sudo hdiutil convert -quiet -format UDTO -o "$CDR" "$DMG" \
-                >"$EVIDENCE/hdiutil-convert.txt" 2>&1
-              echo "convert exit: $?"
+              # tee, not a redirect: sudo does not apply to the redirection, so
+              # the file would be opened as the unprivileged user
+              sudo hdiutil convert -quiet -format UDTO -o "$CDR" "$DMG" 2>&1 |
+                tee "$EVIDENCE/hdiutil-convert.txt" >/dev/null
+              echo "convert exit: ${PIPESTATUS[0]}"
               sed -n '1,20p' "$EVIDENCE/hdiutil-convert.txt" | sed 's/^/  | /'
               if [ -f "$CDR" ]; then
                 CDR_FILE="$CDR"
