@@ -3372,7 +3372,12 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         `surface.layers`, whose VALUE is the PlateLayer wrapper
         (`wrapped = surface.layers.get(layer)` in _schedule_surface). The
         token is bumped when a job is submitted and popped when it
-        commits, so its disappearance is the completion signal;
+        commits. It is per LAYER, not per job: a layer's prefix and full
+        demands share the key, so the disappearance of a token this
+        waiter saw pending means NO job is outstanding for that layer —
+        which is the completion this test needs, but is not "the prefix
+        job finished" and is not claimed to be. Its disappearance is the
+        signal;
 
             layer = surface.layers[5]      # a PlateLayer
             surface.tokens.get(layer)      # ALWAYS None — wrong key
@@ -3609,8 +3614,9 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         hold = {"armed": False, "used": False}
         gate = threading.Event()
         reached = threading.Event()
-        # Always release: a failed assertion above must not leave a
-        # worker parked on the gate for the rest of the run.
+        escaped = {}
+        # Unconditional, and registered before anything can fail: a
+        # worker left parked on the gate would stall the rest of the run.
         self.addCleanup(gate.set)
 
         def gated_prefix(payload_arg, plot, view, split, **kwargs):
@@ -3618,12 +3624,20 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
             # whichever split it is for; the cadence decides when one is
             # wanted, so naming a split here would hold nothing. The
             # `reached` event witnesses the worker ARRIVING, so the
-            # ordering is established by the barrier and not by a runner
-            # happening to be slow.
+            # ordering is established by the barrier rather than by a
+            # runner happening to be slow.
             if hold["armed"] and not hold["used"]:
                 hold["used"] = True
                 reached.set()
-                gate.wait(10.0)
+                # The release is INLINE (see below), so this cannot
+                # legitimately time out. Ignoring the return would let
+                # the worker render without the release, leaving
+                # `reached` set and the later assertion satisfied by a
+                # worker that is no longer parked — the barrier bypassed
+                # silently. Recorded instead, and asserted after the
+                # settle.
+                if not gate.wait(60.0):
+                    escaped["timeout"] = True
             return real_prefix(payload_arg, plot, view, split, **kwargs)
 
         final_split = None
@@ -3640,9 +3654,10 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                             "no prefix render reached the gate; the ordering "
                             "this test exists to force did not happen")
 
-            # THE NAIVE ORDERING: advance, submit, then settle — the
-            # release comes after the advance, so the stale commit lands
-            # after it and re-arms past it.
+            # THE NAIVE ORDERING: advance, then release, then settle. The
+            # release is INLINE and comes after the advance, so the stale
+            # commit cannot land before it — no elapsed delay decides the
+            # ordering, and the worker cannot proceed without it.
             clock.t += 5.0
             layer_number = 5
             wrapped = surface.layers[layer_number]
@@ -3650,14 +3665,11 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                                        "next": None}, layer_number,
                              "motion index", final_split)
             self._fire_due_wakes(model, armed, clock)
-            # Released from a timer, so the commit lands DURING the
-            # settle — after the advance, as the defect requires.
-            from PyQt6.QtCore import QTimer
-            timer = QTimer()
-            timer.setSingleShot(True)
-            timer.timeout.connect(gate.set)
-            timer.start(10)
+            gate.set()
             self._drain_job(model, surface, self.qt)
+            self.assertFalse(escaped.get("timeout"),
+                             "the worker escaped the gate: it rendered without "
+                             "the release, so the ordering was not forced")
             self.assertTrue(hold["used"],
                             "no prefix render was held; the ordering this "
                             "test exists to force did not happen")
@@ -3686,6 +3698,76 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         wrapped = surface.layers[5]
         self.assertEqual(wrapped.prefixSplit, final_split,
                          "the checkpoint stayed stranded past a stale commit")
+
+    def test_the_prefix_waiter_stays_pending_until_the_job_commits(self):
+        """The PENDING branch of `_await_prefix_job`, forced.
+
+        Everywhere else in this file the demand completes within the
+        fires, so the waiter takes its already-current path and the
+        pending branch is never entered. That is exactly how a wait keyed
+        by the wrong dictionary key went unnoticed: it never mattered,
+        because the branch it guarded never ran. Here a prefix render is
+        parked, its integer-keyed token is observed BEFORE any event
+        processing can consume completion, and the waiter is shown to
+        stay pending until the worker is released AND its owner-thread
+        commit lands.
+        """
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        module = self.qt.load("MoonrakerMonitorModel")
+        real_prefix = module.render_layer_prefix
+        gate = threading.Event()
+        reached = threading.Event()
+        self.addCleanup(gate.set)
+
+        def gated_prefix(payload_arg, plot, view, split, **kwargs):
+            reached.set()
+            gate.wait(60.0)
+            return real_prefix(payload_arg, plot, view, split, **kwargs)
+
+        layer_number = 5
+        final_split = None
+        with patch.object(module, "render_layer_prefix", gated_prefix):
+            for poll in range(self.POLLS):
+                final_split = 100 + poll * 12
+                self._poll(model, surface, payload, layer_number, final_split,
+                           clock, armed, self.qt)
+            self.assertTrue(reached.wait(10.0),
+                            "no prefix render was submitted to park")
+            clock.t = max(clock.t + 5.0,
+                          getattr(surface.layers[layer_number],
+                                  "_prefix_checkpoint_at", 0.0))
+            model._qt_window(surface, {"prev": None, "current": payload,
+                                       "next": None}, layer_number,
+                             "motion index", final_split)
+            self._fire_due_wakes(model, armed, clock)
+            self.qt.events(6)
+            # The token, on the LAYER NUMBER, while the worker is parked.
+            pending = surface.tokens.get(layer_number)
+            self.assertIsNotNone(
+                pending, "no pending token for the parked render — the waiter "
+                "would take its already-current path and prove nothing")
+            # Outstanding work: the waiter must NOT report completion.
+            self.assertFalse(
+                self._await_prefix_job(surface, layer_number, final_split,
+                                       self.qt, timeout=0.5),
+                "the waiter reported completion while a job was pending")
+            self.assertEqual(surface.tokens.get(layer_number), pending,
+                             "the token moved while the worker was parked")
+            # Release, and require the waiter to see the commit land.
+            gate.set()
+            self.assertTrue(
+                self._await_prefix_job(surface, layer_number, final_split,
+                                       self.qt),
+                "the waiter never saw the parked job complete")
+        self._drain_job(model, surface, self.qt)
+        # No final-split assertion HERE, deliberately: this test parks
+        # EVERY prefix render, so they unblock together and commit in
+        # whichever order the pool runs them — the last commit is not
+        # necessarily the frozen split. The final-split and cadence
+        # assertions belong to the tests that drive the real cadence,
+        # and they are untouched; this one proves the waiter's contract.
 
     def test_an_attached_layer_change_bypasses_the_prefix_cadence(self):
         # A new layer's prefix is a fresh demand: it renders
