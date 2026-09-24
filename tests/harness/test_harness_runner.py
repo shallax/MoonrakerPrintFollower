@@ -562,6 +562,39 @@ class StaticLegTests(unittest.TestCase):
         self.assertIn('"static_leg"', source)
         self.assertIn("for root, _dirs, names in os.walk(run_dir)", source)
 
+    def test_a_failed_leg_is_still_judged(self):
+        # A leg that failed its scenario must still get its static
+        # verdict recorded — those are the recordings an audit reads —
+        # so the exit path calls the check unconditionally instead of
+        # short-circuiting on the scenario's return code.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        tail = source[source.index("if __name__ =="):]
+        self.assertNotIn("_rc = _rc or static_leg_report", tail)
+        self.assertIn("sys.exit(_rc or _static_rc)", tail)
+
+    def test_a_scenario_that_delivered_no_frame_is_named(self):
+        # The probe's verdict is a comparison of the two samples, not a
+        # threshold: a window that gained no frame between them is the
+        # one whose recording the static check then finds frozen.
+        stalled = runner.frames_verdict([
+            {"scenario": "g1", "phase": "start", "swapped": 12, "ok": True},
+            {"scenario": "g1", "phase": "end", "swapped": 12, "ok": True},
+            {"scenario": "g2", "phase": "start", "swapped": 30, "ok": True},
+            {"scenario": "g2", "phase": "end", "swapped": 94, "ok": True},
+        ])
+        self.assertEqual(stalled, ["g1"])
+
+    def test_an_unanswered_probe_is_not_a_stall(self):
+        # A platform that cannot answer is recorded, never judged: an
+        # unanswered sample must not read as "the window never painted".
+        stalled = runner.frames_verdict([
+            {"scenario": "g1", "phase": "start", "ok": False, "error": "boom"},
+            {"scenario": "g1", "phase": "end", "ok": False, "error": "boom"},
+            {"scenario": "g2", "phase": "start", "swapped": 1, "ok": True},
+            {"scenario": "g2", "phase": "end", "swapped": 1, "ok": True},
+        ])
+        self.assertEqual(stalled, ["g2"])
+
     def test_the_thresholds_are_the_measured_ones(self):
         # 60 s clears every legitimate idle measured across the 51
         # galleries (the longest non-frozen span is 59 s) and the

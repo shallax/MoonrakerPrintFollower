@@ -134,6 +134,61 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("item.mapToScene(QPointF(float(item.width()) / 2.0",
                       source)
 
+    def test_a_confirm_is_pressed_not_driven_as_a_slot(self):
+        # The static-recording finding: the visual leg confirmed its
+        # rename by calling the slot, which leaves the modal popup
+        # open — its scrim then covers every later scenario, so the
+        # leg's clicks are ones a user could not make and its
+        # recording's last minute never moves. A confirm is the
+        # dialog's own verb, pressed on screen.
+        offenders = []
+        for spec in _scenarios.SCENARIOS:
+            for step in spec.get("steps", ()):
+                if step.get("op") not in ("exec_slot", "exec_file_slot"):
+                    continue
+                if "confirm" in str(step.get("slot", "")).lower():
+                    offenders.append(f"{spec['id']}: {step['slot']} driven as a slot")
+        self.assertEqual(offenders, [])
+
+    def test_the_rename_flow_witnesses_its_dialog_closing(self):
+        # The press that confirms must also be shown to close the
+        # popup, and the absence must be WITNESSED: the witness step
+        # (the dialog on screen) comes first, so the absent read is
+        # never the vacuous "never observed" pass.
+        spec = next(s for s in _scenarios.SCENARIOS
+                    if s["id"] == "v10")
+        steps = spec["steps"]
+        witness = next(i for i, s in enumerate(steps)
+                       if s.get("op") == "wait_rect" and s.get("text") == "Rename file"
+                       and not s.get("absent"))
+        press = next(i for i, s in enumerate(steps)
+                     if s.get("op") == "deliver_click"
+                     and s.get("objectName") == "renameConfirmButton")
+        gone = next(i for i, s in enumerate(steps)
+                    if s.get("op") == "wait_rect" and s.get("text") == "Rename file"
+                    and s.get("absent"))
+        self.assertLess(witness, press, "the dialog must be on screen before the press")
+        self.assertLess(press, gone, "the press must come before the popup is gone")
+
+    def test_a_visual_scenario_that_opens_the_file_manager_closes_it(self):
+        # The manager is a full-area page: left open it hides the
+        # panes the rest of the visual leg asserts and presses, so
+        # those steps would pass over a screen showing something
+        # else entirely. The way out is the page's own Close button
+        # (a press, not a slot), so the departure is on screen too.
+        offenders = []
+        for spec in _scenarios.SCENARIOS:
+            if spec.get("group") != "visual":
+                continue
+            steps = spec.get("steps", ())
+            slots = [str(step.get("slot", "")) for step in steps
+                     if step.get("op") in ("exec_slot", "exec_file_slot")]
+            closes = [step for step in steps
+                      if step.get("objectName") == "fileManagerCloseButton"]
+            if "openFileManager" in slots and not (closes or "setFileManagerOpen" in slots):
+                offenders.append(spec["id"])
+        self.assertEqual(offenders, [])
+
     def test_spec_ids_are_unique(self):
         ids = [spec["id"] for spec in _scenarios.SCENARIOS]
         duplicates = sorted({name for name in ids if ids.count(name) > 1})
@@ -201,6 +256,40 @@ class HarnessSpecTests(unittest.TestCase):
                 if op and op not in ops:
                     missing.setdefault(op, []).append(spec["id"])
         self.assertEqual(missing, {})
+
+    def test_the_presentation_probe_asks_the_app_not_the_screen(self):
+        # A window whose scene graph stopped presenting answers every
+        # tree read, so a leg can pass every assertion over a screen
+        # that never moved (the static-green ruling). The probe must
+        # therefore read the app's own frame count: the driver attaches
+        # to frameSwapped and reports it, and the runner samples it at
+        # the start and the end of every scenario.
+        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "driver", "__init__.py")
+        with open(driver, encoding="utf-8") as handle:
+            driver_source = handle.read()
+        self.assertIn('if cmd == "frames":', driver_source)
+        self.assertIn("frameSwapped.connect", driver_source)
+        self.assertIn("requestUpdate", driver_source)
+        self.assertIn("isExposed", driver_source)
+        with open(_runner.__file__, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn('"cmd": "frames"', source)
+        self.assertIn("def frames_probe(", source)
+        self.assertIn("def frames_verdict(", source)
+        start = source.index('frames_probe("start", spec["id"])')
+        end = source.index('frames_probe("end", spec["id"])')
+        self.assertLess(start, end)
+        self.assertIn('run["frames"] = FRAME_PROBES', source)
+        # The kick must not assume the Qt6 spelling: Cura 5.x ships
+        # Qt 5.15, where the same request is update().
+        self.assertIn("getattr(window, \"requestUpdate\", None) or window.update",
+                      driver_source)
+        # And the enums go out as names: PyQt6 hands back the wrapper
+        # (QWindow.Visibility) and int() on it raises — the first live
+        # run of the probe answered every sample with that TypeError.
+        self.assertIn("def _enum_name(", driver_source)
+        self.assertNotIn("int(window.visibility())", driver_source)
 
 
 if __name__ == "__main__":

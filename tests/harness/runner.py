@@ -505,6 +505,53 @@ def _verdict(steps):
 # them null rather than absent.
 EVIDENCE = []
 
+# The presentation record (the static-green ruling): a scenario's frame
+# counts at its start and its end. Every step reads the QML tree, so an
+# app whose window stopped painting still passes every assertion over a
+# still screen — this is the measurement that says whether the window
+# was painting at all, and it separates a stalled scene graph from a
+# stalled capture.
+FRAME_PROBES = []
+
+
+def frames_probe(phase, scenario_id):
+    """One frame-count sample, recorded; never fails a step itself."""
+    sample = {"scenario": scenario_id, "phase": phase}
+    try:
+        reply = rpc({"id": 1, "cmd": "frames", "kick": True, "settle_ms": 300},
+                    timeout=30)
+    except Exception as exc:
+        reply = {"ok": False, "error": repr(exc)}
+    for key in ("swapped", "gained", "exposed", "visible", "active",
+                "visibility", "state", "platform", "error"):
+        if key in reply:
+            sample[key] = reply[key]
+    sample["ok"] = bool(reply.get("ok"))
+    FRAME_PROBES.append(sample)
+    return sample
+
+
+def frames_verdict(samples):
+    """The scenarios whose window never painted: a run of steps that
+    all passed over a window that delivered no frame is the shape the
+    static check then finds in the recording, and naming it here says
+    which mechanism it was."""
+    by_scenario = {}
+    for sample in samples:
+        if not sample.get("ok"):
+            continue
+        entry = by_scenario.setdefault(sample["scenario"], {})
+        entry[sample.get("phase")] = sample
+    stalled = []
+    for scenario_id, phases in sorted(by_scenario.items(),
+                                      key=lambda item: str(item[0])):
+        start, end = phases.get("start"), phases.get("end")
+        if start is None or end is None:
+            continue
+        if end.get("swapped", 0) <= start.get("swapped", 0):
+            stalled.append(scenario_id)
+    return stalled
+
 # F08's evidence classification: a step's class derives from its
 # MECHANISM, never from a declared label — the scenario's claim is
 # the minimum class over its steps (one real click plus six slot
@@ -652,6 +699,13 @@ def write_evidence(title):
         },
         "steps": EVIDENCE,
     }
+    if FRAME_PROBES:
+        run["frames"] = FRAME_PROBES
+        stalled = frames_verdict(FRAME_PROBES)
+        for scenario_id in stalled:
+            print(f"ui_test: NO FRAMES — scenario {scenario_id}: the window "
+                  f"delivered no frame between its start and its end sample")
+
     with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
         json.dump(run, handle, indent=2)
 
@@ -2935,6 +2989,7 @@ def suite_scenario(spec, step_fn=None):
     if step_fn is None:
         step_fn = suite_step
     steps = []
+    frames_probe("start", spec["id"])
     # The calibration pre-step (a suite default, not a per-spec
     # field): every scenario starts from the baseline geometry, so no
     # scenario's resize can leak into the next inside a group's
@@ -2994,6 +3049,7 @@ def suite_scenario(spec, step_fn=None):
             EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
                                             f"{spec['name']}: {step.get('op')}",
                                             f"step error: {exc!r}", capture, started))
+    frames_probe("end", spec["id"])
     return steps
 
 # ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────
@@ -4208,5 +4264,8 @@ if __name__ == "__main__":
         harvest_cura_log(RUN_DIR)
     # The leg-level static check, after every recording is closed: a
     # green verdict over a screen that never moved is not a success.
-    _rc = _rc or static_leg_report(RUN_DIR)
-    sys.exit(_rc)
+    # Both run even when the scenario already failed — the recordings of
+    # a failed leg are the ones whose verdicts get read afterwards, and
+    # an `or` here would leave exactly those legs without the record.
+    _static_rc = static_leg_report(RUN_DIR)
+    sys.exit(_rc or _static_rc)

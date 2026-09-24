@@ -398,6 +398,39 @@ class HarnessServer(QObject):
                              "visible": bool(window.isVisible()),
                              "title": window.title() or ""})
             return {"id": request_id, "ok": True, "windows": rows}
+        if cmd == "frames":
+            # Whether the app is actually presenting. Every step reads
+            # the QML tree, so a window whose scene graph stopped
+            # painting still answers every read and every step still
+            # passes over a screen that never moved (the static-green
+            # ruling). This reports the frame count instead: attach to
+            # the main window's frameSwapped, ask for a repaint, and
+            # say how many frames arrived. A live app emits at least
+            # one; a stalled one emits none, whatever the tree says.
+            try:
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                _FRAMES.attach(window)
+                if request.get("reset"):
+                    _FRAMES.count = 0
+                before = _FRAMES.count
+                if request.get("kick", True):
+                    # requestUpdate is the Qt6 spelling; Cura 5.x ships
+                    # Qt 5.15, where update() is the same request.
+                    kick = getattr(window, "requestUpdate", None) or window.update
+                    kick()
+                _settle(request.get("settle_ms", 300))
+                return {"id": request_id, "ok": True, "swapped": _FRAMES.count,
+                        "since": before, "gained": _FRAMES.count - before,
+                        "exposed": bool(window.isExposed()),
+                        "visible": bool(window.isVisible()),
+                        "active": bool(window.isActive()),
+                        "visibility": _enum_name(window.visibility()),
+                        "state": _enum_name(window.windowState()),
+                        "platform": QGuiApplication.platformName()}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "foreground":
             # The foreground guard (the visible-interactions ruling):
             # evidence records the DISPLAY, so a step that hands the
@@ -2025,6 +2058,61 @@ def _os_foreground_owner():
 # "no authority" instead of failing every step of the run. One
 # observation of the window active is enough to arm it.
 _FOREGROUND_SEEN = [False]
+
+
+class _FrameCounter:
+    """Counts the main window's delivered frames.
+
+    frameSwapped is emitted on the render thread and delivered to the
+    connectING thread, so a slot here is called on the driver's thread
+    and a plain counter is enough — no lock, no cross-thread reads.
+    The window is remembered because a leg's boot can replace it.
+    """
+
+    def __init__(self):
+        self.count = 0
+        self.window = None
+
+    def _swapped(self):
+        self.count += 1
+
+    def attach(self, window):
+        if self.window is window:
+            return
+        previous = self.window
+        self.window = window
+        if window is not None:
+            try:
+                window.frameSwapped.connect(self._swapped)
+            except Exception:
+                self.window = previous
+                return
+        if previous is not None:
+            try:
+                previous.frameSwapped.disconnect(self._swapped)
+            except Exception:
+                pass
+        self.count = 0
+
+
+_FRAMES = _FrameCounter()
+
+
+def _enum_name(value):
+    """A Qt enum as a name, never as int(value).
+
+    PyQt6 hands back the enum wrapper (QWindow.Visibility), and int()
+    on it raises — the first live run of the frame probe answered every
+    sample with that TypeError and so measured nothing. The name is
+    also the readable half in the evidence.
+    """
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _foreground_state(window):

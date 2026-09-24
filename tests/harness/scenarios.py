@@ -2224,10 +2224,21 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "openFileManager", "args": []},
          {"op": "exec_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
          {"op": "exec_slot", "slot": "filePreviewRename", "args": ["benchy-renamed.gcode"]},
-         {"op": "exec_slot", "slot": "fileConfirmRename", "args": []},
+         # The confirm is the dialog's own verb, pressed on screen: a
+         # slot call leaves the modal popup open, and its scrim then
+         # covers every later scenario in the leg — clicks a user
+         # could not make, over a recording that never moved. The
+         # witness/absent pair keeps the absence non-vacuous.
+         {"op": "wait_rect", "text": "Rename file", "budget": 30},
+         {"op": "deliver_click", "objectName": "renameConfirmButton"},
+         {"op": "wait_rect", "text": "Rename file", "absent": True, "budget": 30},
          {"op": "wait_model", "prop": "fileManagerRows", "contains": "benchy-renamed", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerFileRowName", "any": True,
           "contains": "benchy-renamed", "budget": 30},
+         # The manager is a full-area page: the next scenario's panes
+         # must be the ones on screen, and its own Close button is
+         # the visible way out.
+         {"op": "deliver_click", "objectName": "fileManagerCloseButton"},
      ]},
     {"id": "v11", "group": "visual",
      "name": "the file manager's narrow mode hides the search field, wide restores it",
@@ -2239,6 +2250,9 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "absent": True, "budget": 30},
          {"op": "resize_window", "w": 1840, "h": 1040},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "budget": 30},
+         # The page leaves with the scenario: the rest of the leg
+         # asserts the panes behind it.
+         {"op": "deliver_click", "objectName": "fileManagerCloseButton"},
      ]},
     {"id": "v12", "group": "visual",
      "name": "the bed mesh view renders in the information pane",
