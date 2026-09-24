@@ -45,9 +45,9 @@ elapsed_text() {
     if [ "$seconds" -lt 60 ]; then
         printf '%ss' "$seconds"
     elif [ "$seconds" -lt 3600 ]; then
-        printf '%dm%02ds' "$((seconds / 60))" "$((seconds % 60))"
+        printf '%dm %02ds' "$((seconds / 60))" "$((seconds % 60))"
     else
-        printf '%dh%02dm%02ds' "$((seconds / 3600))" "$(((seconds % 3600) / 60))" "$((seconds % 60))"
+        printf '%dh %02dm %02ds' "$((seconds / 3600))" "$(((seconds % 3600) / 60))" "$((seconds % 60))"
     fi
 }
 

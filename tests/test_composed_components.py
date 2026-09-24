@@ -1806,10 +1806,19 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         wrapped = surface.layers.get(layer)
         return wrapped is not None and wrapped.rasterValid
 
-    def _pump_rasters(self, model, name, timeout=400):
+    def _pump_rasters(self, model, name, timeout=400, deadline_s=30.0):
         """Drive the event loop until the surface's desired window is
         fully rasterised (the workers deliver through the queued
-        bridge signals)."""
+        bridge signals).
+
+        The claim is that the rasters SETTLE, not that they settle
+        within a number of loop turns — and a loaded runner spends
+        longer per turn than an idle one while the worker delivering
+        through the queued bridge is asynchronous either way. The turn
+        budget stays as the floor (an idle machine returns in a handful
+        of turns); the wall-clock deadline is what decides, so a slow
+        machine waits rather than fails and a genuine hang still fails
+        rather than hangs (the Windows CI flake, 2026-09-24)."""
         surface = model._plate_surfaces[name]
 
         def settled():
@@ -1822,7 +1831,12 @@ class NativeRenderSchedulerTests(unittest.TestCase):
                 return False
             return all(self._hot(surface, layer) for layer in desired["ghosts"].values())
 
+        started = time.monotonic()
         for _ in range(timeout):
+            self.qt.events(5)
+            if settled():
+                return
+        while time.monotonic() - started < deadline_s:
             self.qt.events(5)
             if settled():
                 return

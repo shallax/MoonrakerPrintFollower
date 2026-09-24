@@ -63,12 +63,12 @@ $script:PhaseWatch = [Diagnostics.Stopwatch]::StartNew()
 function Format-Elapsed([double]$Seconds) {
     $total = [int][Math]::Floor($Seconds)
     if ($total -lt 60) { return "${total}s" }
-    if ($total -lt 3600) { return ('{0}m{1:d2}s' -f [int]($total / 60), ($total % 60)) }
-    return ('{0}h{1:d2}m{2:d2}s' -f [int]($total / 3600), [int](($total % 3600) / 60), ($total % 60))
+    if ($total -lt 3600) { return ('{0}m {1:d2}s' -f [int]($total / 60), ($total % 60)) }
+    return ('{0}h {1:d2}m {2:d2}s' -f [int]($total / 3600), [int](($total % 3600) / 60), ($total % 60))
 }
 
 function Write-Log([string]$Message) {
-    $stamped = "[{0,8}] {1}" -f (Format-Elapsed $script:PhaseWatch.Elapsed.TotalSeconds), $Message
+    $stamped = "[{0,10}] {1}" -f (Format-Elapsed $script:PhaseWatch.Elapsed.TotalSeconds), $Message
     Write-Host $stamped
     if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $stamped -Encoding ASCII }
 }
