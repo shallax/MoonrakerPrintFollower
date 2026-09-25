@@ -2953,7 +2953,10 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         # refresh while detached; without the no-op the rewind, the
         # demand and the advance ran per refresh and the worker's
         # own completion fed the loop back through changed ->
-        # refresh (the detached 114% burn).
+        # refresh (the detached 114% burn). The rewind and the
+        # advance stay suppressed; the DEMAND stands, because a
+        # window whose request was dropped while the worker was busy
+        # never came back otherwise (the label stood on it).
         service = self.follower._runtime.index
         service._manual_anchor_calls = 0
         service._manual_anchor_changes = 0
@@ -2968,8 +2971,10 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             first = (service._full_next, len(advances), len(windows))
             service.set_manual_anchor(5)
             service.set_manual_anchor(5)
-            self.assertEqual((service._full_next, len(advances), len(windows)),
-                             first, "the same anchor re-ran the seek focus")
+            self.assertEqual((service._full_next, len(advances)), first[:2],
+                             "the same anchor re-ran the seek focus or the advance")
+            self.assertGreater(len(windows), first[2],
+                               "the re-assert did not keep the demand standing")
             self.assertEqual(service._manual_anchor_calls, 3,
                              "the idempotency counters missed calls")
             self.assertEqual(service._manual_anchor_changes, 1,

@@ -154,6 +154,15 @@ _NAV_KEY_FIELDS = 16
 # at most once per window, snapshotting the latest split — the QML
 # tail accumulates [P, split) cheaply between checkpoints.
 _PREFIX_CHECKPOINT_S = 5.0
+# What the follower's placeholder says when the layer it is on will
+# never arrive: the service latches a source it could not present
+# ("failed") and refuses an anchor a shrunken file left behind
+# ("outside"). Both are distinct from a load still in progress, which
+# is the label's own default.
+_PLATE_REFUSAL_REASONS = {
+    "failed": "This layer failed to load.",
+    "outside": "This layer is not in this file.",
+}
 
 
 def _sections_path() -> str:
@@ -1437,7 +1446,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # exists-but-loading case, the plain label's own.
                 values["plateProgressReason"] = ""
             elif not values["plateProgressAvailable"]:
-                values["plateProgressReason"] = "Loading layer…"
+                # A refusal must not read as a load in progress: the
+                # service latches a layer it could not present, and the
+                # label promised a load that was never coming (the live
+                # report — the indicator stood forever).
+                values["plateProgressReason"] = _PLATE_REFUSAL_REASONS.get(
+                    popover.get("refusal") or "", "Loading layer…")
             else:
                 values["plateProgressReason"] = ""
             # The warm interaction raster: a retained URL reaches the

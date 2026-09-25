@@ -571,7 +571,12 @@ class GCodeIndexService(QObject):
             # refresh while detached; without this no-op the rewind,
             # the demand and the advance ran per refresh and the
             # worker's own completion fed the loop back through
-            # changed -> refresh (the detached 114% burn).
+            # changed -> refresh (the detached 114% burn). The DEMAND
+            # still stands on its own: a window whose request was
+            # dropped while the worker was busy is raised again, never
+            # rewritten and never advanced (the re-read per poll
+            # stays out: a refused layer is skipped by the demand).
+            self._request_manual_window()
             return
         self._manual_anchor_changes = getattr(self, "_manual_anchor_changes", 0) + 1
         self._manual_anchor = normalised
@@ -580,6 +585,12 @@ class GCodeIndexService(QObject):
             # split is the print's own again.
             self._manual_split = None
         else:
+            # An explicit seek is a FRESH attempt: a refusal from an
+            # earlier attempt must not refuse the user's own re-ask
+            # silently (the live report — the label stood on
+            # "Loading layer…" with no way back to the layer). Only a
+            # changed anchor clears it, never a poll.
+            self._failed_hydrate.discard(self._manual_anchor)
             # A seek focuses the pass: the sought window prepares
             # before the pass resumes wherever it stood (the live
             # report — a far seek waited for the pass to walk the
@@ -1260,8 +1271,19 @@ class GCodeIndexService(QObject):
         if self._view is not None:
             with self._view._index.cache_lock:
                 motion_total = self._view._index.motion_count(anchor)
+        # The refusal travels WITH the payload: a latched layer and one
+        # still arriving look identical from here (no current), and the
+        # face promised a load for the latched one forever. "outside" is
+        # the anchor a shrunken file left behind — the same promise, the
+        # same answer.
+        refusal = ""
+        if isinstance(anchor, int) and self._view is not None:
+            if anchor in self._failed_hydrate:
+                refusal = "failed"
+            elif not 0 <= anchor < len(self._view.ranges):
+                refusal = "outside"
         return {"layers": layers, "split": split, "method": method,
-                "motionTotal": motion_total, "anchor": anchor}
+                "motionTotal": motion_total, "anchor": anchor, "refusal": refusal}
 
     # The memory accounting (the RAM tiers' honest view): the
     # wrapper-pinned decoded payloads charge the same budget the LRU

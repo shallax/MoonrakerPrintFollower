@@ -327,7 +327,10 @@ flag — the lane never wedges across a print boundary.
 Failed downloads retry on their own backoff ladder, driven by consumer
 re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
-poll.
+poll. The latch is never silent: the payload carries the refusal, the
+face names it instead of promising a load that is not coming, and an
+explicit re-seek to that layer (a changed anchor, never a poll) clears
+it and tries once more.
 
 The file-manager's one-shot lane (`download_once`) runs on the same operation
 machinery and captures the transport identity at request time. A mid-stream

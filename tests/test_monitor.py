@@ -3048,6 +3048,36 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.plateProgressAnchor, 7)
         self.assertEqual(model.plateLayerCount, 12)
 
+    def test_a_refused_layer_says_so_instead_of_claiming_to_load(self):
+        # The live report: the label stood on "Loading layer…" forever
+        # with no way back — a refused layer was indistinct from one
+        # still arriving. A payload that carries the refusal names it.
+        model = self.monitor()
+        model.setFollowerPopoverOpen(True)
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        self.assertEqual(model.plateProgressReason, "",
+                         "a served layer carries no reason")
+        base = coordinator._snapshot
+        loading = {"layers": {"prev": None, "current": None, "next": None},
+                   "split": None, "anchor": 7, "method": "unavailable",
+                   "motionTotal": 0, "refusal": ""}
+        coordinator._snapshot = replace(base, plate_progress=loading)
+        model._publish()
+        self.assertFalse(model.plateProgressAvailable)
+        self.assertEqual(model.plateProgressReason, "Loading layer…")
+        # The same absent layer, but the service has said it will never
+        # arrive: the label names the refusal instead of promising a
+        # load that is not coming — and names WHICH refusal.
+        for refusal, text in (("failed", "This layer failed to load."),
+                              ("outside", "This layer is not in this file.")):
+            coordinator._snapshot = replace(
+                base, plate_progress=dict(loading, refusal=refusal))
+            model._publish()
+            self.assertFalse(model.plateProgressAvailable)
+            self.assertEqual(model.plateProgressReason, text,
+                             "a refused layer must say so, not claim to be loading")
+
     def test_detaching_holds_the_layer_the_face_shows_and_reattaching_rejoins(self):
         model = self.monitor()
         coordinator = self.follower._runtime.coordinator

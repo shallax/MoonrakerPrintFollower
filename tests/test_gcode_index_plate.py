@@ -693,6 +693,76 @@ class HydrationWindowTests(unittest.TestCase):
         # The other two layers remain useful and are still demanded.
         self.assertEqual(self.service._hydrate, {1, 3})
 
+    def test_a_refused_layer_names_itself_in_the_payload(self):
+        # The silent latch: the layer is refused, the face shows
+        # "Loading layer…" for as long as it is on screen and nothing
+        # says why. The payload carries the verdict so the face can
+        # name it.
+        self._bind(layers=8)
+        self.service.set_manual_anchor(5)
+        self.service._failed_hydrate.add(5)
+        payload = self.service.plate_progress(5, file_position=None)
+        self.assertIsNone(payload["layers"]["current"])
+        self.assertEqual(payload["refusal"], "failed",
+                         "the refused layer must name itself")
+        # A neighbour's refusal is not this anchor's: the face names
+        # the layer it is showing.
+        self.assertEqual(self.service.plate_progress(4, file_position=None)["refusal"], "")
+
+    def test_an_anchor_outside_the_file_names_itself_too(self):
+        # The other no-arrival state: a shrunken file leaves the frozen
+        # anchor past the last layer. Nothing will ever arrive for it
+        # either, so the face must not promise a load.
+        self._bind(layers=8)
+        self.service._manual_anchor = 11
+        payload = self.service.plate_progress(11, file_position=None)
+        self.assertIsNone(payload["layers"]["current"])
+        self.assertEqual(payload["refusal"], "outside")
+        # A healthy layer of the same file claims nothing.
+        self.assertEqual(self.service.plate_progress(3, file_position=None)["refusal"], "")
+
+    def test_an_explicit_seek_clears_the_refusal_latch(self):
+        # The trap: the latch outranks every demand, so seeking away
+        # and back to a refused layer was refused again with nothing
+        # said — the user had no way to ask. A NEW anchor is a fresh
+        # attempt; the poll's re-assert of the SAME anchor is not
+        # (that is the per-poll re-read the latch exists to stop).
+        self._bind(layers=8)
+        self.service.set_manual_anchor(5)
+        self.service._failed_hydrate.add(5)
+        self.service._hydrate.clear()
+        self.service.set_manual_anchor(5)
+        self.assertIn(5, self.service._failed_hydrate,
+                      "the poll's own re-assert must not clear the latch")
+        self.assertNotIn(5, self.service._hydrate)
+        self.service.set_manual_anchor(1)
+        self.service.set_manual_anchor(5)
+        self.assertNotIn(5, self.service._failed_hydrate,
+                         "an explicit re-seek is a fresh attempt")
+        self.assertIn(5, self.service._hydrate,
+                      "the re-seek's layer was not demanded again")
+
+    def test_the_polls_re_assert_keeps_the_frozen_demand_standing(self):
+        # The coordinator re-asserts the frozen anchor every poll so a
+        # demand dropped while the worker was busy is raised again
+        # (its own comment says the request has to stand). The
+        # idempotency guard swallowed the whole call, so a manual
+        # window that lost its demand never came back.
+        self._bind(layers=8)
+        index = self.service._view._index
+        index.followed_layer = 1
+        self.service.set_manual_anchor(5)
+        self.service._hydrate.clear()
+        self.service.set_manual_anchor(5)
+        self.assertEqual(self.service._hydrate, {4, 5, 6},
+                         "the standing demand was not re-raised")
+        # A ready layer is never re-demanded: decoded is readiness, and
+        # re-raising it would submit the window every poll.
+        self.service._decoded_lru.set(5, {}, 0)
+        self.service._hydrate.clear()
+        self.service.set_manual_anchor(5)
+        self.assertEqual(self.service._hydrate, {4, 6})
+
     def test_a_moved_anchor_retops_the_window(self):
         index = self._bind(hydrated=(4,))
         self.service._hydrate = {0, 1, 2}
@@ -1058,7 +1128,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         payload = self.service.plate_progress(0, 50, (5.0, 0.0, 0.2))
         self.assertIsNone(payload["split"])
         self.assertEqual(payload, {"layers": {}, "split": None, "method": "unavailable",
-                                   "motionTotal": 0, "anchor": 0})
+                                   "motionTotal": 0, "anchor": 0, "refusal": ""})
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
