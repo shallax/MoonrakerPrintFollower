@@ -57,6 +57,12 @@ WHATS_NEW: Tuple[dict, ...] = (
             "pan, the picture freezes until you let go (the toolhead keeps "
             "moving), and the view tracks the print's real position — the "
             "drift that used to stall and jump the fill is gone.",
+            "The follower can schedule a pause now: drag the Layer slider "
+            "to a layer, and the button under the list schedules a pause at "
+            "the end of that layer — press the same button again to remove "
+            "it. The plugin sends the pause itself as the print crosses the "
+            "layer, the row counting down with its wall-clock ETA, and a "
+            "pause the G-code already carries is listed as baked.",
             "The temperature chart samples on its own steady one-second "
             "clock now. A fast auxiliary update setting used to cut the "
             "advertised 30-minute window down to minutes.",
