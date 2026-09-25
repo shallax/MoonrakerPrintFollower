@@ -6732,6 +6732,91 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "two producers disagree about the pan"
                 % (travel_shift, wall_shift))
 
+    def test_no_split_moves_the_ink_vertically(self):
+        """The judder probe the split sweep could not be.
+
+        The renderer-level sweep held the view fixed and swept the
+        split: the canvas size and the prefix centroid were constant,
+        so the split cannot resize a raster or move a stroke inside
+        one. That says nothing about the COMPOSED scene, where a
+        partial scrub is a native prefix raster under a QML canvas
+        tail and the same scrub at full progress is one raster — two
+        different producers of the same ink that must place it at the
+        same device row. Hold the view fixed, sweep the split across
+        its whole range, and require the red ink's vertical placement
+        to be invariant: a step here is the judder."""
+        monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]},
+                   "travels": [], "travelStarts": [], "travelEnds": [],
+                   "motions": 21}
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+
+        def red_rows(image):
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            rows = []
+            for row in range(0, int(face.height())):
+                for col in range(0, int(face.width())):
+                    if self._matches(image.pixel(int(origin.x()) + col,
+                                                 int(origin.y()) + row),
+                                     (0xD3, 0x2F, 0x2F)):
+                        rows.append(row)
+                        break
+            return rows
+
+        # Split 1 composes no segment at all (a one-motion tail is
+        # degenerate), so there is no placement to compare there. The
+        # range below has ink on every value and crosses both
+        # handovers: the prefix boundary at 10 and the full raster at
+        # motions.
+        measured = []
+        for split in list(range(2, 22)):
+            self._printer.setSplit(split)
+            self.pump(30)
+            window.grabWindow()
+            self.pump(30)
+            image = window.grabWindow()
+            rows = red_rows(image)
+            self.assertTrue(rows, "the wall never painted at split %d" % split)
+            measured.append((split, sum(rows) / float(len(rows)), len(rows),
+                             min(rows), max(rows)))
+
+        # The probe's own liveness control: the row set moves with the
+        # geometry, so a constant one means something. At lineScale 8
+        # the bed maps 1 mm to two device rows, so a wall one
+        # millimetre further up the bed must read two rows up.
+        probe = [[20.0 + motion * 10.0, 126.0, float(motion)]
+                 for motion in range(21)]
+        shifted = self._native_layer(
+            {"classes": {"WALL-OUTER": [probe]}, "travels": [],
+             "travelStarts": [], "travelEnds": [], "motions": 21},
+            face, prefix_split=10)
+        self._printer.setSplit(21)
+        self._printer.setLayers({"prev": None, "current": shifted, "next": None})
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        moved = red_rows(window.grabWindow())
+        self.assertTrue(moved, "the liveness control painted nothing")
+        self.assertAlmostEqual(
+            sum(moved) / float(len(moved)), measured[-1][1] - 2.0, delta=0.5,
+            msg="the ink probe is blind: a wall 1 mm up the bed did not "
+                "read two rows up, so a constant centroid proves nothing")
+
+        centroids = [m[1] for m in measured]
+        spread = max(centroids) - min(centroids)
+        self.assertLessEqual(
+            spread, 0.5,
+            "the ink's vertical placement moved %.2f px across the split "
+            "sweep (%s) — the prefix, the canvas tail and the full raster "
+            "do not place the same stroke at the same row"
+            % (spread, ", ".join("s%d=%.2f" % (m[0], m[1]) for m in measured)))
+
     @staticmethod
     def _arc_payload(gcode, split=None):
         """The follower payload a literal file produces: the painted
