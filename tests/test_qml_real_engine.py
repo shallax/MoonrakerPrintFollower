@@ -1900,13 +1900,21 @@ class CameraFpsControlTests(RealEngineTestCase):
     def _mouse(self, window, item, kind, x, y, buttons=None, button=None):
         """One real mouse event at item-local (x, y) — the drag pan's
         own path (the plate face suite's idiom). *button* is the button
-        the event is ABOUT: a press must carry its own button in the
-        held set or the delivery agent files it as a bare update, which
-        is why the default pairs the two."""
-        from PyQt6.QtCore import QPoint, Qt
+        the event is ABOUT.
+
+        A press must carry its own button or the delivery agent files it
+        as a bare update; a MOVE must carry NONE, because a move that
+        names a button reads as a fresh press (`isBeginEvent`), and Qt
+        then re-runs target selection mid-drag — which hands the grab to
+        whatever animated control has arrived under the pointer and
+        stops the pan the drag was driving. The buttons still HELD ride
+        *buttons*, which is what a move is classified by.
+        """
+        from PyQt6.QtCore import QEvent, QPoint, Qt
         from PyQt6.QtGui import QMouseEvent
         if button is None:
-            button = Qt.MouseButton.LeftButton
+            button = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
+                else Qt.MouseButton.LeftButton
         if buttons is None:
             buttons = Qt.MouseButton.NoButton
         scene = item.mapToItem(window.contentItem(), QPointF(x, y))
@@ -2380,16 +2388,73 @@ class CameraFpsControlTests(RealEngineTestCase):
                     Qt.MouseButton.LeftButton)
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit + 90, cy,
                     Qt.MouseButton.LeftButton)
-        self.pump(20)
+        # Both legs wait for the pan the assertion is about rather than
+        # for a number of event rounds: the drag is delivered to the
+        # gesture area and the pan applied on the Qt side, so a starved
+        # leg read 0.0 for a drag that had simply not landed yet. The
+        # VALUES are what carry the claim — an overshoot that had to be
+        # undone first would still read short here.
+        self._wait_until(window,
+                         lambda _image: abs(pane.property("cameraPanX") - limit) <= 1.5,
+                         timeout=8.0)
         self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
                                msg="the overshoot is discarded, not banked")
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit + 50, cy,
                     Qt.MouseButton.LeftButton)
-        self.pump(20)
+        self._wait_until(window,
+                         lambda _image: abs(pane.property("cameraPanX") - (limit - 40)) <= 1.5,
+                         timeout=8.0)
         self.assertAlmostEqual(pane.property("cameraPanX"), limit - 40, delta=1.5,
                                msg="the return leg moves the picture at once")
         self._mouse(window, frame, QEvent.Type.MouseButtonRelease, cx + limit + 50, cy)
         self.pump(20)
+
+    def test_a_drag_across_the_settled_zoom_control_keeps_the_camera(self):
+        # The malformed move: a MOVE that names a button reads as a
+        # fresh press, so Qt re-selects the target mid-drag and the
+        # settled zoom control takes the grab the camera gesture was
+        # holding. The pan then stops dead and the rest of the drag is
+        # lost — which is what the macos leg saw as a pan that never
+        # moved at all. The control has to be IN the pointer's path and
+        # settled for this to bite, so the wait is its own docked
+        # geometry and its turn-over, never a sleep.
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        bar = self.find(pane, "cameraBar")
+        self._wheel(window, frame)
+        self._wait_until(window,
+                         lambda _image: pane.property("cameraBarDocked")
+                         and not pane.property("_cameraBarTurning")
+                         and bar.x() + bar.width() <= frame.width() + 0.5,
+                         timeout=8.0)
+        limit = pane.property("cameraPanLimitX")
+        self.assertGreater(limit, 40.0, "the mount must zoom into a real overhang")
+        from PyQt6.QtCore import QEvent
+        cx, cy = frame.width() / 2, frame.height() / 2
+        self._mouse(window, frame, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.LeftButton)
+        # A first move that clears the overshoot, then a second that
+        # crosses the control: the grab has to survive the crossing.
+        self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit, cy,
+                    Qt.MouseButton.LeftButton)
+        self._wait_until(window,
+                         lambda _image: abs(pane.property("cameraPanX") - limit) <= 1.5,
+                         timeout=8.0)
+        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+                               msg="the first move never panned")
+        across = bar.x() + bar.width() / 2
+        self._mouse(window, frame, QEvent.Type.MouseMove, across, cy,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        out = pane.property("cameraPanX")
+        # The return leg is the claim: the grab is the camera gesture's
+        # until the release, so the picture tracks the pointer even
+        # though the outward leg ended over the control.
+        self._mouse(window, frame, QEvent.Type.MouseMove, across - 60, cy,
+                    Qt.MouseButton.LeftButton)
+        self.pump(20)
+        self.assertAlmostEqual(pane.property("cameraPanX"), out - 60, delta=2.0,
+                               msg="the drag lost the camera's grab to the control")
+        self._mouse(window, frame, QEvent.Type.MouseButtonRelease, across - 60, cy)
 
     def test_a_double_click_returns_the_fit(self):
         pane, window, _model, _image, frame = self._fps_pane(700, 700)
@@ -5106,10 +5171,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
         from PyQt6.QtCore import QEvent
         from PyQt6.QtGui import QMouseEvent
         def mouse(kind, x, y, buttons):
+            # A move is about NO button: carrying one makes Qt read it
+            # as a fresh press, which re-selects the target mid-drag and
+            # hands the grab to whatever animated control arrived under
+            # the pointer. The held mask still rides `buttons`.
+            faced = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
+                else Qt.MouseButton.LeftButton
             scene = face.mapToItem(window.contentItem(), QPointF(x, y))
             event = QMouseEvent(kind, QPointF(scene),
                                 QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
-                                Qt.MouseButton.LeftButton, buttons,
+                                faced, buttons,
                                 Qt.KeyboardModifier.NoModifier)
             QGuiApplication.sendEvent(window, event)
         pan_before = face.property("displayPanX")
@@ -5931,10 +6002,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
         cy = int(face.height() / 2)
 
         def mouse(kind, x, y, buttons):
+            # A move is about NO button: carrying one makes Qt read it
+            # as a fresh press, which re-selects the target mid-drag and
+            # hands the grab to whatever animated control arrived under
+            # the pointer. The held mask still rides `buttons`.
+            faced = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
+                else Qt.MouseButton.LeftButton
             scene = face.mapToItem(window.contentItem(), QPointF(x, y))
             event = QMouseEvent(kind, QPointF(scene),
                                 QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
-                                Qt.MouseButton.LeftButton, buttons,
+                                faced, buttons,
                                 Qt.KeyboardModifier.NoModifier)
             QGuiApplication.sendEvent(window, event)
 
