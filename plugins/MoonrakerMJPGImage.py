@@ -16,7 +16,7 @@ import time
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QImage, QPainter
+from PyQt6.QtGui import QGuiApplication, QImage, QPainter
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtQuick import QQuickPaintedItem
 
@@ -55,6 +55,13 @@ MAX_HEADER_BYTES = 4096
 # The diagnostics snapshot cadence: the counters ride the QML surface
 # through one low-frequency signal, never per-frame notifications.
 STATS_EMIT_INTERVAL_MS = 1000
+
+# The interval the trace summary reports on. The counts, the Qt-thread
+# milliseconds and the two ages are all measured over the interval that
+# just closed rather than the stream's lifetime: the complaint is a rate
+# that COLLAPSES on a phase boundary, and a lifetime average hides
+# exactly that.
+SUMMARY_INTERVAL_S = 5.0
 
 
 class MoonrakerMJPGImage(QQuickPaintedItem):
@@ -125,6 +132,41 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._recent_incoming = 0.0
         self._recent_displayed = 0.0
         self._recent_bytes_per_sec = 0.0
+
+        # The interval accounting (the Windows diagnosis). Everything
+        # here answers one of three questions the frame rates alone
+        # cannot: how much of the Qt thread this pipeline actually
+        # costs (decode and drain, the only parts that run there),
+        # whether a frame reached the screen late or was never parsed
+        # at all (the display lag), and whether the Qt thread was
+        # between drains long enough for the camera's own send to
+        # block (the drain gap). The maxima are the interval's, reset
+        # by every stats tick, so a spike cannot hide inside an
+        # average.
+        self._drain_ms_total = 0.0
+        self._drain_ms_max = 0.0
+        self._drain_gap_ms_max = 0.0
+        self._last_drain_end = 0.0
+        self._display_lag_ms_total = 0.0
+        self._display_lag_ms_max = 0.0
+        self._pending_arrival = 0.0
+        self._decodes_rendered = 0
+        self._recent_parsed_count = 0
+        self._recent_displayed_count = 0
+        self._recent_decodes = 0
+        self._recent_interval_s = 0.0
+        self._recent_decode_ms = 0.0
+        self._recent_decode_ms_max = 0.0
+        self._recent_decode_ms_per_frame = 0.0
+        self._recent_drain_ms = 0.0
+        self._recent_drain_ms_max = 0.0
+        self._recent_drain_ms_per_frame = 0.0
+        self._recent_drain_gap_ms = 0.0
+        self._recent_display_lag_ms = 0.0
+        self._recent_display_lag_ms_max = 0.0
+        self._recent_pending_age_ms = 0.0
+        self._last_meters = None
+        self._app_state = ""
 
         self.setAntialiasing(True)
 
@@ -340,6 +382,8 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._stop_request()
         self._stream_buffer = bytearray()
         self._pending_frame = None
+        self._pending_arrival = 0.0
+        self._last_drain_end = 0.0
         self._multipart_boundary = None
         self._started = False
         self._render_timer.stop()
@@ -405,12 +449,24 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # the previous source into this one.
         self._stream_buffer = bytearray()
         self._pending_frame = None
+        self._pending_arrival = 0.0
         self._multipart_boundary = None
         self._requests_started += 1
-        # The recent-delta baseline restarts with the stream: a long
-        # stopped interval must not dilute the first measurement.
-        self._last_stats_snapshot = None
-        self._last_stats_at = 0.0
+        # The recent-delta baselines restart with the stream: a long
+        # stopped interval must not dilute the first measurement. Both
+        # are seeded here rather than at the first tick, so every
+        # interval the counters report is the SAME window — the counts
+        # and the Qt-thread milliseconds can never disagree about which
+        # interval they describe.
+        self._last_stats_snapshot = self._stats_snapshot()
+        self._last_stats_at = time.monotonic()
+        self._last_meters = (self._drain_ms_total, self._display_lag_ms_total,
+                             self._decode_ms_total, self._decodes_rendered)
+        self._last_drain_end = 0.0
+        self._drain_ms_max = 0.0
+        self._drain_gap_ms_max = 0.0
+        self._recent_decode_ms_max = 0.0
+        self._display_lag_ms_max = 0.0
         self._recent_incoming = 0.0
         self._recent_displayed = 0.0
         self._recent_bytes_per_sec = 0.0
@@ -474,21 +530,36 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
                 return
 
     def _drain(self) -> None:
+        started = time.perf_counter()
+        # The idle gap between drains. The socket is read only when the
+        # Qt thread returns to its event loop, so this is the starvation
+        # the camera's own send sees: a source that cannot be drained
+        # blocks, and the frames it would have sent are the ones the
+        # user reads as "backing up".
+        if self._last_drain_end:
+            gap = (started - self._last_drain_end) * 1000.0
+            if gap > self._drain_gap_ms_max:
+                self._drain_gap_ms_max = gap
         if self._image_reply is None:
+            self._last_drain_end = started
             return
         data = bytes(self._image_reply.readAll())
-        if not data:
-            return
-        self._bytes_received += len(data)
-        self._stream_buffer += data
-        self._buffer_high_water = max(self._buffer_high_water, len(self._stream_buffer))
-        if self._multipart_boundary is None:
-            self._detect_boundary()
-        if self._multipart_boundary is not None:
-            self._parse_multipart()
-        else:
-            self._parse_scan()
-        self._apply_limits()
+        if data:
+            self._bytes_received += len(data)
+            self._stream_buffer += data
+            self._buffer_high_water = max(self._buffer_high_water, len(self._stream_buffer))
+            if self._multipart_boundary is None:
+                self._detect_boundary()
+            if self._multipart_boundary is not None:
+                self._parse_multipart()
+            else:
+                self._parse_scan()
+            self._apply_limits()
+        self._last_drain_end = time.perf_counter()
+        elapsed = (self._last_drain_end - started) * 1000.0
+        self._drain_ms_total += elapsed
+        if elapsed > self._drain_ms_max:
+            self._drain_ms_max = elapsed
 
     def _consume_frame(self, frame: bytes) -> None:
         # The single per-frame validation point every parser path
@@ -508,6 +579,11 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             # intentionally dropped before any decode cost.
             self._latest_wins_drops += 1
         self._pending_frame = frame
+        # The arrival stamp the display lag is measured from: the age
+        # of the frame when it reaches the screen is the latency the
+        # user sees, and the one number a decode-rate readout cannot
+        # show.
+        self._pending_arrival = time.monotonic()
 
     @staticmethod
     def _content_length(header_block: bytes) -> Optional[int]:
@@ -658,16 +734,29 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         if self._pending_frame is None:
             return
         frame = self._pending_frame
+        arrival = self._pending_arrival
         self._pending_frame = None
+        self._pending_arrival = 0.0
         started = time.perf_counter()
         image = QImage.fromData(frame)
         elapsed = (time.perf_counter() - started) * 1000.0
         self._decode_ms_total += elapsed
         self._decode_ms_max = max(self._decode_ms_max, elapsed)
+        if elapsed > self._recent_decode_ms_max:
+            self._recent_decode_ms_max = elapsed
         if image.isNull():
             self._decode_failures += 1
             return
         self._frames_displayed += 1
+        self._decodes_rendered += 1
+        if arrival:
+            # How old the frame was when it reached the screen: a
+            # stalled Qt thread shows up here first, because the frame
+            # is already in hand and only the hand-off is late.
+            lag = (time.monotonic() - arrival) * 1000.0
+            self._display_lag_ms_total += lag
+            if lag > self._display_lag_ms_max:
+                self._display_lag_ms_max = lag
         # The new image lands BEFORE the notify: imageWidth and
         # imageHeight must already expose the new dimensions when the
         # signal fires.
@@ -699,6 +788,43 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
                 (snapshot[2] - self._last_stats_snapshot[2]) / interval, 1)
             self._recent_bytes_per_sec = round(
                 (snapshot[0] - self._last_stats_snapshot[0]) / interval, 1)
+            self._recent_interval_s = round(interval, 2)
+            self._recent_parsed_count = snapshot[1] - self._last_stats_snapshot[1]
+            self._recent_displayed_count = snapshot[2] - self._last_stats_snapshot[2]
+            meters = (self._drain_ms_total, self._display_lag_ms_total,
+                      self._decode_ms_total, self._decodes_rendered)
+            if self._last_meters is not None:
+                drain_ms = meters[0] - self._last_meters[0]
+                lag_ms = meters[1] - self._last_meters[1]
+                decode_ms = meters[2] - self._last_meters[2]
+                decodes = meters[3] - self._last_meters[3]
+                self._recent_decodes = decodes
+                # The Qt-thread share of the interval, in the unit the
+                # frame-rate complaint is really about.
+                self._recent_decode_ms = round(decode_ms / interval, 1)
+                self._recent_drain_ms = round(drain_ms / interval, 1)
+                self._recent_decode_ms_per_frame = round(decode_ms / max(1, decodes), 2)
+                self._recent_drain_ms_per_frame = round(
+                    drain_ms / max(1, self._recent_parsed_count), 2)
+                self._recent_decode_ms_max = round(self._recent_decode_ms_max, 2)
+                self._recent_drain_ms_max = round(self._drain_ms_max, 2)
+                self._recent_drain_gap_ms = round(self._drain_gap_ms_max, 1)
+                self._recent_display_lag_ms = round(lag_ms / max(1, decodes), 1)
+                self._recent_display_lag_ms_max = round(self._display_lag_ms_max, 1)
+            self._last_meters = meters
+        # The maxima are the interval's: reset here, not on the summary's
+        # slower cadence, so a spike is attributed to the interval it
+        # happened in.
+        self._drain_ms_max = 0.0
+        self._drain_gap_ms_max = 0.0
+        self._display_lag_ms_max = 0.0
+        # The age of the frame waiting to be rendered RIGHT NOW: the
+        # backlog a displayed rate cannot show, because a frame that
+        # never reached the screen never entered any rate. Read at the
+        # tick, so it is a sample rather than an interval aggregate.
+        self._recent_pending_age_ms = round(
+            (now - self._pending_arrival) * 1000.0, 1) if self._pending_arrival else 0.0
+        self._app_state = self._current_app_state()
         if snapshot != self._last_stats_snapshot or \
                 (self._recent_incoming, self._recent_displayed) != recent:
             self.statsChanged.emit()
@@ -709,36 +835,72 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # diagnoses it.
         self._trace_summary()
 
+    def _current_app_state(self) -> str:
+        # Which application state the interval's numbers were taken in.
+        # The owner's complaint is a rate that collapses when Cura is
+        # not the active window, and a rate read in one state cannot
+        # show that; the label is what makes two pastes comparable.
+        try:
+            state = QGuiApplication.applicationState()
+        except Exception:
+            return "unknown"
+        # getattr, not attribute access: the binding does not expose
+        # every member on every PyQt6 version, and a missing one must
+        # degrade to "unknown" rather than raise inside the timer.
+        for name, label in (("ApplicationActive", "active"),
+                            ("ApplicationInactive", "inactive"),
+                            ("ApplicationHidden", "hidden"),
+                            ("ApplicationSuspended", "suspended")):
+            candidate = getattr(Qt.ApplicationState, name, None)
+            if candidate is not None and state == candidate:
+                return label
+        return "unknown"
+
     def _trace(self, message: str) -> None:
         if self._trace_enabled:
             Logger.log("i", "Moonraker MJPEG: %s", message)
 
-    def _trace_summary(self) -> None:
-        if not self._trace_enabled:
-            return
-        now = time.monotonic()
-        if now - self._trace_summary_at < 5.0:
-            return
-        self._trace_summary_at = now
-        elapsed = max(0.001, now - self._stream_epoch)
-        Logger.log(
-            "i",
-            "Moonraker MJPEG summary: incoming %.1f fps (recent %.1f), "
-            "displaying %.1f fps (recent %.1f), bandwidth %.1f KB/s (%.2f Mbps), "
-            "latest-frame drops %.1f fps, "
-            "decode failures %d, oversized drops %d, average frame %.1f KB, "
-            "maximum frame %.1f KB, parser buffer high-water %.1f KB, "
-            "requests %d, source changes %d, transport errors %d, "
-            "parser resyncs %d, average decode %.1f ms, maximum decode %.1f ms",
-            self._frames_parsed / elapsed,
+    def _summary_line(self) -> tuple:
+        """The summary's format and its arguments, kept separate from
+        the logging call so the numbers the owner pastes are the
+        numbers a test can assert on."""
+        elapsed = max(0.001, time.monotonic() - self._stream_epoch)
+        fmt = (
+            "Moonraker MJPEG summary [%s] over %.2f s: parsed %d frames (%.1f fps), "
+            "displayed %d frames (%.1f fps), latest-frame drops %.1f fps, "
+            "decode failures %d, oversized drops %d, "
+            "Qt thread %.1f ms/s (decode %.1f, drain %.1f), "
+            "decode %.2f ms/frame (max %.2f), drain %.2f ms/frame (max %.2f ms), "
+            "drain gap max %.1f ms, display lag %.1f ms mean (max %.1f ms), "
+            "pending frame age %.1f ms, bandwidth %.1f KB/s (%.2f Mbps), "
+            "average frame %.1f KB, maximum frame %.1f KB, "
+            "parser buffer high-water %.1f KB, requests %d, source changes %d, "
+            "transport errors %d, parser resyncs %d, "
+            "lifetime parsed %.1f fps, displayed %.1f fps"
+        )
+        values = (
+            self._app_state or "unknown",
+            self._recent_interval_s,
+            self._recent_parsed_count,
             self._recent_incoming,
-            self._frames_displayed / elapsed,
+            self._recent_displayed_count,
             self._recent_displayed,
-            self._recent_bytes_per_sec / 1000.0,
-            self._recent_bytes_per_sec * 8.0 / 1000.0 / 1000.0,
             self._latest_wins_drops / elapsed,
             self._decode_failures,
             self._oversized_drops,
+            self._recent_decode_ms + self._recent_drain_ms,
+            self._recent_decode_ms,
+            self._recent_drain_ms,
+            self._recent_decode_ms_per_frame,
+            self._recent_decode_ms_max,
+            self._recent_drain_ms_per_frame,
+            self._recent_drain_ms_max,
+            self._recent_drain_gap_ms,
+            self._recent_display_lag_ms,
+            self._recent_display_lag_ms_max,
+            self._recent_pending_age_ms,
+            self._recent_bytes_per_sec / 1000.0,
+            self._recent_bytes_per_sec * 8.0 / 1000.0 / 1000.0,
             self._frame_bytes_total / max(1, self._frames_parsed) / 1000.0,
             self._frame_bytes_max / 1000.0,
             self._buffer_high_water / 1000.0,
@@ -746,9 +908,20 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             self._source_changes,
             self._transport_errors,
             self._parser_resyncs,
-            self._decode_ms_total / max(1, self._frames_displayed),
-            self._decode_ms_max,
+            self._frames_parsed / elapsed,
+            self._frames_displayed / elapsed,
         )
+        return fmt, values
+
+    def _trace_summary(self) -> None:
+        if not self._trace_enabled:
+            return
+        now = time.monotonic()
+        if now - self._trace_summary_at < SUMMARY_INTERVAL_S:
+            return
+        self._trace_summary_at = now
+        fmt, values = self._summary_line()
+        Logger.log("i", fmt, *values)
 
     def __del__(self) -> None:
         try:

@@ -1476,14 +1476,32 @@ class CoordinatorCoverageTests(unittest.TestCase):
         from plugins import PrintCoordinator as coordinator_module
         with patch.object(coordinator_module, "Logger") as logger:
             parts.coordinator._publish()
-            self.assertEqual(len(logger.log.call_args_list), 1)
+            messages = [str(call) for call in logger.log.call_args_list]
+            # Two diagnostics lines: the card's gates and the phases.
+            self.assertEqual(len(messages), 2)
+            self.assertTrue(any("preview card gates" in message
+                                for message in messages))
+            self.assertTrue(any("preview card phases" in message
+                                for message in messages))
             parts.coordinator._publish()
-        self.assertEqual(len(logger.log.call_args_list), 1)
+        self.assertEqual(len(logger.log.call_args_list), 2)
         with patch.object(coordinator_module, "Logger") as logger:
             parts.cura.has_toolpath = True
             parts.coordinator._publish()
         self.assertTrue(any("preview card gates" in str(call)
                             for call in logger.log.call_args_list))
+        # The phase line answers to a phase, not to a gate: the camera's
+        # own summary is a timestamp with no idea which phase it fell in.
+        with patch.object(coordinator_module, "Logger") as logger:
+            parts.index.phase = "indexing"
+            parts.coordinator._publish()
+        messages = [str(call) for call in logger.log.call_args_list]
+        self.assertTrue(any("preview card phases" in message
+                            for message in messages))
+        self.assertFalse(any("preview card gates" in message
+                             for message in messages))
+        args = logger.log.call_args_list[-1][0]
+        self.assertIn("index=indexing", args[1] % tuple(args[2:]))
 
     def test_close_silences_every_later_publication(self):
         parts = self._make()

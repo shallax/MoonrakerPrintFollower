@@ -56,6 +56,7 @@ class PrintCoordinator(QObject):
         self._status = {}
         self._detail = "Not connected"
         self._gate_logged = None
+        self._phase_logged = None
         self._preview_block = None
         # The replace prompt's pending action: the load the card's
         # dialog is asking about, held while the prompt is up (None
@@ -904,6 +905,16 @@ class PrintCoordinator(QObject):
             self._gate_logged = gate
             Logger.log("i", "Moonraker preview card gates: configured=%s loadBusy=%s hasToolpath=%s previewStage=%s",
                        gate[0], gate[1], gate[2], gate[3])
+        # The phase transitions, same change-gated shape: the camera's
+        # own summary is a timestamp with no idea which phase it fell
+        # in, and "slower while indexing" is only readable when the two
+        # lines can be put side by side.
+        phase = (self._files.phase, self._index.phase, self._cura.loading,
+                 self._snapshot.load_active)
+        if phase != self._phase_logged:
+            self._phase_logged = phase
+            Logger.log("i", "Moonraker preview card phases: files=%s index=%s curaLoading=%s loadActive=%s",
+                       phase[0], phase[1], phase[2], phase[3])
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
             # The preview's load feedback: busy until the load reaches a

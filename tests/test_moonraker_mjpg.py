@@ -4,6 +4,7 @@ contracts. Qt-guarded — the container runs them for real against the
 production class with a fake network manager and a fake reply."""
 
 import os
+import time
 import unittest
 
 # The window paint test needs a screen: the offscreen platform,
@@ -123,6 +124,17 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
     def _drain(self, milliseconds):
         """Run the event loop so the render timer fires its ticks."""
         self.qt.events(milliseconds)
+
+    def _drain_until(self, predicate, milliseconds=4000):
+        """Pump the event loop until the predicate holds. The stats
+        cadence is real time, so a fixed sleep would make the pin a
+        race against it — this waits for the tick it wants."""
+        deadline = time.monotonic() + milliseconds / 1000.0
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            self.qt.events(25)
+        return predicate()
 
     def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
         def _get_with_type(request):
@@ -627,6 +639,113 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._reply().deliver(body)  # the frame lands in the NEXT interval
         self._drain(1100)
         self.assertGreater(self.item.recentIncomingFPS, 0)
+
+    def test_the_drain_records_its_cost_and_the_gap_between_drains(self):
+        # The drain is the receive path's share of the Qt thread, and
+        # the gap between two drains is the starvation the camera's own
+        # send sees. Neither is readable from a frame rate, and a
+        # source that cannot be drained is the "frames backing up"
+        # complaint's other explanation.
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertGreater(self.item._drain_ms_total, 0)
+        self.assertGreater(self.item._drain_ms_max, 0)
+        started = time.monotonic()
+        self._drain(300)  # nothing arrives: the Qt thread is elsewhere
+        waited = (time.monotonic() - started) * 1000.0
+        self.assertGreaterEqual(waited, 250)
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertGreaterEqual(self.item._drain_gap_ms_max, waited * 0.8)
+
+    def test_the_display_lag_is_the_age_of_the_frame_that_reached_the_screen(
+            self):
+        # The latency the viewer actually sees. A frame that arrived
+        # long before it was decoded is late by its AGE, not by its
+        # decode time — which is what "behind reality" means.
+        self._start()
+        self.item._render_timer.stop()  # hold the frame in the buffer
+        frame = _jpeg(40, 30)
+        self._reply().deliver(_multipart(frame))
+        started = time.monotonic()
+        self._drain(250)  # the frame waits while the Qt thread is busy
+        waited = (time.monotonic() - started) * 1000.0
+        self.item._render()
+        held = self.item._display_lag_ms_total
+        self.assertGreaterEqual(held, waited * 0.8)
+        # A frame rendered at once is a small lag: the measurement is
+        # THIS frame's age, not a constant and not a stale stamp.
+        self._reply().deliver(_multipart(frame))
+        self.item._render()
+        self.assertLess(self.item._display_lag_ms_total - held, waited * 0.5)
+
+    def test_the_stats_interval_separates_parsed_from_displayed(self):
+        # The phase diagnosis needs both counts over the SAME interval:
+        # parsed-but-not-displayed is the backlog, and the Qt-thread
+        # share says whether the plugin or the source owns it.
+        self._start()
+        frames = [_jpeg(40, 30, shade=50 + index) for index in range(4)]
+        self._reply().deliver(b"".join(_multipart(item) for item in frames))
+        self.assertTrue(
+            self._drain_until(lambda: self.item._recent_parsed_count == 4),
+            "the stats tick never closed an interval over the burst")
+        self.assertEqual(self.item._recent_displayed_count, 1)
+        # The stats timer is a coarse QTimer: 1 s of interval with Qt's
+        # 5% tolerance, not a lifetime and not a guess.
+        self.assertGreaterEqual(self.item._recent_interval_s, 0.9)
+        self.assertLessEqual(self.item._recent_interval_s, 1.5)
+        self.assertGreater(self.item._recent_decode_ms, 0)
+        self.assertGreater(self.item._recent_decode_ms_per_frame, 0)
+        self.assertGreater(self.item._recent_drain_ms_per_frame, 0)
+
+    def test_the_oldest_buffered_frame_reports_its_age(self):
+        # A frame that parsed but never rendered is invisible to both
+        # rates; its age at the tick is the backlog the user feels.
+        self._start()
+        self.item._render_timer.stop()  # the render never happens
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertTrue(
+            self._drain_until(lambda: self.item._recent_pending_age_ms > 0),
+            "the stats tick never reported the buffered frame")
+        self.assertEqual(self.item.framesParsed, 1)
+        self.assertEqual(self.item.framesDisplayed, 0)
+        self.assertGreaterEqual(self.item._recent_pending_age_ms, 200)
+
+    def test_the_interval_maxima_are_reset_by_the_tick(self):
+        # A maximum that never reset would report an old spike as the
+        # current interval's worst: the maxima belong to the interval
+        # they were measured in, so the fresh interval reads low.
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        started = time.monotonic()
+        self._drain(300)
+        self.assertGreaterEqual((time.monotonic() - started) * 1000.0, 250)
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertGreaterEqual(self.item._drain_gap_ms_max, 250)
+        self.assertTrue(
+            self._drain_until(lambda: self.item._recent_drain_gap_ms >= 250),
+            "the tick never harvested the interval's maxima")
+        self.assertEqual(self.item._drain_gap_ms_max, 0.0)
+
+    def test_the_summary_line_renders_every_number_it_promises(self):
+        # The line the owner pastes: the format and its values must
+        # stay in step (a mismatch raises), and the interval's own
+        # parsed/displayed counts, the app state and the oldest
+        # buffered frame's age must all be on it.
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertTrue(
+            self._drain_until(lambda: self.item._recent_displayed_count >= 1),
+            "the stats tick never reported the displayed frame")
+        fmt, values = self.item._summary_line()
+        line = fmt % values
+        self.assertIn(self.item._app_state,
+                      ("active", "inactive", "hidden", "suspended", "unknown"))
+        self.assertIn("[%s]" % self.item._app_state, line)
+        self.assertIn("parsed %d frames" % self.item._recent_parsed_count, line)
+        self.assertIn("displayed %d frames" % self.item._recent_displayed_count, line)
+        self.assertIn("pending frame age %.1f ms" % self.item._recent_pending_age_ms,
+                      line)
+        self.assertIn("Qt thread", line)
 
     def test_the_soi_eoi_fallback_covers_streams_without_multipart(self):
         # No usable Content-Type: the raw concatenated-JPEG scan must
