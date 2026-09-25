@@ -3147,6 +3147,7 @@ if QT_AVAILABLE:
         # state and the option ride the view group.
         plateProgressChanged = pyqtSignal()
         followerViewChanged = pyqtSignal()
+        improvingEtaChanged = pyqtSignal()
 
         # The picker's own payload: a test installs one before it mounts
         # (the class-attribute pattern the follower half's PAYLOAD uses).
@@ -3164,6 +3165,7 @@ if QT_AVAILABLE:
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
             self._layer_anchor = -1
+            self._improving_eta = False
             self._show_base = True
             self.calls = []
             self._plate = PlatePrinterDouble.PLATE if PlatePrinterDouble.PLATE is not None else {
@@ -3257,6 +3259,33 @@ if QT_AVAILABLE:
         @pyqtProperty(str, constant=True)
         def plateProgressReason(self):
             return ""
+
+        @pyqtProperty(bool, notify=improvingEtaChanged)
+        def improvingEta(self):
+            # The load gate `PlateDownloadAction.busy()` reads, declared
+            # for the same reason production's model declares it: a
+            # property a QML binding cannot resolve reads as undefined,
+            # and a property animation whose `running:` binding fails to
+            # resolve keeps its own default — the action's two infinite
+            # animations then run for as long as the face is mounted.
+            return self._improving_eta
+
+        @pyqtProperty(float, notify=improvingEtaChanged)
+        def improveEtaProgress(self):
+            return -1.0
+
+        @pyqtProperty(str, notify=improvingEtaChanged)
+        def improveEtaPhase(self):
+            return ""
+
+        def setImprovingEta(self, improving):
+            """A load starting or finishing: the action's animations and
+            the phase row's own bindings follow the gate."""
+            improving = bool(improving)
+            if improving == self._improving_eta:
+                return
+            self._improving_eta = improving
+            self.improvingEtaChanged.emit()
 
         @pyqtProperty("QVariant", notify=plateDotChanged)
         def plateDot(self):
@@ -8420,6 +8449,78 @@ class PlateFaceRenderTests(RealEngineTestCase):
         side = plot.property("bed").property("plotWidth").toNumber()
         face.setProperty("viewScale", max(face.width(), face.height()) / side + 0.5)
         self.pump(20)
+
+    @staticmethod
+    def _running_animations(face):
+        """Every animation-family object under the face that is running.
+        The face's animations are all gated on a load being busy; an
+        idle face must own none."""
+        return [str(child.metaObject().className())
+                for child in face.findChildren(QObject)
+                if "Animation" in str(child.metaObject().className())
+                and child.property("running")]
+
+    def _driver_ticks(self, window, milliseconds):
+        """QML animation-driver Timer events delivered app-wide while
+        the rig pumps `milliseconds`. The driver is what turns a running
+        animation into a 60 Hz repaint loop: the events are the cost,
+        independent of how much ink the frames carry."""
+        from PyQt6.QtCore import QEvent
+
+        class DriverCensus(QObject):
+            def __init__(self):
+                super().__init__()
+                self.ticks = 0
+
+            def eventFilter(self, obj, event):
+                if (event.type() == QEvent.Type.Timer
+                        and "AnimationDriver" in str(obj.metaObject().className())):
+                    self.ticks += 1
+                return False
+
+        census = DriverCensus()
+        self.app.installEventFilter(census)
+        try:
+            self._pump_ms(milliseconds)
+        finally:
+            self.app.removeEventFilter(census)
+        return census.ticks
+
+    def test_a_mounted_face_animates_only_while_a_load_is_busy(self):
+        """The download action's animations hang off ONE model gate.
+
+        `PlateDownloadAction.busy()` reads the model's `improvingEta`
+        and its hourglass and sweep animations run while that is true.
+        The gate is a model property, so the rig's printer double has to
+        publish it the way the model does: a property a binding cannot
+        resolve reads as undefined, the `running:` binding never turns
+        the animation off, and a mounted but idle face then ticks the
+        animation driver at ~62 Hz (and forces ~18 window frames a
+        second) for as long as the popover is open. Both halves are
+        pinned: idle animates nothing, a busy load still animates."""
+        monitor, window, face = self._follower_popover()
+        self.pump(60)
+        printer = self._printer
+        self.assertFalse(printer.property("improvingEta"),
+                         "the fixture starts with nothing loading")
+        self.assertEqual(self._running_animations(face), [],
+                         "the face animates while nothing loads")
+        busy_ticks = self._driver_ticks(window, 600)
+        self.assertEqual(busy_ticks, 0,
+                         "the idle face ticked the animation driver %d times"
+                         % busy_ticks)
+        # The gate itself is live: a load in progress still animates, so
+        # the pin cannot pass by the animations being broken outright.
+        printer.setImprovingEta(True)
+        self.pump(30)
+        self.assertTrue(self._running_animations(face),
+                        "a busy load left the action without its animations")
+        self.assertGreater(self._driver_ticks(window, 600), 0,
+                           "the busy action never ticked the driver")
+        printer.setImprovingEta(False)
+        self.pump(30)
+        self.assertEqual(self._running_animations(face), [],
+                         "the finished load left the action animating")
 
     def test_the_jump_button_recentres_the_view_on_the_toolhead(self):
         monitor, window, face = self._follower_popover()
