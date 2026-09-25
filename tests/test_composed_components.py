@@ -3364,9 +3364,12 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         real_schedule_nav = model_cls._schedule_navigation
         real_schedule_surface = model_cls._schedule_surface
 
-        def schedule_nav(pane, plate_surface):
+        def schedule_nav(pane, plate_surface, **kwargs):
+            # The wake fires with coalesce_zoom=False (the settle's own
+            # expiry must bake): the seam forwards it, so the patched
+            # scheduler behaves exactly as the product's does.
             before = plate_surface.nav.get("job")
-            real_schedule_nav(pane, plate_surface)
+            real_schedule_nav(pane, plate_surface, **kwargs)
             after = plate_surface.nav.get("job")
             if after is not None and after is not before:
                 starts["nav"].append(
@@ -3560,19 +3563,61 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                         "the recovered render never painted the raster")
 
     def test_a_hard_scene_change_bypasses_the_nav_window(self):
-        # A zoom change genuinely re-bakes the scene: it must not
-        # wait out the follow window.
+        # A LAYER change genuinely re-bakes the scene: it must not
+        # wait out the follow window. (The zoom is no longer hard per
+        # step — a wheel's steps are one intent and ride the settle;
+        # see test_a_zoom_burst_coalesces_onto_its_settle.)
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
         payload = self._payload(600)
         self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
         self._drain_job(model, surface, self.qt)
         before = len(starts["nav"])
-        model.setFollowerView("popover", 2.0, 0.7, 400, 300, False, 0.0, 0.0)
-        self.qt.events(5)
+        # A NEW layer is new geometry, so it arrives as its own payload
+        # (the nav key identifies the window's content by payload
+        # identity — re-feeding the same dict would be the same scene).
+        layer_payload = self._payload(600)
+        self._poll(model, surface, layer_payload, 6, 50, clock, armed,
+                   self.qt)
         self._drain_job(model, surface, self.qt)
         self.assertGreater(len(starts["nav"]), before,
-                           "the zoom change waited out the follow window")
+                           "the layer change waited out the follow window")
+
+    def test_a_zoom_burst_coalesces_onto_its_settle(self):
+        # The measured storm: the zoom rides the content key (the grid
+        # and the stroke floor are baked at the level they present
+        # at), so every wheel step used to bypass the follow window and
+        # buy a whole-scene 4x composite — a chain in which each bake
+        # was superseded by the next step. A burst is ONE intent: the
+        # steps ride the short settle, and the level the wheel stops on
+        # bakes exactly once, without waiting out the follow window.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        before = len(starts["nav"])
+        key = surface.nav["key"]
+        self.assertIsNotNone(key, "the warm raster never promoted")
+        for zoom in (1.2, 1.4, 1.6, 1.8, 2.0):
+            model.setFollowerView("popover", zoom, 0.7, 400, 300, False,
+                                  0.0, 0.0)
+            self.qt.events(5)
+        self._drain_job(model, surface, self.qt)
+        self.assertEqual(len(starts["nav"]), before,
+                         "a wheel step bypassed the settle")
+        # The settle expires: one bake, for the level the wheel left.
+        clock.t += 0.2
+        self._fire_due_wakes(model, armed, clock)
+        self._drain_job(model, surface, self.qt)
+        self.assertEqual(len(starts["nav"]), before + 1,
+                         "the settle did not bake exactly once")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and surface.nav["key"] != key:
+            self.qt.events(6)
+            time.sleep(0.01)
+        self.assertEqual(surface.nav["key"][-1], 2.0,
+                         "the settled raster baked a superseded zoom")
 
     def test_attached_prefix_checkpoints_on_a_five_second_cadence(self):
         # 30 s of attached polls: the native prefix advances at most

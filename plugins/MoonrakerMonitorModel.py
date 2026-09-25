@@ -133,6 +133,20 @@ CONSOLE_HEIGHT_MAX = 2000
 # release returns the picture to the exact scene, so the window only
 # needs to keep the gesture entries fresh.
 _NAV_FOLLOW_BAKE_S = 3.0
+# The zoom's own settle: the zoom rides the navigation key (the
+# raster's grid and stroke floor are baked at the level they present
+# at), so a wheel step is a genuine demand change. A BURST of them is
+# one intent, and baking the whole 4x composite per step spent the
+# worker and the GUI thread on pictures the next step superseded — so
+# a demand whose zoom slot moved rides this short trailing settle
+# instead, and the demand the wheel stops on bakes once. Far shorter
+# than the follow window: the gesture needs a raster at the level it
+# is now presenting at, not three seconds later.
+_NAV_ZOOM_SETTLE_S = 0.12
+# The navigation key's shape: the builder below is the ONE length and
+# the derived keys read slots by position, so the count is named here
+# rather than repeated as a bare number.
+_NAV_KEY_FIELDS = 16
 # The attached prefix checkpoint cadence: the native prefix advances
 # at most once per window, snapshotting the latest split — the QML
 # tail accumulates [P, split) cheaply between checkpoints.
@@ -372,7 +386,13 @@ class _RenderSurface:
                     # when the next bake is permitted, `failed_hard`
                     # the hard key whose render failed (retried once
                     # per window, never per poll).
-                    "hard": None, "wake_at": None, "failed_hard": None}
+                    "hard": None, "wake_at": None, "failed_hard": None,
+                    # Which kind of window the armed wake belongs to:
+                    # the attached follow's catch-up, or the zoom's own
+                    # settle. The settle must land its raster even with
+                    # the popover closed (nothing else re-fires that
+                    # demand), so the wake is not gated on visibility.
+                    "wake_settle": False}
 
     def render_key(self):
         """The key a raster must carry to display on this surface
@@ -3345,22 +3365,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 round(float(surface.view.get("lineScale") or 0.7), 6),
                 int(surface.view.get("width") or 0),
                 int(surface.view.get("height") or 0),
-                # The ZOOM rides the key (the live ruling): the grid
-                # is baked at the width that presents as the canvas's
-                # 1 px AT THIS ZOOM, so a zoom change re-bakes the
-                # single flat raster. The pan stays a presentation
-                # transform and never appears here.
-                round(float(surface.view.get("scale") or 1.0), 6),
                 round(float(self.bedMeshMachineWidth or 0.0), 6),
                 round(float(self.bedMeshMachineDepth or 0.0), 6),
                 tuple(sorted((k, round(float(v), 6))
                              for k, v in (surface.plot or {}).items())),
-                # The DPR rides the key and APPENDS: the render view's
-                # stroke floor presents min(2/dpr, 1) logical px, so a
-                # window moving to another screen changes the baked
-                # pixels — and the appended slot keeps _nav_key_hard's
-                # split neutralisation on index 3 intact.
-                round(min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))), 6))
+                # The DPR rides the key: the render view's stroke floor
+                # presents min(2/dpr, 1) logical px, so a window moving
+                # to another screen changes the baked pixels — and
+                # appending keeps _nav_key_hard's split neutralisation
+                # on index 3 intact.
+                round(min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))), 6),
+                # The ZOOM APPENDS (the live ruling, and the coalescing
+                # rule reads it by position): the grid is baked at the
+                # width that presents as the canvas's 1 px AT THIS
+                # ZOOM, so a zoom change re-bakes the single flat
+                # raster. The pan stays a presentation transform and
+                # never appears here.
+                round(float(surface.view.get("scale") or 1.0), 6))
 
     @staticmethod
     def _nav_key_hard(key):
@@ -3384,6 +3405,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return key
         return key[:3] + (key[3] is None,) + key[4:]
 
+    @staticmethod
+    def _nav_key_zoom(key):
+        """The key's trailing ZOOM slot — the one field that names a
+        presentation level rather than a scene. A key that is not the
+        full shape (a synthetic test ticket) reads as the WHOLE key,
+        so two of them compare equal only when they already are equal
+        and the zoom's coalescing rule can never fire for a demand
+        that moved anything else."""
+        if key is None or len(key) != _NAV_KEY_FIELDS:
+            return key
+        return key[-1]
+
     def _nav_arm_wake(self, surface):
         """Arm the attached throttle's expiry wake: when the start-
         time window passes, the LATEST demand schedules once — the
@@ -3400,18 +3433,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _nav_wake(self, surface, deadline=None):
         """The window expired: clear the throttle and the failed-hard
-        latch, then let the scheduler take the latest demand."""
+        latch, then let the scheduler take the latest demand.
+
+        A settle wake is the zoom's own expiry and is not gated on the
+        popover being open: the demand it fires for was scheduled by
+        the gesture and nothing else would re-fire it, so dropping it
+        would strand the raster at the level the wheel left behind."""
         surface = self._surface_for(surface)
-        if surface is None or surface.name != "popover" \
-                or not self._follower_popover_open:
+        if surface is None or surface.name != "popover":
             return
         if deadline is not None and surface.nav.get("wake_at") != deadline:
             return  # a newer submit owns the window now
+        settle = bool(surface.nav.get("wake_settle"))
+        if not settle and not self._follower_popover_open:
+            return
         surface.nav["wake_at"] = None
         surface.nav["failed_hard"] = None
-        self._schedule_navigation(surface)
+        # The wake IS the settle's own expiry: the demand it fires for
+        # must bake, never re-enter the zoom's coalescing rule (whose
+        # anchor — the promoted key — has not moved yet).
+        self._schedule_navigation(surface, coalesce_zoom=False)
 
-    def _schedule_navigation(self, surface):
+    def _schedule_navigation(self, surface, coalesce_zoom=True):
         """The warm interaction raster's demand: ONE background job
         per surface (the live updates coalesce on the key), never on
         the camera path, and only for the popover — the mini does
@@ -3427,6 +3470,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # key and re-arms; a success clears the latch.
         if key is None or key == surface.nav["key"] \
                 or key == surface.nav.get("failed"):
+            return
+        # The zoom's own settle (the measured storm): the zoom rides
+        # the key, so every wheel step was a hard change that bypassed
+        # the follow window — and a burst bought a CHAIN of full 4x
+        # composites, each one a whole-scene walk plus its publication,
+        # every one superseded by the next step. The wheel's steps are
+        # one intent: a demand whose zoom slot moved off the last
+        # PROMOTED raster rides this short trailing window instead, and
+        # the level the wheel stops on bakes once. The split may move
+        # with the zoom — the bake that follows carries the latest
+        # demand anyway — but a split-only drift never fires this rule
+        # (its zoom slot is unchanged) and keeps its follow window.
+        if coalesce_zoom and surface.nav["key"] is not None \
+                and self._nav_key_zoom(key) \
+                != self._nav_key_zoom(surface.nav["key"]):
+            surface.nav["wake_at"] = time.monotonic() + _NAV_ZOOM_SETTLE_S
+            surface.nav["wake_settle"] = True
+            self._nav_arm_wake(surface)
             return
         # The attached start-time throttle: the window runs from the
         # job's START, so a render overtaken by the split can never
@@ -3445,6 +3506,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 self._nav_arm_wake(surface)
                 return
             surface.nav["wake_at"] = None
+            surface.nav["wake_settle"] = False
         desired = surface.desired
         window = {}
         for role, layer in (("current", desired["current"]),
@@ -3497,6 +3559,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # window expires.
             surface.nav["hard"] = self._nav_key_hard(key)
             surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+            surface.nav["wake_settle"] = False
             self._nav_arm_wake(surface)
         ticket = (surface.name, -1, 0, 0, key, "nav", split, epoch, serial)
 
@@ -3563,6 +3626,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 if self._follower_attached:
                     surface.nav["failed_hard"] = self._nav_key_hard(job["key"])
                     surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+                    surface.nav["wake_settle"] = False
                     self._nav_arm_wake(surface)
                 self._schedule_navigation(surface)
             return
@@ -3607,6 +3671,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # commit — the wake coalesces whatever the polls
                 # advance to.
                 surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
+                surface.nav["wake_settle"] = False
                 self._nav_arm_wake(surface)
         old = surface.nav["url"]
         surface.nav["url"] = url
@@ -3835,6 +3900,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # print must find nothing to clear (and the new print's hard
         # key differs anyway — the epoch rides it).
         surface.nav["wake_at"] = None
+        surface.nav["wake_settle"] = False
         surface.nav["failed_hard"] = None
 
     def _cancel_obsolete_job(self, surface):
@@ -4107,6 +4173,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.nav["cancel"].set()
             surface.nav["job"] = None
         surface.nav["wake_at"] = None
+        surface.nav["wake_settle"] = False
         surface.nav["failed"] = None
         surface.nav["failed_hard"] = None
         self._schedule_navigation(surface)

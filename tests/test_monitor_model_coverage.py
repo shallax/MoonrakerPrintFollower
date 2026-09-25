@@ -1509,6 +1509,49 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.layers[layer] = wrapped
         return wrapped
 
+    def test_the_navigation_key_shape_is_what_its_derived_keys_assume(self):
+        # The derived keys read the built key by POSITION: _nav_key_hard
+        # neutralises index 3 (the split), the zoom's coalescing rule
+        # reads the trailing slot — and _nav_key_zoom's length guard
+        # degrades to the WHOLE key when the shape drifts, which reads
+        # as "every demand moved the zoom" and stops the warm raster
+        # re-baking at all (it did, once: the constant sat one above the
+        # built length and the coalescing rule fired for every demand).
+        # So pin the shape against the constant the guard reads.
+        module = self.qt.load("MoonrakerMonitorModel")
+        model = self.model_now()
+        model.setFollowerAttached(False)
+        surface = self.surface()
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
+                           "split": 40}
+        key = model._navigation_key(surface)
+        self.assertEqual(len(key), module._NAV_KEY_FIELDS,
+                         "the built key drifted from the guarded shape")
+        self.assertEqual(key[3], 40, "the split left its slot")
+        self.assertEqual(key[-1], 1.0, "the zoom left the trailing slot")
+        # A split-only drift: invisible to the hard key AND to the
+        # coalescing rule — the demand keeps its follow window.
+        surface.desired["split"] = 80
+        split_moved = model._navigation_key(surface)
+        self.assertEqual(model._nav_key_hard(split_moved),
+                         model._nav_key_hard(key))
+        self.assertEqual(model._nav_key_zoom(split_moved),
+                         model._nav_key_zoom(key))
+        # A zoom drift: hard (a stale-zoom raster must never be
+        # promoted as compatible — the exact scene serves the gesture)
+        # and the ONLY thing the coalescing rule reacts to.
+        surface.view["scale"] = 2.0
+        zoomed = model._navigation_key(surface)
+        self.assertNotEqual(model._nav_key_hard(zoomed),
+                            model._nav_key_hard(key))
+        self.assertNotEqual(model._nav_key_zoom(zoomed),
+                            model._nav_key_zoom(key))
+        # A synthetic ticket (a test's own short tuple) reads as the
+        # whole key, so it can never make the rule fire spuriously.
+        self.assertEqual(model._nav_key_zoom(("a", "b")), ("a", "b"))
+        self.assertIsNone(model._nav_key_zoom(None))
+
     @staticmethod
     def local_url(path):
         from PyQt6.QtCore import QUrl
