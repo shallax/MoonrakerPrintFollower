@@ -5433,6 +5433,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(20)
         self.assertEqual(grid.property("opacity"), 1.0,
                          "the idle mapping is not on screen")
+        # The baseline is a SETTLED word, not one read the instant the
+        # pump ends: the threaded canvas services a request a frame later
+        # (the harness's own lesson — two grabs of a canvas that has not
+        # painted yet agree perfectly), so a count taken while the mount's
+        # paints are still owed is a word the drag can then move without
+        # the hidden canvas painting anything, and the restore's arrival
+        # would be read off one of them. Quiet, bounded: a count that
+        # stops advancing through a real pump is the serviced one.
+        settle_deadline = time.monotonic() + 5.0
+        while time.monotonic() < settle_deadline:
+            settled = grid.property("_paints")
+            self._pump_ms(120)
+            if grid.property("_paints") == settled:
+                break
         painted = grid.property("_paints")
         cx = int(face.width() / 2)
         cy = int(face.height() / 2)
@@ -5471,6 +5485,18 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          "the pan gesture never settled back to the exact scene")
         self.assertEqual(grid.property("opacity"), 1.0,
                          "the restored mapping is not on screen")
+        # The restore's repaint is REQUESTED when the opacity lands and
+        # painted a frame later on the render thread, so the count is
+        # waited for as an ARRIVAL with a bounded deadline — not read
+        # inside the barrier's own window, where it was a claim about the
+        # machine's speed: CI read exactly the baseline's 2 there, while
+        # a quieter host serviced the paint inside the same beat. The pin
+        # itself is unchanged: a restore that never repaints still fails
+        # here, 5 s later.
+        restore_deadline = time.monotonic() + 5.0
+        while (time.monotonic() < restore_deadline
+               and grid.property("_paints") <= painted):
+            self._pump_ms(30)
         self.assertGreater(grid.property("_paints"), painted,
                            "the restored mapping never repainted the "
                            "transform the pan left")
