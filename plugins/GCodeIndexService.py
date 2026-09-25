@@ -338,6 +338,12 @@ class GCodeIndexService(QObject):
         self._hydrate_arrays = set()
         self._hydrating = None
         self._failed_hydrate = set()
+        # The pass's failure latch, cleared wherever the hydration
+        # latch clears (the bytes it was reading are gone). A batch the
+        # worker could not run walks no layer, and the terminal chains
+        # `_advance`, whose pass branch tests only the frontier — so an
+        # unlatched failure resubmits the same batch forever.
+        self._pass_error = ""
         self._closed = False
         self._error = ""
         # The build's byte-offset fraction, written from the worker
@@ -505,6 +511,7 @@ class GCodeIndexService(QObject):
         self._hydrate_arrays.clear()
         self._hydrating = None
         self._failed_hydrate.clear()
+        self._pass_error = ""
         self._prepared_table = None
         self._prepared_identity = None
         self._prepared_saved = False
@@ -1569,6 +1576,7 @@ class GCodeIndexService(QObject):
         self._hydrate_arrays.clear()
         self._hydrating = None
         self._failed_hydrate.clear()
+        self._pass_error = ""
         self._error = ""
 
     def _request_window(self, layer):
@@ -1593,6 +1601,7 @@ class GCodeIndexService(QObject):
         # A new file (or a re-downloaded one) invalidates failed hydration
         # attempts: the bytes the latch was based on no longer exist.
         self._failed_hydrate.clear()
+        self._pass_error = ""
         self._advance()
 
     def _advance(self):
@@ -1844,7 +1853,8 @@ class GCodeIndexService(QObject):
                 def prepared_save():
                     return store.finish_write(writer)
                 self._submit("prepared_save", prepared_save)
-        elif self._view is not None and self._full_next < len(self._view.ranges):
+        elif self._view is not None and not self._pass_error \
+                and self._full_next < len(self._view.ranges):
             # The full prepared cache's background pass (the live
             # request): one bounded batch per worker task, so the
             # demanded hydrates above always cut in. Every layer ends
@@ -2106,6 +2116,7 @@ class GCodeIndexService(QObject):
                     self._view = IndexView(self._job, value)
                     self._save = kind == "build"
                     self._failed_hydrate.clear()
+                    self._pass_error = ""
                     # The restore path returns BEFORE _advance's open
                     # (the submission is its last step): open the
                     # table HERE so the adoption right below sees it —
@@ -2201,6 +2212,15 @@ class GCodeIndexService(QObject):
                                 self._prepared.append_uncacheable(writer, layer)
                     if isinstance(frontier, int):
                         self._full_next = max(self._full_next, frontier)
+                        self._pass_error = ""
+                else:
+                    # The batch walked nothing: it raised, or returned
+                    # something this commit cannot read. The `_advance`
+                    # below would submit the same frontier again at
+                    # once, and the terminal after that again — so
+                    # latch the pass instead of resubmitting it.
+                    self._pass_error = str(error or "the batch returned no result")
+                    Logger.log("w", "the preparation pass failed: %s", self._pass_error)
             elif kind == "prepared_save":
                 # The published file replaces the table this session
                 # holds: a fresh/repair pass's offsets differ from

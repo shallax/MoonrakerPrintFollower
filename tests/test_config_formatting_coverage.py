@@ -2585,8 +2585,12 @@ if QT_AVAILABLE:
             self.service._wanted = True
             self.service._hydrate = {2, 1}
             hydrations = []
+            # The stub carries the production signature, `should_stop`
+            # included: the pass's own hydration hands the interpreter
+            # back on it, and a stub that rejects the keyword fails the
+            # whole batch instead of hydrating the layer.
             with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
-                       side_effect=lambda index, path, layer: (
+                       side_effect=lambda index, path, layer, should_stop=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
                            True)[2]):
@@ -2598,6 +2602,43 @@ if QT_AVAILABLE:
             self.assertEqual(hydrations, [1, 2, 0])
             self.assertEqual(self.service._hydrate, set())
             self.assertIsNone(self.service._hydrating)
+
+        def test_a_pass_batch_that_raises_is_latched_not_resubmitted(self):
+            """A batch the worker cannot run walks no layer, and the
+            task terminal re-enters `_advance` on the submitting stack
+            — the inline executor's own contract. Tested only by the
+            frontier, that re-entry resubmitted the same batch at
+            once, and again after that: an unbounded recursion, which
+            this harness sees as a RecursionError escaping into Qt
+            (the process aborts; no assertion ever runs). The pass's
+            failure latches instead, so one batch fails once."""
+            index = self._index()
+            index.compact = True
+            self.service.bind(self.job)
+            self.service._view = IndexView(self.job, index)
+            self.files.identity = SimpleNamespace(uuid="u", modified=1)
+            self.files.path = self.path
+            self.service._restored = True
+            self.service._wanted = True
+            submitted = []
+            original = self.service._submit
+
+            def counted(kind, work, lease=None):
+                submitted.append(kind)
+                return original(kind, work, lease)
+
+            self.service._submit = counted
+            with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
+                       side_effect=OSError("the file went away")):
+                self.service._advance()
+                self.assertEqual(submitted, ["fullprep"],
+                                 "the failed pass batch was resubmitted")
+                self.assertEqual(self.service._full_next, 0)
+                self.assertIn("went away", self.service._pass_error)
+                # The latch is not the pass's death: a re-download's
+                # new bytes reopen it, and the retry is one batch.
+                self.service._on_files_changed()
+                self.assertEqual(submitted, ["fullprep", "fullprep"])
 
         def test_a_pending_hydration_without_a_lease_asks_for_the_file(self):
             index = self._index()
