@@ -68,6 +68,7 @@ if QT_AVAILABLE:
 
     from plugins.GCodeIndex import build_index_from_bytes
     from plugins.MonitorFormatting import _point_in_polygon, polygon_bounds
+    from plugins.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
     from plugins.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
@@ -3278,6 +3279,21 @@ if QT_AVAILABLE:
         def followerShowBase(self):
             return self._show_base
 
+        @pyqtProperty(float, notify=followerViewChanged)
+        def followerTravelVisualRatio(self):
+            # The MODEL publishes the parity constant: the face's
+            # travel stroke arithmetic (`toolpathWidthPx() *
+            # travelVisualRatio`) and the renderer's own travels pen
+            # read ONE number, so the canvas' travels and the travels
+            # raster are the same width. Without it here the face falls
+            # back to `lineScale` — 8.0 in these fixtures against the
+            # renderer's 0.7 — and the canvas' travel run then runs 12
+            # px past the raster's at EACH end: whichever producer the
+            # frame happened to hold changed the run's length by 25 px,
+            # which is what made the pan travels pin red on some runs
+            # and green on others.
+            return _PLATE_TRAVEL_VISUAL_RATIO
+
         @pyqtSlot(bool)
         def setFollowerShowBase(self, show):
             self.calls.append(("showBase", bool(show)))
@@ -3573,7 +3589,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # solid. The parity test passes the production 0.7.
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": scale, "lineScale": line_scale, "compact": False,
-                "panX": pan_x, "panY": 0.0, "dpr": dpr}
+                "panX": pan_x, "panY": 0.0, "dpr": dpr,
+                # The model's own view does this (`_surface_view`): the
+                # renderer's travel pen takes the ratio EXPLICITLY, from
+                # the same constant the printer double publishes to the
+                # face — one number, two channels, as production has it.
+                "travelVisualRatio": _PLATE_TRAVEL_VISUAL_RATIO}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
         stem = "fixture-%d" % PlateFaceRenderTests._raster_stem
@@ -3593,6 +3614,29 @@ class PlateFaceRenderTests(RealEngineTestCase):
             layer.set_prefix(prefix, png_file(prefix, raster_dir, stem + "-p"),
                              prefix_split, "fixture-key")
         return layer
+
+    def _slow_raster(self, url, tag, factor=6):
+        """The same PNG at an integer multiple of its size — the SLOW
+        source, for sampling a window too short to sample.
+
+        `anchors.fill` with the default Stretch and `smooth: false`
+        presents a nearest-neighbour downscale of a nearest-neighbour
+        upscale, which is the identity: the composed picture cannot
+        change by a pixel, only the decode's length. A raster at the
+        face's own size decodes in a few ms — no sampling can catch the
+        state inside that, so the fixture lengthens the same decode to
+        the hundreds of ms a cold bake's own (encoded at the transport's
+        sizes and read back off disk) can take on a loaded host."""
+        if factor <= 1:
+            return url
+        from PyQt6.QtGui import QImage
+        source = QImage(QUrl(url).toLocalFile())
+        big = source.scaled(source.width() * factor, source.height() * factor,
+                            Qt.AspectRatioMode.IgnoreAspectRatio,
+                            Qt.TransformationMode.FastTransformation)
+        path = "/tmp/mpf/raster-probe/%s-%dx.png" % (tag, factor)
+        big.save(path, "PNG")
+        return QUrl.fromLocalFile(path).toString()
 
     def _mount_empty(self):
         """Mount with EMPTY geometry: the mount's own vector paths
@@ -3670,6 +3714,33 @@ class PlateFaceRenderTests(RealEngineTestCase):
     @staticmethod
     def _longest_run(runs):
         return max(runs, key=lambda run: run[1] - run[0]) if runs else None
+
+    def _feature_run(self, image, face, window, plot, bed_y, predicate,
+                     band=8, inset=20):
+        """The columns one bed row's feature occupies, within a BAND
+        around that row — the census a handover can be sampled with.
+
+        `_colour_runs` walks every face row for every column, and one
+        such pass outlasts the decode window a handover has to be
+        sampled inside: the sampling would then read the settled picture
+        and never see the state it is asking about. The feature's own
+        bed row is known (the fixtures paint one stroke per row), so the
+        band around it is the whole search. A run is the same
+        contiguous-column answer `_longest_run` reads, with None for a
+        feature that is not on the face at all."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        row = int(origin.y() + plot["offsetY"]
+                  + (plot["bedYMax"] - bed_y) * plot["sy"])
+        first = last = None
+        for col in range(inset, int(face.width()) - inset):
+            for scan in range(max(0, row - band),
+                              min(image.height(), row + band + 1)):
+                if predicate(image.pixel(int(origin.x()) + col, scan)):
+                    if first is None:
+                        first = col
+                    last = col
+                    break
+        return (first, last)
 
     def _pixel_diff(self, image, baseline, face, window):
         """The sampled pixels that differ from the baseline grab (a
@@ -3798,6 +3869,51 @@ class PlateFaceRenderTests(RealEngineTestCase):
         both grabs, and the census still examines every beat."""
         window.grabWindow()
         return window.grabWindow()
+
+    def _settled_frame(self, window, face, differs_from=None, painted=None,
+                       timeout=10.0):
+        """The frame the face has SETTLED at, judged by its own picture.
+
+        A fixed beat after an install is not a settled read. The grab
+        returns the picture the last completed pass painted, so on a
+        host whose frames trail the evaluation it is the HELD
+        pre-install picture; and mid-handover it can be the
+        composition's own blank beat, which is a stable frame of its
+        own that two equal grabs agree on happily. Settling therefore
+        needs all three: the install has landed (the picture differs
+        from `differs_from`), the caller's landmark stands (`painted`),
+        and two consecutive grabs agree. `painted` is what keeps a
+        blank beat from reading as a settle, and `differs_from` is what
+        keeps the held frame from reading as one."""
+        deadline = time.monotonic() + timeout
+        previous = window.grabWindow()
+        image = previous
+        while time.monotonic() < deadline:
+            self._pump_ms(10)
+            window.grabWindow()
+            image = window.grabWindow()
+            if differs_from is not None and \
+                    self._pixel_diff(image, differs_from, face, window) == 0:
+                previous = image
+                continue
+            if painted is not None and not painted(image):
+                previous = image
+                continue
+            if self._pixel_diff(image, previous, face, window) == 0:
+                return image
+            previous = image
+        return image
+
+    def _image_with_source(self, face, marker):
+        """The Image ITEM whose own source carries `marker` — how the
+        plate rasters are found from the test side, since the face names
+        only the prefix pair."""
+        for item in face.findChildren(QQuickItem):
+            if item.metaObject().className() != "QQuickImage":
+                continue
+            if marker in str(item.property("source") or ""):
+                return item
+        return None
 
     def _prefix_stack_owners(self, face):
         """The prefix stack's standing owners, by ITEM.
@@ -6976,21 +7092,6 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # pan is a quarter of the plot width and NOT scaled again.
         pan = float(bed["plotWidth"]) * 0.25
 
-        def install(pan_x):
-            # The pan is BAKED: the renderer paints the shifted picture
-            # and the scene anchors it to fill the face, so the ink
-            # moves by pan_x and the image itself never translates.
-            layer = self._native_layer(payload, face, pan_x=pan_x)
-            self._printer.setScrub(payload)
-            self._printer.setLayers({"prev": None, "current": layer, "next": None})
-            self._printer.setSplit(26)
-            face.setProperty("viewPanX", pan_x)
-            face.setProperty("viewPanY", 0.0)
-            self.pump(30)
-            window.grabWindow()
-            self.pump(30)
-            return self._wait_purple(window, face)[0]
-
         def wall_run(image):
             return self._longest_run(self._colour_runs(
                 image, face, window,
@@ -7000,12 +7101,36 @@ class PlateFaceRenderTests(RealEngineTestCase):
             return self._longest_run(
                 self._colour_runs(image, face, window, self._is_travel))
 
-        before = install(0.0)
+        def both_runs(image):
+            return wall_run(image) is not None and travel_run(image) is not None
+
+        def install(pan_x, differs_from):
+            # The pan is BAKED: the renderer paints the shifted picture
+            # and the scene anchors it to fill the face, so the ink
+            # moves by pan_x and the image itself never translates.
+            layer = self._native_layer(payload, face, pan_x=pan_x)
+            self._printer.setScrub(payload)
+            self._printer.setLayers({"prev": None, "current": layer, "next": None})
+            self._printer.setSplit(26)
+            face.setProperty("viewPanX", pan_x)
+            face.setProperty("viewPanY", 0.0)
+            # The pan's own handover is sampled by the travels pin
+            # below; this one waits for the picture the pan actually
+            # settles at. A fixed beat after the install is not that
+            # picture: the grab returns the last pass's, which on a host
+            # whose frames trail the evaluation is the pre-pan one (the
+            # scene anchors the raster to fill the face, so the stale
+            # pane reads as a shift of zero), and `_wait_purple` clears
+            # on the first purple pixel — which the held pane has too.
+            return self._settled_frame(window, face, differs_from=differs_from,
+                                       painted=both_runs)
+
+        before = install(0.0, _baseline)
         wall_before, travel_before = wall_run(before), travel_run(before)
         self.assertIsNotNone(wall_before, "the walls never painted at pan 0")
         self.assertIsNotNone(travel_before, "the travels never painted at pan 0")
 
-        after = install(pan)
+        after = install(pan, before)
         wall_after, travel_after = wall_run(after), travel_run(after)
         self.assertIsNotNone(wall_after, "the walls never painted after the pan")
         self.assertIsNotNone(travel_after, "the travels never painted after the pan")
@@ -7034,6 +7159,162 @@ class PlateFaceRenderTests(RealEngineTestCase):
             msg="the travels moved %d px while the walls moved %d px — the "
                 "two producers disagree about the pan"
                 % (travel_shift, wall_shift))
+
+    def test_the_travels_never_blank_as_the_split_reaches_full(self):
+        """The entry the owner reported: the split reaches full and the
+        travel ink LEAVES the picture while the walls stand.
+
+        The two halves of the full state arrive on their own clocks: the
+        class raster's texture is the walls and the travels raster's is
+        the travel ink. The travels Image binds its source only once the
+        split is full (a partial scrub shows no travels raster at all),
+        so its decode STARTS on the flip that completes the layer — the
+        walls are already standing while the travels are still decoding.
+        A composition that retires the canvas on the class raster's
+        readiness alone stands nothing there: for the whole decode the
+        walls stand and the travels are gone.
+
+        The travels' source here is the same PNG at an integer multiple
+        of its size: `anchors.fill` with the default Stretch and
+        `smooth: false` presents a nearest-neighbour downscale of a
+        nearest-neighbour upscale, so the picture cannot change by a
+        pixel and only the decode lengthens (a raster at the face's own
+        size decodes in a few ms — no sample lands inside that). Every
+        frame from the flip to the settle is censused, and each frame's
+        ruling is the travels Image's own Loading state, read through
+        QML as the face's gates read it.
+        """
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        payload = {"classes": {"WALL-OUTER": [self.PAN_WALL]},
+                   "travels": [self.PAN_TRAVEL],
+                   "travelStarts": [], "travelEnds": [], "motions": 26}
+        plot = self._bed_point(face, 0.0, 0.0)
+
+        def wall_run(image):
+            return self._feature_run(image, face, window, plot, 200.0,
+                                     lambda p: self._matches(p, (0xD3, 0x2F, 0x2F)))
+
+        def travel_run(image):
+            return self._feature_run(image, face, window, plot, 120.0,
+                                     self._is_travel)
+
+        def both_runs(image):
+            return wall_run(image)[0] is not None and travel_run(image)[0] is not None
+
+        # The partial state first — the shape production's own
+        # `_scrub_vector_for` publishes below the split: the prefix
+        # raster owns the printed history, the canvas the tail, and the
+        # travels raster is not shown at all.
+        layer = self._native_layer(payload, face, prefix_split=13)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(13)
+        before = self._settled_frame(window, face, differs_from=baseline,
+                                     painted=both_runs)
+        wall_before, travel_before = wall_run(before), travel_run(before)
+        self.assertIsNotNone(wall_before, "the walls never painted at the partial split")
+        self.assertIsNotNone(travel_before,
+                             "the travels never painted at the partial split")
+
+        # The slow source rides the SAME layer the flip completes: the
+        # class raster is hot (its texture never leaves) and only the
+        # travels' decode starts on the flip.
+        layer.set_travels(layer.travelRaster, "fixture-key",
+                          self._slow_raster(layer.travelData, "slow-travels"))
+        self.assertIsNone(
+            self._image_with_source(face, "slow-travels"),
+            "the travels' decode had started before the split was full")
+
+        # The full split: the model publishes NO scrub vector here
+        # (`_scrub_vector_for` returns None at split == motions), so the
+        # canvas has no geometry of its own to redraw — the picture it
+        # holds is the only copy of the ink it was standing.
+        status_of = self._status_probe()
+        self._printer.setScrub(None)
+        self._printer.setSplit(26)
+        travels_item = None
+        deadline = time.monotonic() + 5.0
+        while travels_item is None and time.monotonic() < deadline:
+            self._pump_ms(2)
+            travels_item = self._image_with_source(face, "slow-travels")
+        self.assertIsNotNone(travels_item,
+                             "the travels Image never bound the slow source")
+
+        frames = []
+        for _ in range(12):
+            self.pump(5)
+            image = window.grabWindow()
+            # The status AFTER the grab: a texture that has not landed by
+            # the read cannot have stood in the picture the grab returned.
+            frames.append((wall_run(image), travel_run(image),
+                           status_of.statusOf(travels_item)))
+
+        def completed(image):
+            wall_run_now, travel_run_now = wall_run(image), travel_run(image)
+            return (wall_run_now[0] is not None and travel_run_now[0] is not None
+                    and travel_run_now[1] - travel_run_now[0]
+                    > travel_before[1] - travel_before[0] + 20)
+
+        after = self._settled_frame(window, face, differs_from=before,
+                                    painted=completed)
+        wall_after, travel_after = wall_run(after), travel_run(after)
+        self.assertIsNotNone(wall_after, "the walls never painted at the full split")
+        self.assertIsNotNone(travel_after, "the travels never painted at the full split")
+
+        # The liveness control: the flip the frames were sampled across
+        # really happened — the same view origin, MORE ink. A census
+        # that read one static picture would satisfy the invariant below
+        # for the wrong reason.
+        self.assertAlmostEqual(
+            float(wall_after[0]), float(wall_before[0]), delta=2.0,
+            msg="the walls moved across the flip (%s -> %s) although the view "
+                "never changed" % (wall_before, wall_after))
+        self.assertGreaterEqual(
+            wall_after[1] - wall_before[1], 40,
+            msg="the full split added no wall ink (%s -> %s): the layer never "
+                "completed" % (wall_before, wall_after))
+        self.assertGreaterEqual(
+            travel_after[1] - travel_before[1], 40,
+            msg="the full split added no travel ink (%s -> %s)"
+                % (travel_before, travel_after))
+
+        # The non-vacuity control: the handover WAS sampled — frames were
+        # read while the travels' texture was still decoding. Without it
+        # a host that sampled after the flip would pass the invariant by
+        # never having looked at the state it is about.
+        pending = [frame for frame in frames if frame[2] != 1]  # Image.Ready
+        standing = [frame for frame in frames if frame[0][0] is not None]
+        self.assertTrue(
+            pending, "the travels' decode was never sampled: %r"
+            % ([frame[2] for frame in frames],))
+        self.assertTrue(standing, "no sampled frame stood the walls")
+
+        # The invariant: while the walls stand and the travels' own
+        # texture is not here, the travel ink the previous state was
+        # standing must still be there — the same run, in the same
+        # place. Neither a blank, nor the travels raster's texture at
+        # some other view.
+        for wall_run_now, travel_run_now, status in frames:
+            if wall_run_now[0] is None or status == 1:  # Image.Ready
+                continue
+            self.assertIsNotNone(
+                travel_run_now[0],
+                "the walls stood with no travel ink at all while the travels "
+                "were still decoding (status %d, wall %s)"
+                % (status, wall_run_now))
+            self.assertAlmostEqual(
+                float(travel_run_now[0]), float(travel_before[0]), delta=2.0,
+                msg="the held travel ink was displaced while the travels "
+                    "decoded (%s -> %s, status %d)"
+                    % (travel_before, travel_run_now, status))
+            self.assertAlmostEqual(
+                float(travel_run_now[1]), float(travel_before[1]), delta=2.0,
+                msg="the held travel ink changed length while the travels "
+                    "decoded (%s -> %s, status %d)"
+                    % (travel_before, travel_run_now, status))
 
     def test_no_split_moves_the_ink_vertically(self):
         """The judder probe the split sweep could not be.

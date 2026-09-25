@@ -113,6 +113,16 @@ Item {
     // owns the transition, read like any other property.
     property bool _rasterStatusReady: false
     property bool _rasterStatusFailed: false
+    // The travels raster's status, mirrored for the SAME beat: the
+    // travels are the second half of the full state's picture and
+    // their texture decodes on its own clock, so the class raster's
+    // arrival must not retire the canvas while the travels are still
+    // decoding (they blanked for the decode), and the travels Image
+    // must not present before the picture's own bake does (its
+    // texture can land first, which stood the new travels over the
+    // canvas' held picture — the reported shift).
+    property bool _travelsStatusReady: false
+    property bool _travelsStatusFailed: false
     // The prefix Image's Ready status as a one-way mirror: the
     // visible binding reads THIS (written by the image's own status
     // handler), never the status directly — reading the live status
@@ -335,6 +345,32 @@ Item {
             return layer.travelValid === true;
         }
         return layer.travelRaster !== undefined && layer.travelRaster != null && layer.travelRaster.width > 0;
+    }
+
+    function _travelsShown() {
+        // The travels belong to the pictured state: only the full
+        // state has a travels raster, and only when the scene wants
+        // them. One predicate for the image's visibility AND its
+        // source, so the decode starts exactly when they are shown.
+        return root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current);
+    }
+
+    function _travelsPending() {
+        // Shown, and their texture is not here yet. An Error releases
+        // the handover: a travel raster that will never decode must
+        // not hold the picture (the failed-mirror escape, as for the
+        // class raster).
+        return _travelsShown() && !root._travelsStatusReady && !root._travelsStatusFailed;
+    }
+
+    function _exactFullStanding() {
+        // The full state's single-owner predicate: the exact pair —
+        // the class raster's texture AND, when the travels are shown,
+        // the travels raster's — is here. The canvas yields on THIS
+        // (opacity and clear) and the travels Image presents on it,
+        // so the two halves swap in one beat and no frame shows one
+        // half of a bake over the other's held picture.
+        return _fullRaster() && root._rasterStatusReady && !_travelsPending();
     }
 
     function _ghost(role) {
@@ -1507,9 +1543,21 @@ Item {
             anchors.fill: parent
             asynchronous: true
             smooth: false
-            opacity: 0.8
-            visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
+            // Presentation rides the exact-pair predicate, never a
+            // bare visibility: a travels texture that lands before the
+            // class raster's would otherwise stand at the new view
+            // while the canvas still holds the old picture (a pixels
+            // -wide shift that grows with the move). Zero, never
+            // hidden — the source binding must stay alive so the
+            // decode starts here and the canvas can hand over in the
+            // beat the texture arrives.
+            opacity: _exactFullStanding() ? 0.8 : 0.0
+            visible: _travelsShown()
             source: visible ? root.progress.layers.current.travelData : ""
+            onStatusChanged: {
+                root._travelsStatusReady = status === Image.Ready;
+                root._travelsStatusFailed = status === Image.Error;
+            }
         }
 
         // The grey whole-layer base: the
@@ -1683,7 +1731,11 @@ Item {
             // withdrawing on the paint beat left the old ink over the
             // new texture (the liveness control's doubling). Opacity,
             // never visibility: hiding a Canvas discards its buffer.
-            opacity: (_fullRaster() && root._rasterStatusReady) ? 0 : 1
+            // Withdrawing waits for the whole exact pair: the travels'
+            // texture is the second half of the same bake, and the
+            // canvas is the only producer holding the travels' ink
+            // while it decodes.
+            opacity: _exactFullStanding() ? 0 : 1
             onPainted: {
                 // The paint's bitmap is delivered: its coverage record
                 // now describes the scene's committed texture. A held
@@ -1816,7 +1868,7 @@ Item {
                 // the same row (the invariance sweep) — and the slot's
                 // own onStatusChanged repaints this canvas the moment
                 // it does.
-                if (_fullRaster() && root._rasterStatusReady) {
+                if (_exactFullStanding()) {
                     ctx.reset();
                     ctx.clearRect(0, 0, width, height);
                     root._lastSplit = split;
@@ -1826,6 +1878,14 @@ Item {
                 }
                 var current = _scrubVector();
                 if (current == null) {
+                    // A full-state payload carries no vector, so this
+                    // paint can only clear. While the travels' texture
+                    // decodes the standing ink is the picture's other
+                    // half — hold it for the same view it was painted
+                    // at, and let the travels' arrival end the hold.
+                    if (_travelsPending() && _viewKey() === root._accumViewKey) {
+                        return;
+                    }
                     // No vector and no full raster yet (a cold full seek,
                     // a 0% state): nothing to accumulate.
                     ctx.reset();
