@@ -855,6 +855,81 @@ G00 X2 Y2 Z0.2
             self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")),
                                  "a fresh extraction uuid refused the same content")
 
+    def _scan_gcode(self, layers: int = 40, moves: int = 400) -> bytes:
+        lines = [b";HEADER\n"]
+        for layer in range(layers):
+            lines.append(f";LAYER:{layer}\n".encode())
+            for move in range(moves):
+                lines.append(
+                    f"G1 X{move * 0.1:.3f} Y{layer * 0.2:.3f} Z{layer * 0.2:.3f} E{move * 0.01:.4f}\n".encode())
+        return b"".join(lines)
+
+    def _scan_beats(self, data: bytes):
+        """The build scan's gate asks, progress emissions and line count
+        for *data*, with the real yield still running."""
+        import plugins.GCodeIndex as module
+        lines = data.count(b"\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "scan.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            asks = []
+            emissions = []
+            real_yield = module.passive_yield
+            real_emit = module._emit_progress
+
+            def recorded_yield(now, last):
+                asks.append(now)
+                return real_yield(now, last)
+
+            def recorded_emit(handle, progress):
+                emissions.append(progress)
+                return real_emit(handle, progress)
+
+            with patch.object(module, "passive_yield", recorded_yield), \
+                    patch.object(module, "_emit_progress", recorded_emit):
+                index = build_index_from_file(path, progress=lambda _f: None)
+        self.assertEqual(index.layer_count(), 40, "the scan did not read the fixture")
+        return len(asks), len(emissions), lines
+
+    def test_the_scan_reports_progress_on_a_coarser_beat_than_its_hand_back(self):
+        # The build's hand-back and its progress readout were ONE beat
+        # before the split, which is what let the coarser of the two
+        # interests set the hand-back period. They are two beats now,
+        # and the split is the contract: the readout carries the
+        # worker's byte-offset fraction up to the UI, so it is the
+        # COARSER of the two — a readout on the hand-back's beat would
+        # put a queued signal per 64 lines onto the GUI thread the
+        # fine beat exists to keep free. The asserts are on the counts,
+        # which are deterministic; the wall-clock cadence they exist to
+        # serve is evidence, and a bound on gaps per unit of time would
+        # pin the machine's load rather than the loop's shape.
+        asks, emissions, lines = self._scan_beats(self._scan_gcode())
+        self.assertGreaterEqual(emissions, 1, "the progress readout never fired")
+        self.assertLessEqual(
+            emissions, lines // 1024 + 1,
+            "the progress readout fired %d times over %d lines — it "
+            "inherited the hand-back's beat" % (emissions, lines))
+        self.assertGreaterEqual(
+            asks, emissions * 4,
+            "the scan asked its hand-back gate %d times and reported "
+            "progress %d times — the two beats have merged"
+            % (asks, emissions))
+
+    def test_the_scans_hand_back_stays_out_of_the_per_line_path(self):
+        # The other edge of the split: the hand-back's beat must be fine
+        # enough that the wall-clock gate governs it, but not so fine
+        # that the loop pays a clock call per line. The scan's floor is
+        # pinned with the hydration walk's in the plate suite; this is
+        # the ceiling that keeps a future starvation report from being
+        # answered by asking the gate on every line of a 300k-line
+        # layer.
+        asks, _emissions, lines = self._scan_beats(self._scan_gcode())
+        self.assertLessEqual(
+            asks, lines // 32,
+            "the scan asked its gate %d times over %d lines — the clock "
+            "call has entered the per-line path" % (asks, lines))
+
 
 class _GatedStream:
     """The save's gzip handle, parked at its first written byte.
