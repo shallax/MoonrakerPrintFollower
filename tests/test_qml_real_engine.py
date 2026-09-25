@@ -6817,6 +6817,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
             "do not place the same stroke at the same row"
             % (spread, ", ".join("s%d=%.2f" % (m[0], m[1]) for m in measured)))
         # The teeth: a one-device-row displacement of the full raster
+        # (a bare `y: 1` against `anchors.fill` is inert, and
+        # `anchors.topMargin` under it STRETCHES rather than
+        # translates — both read as "the pin has no teeth" if you stop
+        # there and neither moves the row set; explicit geometry is the
+        # form that actually displaces it)
         # (progressRasterImage, explicit geometry — a bare `y: 1`
         # against `anchors.fill` is inert, and `anchors.topMargin`
         # stretches rather than translates) splits the sweep to
@@ -6933,6 +6938,134 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "the overlay's stroke is thicker than the exact scene's at "
                 "zoom %.2f (%d rows vs %d) — a resampled blur, not the same "
                 "stroke" % (zoom, gesture_rows, exact_rows))
+
+    def test_the_raster_and_the_vector_place_the_ink_identically(self):
+        """The two producers of the printed prefix, measured against
+        each other at the same view and split.
+
+        A partial composition is either the Ready prefix raster over a
+        delivered canvas, or the delivered VECTOR owning the whole
+        interval when the prefix raster has not arrived — both are
+        named in _fullReleaseReady(). If those two disagree about
+        where a stroke lies, then which one a scrub lands on decides
+        the ink's position, and the choice is arrival timing: a
+        per-render race inside the exact scene with no view input
+        changing. It would look exactly like a sub-render that cannot
+        decide where a pixel lies.
+
+        Measured with a redness centroid, not a colour census — at the
+        live lineScale of 0.7 the stroke is sub-pixel and a threshold
+        census sees nothing at all. They agree to 0.000 px in every
+        configuration: lineScale 0.7 to 3.0, at the fit view and at a
+        fractional zoom. So the producers do not disagree, and the
+        handover between them is not a step either.
+
+        The 0.5 px bound is the tolerance, not the measurement: a
+        one-pixel displacement of the vector canvas reads 0.998 px and
+        fails this, so the measurement would see a disagreement.
+
+        Getting a real comparison out of this fixture is itself the
+        finding. The first version compared the raster-served prefix
+        against a serving with no prefix at all and PASSED, and the
+        canvas mutation did not fail it: the second serving was not
+        drawing the vector. The retained prefix was still standing,
+        because _retainedPrefixApplies() holds it on split and anchor
+        alone and the second serving's split was still past its
+        boundary — so the "vector" band measured a retained copy of the
+        first serving's raster, and the comparison was the raster with
+        itself. The retained record is armed at four sites (progress,
+        the prefix image's handlers, the canvas paint) and none of them
+        records the VIEW, so a retained frame baked at another zoom,
+        pan or lineScale can stand in for the current composition.
+        Serving the vector below the prefix boundary is what disarms
+        it; the interval is shorter there and a horizontal wall's row
+        does not depend on the interval's length."""
+        monitor, window, face, _baseline = self._mount_empty()
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+        self._printer.setScrub(payload)
+        self._printer.setSplit(15)
+        pv = face.property("plot")
+        if hasattr(pv, "toVariant"):
+            pv = pv.toVariant()
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        ox = float(pv["bed"]["offsetX"])
+        sx = float(pv["sx"])
+
+        def centroid(image, bed_x0, bed_x1):
+            c0 = int(origin.x() + ox + bed_x0 * sx)
+            c1 = int(origin.x() + ox + bed_x1 * sx)
+            total = 0.0
+            weighted = 0.0
+            for row in range(0, int(face.height())):
+                weight = 0.0
+                for col in range(c0, c1):
+                    px = image.pixel(col, int(origin.y()) + row)
+                    weight += max(0.0, float((px >> 16) & 0xFF)
+                                  - float((px >> 8) & 0xFF))
+                if weight > 0.0:
+                    total += weight
+                    weighted += weight * row
+            return None if total <= 0.0 else weighted / total
+
+        def settle():
+            self.pump(30)
+            window.grabWindow()
+            self.pump(30)
+            return window.grabWindow()
+
+        # The two servings must not share a retained record: the
+        # retained prefix stands on split and anchor alone, so a split
+        # at or past its boundary keeps serving the PREVIOUS serving's
+        # raster and the "vector" row measured would be that raster
+        # again — a comparison of the raster with itself, which no
+        # canvas mutation can fail. The vector owns the interval only
+        # where the retained record is disarmed, so its serving runs a
+        # split BELOW the prefix boundary: the rendered interval is
+        # shorter, and a horizontal wall's ROW does not depend on the
+        # interval's length.
+        measured = []
+        for line_scale in (0.7, 1.0, 1.5, 3.0):
+            for scale in (1.0, 1.37):
+                face.setProperty("lineScale", line_scale)
+                face.setProperty("viewScale", scale)
+                self.pump(10)
+                # Serving A: a Ready prefix raster over the canvas tail.
+                served = self._native_layer(payload, face, prefix_split=10,
+                                            line_scale=line_scale, scale=scale)
+                self._printer.setLayers({"prev": None, "current": served,
+                                         "next": None})
+                self._printer.setSplit(15)
+                with_raster = settle()
+                # Serving B: below the prefix boundary nothing applies,
+                # so the canvas owns the whole rendered interval.
+                vector_only = self._native_layer(payload, face,
+                                                 line_scale=line_scale,
+                                                 scale=scale)
+                self._printer.setLayers({"prev": None, "current": vector_only,
+                                         "next": None})
+                self._printer.setSplit(5)
+                by_vector = settle()
+                a = centroid(with_raster, 25.0, 110.0)
+                b = centroid(by_vector, 25.0, 60.0)
+                self.assertIsNotNone(
+                    a, "the raster-served prefix painted nothing at lineScale "
+                       "%.1f zoom %.2f" % (line_scale, scale))
+                self.assertIsNotNone(
+                    b, "the vector-served prefix painted nothing at lineScale "
+                       "%.1f zoom %.2f" % (line_scale, scale))
+                measured.append((line_scale, scale, a, b))
+                self.assertLessEqual(
+                    abs(a - b), 0.5,
+                    "the printed prefix's stroke sits %.3f px differently "
+                    "when the vector owns the interval instead of the raster "
+                    "(lineScale %.1f zoom %.2f) — which of the two a scrub "
+                    "lands on is arrival timing, so the ink would move with "
+                    "it" % (b - a, line_scale, scale))
+        self._printer.setSplit(15)
 
     @staticmethod
     def _arc_payload(gcode, split=None):
