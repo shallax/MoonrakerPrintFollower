@@ -1912,9 +1912,15 @@ class CameraFpsControlTests(RealEngineTestCase):
         """
         from PyQt6.QtCore import QEvent, QPoint, Qt
         from PyQt6.QtGui import QMouseEvent
-        if button is None:
-            button = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
-                else Qt.MouseButton.LeftButton
+        # EVERY move, whatever the caller names for it: a right drag
+        # passes RightButton for the event's button AND the held mask,
+        # and taking that at face value built the same malformed event a
+        # defaulted left move did. Press and release keep their own
+        # changed button — that is what they are about.
+        if kind == QEvent.Type.MouseMove:
+            button = Qt.MouseButton.NoButton
+        elif button is None:
+            button = Qt.MouseButton.LeftButton
         if buttons is None:
             buttons = Qt.MouseButton.NoButton
         scene = item.mapToItem(window.contentItem(), QPointF(x, y))
@@ -1923,6 +1929,7 @@ class CameraFpsControlTests(RealEngineTestCase):
                             button, buttons,
                             Qt.KeyboardModifier.NoModifier)
         QGuiApplication.sendEvent(window, event)
+        return event
 
     def _drag(self, window, item, dx, dy):
         """Press at the item's centre, move by (dx, dy), release."""
@@ -2455,6 +2462,78 @@ class CameraFpsControlTests(RealEngineTestCase):
         self.assertAlmostEqual(pane.property("cameraPanX"), out - 60, delta=2.0,
                                msg="the drag lost the camera's grab to the control")
         self._mouse(window, frame, QEvent.Type.MouseButtonRelease, across - 60, cy)
+
+    def test_a_move_is_an_update_whatever_button_it_names(self):
+        # The malformed-event contract, for BOTH buttons. A move that
+        # names a button reads as a fresh press (isBeginEvent), which
+        # re-selects the target mid-drag; the helper used to take the
+        # caller's button at face value, and _rate_drag passes
+        # RightButton for the event's button AND the held mask, so every
+        # right drag was still built malformed.
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        from PyQt6.QtCore import QEvent, Qt
+        cx, cy = frame.width() / 2, frame.height() / 2
+        default_left = self._mouse(window, frame, QEvent.Type.MouseMove, cx, cy)
+        explicit_left = self._mouse(window, frame, QEvent.Type.MouseMove, cx, cy,
+                                    Qt.MouseButton.LeftButton)
+        right = self._mouse(window, frame, QEvent.Type.MouseMove, cx, cy,
+                            Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        for name, event in (("default left", default_left),
+                            ("explicit left", explicit_left),
+                            ("explicit right", right)):
+            self.assertEqual(event.type(), QEvent.Type.MouseMove,
+                             "%s was not a move" % name)
+            self.assertTrue(event.isUpdateEvent(),
+                            "%s was not an update event" % name)
+            self.assertFalse(event.isBeginEvent(),
+                             "%s was built as a begin event" % name)
+            self.assertEqual(event.button(), Qt.MouseButton.NoButton,
+                             "%s named a button on a move" % name)
+        # The held mask still rides the event — it is what classifies a
+        # move, and the right drag's grab depends on it.
+        self.assertEqual(right.buttons(), Qt.MouseButton.RightButton,
+                         "the right drag's held mask was dropped")
+        # A press keeps its own changed button: that is what it is about.
+        press = self._mouse(window, frame, QEvent.Type.MouseButtonPress, cx, cy,
+                            Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self.assertEqual(press.button(), Qt.MouseButton.RightButton)
+        self.assertFalse(press.isUpdateEvent(), "a press was filed as an update")
+
+    def test_a_right_drag_across_the_settled_zoom_control_keeps_the_rate(self):
+        # The same grab the left drag's regression pins, on the button
+        # that still bypassed the fix: the rate's own gesture runs a
+        # right drag across the picture, and the control has to be IN
+        # the pointer's path and settled for the malformed move to steal
+        # it. The wait is the control's own docked geometry.
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        bar = self.find(pane, "cameraBar")
+        self._wheel(window, frame)
+        self._wait_until(window,
+                         lambda _image: pane.property("cameraBarDocked")
+                         and not pane.property("_cameraBarTurning")
+                         and bar.x() + bar.width() <= frame.width() + 0.5,
+                         timeout=8.0)
+        from PyQt6.QtCore import QEvent
+        cx, cy = frame.width() / 2, frame.height() / 2
+        self._mouse(window, frame, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self.pump(20)
+        across = bar.x() + bar.width() / 2
+        # Cross the control first, then drive the rate from ON it: the
+        # rate's own axis is vertical, so the leg that has to track is
+        # the one taken while the pointer sits over the control.
+        self._mouse(window, frame, QEvent.Type.MouseMove, across, cy,
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self.pump(20)
+        out = pane.property("cameraFps")
+        self._mouse(window, frame, QEvent.Type.MouseMove, across, cy + 30,
+                    Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self.pump(20)
+        self.assertNotEqual(pane.property("cameraFps"), out,
+                            "the right drag lost its grab to the control")
+        self._mouse(window, frame, QEvent.Type.MouseButtonRelease, across, cy + 30,
+                    Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
+        self.assertIn(len(model.fps_calls), (1, 2), "the release never committed a rate")
 
     def test_a_double_click_returns_the_fit(self):
         pane, window, _model, _image, frame = self._fps_pane(700, 700)
