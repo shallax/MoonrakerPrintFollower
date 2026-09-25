@@ -1066,10 +1066,14 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
                 self._recent_display_lag_ms_max = round(self._display_lag_ms_max, 1)
                 # The round trip, split by where it stalls: a long queue
                 # wait is the worker being scarce, a long decode is the
-                # frame, and a long delivery is the Qt thread.
+                # frame, and a long delivery is the Qt thread. The trip
+                # is read as the sum of its shares, so it is reported at
+                # their precision: rounded a digit coarser, half a unit
+                # of its own rounding (5% of frames) comes between the
+                # two, while at theirs the sum lands inside 0.01.
                 self._recent_queue_wait_ms = round(queue_wait_ms / max(1, decodes), 2)
                 self._recent_delivery_ms = round(delivery_ms / max(1, decodes), 2)
-                self._recent_round_trip_ms = round(round_trip_ms / max(1, decodes), 1)
+                self._recent_round_trip_ms = round(round_trip_ms / max(1, decodes), 2)
                 self._recent_round_trip_ms_max = round(self._round_trip_ms_max, 1)
                 # The install is the trip's last stage and the only one
                 # that touches the scene graph, so it is reported per

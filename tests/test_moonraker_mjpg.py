@@ -1298,7 +1298,9 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
         # whatever the hand-over and the return cost.
         self.assertGreaterEqual(round_trip, 30.0)
         # The three shares are the trip, and each is accounted where it
-        # happens: a split that dropped a share would not sum back.
+        # happens: a split that dropped a share would not sum back. The
+        # four readings share one precision, so their sums differ by
+        # rounding alone — 0.02 at the worst, against the 0.05 here.
         self.assertAlmostEqual(
             round_trip,
             self.item._recent_queue_wait_ms + self.item._recent_decode_ms_per_frame
