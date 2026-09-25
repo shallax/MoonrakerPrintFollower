@@ -3160,6 +3160,11 @@ if QT_AVAILABLE:
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._scrub = None
             self._navigation = ""
+            # Zero is the whole layer — what the property's absence
+            # stood for before it existed, so a fixture that never sets
+            # it measures the frame it always measured.
+            self._navigation_split = 0
+            self._navigation_backing = 4.0
             self._layer_count = 40
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
@@ -3222,6 +3227,24 @@ if QT_AVAILABLE:
 
         def setNavigation(self, url):
             self._navigation = url or ""
+            self.plateLayersChanged.emit()
+
+        @pyqtProperty("QVariant", notify=plateLayersChanged)
+        def plateNavigationSplit(self):
+            # The warm raster's own split: the carried tail repaints
+            # only the interval above it. Zero is the whole layer —
+            # the definition the absent property used to stand for,
+            # so a fixture that never sets it measures what it always
+            # did.
+            return self._navigation_split
+
+        @pyqtProperty("QVariant", notify=plateLayersChanged)
+        def plateNavigationBacking(self):
+            return self._navigation_backing
+
+        def setNavigationSplit(self, split, backing=4.0):
+            self._navigation_split = int(split)
+            self._navigation_backing = float(backing)
             self.plateLayersChanged.emit()
 
         def setSplit(self, split):
@@ -3595,7 +3618,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return image
 
     def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
-                      line_scale=8.0, grey=True, pan_x=0.0, scale=1.0):
+                      line_scale=8.0, grey=True, pan_x=0.0, scale=1.0,
+                      pan_y=0.0):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -3618,7 +3642,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # solid. The parity test passes the production 0.7.
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": scale, "lineScale": line_scale, "compact": False,
-                "panX": pan_x, "panY": 0.0, "dpr": dpr,
+                "panX": pan_x, "panY": pan_y, "dpr": dpr,
                 # The model's own view does this (`_surface_view`): the
                 # renderer's travel pen takes the ratio EXPLICITLY, from
                 # the same constant the printer double publishes to the
@@ -7913,6 +7937,370 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "the overlay's stroke is thicker than the exact scene's at "
                 "zoom %.2f (%d rows vs %d) — a resampled blur, not the same "
                 "stroke" % (zoom, gesture_rows, exact_rows))
+
+    def test_the_carried_tail_lands_on_the_warm_rasters_own_pixels(self):
+        """The gesture's carried tail, measured at the camera it runs at.
+
+        The warm navigation raster is camera-free: its content is the
+        100%-fit plot at the backing, and the flip into a gesture changes
+        only the presentation (`displayScale / backing`, the pan on the
+        item's translation). ``carryCanvas`` paints the lines printed
+        since that raster's own split over it through the same
+        presentation, so a tail painted camera-free lands on the
+        raster's pixels — and a tail that is not does not.
+
+        Measured, it did neither, and both defects are in this one item.
+        The canvas scales about QML's default ``Item.Center`` origin
+        while its presentation is authored for a top-left one (the
+        raster grows from a fixed corner; the canvas swung its content by
+        ``size * (1 - displayScale / backing)`` — more than the face is
+        wide at 4x backing, so no tail was EVER visible during a zoomed
+        gesture, on any host). And ``_paintCarry`` authored at
+        ``viewScale * backing`` while the item presents at
+        ``displayScale / backing``, magnifying the tail by the live zoom
+        against the raster it completes.
+
+        The existing overlay pin cannot see either: it drives
+        ``_interactionActive`` directly, and a tail that lands outside
+        the face leaves the warm raster's own ink standing — exactly the
+        picture that pin asserts. This one enters through the real gate
+        (a press and a panning move, the only entries production has) and
+        paints the warm raster EMPTY, so the only fixture ink in the
+        frame is the carrier's.
+
+        The fixture is a ten-motion tail over a twenty-motion layer, near
+        the bed's centre so the centred zoom the wheel reaches keeps both
+        strokes on the face. The reference frame is the same geometry at
+        the same camera through the native renderer — the producer nobody
+        questions — and it validates the camera arithmetic the tail is
+        then measured against. The tail's run centre, its length, its rows
+        and the travel-to-wall offset all move when it arrives at the
+        wrong scale or off its corner."""
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QMouseEvent
+        from plugins.PlateQt import png_file, render_navigation_layer
+
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        wall = [[90.0 + motion * 4.0, 155.0, float(motion)]
+                for motion in range(21)]
+        travel = [[90.0 + motion * 4.0, 115.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [wall]}, "travels": [travel],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+        empty = {"classes": {}, "travels": [], "travelStarts": [],
+                 "travelEnds": [], "motions": 21}
+        zoom = 1.5625
+        raster_split = 10
+
+        def red(pixel):
+            return self._matches(pixel, (0xD3, 0x2F, 0x2F))
+
+        def mouse(kind, x, y, buttons):
+            """A real mouse event at face-local (x, y). A move is about
+            NO button: carrying one makes Qt read it as a fresh press,
+            which re-selects the target mid-drag and hands the grab to
+            whatever arrived under the pointer."""
+            faced = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
+                else Qt.MouseButton.LeftButton
+            scene = face.mapToItem(window.contentItem(), QPointF(x, y))
+            event = QMouseEvent(
+                kind, QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()),
+                                                  int(scene.y())))),
+                faced, buttons, Qt.KeyboardModifier.NoModifier)
+            QGuiApplication.sendEvent(window, event)
+
+        def settle_size():
+            """Wait for the face's own size to stop moving.
+
+            The scope docks on a viewScale change and the face resizes
+            with it, so a raster baked against one width and a camera
+            read against another disagree by half the difference — a
+            fixture error that would read as a placement defect."""
+            previous = None
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                size = (int(face.width()), int(face.height()))
+                if size == previous:
+                    return size
+                previous = size
+                self._pump_ms(120)
+            return previous or (int(face.width()), int(face.height()))
+
+        def camera():
+            """The centred zoom the wheel reaches: the bed stays over the
+            face on both axes, and the warm raster presents it with the
+            pan riding the item's translation.
+
+            The pan is re-set once the dock has resized the face: the
+            zoom is what triggers the dock, so the pan computed before
+            it belongs to the face the mount started with."""
+            for name, value in (("viewScale", zoom), ("displayScale", zoom),
+                                ("viewPanX", 0.0), ("displayPanX", 0.0),
+                                ("viewPanY", 0.0), ("displayPanY", 0.0)):
+                face.setProperty(name, value)
+            self._pump_ms(500)
+            width, height = settle_size()
+            pan_x = (1.0 - zoom) * width / 2.0
+            pan_y = (1.0 - zoom) * height / 2.0
+            for name, value in (("viewPanX", pan_x), ("displayPanX", pan_x),
+                                ("viewPanY", pan_y), ("displayPanY", pan_y)):
+                face.setProperty(name, value)
+            self._pump_ms(200)
+
+        def expectation(bed_x, bed_y):
+            plot = self._bed_point(face, 0.0, 0.0)
+            scale = float(face.property("displayScale") or 1.0)
+            return ((plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+                    * scale + float(face.property("displayPanX") or 0.0),
+                    (plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"])
+                    * scale + float(face.property("displayPanY") or 0.0))
+
+        def install(split, prefix_split):
+            """The face's state at the camera: an EMPTY warm raster (so
+            the carrier is the gesture frame's only fixture producer), a
+            warm split of ten motions that the layer's split runs ahead
+            of, and the exact scene's own rasters at the same camera."""
+            plot = self._bed_point(face, 0.0, 0.0)
+            width, height = float(face.width()), float(face.height())
+            nav = render_navigation_layer(
+                {"prev": None, "current": empty, "next": None}, plot,
+                {"width": int(width), "height": int(height), "scale": 1.0,
+                 "lineScale": 8.0, "compact": False, "panX": 0.0, "panY": 0.0,
+                 "backing": 4.0, "bedWidth": 250.0, "bedDepth": 250.0,
+                 "showTravels": True},
+                split)
+            self._printer.setNavigation(png_file(nav, "/tmp/mpf/raster-probe",
+                                                 "carry-nav-%d" % split))
+            self._printer.setNavigationSplit(raster_split, 4.0)
+            layer = self._native_layer(
+                payload, face, prefix_split=prefix_split, scale=zoom,
+                pan_x=(1.0 - zoom) * width / 2.0,
+                pan_y=(1.0 - zoom) * height / 2.0)
+            self._printer.setScrub(payload)
+            self._printer.setLayers({"prev": None, "current": layer,
+                                     "next": None})
+            self._printer.setSplit(split)
+            self._pump_ms(400)
+
+        def placement(image, predicate):
+            """The longest fixture-bearing run: its columns, and the row
+            band it opens with.
+
+            Runs shorter than twenty columns are dropped — this face
+            carries two isolated chrome specks that wear the travel's
+            colour, and a fixture stroke is hundreds of columns long. The
+            row band stops at the first empty row because a drawn stroke
+            is one contiguous band, which those specks are not."""
+            runs = [run for run in self._colour_runs(image, face, window,
+                                                     predicate)
+                    if run[1] - run[0] >= 20]
+            if not runs:
+                return None
+            run = self._longest_run(runs)
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            top = bottom = None
+            for row in range(0, int(face.height())):
+                hit = False
+                for col in range(run[0], run[1] + 1):
+                    if predicate(image.pixel(int(origin.x()) + col,
+                                             int(origin.y()) + row)):
+                        hit = True
+                        break
+                if hit:
+                    bottom = row
+                    if top is None:
+                        top = row
+                elif top is not None:
+                    break
+            return {"run": run, "top": top, "bottom": bottom,
+                    "length": run[1] - run[0],
+                    "centre": (top + bottom) / 2.0}
+
+        def painted(image):
+            """A coarse census for the settle poll: the full run census
+            costs ~0.2 s a call and the poll runs every 10 ms, so the
+            predicate samples on a stride. The fixture's strokes are
+            horizontal and hundreds of px long, so neither can slip
+            between samples."""
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            for row in range(0, int(face.height()), 2):
+                for col in range(0, int(face.width()), 2):
+                    pixel = image.pixel(int(origin.x()) + col,
+                                        int(origin.y()) + row)
+                    if red(pixel) or self._is_travel(pixel):
+                        return True
+            return False
+
+        def frame(differs_from):
+            return self._settled_frame(window, face, differs_from=differs_from,
+                                       painted=painted, timeout=5.0)
+
+        # 1: the reference. The same geometry at the same camera through
+        # the native renderer, whose rasters are not in question — so a
+        # failure here is the fixture's or the camera arithmetic's, and
+        # the tail's own measurement rests on both.
+        camera()
+        install(21, None)
+        reference = frame(baseline)
+        ref_wall = placement(reference, red)
+        ref_travel = placement(reference, self._is_travel)
+        self.assertIsNotNone(ref_wall, "the reference never painted the wall")
+        self.assertIsNotNone(ref_travel,
+                             "the reference never painted the travel")
+        wall_x, wall_y = expectation(90.0, 155.0)
+        _travel_x, travel_y = expectation(90.0, 115.0)
+        self.assertLessEqual(
+            abs(ref_wall["centre"] - wall_y), 3.0,
+            "the reference's own wall sits on row %.1f where the live "
+            "camera puts row %.1f — the fixture or the camera arithmetic "
+            "is wrong, not the carrier" % (ref_wall["centre"], wall_y))
+        self.assertLessEqual(
+            abs(ref_travel["centre"] - travel_y), 3.0,
+            "the reference's own travel sits on row %.1f where the live "
+            "camera puts row %.1f — the fixture or the camera arithmetic "
+            "is wrong, not the carrier" % (ref_travel["centre"], travel_y))
+        # The round cap pulls the first inked column left of the stroke's
+        # first vertex and never right of it: the camera arithmetic's own
+        # check, on the producer that is not in question.
+        self.assertLessEqual(
+            ref_wall["run"][0], wall_x + 1.0,
+            "the reference's wall starts right of its first vertex")
+        self.assertGreaterEqual(
+            ref_wall["run"][0], wall_x - 12.0,
+            "the reference's wall starts %d px left of its first vertex — "
+            "further than the stroke's round cap reaches"
+            % (wall_x - ref_wall["run"][0]))
+        # Both strokes are the same geometry with the same first and last
+        # vertex, so one frame's two runs are one length: a run that was
+        # clipped or stretched changes it.
+        self.assertLessEqual(
+            abs(ref_wall["length"] - ref_travel["length"]), 4,
+            "the reference's own two strokes disagree about their length "
+            "(%d vs %d) — a producer is clipping ink"
+            % (ref_wall["length"], ref_travel["length"]))
+
+        # 2: the tail's frame, entered through the real gate. The idle
+        # frame first, so the entry has a picture to differ from.
+        install(18, raster_split)
+        idle = frame(reference)
+        cx, cy = int(face.width() / 2), int(face.height() / 2)
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        self._pump_ms(60)
+        mouse(QEvent.Type.MouseMove, cx + 4, cy, Qt.MouseButton.LeftButton)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline \
+                and not face.property("_interactionActive"):
+            self._pump_ms(20)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the panning move never entered the interaction")
+        # Back to the camera the fixture was baked at: the carrier is
+        # only measurable against the reference at the SAME camera.
+        mouse(QEvent.Type.MouseMove, cx, cy, Qt.MouseButton.LeftButton)
+        self._pump_ms(400)
+        carried = frame(idle)
+        carry_wall = placement(carried, red)
+        carry_travel = placement(carried, self._is_travel)
+        self.assertIsNotNone(
+            carry_wall,
+            "the carried tail painted no wall at zoom %.2f: the tail is the "
+            "only producer of the lines the split ran past, so a gesture "
+            "frame without it stands the walls and hides the print's newest "
+            "half. A tail authored at the live zoom instead of the raster's "
+            "own lands magnified past the face's edge, and one scaled about "
+            "the item's centre lands further off again" % zoom)
+        self.assertIsNotNone(
+            carry_travel,
+            "the carried tail painted no travel at zoom %.2f — the same two "
+            "placements carry the travel channel with the walls" % zoom)
+
+        # The tail's own span of the layer, against the reference's.
+        # The reference draws the layer whole — its vertices run from
+        # motion 0 to motion 20, so its ink's midpoint is motion 10's
+        # vertex — while the tail draws the warm raster's split to the
+        # live one, motions raster_split - 1 to split - 1, midpoint
+        # motion 13. The two midpoints are therefore three motions, 12
+        # mm, apart, and a run's MIDPOINT carries neither a round cap
+        # nor a resampling fringe at its ends: it is the placement
+        # measure that survives the two frames' different regimes.
+        plot = self._bed_point(face, 0.0, 0.0)
+        span = 12.0 * plot["sx"] * zoom
+        carry_centre = (carry_wall["run"][0] + carry_wall["run"][1]) / 2.0
+        ref_centre = (ref_wall["run"][0] + ref_wall["run"][1]) / 2.0
+        self.assertLessEqual(
+            abs(carry_centre - ref_centre - span), 2.0,
+            "the carried tail's centre stands %.1f px from the reference's "
+            "where its own span of the layer puts it %.1f px — the carrier "
+            "and the raster disagree about where the layer is"
+            % (carry_centre - ref_centre, span))
+        self.assertLessEqual(
+            carry_wall["length"], ref_wall["length"] - 60,
+            "the carrier painted %d columns against the reference's %d — "
+            "that is the whole layer, not the tail the split left it"
+            % (carry_wall["length"], ref_wall["length"]))
+        self.assertLessEqual(
+            abs(carry_wall["length"] - carry_travel["length"]), 4,
+            "the carrier's two strokes disagree about their length (%d vs "
+            "%d) — one of them is clipped"
+            % (carry_wall["length"], carry_travel["length"]))
+        for label, carry_one, ref_one in (("wall", carry_wall, ref_wall),
+                                          ("travel", carry_travel, ref_travel)):
+            self.assertLessEqual(
+                abs(carry_one["centre"] - ref_one["centre"]), 2.0,
+                "the carried %s sits on row %.1f against the reference's "
+                "%.1f at the same camera — the tail is drawn at the wrong "
+                "scale or off its corner"
+                % (label, carry_one["centre"], ref_one["centre"]))
+        self.assertLessEqual(
+            abs((carry_travel["centre"] - carry_wall["centre"])
+                - (ref_travel["centre"] - ref_wall["centre"])), 2.0,
+            "the carried travel stands %.1f px off the carried wall where "
+            "the reference's stands %.1f — the two carriers of one frame "
+            "disagree"
+            % (carry_travel["centre"] - carry_wall["centre"],
+               ref_travel["centre"] - ref_wall["centre"]))
+
+        # 3: the pan. The live complaint's own shape (worst on the
+        # furthest move): the carried tail must ride the item's
+        # translation with the raster, by the pointer's own delta.
+        mouse(QEvent.Type.MouseMove, cx + 12, cy, Qt.MouseButton.LeftButton)
+        self._pump_ms(250)
+        panned = frame(carried)
+        panned_wall = placement(panned, red)
+        panned_travel = placement(panned, self._is_travel)
+        self.assertIsNotNone(panned_wall,
+                             "the carried wall left the frame across the pan")
+        self.assertIsNotNone(panned_travel,
+                             "the carried travel left the frame across the pan")
+        for label, before, after in (("wall", carry_wall, panned_wall),
+                                     ("travel", carry_travel, panned_travel)):
+            self.assertAlmostEqual(
+                float(after["run"][0] - before["run"][0]), 12.0, delta=1.5,
+                msg="the pan moved the carried %s by %d px for a 12 px "
+                    "pointer move" % (label, after["run"][0] - before["run"][0]))
+            self.assertLessEqual(
+                abs(after["centre"] - before["centre"]), 1.5,
+                "the pan moved the carried %s off its row by %.1f px — the "
+                "tail was redrawn, not translated"
+                % (label, after["centre"] - before["centre"]))
+            self.assertLessEqual(
+                abs(after["length"] - before["length"]), 3,
+                "the carried %s changed length across the pan (%d -> %d)"
+                % (label, before["length"], after["length"]))
+        self.assertLessEqual(
+            abs((panned_travel["centre"] - panned_wall["centre"])
+                - (carry_travel["centre"] - carry_wall["centre"])), 1.5,
+            "the pan moved the carried travel against the carried wall")
+
+        mouse(QEvent.Type.MouseButtonRelease, cx + 12, cy,
+              Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline \
+                and face.property("_interactionActive"):
+            self._pump_ms(30)
 
     def test_the_raster_and_the_vector_place_the_ink_identically(self):
         """The two producers of the printed prefix, measured against

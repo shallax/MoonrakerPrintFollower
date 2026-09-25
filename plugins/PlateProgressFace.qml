@@ -2081,12 +2081,19 @@ Item {
         // the item's translation, never a repaint. Hidden while
         // idle: only the entry and a mid-gesture zoom re-bake
         // request it, and a hidden canvas discards the buffer.
+        //
+        // A TOP-LEFT origin, because the raster the tail completes is
+        // grown by a size change from a fixed corner: at 4x backing
+        // the default centre origin swings this item's content by
+        // size * (1 - displayScale / backing), further than the face
+        // is wide, so a zoomed gesture carried no tail at all.
         visible: root._interactionActive
         width: visible ? root.width * root._navBacking() : 0
         height: visible ? root.height * root._navBacking() : 0
         x: visible ? root.displayPanX : 0
         y: visible ? root.displayPanY : 0
         scale: visible ? root.displayScale / root._navBacking() : 1.0
+        transformOrigin: Item.TopLeft
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
         onPaint: {
@@ -2159,10 +2166,16 @@ Item {
         if (navSplit >= split) {
             return;
         }
-        var scale = root.viewScale * backing;
-        _drawLayer(ctx, current, 1.0, split, false, navSplit, scale, backing);
+        var scale = backing;
+        // The pen follows the content: toolpathWidthPx() carries the
+        // live zoom for the camera-ridden canvases, and the camera is
+        // divided back out here so the stroke presents at the same
+        // physical width the camera-free raster baked — the same
+        // division the renderer's own floor makes.
+        var widthScale = backing / (root.viewScale > 0 ? root.viewScale : 1.0);
+        _drawLayer(ctx, current, 1.0, split, false, navSplit, scale, widthScale);
         if (root.showTravels) {
-            _drawTravels(ctx, current.travels, split, navSplit, scale, backing);
+            _drawTravels(ctx, current.travels, split, navSplit, scale, widthScale);
         }
     }
 
