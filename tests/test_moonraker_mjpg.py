@@ -1314,8 +1314,14 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
                                 round_trip - 1.0)
         # The interval's own maximum, which the stats tick consumes: the
         # trip carries the decode, so it cannot be the shorter of the two.
+        # Both sides at ONE precision: the reported maximum is rounded to
+        # a decimal and the raw decode maximum is not, and rounding only
+        # one side of a comparison breaks its monotonicity — 30.6 against
+        # 30.6279 is a red leg that measured nothing. Rounding both keeps
+        # the ordering exact, since a >= b implies round(a) >= round(b),
+        # so this costs the assertion none of its power.
         self.assertGreaterEqual(self.item._recent_round_trip_ms_max,
-                                self.item._decode_ms_max)
+                                round(self.item._decode_ms_max, 1))
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
