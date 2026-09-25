@@ -1016,6 +1016,7 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
             return QImage.fromData(frame)
 
         self._patch_decode(blocking)
+        self.item.setTargetFps(50.0)  # a 20 ms cap
         self._start()
         self.item._render_timer.stop()  # every tick from here is by hand
         first = [_jpeg(40, 30, shade=40 + index) for index in range(5)]
@@ -1034,27 +1035,33 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
             self._drain(5)
         self.assertEqual(self.item._decodes_rendered, 0,
                          "a frame reached the screen before its decode returned")
+        # Nothing queued behind it: one frame in the worker plus the
+        # newest arrival is the whole memory, and the decodes stay at
+        # the cap's rate rather than the stream's.
+        self.assertEqual(self.item._decoder._queue.qsize(), 0,
+                         "a second decode was queued behind the one in flight")
+        # A decode that has outlasted the cap: the completion is allowed
+        # to hand the newest arrival over itself, which is what stops
+        # the display costing two ticks per frame.
+        time.sleep(0.06)
         gate.set()
         self.assertTrue(
-            self._drain_until(lambda: self.item._decodes_rendered == 1),
-            "the held decode's frame never reached the screen")
-        self._drain(50)  # anything queued behind it would land in here
-        self.assertEqual(len(calls), 1,
-                         "a second frame was handed over while one decoded")
-        self.assertEqual(self.item.framesDisplayed, 1)
-        # Nine parsed: one through the held decode, one still pending
-        # (the newest arrival), the other seven superseded in the buffer.
+            self._drain_until(lambda: self.item.framesDisplayed == 2),
+            "the held decode and the frame behind it did not both reach "
+            "the screen")
+        self.assertEqual(len(calls), 2,
+                         "the completion handed over more than the newest frame")
+        # Nine parsed: two through the worker, the other seven superseded
+        # in the buffer (four before the first hand-over, three after).
         self.assertEqual(self.item.framesDropped, 7)
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 44,
-                         "the installed frame is not the one handed over")
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
+                         "the installed frame is not the newest arrival")
         self.assertEqual(self.item._decode_in_flight, 0,
                          "the in-flight slot never came back")
-        # The newer arrivals were held, not lost: the next tick — the
-        # first after the decode came back — displays the newest one.
-        self._tick_and_install()
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
-                         "the newest arrival never reached the screen")
+        self._drain(50)  # anything further queued would land in here
         self.assertEqual(self.item.framesDisplayed, 2)
+        self.assertEqual(len(calls), 2,
+                         "a frame was handed over with nothing asking for it")
 
     def test_a_decode_in_flight_at_shutdown_is_never_installed(self):
         # Cancellation and teardown together: a decode that started
@@ -1129,6 +1136,184 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
                              "a tick with no worker consumed the frame")
         self.assertEqual(item._decode_in_flight, 0)
         self.assertEqual(item._decodes_rendered, 0)
+
+    def test_a_decode_slower_than_the_tick_displays_once_per_decode(self):
+        # A decode that outlasts its tick must not cost the NEXT tick too.
+        # Dispatch quantised to the tick is one display per two ticks at a
+        # 20 ms tick and a 22 ms decode -- and a frame that arrived just
+        # after the wasted tick then waits out another whole period, which
+        # is the lag the live report names. The display rate belongs to the
+        # decode, bounded by the cap, not to a multiple of the tick.
+        real = QImage.fromData
+
+        def slow(frame):
+            time.sleep(0.022)  # a decode a hair longer than one tick
+            return real(frame)
+
+        self._patch_decode(slow)
+        self.item.setTargetFps(50.0)  # a 20 ms tick
+        self._start()
+        self.assertEqual(self.item._render_timer.interval(), 20)
+        frame = _jpeg(40, 30)
+        delivered = 0
+        started = time.monotonic()
+        next_frame = started
+        while time.monotonic() - started < 1.0:
+            if time.monotonic() >= next_frame:
+                self._reply().deliver(_multipart(frame))
+                delivered += 1
+                next_frame += 0.010  # a 100 fps source: always one in hand
+            self.qt.events(5)
+        self.assertGreaterEqual(delivered, 80)
+        # ~45 displays in the window at the decode's own rate; one per two
+        # ticks is ~25.
+        self.assertGreaterEqual(
+            self.item.framesDisplayed, 35,
+            "the decode's own rate was not reached: dispatch is quantised "
+            "to the tick")
+
+    def test_the_completion_dispatch_never_shortens_the_cap(self):
+        # The hand-over a completion makes must clear the same interval
+        # the tick does, or the cap stops being a cap: a fast source
+        # against a fast decode would display as fast as the source
+        # delivers instead of at the rate the pane asked for.
+        self.item.setTargetFps(20.0)  # a 50 ms cap
+        self._start()
+        self.assertEqual(self.item._render_timer.interval(), 50)
+        frame = _jpeg(40, 30)
+        delivered = 0
+        started = time.monotonic()
+        next_frame = started
+        while time.monotonic() - started < 1.0:
+            if time.monotonic() >= next_frame:
+                self._reply().deliver(_multipart(frame))
+                delivered += 1
+                next_frame += 0.010  # a 100 fps source, 5x the cap
+            self.qt.events(5)
+        self.assertGreaterEqual(delivered, 80)
+        self.assertLessEqual(
+            self.item.framesDisplayed, 24,
+            "the cap was exceeded: a completion hand-over outran the tick")
+        self.assertGreaterEqual(self.item.framesDisplayed, 15,
+                                "the cap's own rate was not reached")
+
+    def test_a_completion_inside_the_cap_leaves_the_frame_for_the_tick(self):
+        # The completion hands over AT the cap, not merely after its
+        # decode: a decode that finished inside the interval must leave
+        # the frame behind it for the tick, or a fast decode would set
+        # the display rate instead of the rate the pane asked for.
+        def ten_ms(frame):
+            time.sleep(0.01)
+            return QImage.fromData(frame)
+
+        self._patch_decode(ten_ms)
+        self.item.setTargetFps(20.0)  # a 50 ms cap
+        self._start()
+        self.item._render_timer.stop()  # every tick from here is by hand
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
+        self.item._render()  # handed over; this decode takes 10 ms
+        # The next frame lands well inside the interval, so it is pending
+        # when the decode returns.
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=41)))
+        self.assertTrue(
+            self._drain_until(lambda: self.item._decodes_rendered == 1),
+            "the first decode never reached the screen")
+        # 10 ms of the 50 ms cap have passed: 30 ms of draining is long
+        # past a second decode, and the frame must still be pending.
+        self._drain(30)
+        self.assertEqual(self.item._decodes_rendered, 1,
+                         "the completion handed a frame over inside the cap")
+        self.assertIsNotNone(self.item._pending_frame,
+                             "the held frame was consumed by nothing")
+        # Held, not lost: the next tick displays it.
+        self._tick_and_install()
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 41)
+        self.assertEqual(self.item.framesDisplayed, 2)
+
+    def test_the_tick_does_not_stack_a_hand_over_on_a_completion(self):
+        # A completion's hand-over is this period's extra one, not a
+        # second cadence: the tick behind it must not hand another frame
+        # over inside the interval — even when the decode that followed
+        # the completion was quick enough to have freed the worker again.
+        # A delivery that lands long after its own decode is the shape a
+        # busy Qt thread produces, and it is where the interval test
+        # alone would let the tick stack.
+        slow_once = []
+
+        def first_slow(frame):
+            if not slow_once:
+                slow_once.append(True)
+                time.sleep(0.03)  # longer than the 20 ms cap
+            return QImage.fromData(frame)
+
+        self._patch_decode(first_slow)
+        self.item.setTargetFps(50.0)  # a 20 ms cap
+        self._start()
+        self.item._render_timer.stop()  # every tick from here is by hand
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
+        self.item._render()  # handed over; this decode is held for 30 ms
+        # A frame in hand when that decode returns: the completion hands
+        # it over itself (the cap allows it by then), and the decode that
+        # follows is instant, so the worker is free again immediately.
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=41)))
+        self.assertTrue(
+            self._drain_until(lambda: self.item._decodes_rendered == 2),
+            "the completion did not hand the pending frame over")
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 41)
+        # A third arrival, inside the interval the completion just spent.
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=42)))
+        self.item._render()
+        self._drain(5)
+        self.assertEqual(self.item._decodes_rendered, 2,
+                         "the tick stacked a hand-over on the completion's")
+        self.assertIsNotNone(self.item._pending_frame,
+                             "the held frame was consumed by nothing")
+        # Held, not lost: once the interval has passed, the next tick
+        # displays it.
+        self._drain(30)
+        self._tick_and_install()
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 42)
+        self.assertEqual(self.item.framesDisplayed, 3)
+
+    def test_the_round_trip_is_reported_split_by_where_it_stalls(self):
+        # The submit-to-install trip is the number the display rate is
+        # a symptom of, so it is reported per frame and split into the
+        # shares that stall independently: the wait for the worker, the
+        # decode, and the trip back to a Qt thread that may be busy.
+        real = QImage.fromData
+
+        def slow(frame):
+            time.sleep(0.03)
+            return real(frame)
+
+        self._patch_decode(slow)
+        self._start()
+        self.item._render_timer.stop()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self._tick_and_install()
+        self.assertEqual(self.item._decodes_rendered, 1)
+        self.item._emit_stats()
+        round_trip = self.item._recent_round_trip_ms
+        # The injected decode is the floor: the trip carries it plus
+        # whatever the hand-over and the return cost.
+        self.assertGreaterEqual(round_trip, 30.0)
+        # The three shares are the trip, and each is accounted where it
+        # happens: a split that dropped a share would not sum back.
+        self.assertAlmostEqual(
+            round_trip,
+            self.item._recent_queue_wait_ms + self.item._recent_decode_ms_per_frame
+            + self.item._recent_delivery_ms,
+            places=1,
+            msg="the round trip's shares do not add up to the round trip")
+        # Two meters, accumulated independently: the frame's age at the
+        # screen (from its parse) cannot be younger than the trip that
+        # put it there.
+        self.assertGreaterEqual(self.item._recent_display_lag_ms,
+                                round_trip - 1.0)
+        # The interval's own maximum, which the stats tick consumes: the
+        # trip carries the decode, so it cannot be the shorter of the two.
+        self.assertGreaterEqual(self.item._recent_round_trip_ms_max,
+                                self.item._decode_ms_max)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
