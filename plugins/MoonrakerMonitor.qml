@@ -3195,10 +3195,30 @@ Component {
                         root.printer.setFollowerLayerProgress(layerProgressSlider.selectedValue());
                     }
                 }
+                // On the component root with the other slider functions: a
+                // function declared on a nested item is invisible to that
+                // item's own descendants, and the plate's column calls this
+                // one from beside its face (the engine's ReferenceError).
+                function _feedRenderView() {
+                    if (root.printer != null) {
+                        // The device-pixel backing (bounded supersampling):
+                        // the worker paints at the screen's physical
+                        // resolution and the scene-graph samples down to
+                        // the logical face — never an enlarged 1x raster.
+                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)));
+                    }
+                }
 
                 ColumnLayout {
+                    // The plate's width is the layout's invariant — the
+                    // popover's old content width, held at every pane
+                    // width. Without it the plate absorbs the whole
+                    // deficit itself and the empty schedule column beside
+                    // it takes the face's width instead.
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.preferredWidth: 585 * screenScaleFactor - 2 * UM.Theme.getSize("default_margin").width
+                    Layout.minimumWidth: 585 * screenScaleFactor - 2 * UM.Theme.getSize("default_margin").width
                     spacing: UM.Theme.getSize("thin_margin").height
                     // The keyboard path: the layer slider takes the focus
                     // on open, so the arrows drive it immediately (the
@@ -3223,16 +3243,6 @@ Component {
                             }
                         }
                     }
-                    function _feedRenderView() {
-                        if (root.printer != null) {
-                            // The device-pixel backing (bounded supersampling):
-                            // the worker paints at the screen's physical
-                            // resolution and the scene-graph samples down to
-                            // the logical face — never an enlarged 1x raster.
-                            root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)));
-                        }
-                    }
-
                     PlateProgressFace {
                         id: progressFace
                         Layout.fillWidth: true
@@ -3685,9 +3695,11 @@ Component {
                     id: pauseColumn
                     // Wide enough for a row's longest suffix ("— baked ·
                     // passed") at the schedule's own font, and it yields
-                    // to the plate first when the pane is tight.
+                    // to the plate first when the pane is tight: with no
+                    // minimum of its own it takes only the room that is
+                    // left over.
                     Layout.preferredWidth: 340 * screenScaleFactor
-                    Layout.minimumWidth: 240 * screenScaleFactor
+                    Layout.minimumWidth: 0
                     // The column fills the card: the schedule's list takes
                     // whatever height the plate's column does not use.
                     Layout.fillHeight: true

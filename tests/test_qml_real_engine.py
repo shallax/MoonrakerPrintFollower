@@ -8314,9 +8314,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
         target, and the graph stretches it into the larger rect — the
         ink moves further the further it sits from the raster's origin.
         Measured on this rig at 1.75, against the raster the face
-        actually presented: the shortfall is 0.75 device px on the
+        actually presented on the 530x581 face this pin was first
+        written against: the shortfall was 0.75 device px on the
         height and 0.5 on the width, and a band census at 1.5, where
-        the width is exact, confined the extra ink to the bands away
+        that width was exact, confined the extra ink to the bands away
         from the anchor — 164 px in the middle band and 142 in the
         bottom against 0 in the top. The bound here is half a device
         pixel, which is half a logical pixel at every scale factor of
@@ -8338,19 +8339,34 @@ class PlateFaceRenderTests(RealEngineTestCase):
                        [[12.0 + i * 3.0, 12.0, float(i)] for i in range(6)]]},
                    "travels": [], "travelStarts": [], "travelEnds": [],
                    "motions": 6}
-        # The popover the census was measured on: its face is 530x581
-        # logical at every scale factor, and the ratios below are the
-        # ones that face divides badly.
+        # The popover the census was measured on: its face is 565x581
+        # logical in this fixture's window, and the ratios below are
+        # derived from that face rather than written down — a fixture
+        # pinned to literals goes stale the moment the face's width
+        # moves, and the pin then measures rects every canvas satisfies.
         _monitor, window, face = self._follower_popover(1400, 1000)
         self.pump(30)
         dpr = float(window.devicePixelRatio())
         width, height = float(face.width()), float(face.height())
         self.assertGreater(width, 0.0, "the face has no size to measure")
-        # Ratios whose device rect is fractional by more than the bound
-        # — the ones a truncating canvas cannot satisfy. Asserting that
-        # they still are is what keeps this a pin: a face that changed
-        # shape must read as a fixture change, never as a silent pass.
-        for ratio in (1.125, 1.375, 1.6, 1.75, 1.875):
+        # Three quarters of the way up to the next whole device pixel:
+        # the worst residue a truncating canvas can leave on each axis,
+        # and more than the bound a rounding one must hold — so every
+        # ratio here discriminates, and the guard below says so.
+        ratios = []
+        for axis in (width, height):
+            axis_ratios = []
+            for scale in (1.25, 1.5, 1.75):
+                whole = int(axis * scale)
+                ratio = (whole + 0.75) / axis
+                if 1.1 <= ratio <= 2.0:
+                    axis_ratios.append(round(ratio, 6))
+            self.assertGreaterEqual(
+                len(axis_ratios), 2,
+                "the %.1f px axis yields no ratio inside the backing "
+                "clamp's range that a truncating canvas could fail" % axis)
+            ratios.extend(axis_ratios)
+        for ratio in sorted(set(ratios)):
             target_w, target_h = width * ratio, height * ratio
             self.assertGreater(
                 max(abs(target_w - int(target_w)),

@@ -1556,8 +1556,6 @@ class MonitorModelContractTests(unittest.TestCase):
             # and the list scrolls with the card's own chevrons rather
             # than stopping at a counted remainder.
             "id: pauseColumn",
-            "Layout.preferredWidth: 340 * screenScaleFactor",
-            "Layout.minimumWidth: 240 * screenScaleFactor",
             "id: pauseBlockModel",
             "model: pauseBlockModel",
             "interactive: contentHeight > height",
@@ -1571,6 +1569,20 @@ class MonitorModelContractTests(unittest.TestCase):
             "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
         ):
             self.assertIn(token, MONITOR_QML)
+        # The width split, scoped to each column's own body: the plate
+        # holds the width the popover's content had before the schedule
+        # moved beside it, and the schedule's column yields whatever is
+        # left. A floor on the schedule's column took 143 px off the
+        # 900 px pane's face and moved every geometry contract this
+        # face has, so the pair is pinned where it stands — a bare
+        # "minimumWidth: 0" matched anywhere would pass vacuously.
+        plate_column = MONITOR_QML[MONITOR_QML.index("id: plateProgressContent"):MONITOR_QML.index("PlateProgressFace {", MONITOR_QML.index("id: plateProgressContent"))]
+        plate_width = "585 * screenScaleFactor - 2 * UM.Theme.getSize(\"default_margin\").width"
+        self.assertIn("Layout.preferredWidth: %s" % plate_width, plate_column)
+        self.assertIn("Layout.minimumWidth: %s" % plate_width, plate_column)
+        pause_column = MONITOR_QML[MONITOR_QML.index("id: pauseColumn"):MONITOR_QML.index("id: pauseBlockModel")]
+        self.assertIn("Layout.preferredWidth: 340 * screenScaleFactor", pause_column)
+        self.assertIn("Layout.minimumWidth: 0", pause_column)
         # The chevrons reuse the card's own expressions, so the
         # no-reflow allow-list carries them once for both hosts.
         for token in (
