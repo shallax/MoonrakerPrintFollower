@@ -8,11 +8,15 @@ while the scrub's within-layer delta keeps the vector payload (the
 only consumer that genuinely needs per-motion granularity), published
 separately from the raster window.
 
-One render job paints THREE sibling assets: the feature-coloured raster, the grey whole-layer base
-(derived from the coloured one via SourceIn — no second geometry
-walk) and the travel-only lines. The face composes them: a full
-100% layer blits colour + travels, a partial layer blits the grey
-base under the vector-walked prefix.
+A full-layer render job paints three sibling assets: the
+feature-coloured raster, the grey whole-layer base (derived from
+the coloured one via SourceIn — no second geometry walk) and the
+travel-only lines. The printed prefix is the fourth, and a job of
+its own (`render_layer_prefix`), because only it can be rendered
+incrementally over its own previous image. The face composes them:
+a full 100% layer blits colour + travels, a partial layer blits the
+grey base under the prefix raster and vector-walks only the live
+delta's tail.
 
 The raster's key inputs (the view, the plot) ride the model's slots;
 the pan stays baked into the render (the standing architecture).

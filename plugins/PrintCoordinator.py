@@ -323,9 +323,11 @@ class PrintCoordinator(QObject):
             layer_count = len(plate_view.ranges) if plate_view is not None else 0
             # The face's anchor: the live layer while the follower
             # follows the print, the manual one while the user has
-            # detached it — refused when it points outside this file
-            # (a frozen anchor outlives a print and the next one may be
-            # shorter).
+            # detached it. An anchor outside this file is not refused:
+            # the service keeps it and withholds it only from the
+            # index's retention bound, so its payload comes back
+            # carrying no current layer (a frozen anchor outlives a
+            # print and the next one may be shorter).
             plate_progress_payload = None
             manual_payload = None
             plate_visited = frozenset()
