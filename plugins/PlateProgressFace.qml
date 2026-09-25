@@ -2207,6 +2207,18 @@ Item {
             var segments = layer.classes[name];
             ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
             ctx.globalAlpha = alpha;
+            // ONE path per class, stroked ONCE. A beginPath/stroke per
+            // SEGMENT was the follower's dominant cost: every
+            // contiguous run became its own software stroke, hundreds
+            // or thousands per repaint, each 100-500 ms on the live
+            // machine. The fresh path was never what kept a stroke
+            // from bridging a travel — a stroke never joins subpaths,
+            // and moveTo opens one, so batching is pixel-identical for
+            // the opaque classes. For the translucent base (alpha
+            // 0.55) it removes the double-compositing where two runs
+            // overlap, which is the alpha-accumulation this file
+            // documents elsewhere rather than a look worth keeping.
+            ctx.beginPath();
             for (var s = 0; s < segments.length; ++s) {
                 var points = segments[s];
                 // Every segment is at least one EDGE — two vertices — so
@@ -2219,18 +2231,17 @@ Item {
                 if (!_edgePrinted(points, i, split)) {
                     continue;
                 }
-                ctx.beginPath();
-                // A fresh path per segment, opened at the first edge's
-                // OWN start vertex: the stroke never bridges a travel, a
-                // feature change, or the boundary the last poll painted.
-                // No pan term: the item's translation carries the view.
+                // Opened at the first edge's OWN start vertex: the
+                // stroke never bridges a travel, a feature change, or
+                // the boundary the last poll painted. No pan term: the
+                // item's translation carries the view.
                 ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
                 while (_edgePrinted(points, i, split)) {
                     ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
                     ++i;
                 }
-                ctx.stroke();
             }
+            ctx.stroke();
             ctx.globalAlpha = 1.0;
         }
     }
