@@ -6816,6 +6816,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
             "sweep (%s) — the prefix, the canvas tail and the full raster "
             "do not place the same stroke at the same row"
             % (spread, ", ".join("s%d=%.2f" % (m[0], m[1]) for m in measured)))
+        # The teeth: a one-device-row displacement of the full raster
+        # (progressRasterImage, explicit geometry — a bare `y: 1`
+        # against `anchors.fill` is inert, and `anchors.topMargin`
+        # stretches rather than translates) splits the sweep to
+        # s2..s20 = 263.50, s21 = 264.50 and fails it, so the pin sees
+        # the raster producer move. A one-row displacement of
+        # progressCanvas fails it too, by a full pixel on the
+        # canvas-only splits, which is where that canvas is the
+        # producer. The two mutations together are what says the sweep
+        # covers both producers rather than one that happens to be on
+        # screen throughout.
 
     def test_the_gesture_overlay_places_the_ink_where_the_exact_scene_does(self):
         """Two presentations of one geometry, measured against each other.
