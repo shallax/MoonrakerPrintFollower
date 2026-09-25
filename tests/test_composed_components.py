@@ -3352,20 +3352,39 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         module = self.qt.load("MoonrakerMonitorModel")
         clock = _FakeClock(module)
         starts = {"nav": [], "prefix": []}
-        real_nav = module.render_navigation_layer
-        real_prefix = module.render_layer_prefix
+        # The counters stamp the SCHEDULER's decision, on this thread,
+        # inside the product's own call — which is the instant the
+        # product stamps into its own window. Stamping the worker's
+        # entry instead put the record on a pool thread, asynchronously,
+        # and the drain that ends the test freezes the fake clock: two
+        # renders entered 88 real ms apart then carried one identical
+        # reading, which reads as two bakes starting together when the
+        # product's own starts were 12.75 fake seconds apart.
+        model_cls = module.MoonrakerMonitorModel
+        real_schedule_nav = model_cls._schedule_navigation
+        real_schedule_surface = model_cls._schedule_surface
 
-        def nav(window, plot, view, split=None, **kwargs):
-            starts["nav"].append((clock.t, split))
-            return real_nav(window, plot, view, split, **kwargs)
+        def schedule_nav(pane, plate_surface):
+            before = plate_surface.nav.get("job")
+            real_schedule_nav(pane, plate_surface)
+            after = plate_surface.nav.get("job")
+            if after is not None and after is not before:
+                starts["nav"].append(
+                    (clock.t, (plate_surface.desired or {}).get("split")))
 
-        def prefix(payload, plot, view, split, **kwargs):
-            starts["prefix"].append((clock.t, split))
-            return real_prefix(payload, plot, view, split, **kwargs)
+        def schedule_surface(pane, plate_surface):
+            before = plate_surface.job
+            real_schedule_surface(pane, plate_surface)
+            after = plate_surface.job
+            if after is not None and after is not before \
+                    and after.get("kind") == "prefix":
+                starts["prefix"].append((clock.t, after.get("split")))
 
         self.patches = [patch.object(module, "time", clock),
-                        patch.object(module, "render_navigation_layer", nav),
-                        patch.object(module, "render_layer_prefix", prefix)]
+                        patch.object(model_cls, "_schedule_navigation",
+                                     schedule_nav),
+                        patch.object(model_cls, "_schedule_surface",
+                                     schedule_surface)]
         for entry in self.patches:
             entry.start()
         self.addCleanup(lambda: [entry.stop() for entry in self.patches])
