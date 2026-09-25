@@ -1807,6 +1807,17 @@ class PersistentIndexCache:
     def save(self, identity: Optional[RemoteFileIdentity], index: LayerMotionIndex) -> None:
         if identity is None or not index:
             return
+        # The hold is the SNAPSHOT, never the encode. The GUI thread
+        # takes this same lock to read the plate (the layers, the
+        # split, the progress and the followed layer's own writes), so
+        # a hold across the gzip of a whole print's motion data is a
+        # stall on the thread that draws the UI, sized by the dataset.
+        #
+        # The snapshot copies, it does not collect references: a
+        # compact index is hydrated — its per-layer arrays replaced —
+        # under this same lock by the background pass, so encoding the
+        # live arrays outside the hold would publish a layer the
+        # header's own counts disagree with.
         with index.cache_lock:
             layer_count = len(index.ranges)
             if not (
@@ -1841,8 +1852,6 @@ class PersistentIndexCache:
                                        index.layer_start_arc_plane)
             if arc_columns is None:
                 return
-            path = self._path(identity)
-            temp_path = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
             header = {
                 "version": _CACHE_VERSION,
                 "identity": identity.stable_key(),
@@ -1873,23 +1882,35 @@ class PersistentIndexCache:
                 # blob would only spend the byte budget on a file the
                 # loader always refuses, so it is not written at all.
                 return
+            # tobytes is what makes the encode lock-free: header and
+            # geometry leave the hold as one consistent view.
+            snapshot = [(offsets.tobytes(), index.motion_x[i].tobytes(),
+                         index.motion_y[i].tobytes(), index.motion_z[i].tobytes())
+                        for i, offsets in enumerate(index.motion_offsets)]
+        path = self._path(identity)
+        # Unique per CONCURRENT writer, not merely per instant: the
+        # encode runs outside the lock now, and the lock is per index
+        # while the path is per identity, so two writers overlapping in
+        # the same millisecond must not share one temp file.
+        temp_path = (f"{path}.tmp-{os.getpid()}-{threading.get_ident()}"
+                     f"-{int(time.time() * 1000)}")
+        try:
+            with gzip.open(temp_path, "wb", compresslevel=3) as handle:
+                handle.write(_CACHE_MAGIC)
+                handle.write(struct.pack("<I", len(raw_header)))
+                handle.write(raw_header)
+                for offsets, xs, ys, zs in snapshot:
+                    handle.write(offsets)
+                    handle.write(xs)
+                    handle.write(ys)
+                    handle.write(zs)
+            os.replace(temp_path, path)
+            self.prune(keep=path)
+        except OSError:
             try:
-                with gzip.open(temp_path, "wb", compresslevel=3) as handle:
-                    handle.write(_CACHE_MAGIC)
-                    handle.write(struct.pack("<I", len(raw_header)))
-                    handle.write(raw_header)
-                    for i, offsets in enumerate(index.motion_offsets):
-                        handle.write(offsets.tobytes())
-                        handle.write(index.motion_x[i].tobytes())
-                        handle.write(index.motion_y[i].tobytes())
-                        handle.write(index.motion_z[i].tobytes())
-                os.replace(temp_path, path)
-                self.prune(keep=path)
+                os.remove(temp_path)
             except OSError:
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
+                pass
 
     def prune(self, keep: Optional[str] = None) -> None:
         """The print-level policy (the review's unified-lifecycle

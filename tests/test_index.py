@@ -1,13 +1,19 @@
+import gzip
 import os
 import pathlib
 import random
 import re
 import tempfile
 import threading
+import time
 import unittest
+from array import array
+from unittest.mock import patch
 
+from plugins import ArcGeometry
 from plugins.MoonrakerProtocol import RemoteFileIdentity
 from plugins.GCodeIndex import (
+    LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,
     build_index_from_file,
@@ -848,6 +854,190 @@ G00 X2 Y2 Z0.2
             self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 2.0, "path-uuid")))
             self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")),
                                  "a fresh extraction uuid refused the same content")
+
+
+class _GatedStream:
+    """The save's gzip handle, parked at its first written byte.
+
+    Every write goes to the real handle, but the FIRST one hands
+    control to the case's watcher and waits (bounded) for its verdict
+    before the byte lands: the watcher sees the save from inside its
+    encode, at a named instant, instead of whenever a stopwatch
+    happened to look.
+
+    The context protocol mirrors GzipFile's: the handle closes when the
+    save's ``with`` block leaves.
+    """
+
+    def __init__(self, handle, at_first_write):
+        self._handle = handle
+        self._at_first_write = at_first_write
+        self._opened = False
+
+    def write(self, data):
+        if not self._opened:
+            self._opened = True
+            self._at_first_write()
+        return self._handle.write(data)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._handle.close()
+
+
+class SaveHoldTests(unittest.TestCase):
+    """The save's lock hold is the SNAPSHOT, never the encode.
+
+    The GUI thread takes index.cache_lock to read the plate — the
+    layers, the split, the progress and the followed layer's own writes
+    all come through it — so a hold across the gzip of a whole print's
+    motion data stalls the thread that draws the UI, for as long as the
+    dataset takes to compress.
+
+    Both cases below drive a REAL save and look at the lock from
+    another thread at the one instant that decides it: the first byte
+    of the encode. The verdict is a boundary, not a duration, so it
+    reads the same on an idle runner and on a busy one.
+    """
+
+    @staticmethod
+    def _dense_index(layers=120, motions=400):
+        """The scan's output shape, at the size an encode has to move."""
+        index = LayerMotionIndex()
+        for layer in range(layers):
+            index.ranges.append((layer * motions * 32, (layer + 1) * motions * 32))
+            index.motion_offsets.append(array("Q", range(layer, layer + motions)))
+            index.motion_x.append(array("f", (m * 0.05 for m in range(motions))))
+            index.motion_y.append(array("f", ((m * 7) % 180 for m in range(motions))))
+            index.motion_z.append(array("f", (layer * 0.2 for _ in range(motions))))
+            index.layer_start_positions.append((0.0, 0.0, layer * 0.2))
+            index.layer_start_absolute.append(True)
+            index.layer_start_units.append(1.0)
+            index.layer_elapsed_times.append(float(layer) * 12.0)
+            index.motion_arcs.append({})
+            index.layer_start_arc_plane.append(ArcGeometry.PLANE_XY)
+            index.layer_motion_counts.append(motions)
+        return index
+
+    @staticmethod
+    def _blob(cache, identity):
+        with gzip.open(cache._path(identity), "rb") as handle:
+            return handle.read()
+
+    @staticmethod
+    def _gated_save(cache, identity, index, encode_started, proceed):
+        """Save for real, gated at the encode's first byte.
+
+        ``encode_started`` says the encode has begun; ``proceed`` is the
+        case's own verdict that it may continue, and its absence is
+        bounded so a failing case still finishes.
+        """
+        real_open = gzip.open
+
+        def at_first_write():
+            encode_started.set()
+            proceed.wait(2.0)
+
+        def gate(path, *args, **kwargs):
+            return _GatedStream(real_open(path, *args, **kwargs), at_first_write)
+
+        with patch("plugins.GCodeIndex.gzip.open", gate):
+            worker = threading.Thread(target=cache.save, args=(identity, index))
+            worker.start()
+            worker.join(10.0)
+        return worker
+
+    def test_the_encode_does_not_hold_the_cache_lock(self):
+        index = self._dense_index()
+        payload = sum(len(a) * 20 for a in index.motion_offsets)
+        identity = RemoteFileIdentity("dense.gcode", payload, 100.0, "uuid-1")
+        encode_started = threading.Event()
+        verdict = threading.Event()
+        read = {}
+
+        def gui_read():
+            # The GUI side, in the shape of the service's own read: the
+            # progress face takes this lock to ask the index for a
+            # layer's motion total.
+            if not encode_started.wait(5.0):
+                return
+            started = time.monotonic()
+            acquired = index.cache_lock.acquire(timeout=1.0)
+            read["waited"] = time.monotonic() - started
+            read["acquired"] = acquired
+            if acquired:
+                try:
+                    index.motion_count(0)
+                finally:
+                    index.cache_lock.release()
+            verdict.set()
+
+        reader = threading.Thread(target=gui_read)
+        reader.start()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_bytes=64 * 1024 * 1024, max_entries=4)
+            worker = self._gated_save(cache, identity, index, encode_started, verdict)
+            reader.join(10.0)
+            self.assertFalse(worker.is_alive(), "the save never finished")
+            self.assertIsNotNone(cache.load(identity), "the gated save wrote no index")
+        self.assertIn("acquired", read, "the save never reached its encode")
+        self.assertTrue(read["acquired"],
+                        "the encode holds the cache lock: the GUI thread's plate "
+                        "read waited %.0f ms for it" % (read["waited"] * 1000))
+        # The margin says "taken at once", not "taken within a budget":
+        # the acquisition above is uncontended once the encode is
+        # outside the hold, and the pre-fix code never returns at all.
+        self.assertLess(read["waited"], 0.05,
+                        "the GUI thread waited %.1f ms for a lock a running "
+                        "encode should not hold" % (read["waited"] * 1000))
+
+    def test_a_hydration_during_the_encode_never_reaches_the_blob(self):
+        # The trap the narrow hold has to answer: a compact index's
+        # layers are filled in under this same lock by the background
+        # pass, so an encode that read the LIVE arrays would publish a
+        # layer the header's own counts disagree with. A blob is one
+        # consistent view or it is not a blob.
+        data = b"G90\n;LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 8 + b";LAYER:1\nG1 X2 Y2 Z0.4\n"
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            source = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(source, compact=True)
+            self.assertEqual([len(a) for a in index.motion_offsets], [0, 0])
+            identity = RemoteFileIdentity("compact.gcode", len(data), 100.0, "uuid-1")
+            with tempfile.TemporaryDirectory() as directory:
+                cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
+                cache.save(identity, index)
+                snapshot_state = self._blob(cache, identity)
+                encode_started = threading.Event()
+                hydrated = threading.Event()
+
+                def hydrate_midway():
+                    if not encode_started.wait(5.0):
+                        return
+                    hydrate_layer_from_file(index, source, 0)
+                    hydrated.set()
+
+                hydrator = threading.Thread(target=hydrate_midway)
+                hydrator.start()
+                self._gated_save(cache, identity, index, encode_started, hydrated)
+                hydrator.join(10.0)
+                self.assertFalse(hydrator.is_alive(), "the hydration never finished")
+                self.assertEqual([len(a) for a in index.motion_offsets], [8, 0],
+                                 "the hydration did not land in the index")
+                self.assertEqual(self._blob(cache, identity), snapshot_state,
+                                 "the blob took up state that changed after the snapshot")
+                loaded = cache.load(identity)
+                self.assertIsNotNone(loaded)
+                # The saved view is the pre-hydration one: the compact
+                # save writes the evicted state, and the counts that ride
+                # beside it still know the layer's real total.
+                self.assertEqual([len(a) for a in loaded.motion_offsets], [0, 0])
+                self.assertEqual(loaded.motion_count(0), 8)
+        finally:
+            os.remove(source)
 
 
 if __name__ == "__main__":
