@@ -8302,6 +8302,160 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 and face.property("_interactionActive"):
             self._pump_ms(30)
 
+    def test_the_worker_raster_covers_the_faces_device_rect(self):
+        """The worker's canvas against the rect the face shows it in.
+
+        The face presents these rasters across its own device rect,
+        `logical * dpr`, and presents them 1:1 — the worker paints at
+        the screen's physical resolution so the scene graph has
+        nothing to resample. That holds only if the canvas IS that
+        extent: `int(logical * dpr)` truncates a product that is whole
+        only at whole scale factors, leaving the texture short of its
+        target, and the graph stretches it into the larger rect — the
+        ink moves further the further it sits from the raster's origin.
+        Measured on this rig at 1.75, against the raster the face
+        actually presented: the shortfall is 0.75 device px on the
+        height and 0.5 on the width, and a band census at 1.5, where
+        the width is exact, confined the extra ink to the bands away
+        from the anchor — 164 px in the middle band and 142 in the
+        bottom against 0 in the top. The bound here is half a device
+        pixel, which is half a logical pixel at every scale factor of
+        1 or more, and the rounding canvas holds it at every ratio up
+        to the backing clamp.
+
+        Two halves, because the suite's ambient scale factor is 1.0,
+        where every candidate rounds alike: the LIVE raster is measured
+        at whatever ratio this process runs at (the sibling test runs
+        this same method at 1.375), and the canvas factory is measured
+        at the fractional ratios directly, which is where truncation
+        breaks the bound. The factory loop calls `_new_canvas` rather
+        than the rounding helper, so the sibling's failure is a
+        measurement of the extent and not an import error.
+        """
+        from plugins.PlateQt import _new_canvas
+
+        payload = {"classes": {"WALL-OUTER": [
+                       [[12.0 + i * 3.0, 12.0, float(i)] for i in range(6)]]},
+                   "travels": [], "travelStarts": [], "travelEnds": [],
+                   "motions": 6}
+        # The popover the census was measured on: its face is 530x581
+        # logical at every scale factor, and the ratios below are the
+        # ones that face divides badly.
+        _monitor, window, face = self._follower_popover(1400, 1000)
+        self.pump(30)
+        dpr = float(window.devicePixelRatio())
+        width, height = float(face.width()), float(face.height())
+        self.assertGreater(width, 0.0, "the face has no size to measure")
+        # Ratios whose device rect is fractional by more than the bound
+        # — the ones a truncating canvas cannot satisfy. Asserting that
+        # they still are is what keeps this a pin: a face that changed
+        # shape must read as a fixture change, never as a silent pass.
+        for ratio in (1.125, 1.375, 1.6, 1.75, 1.875):
+            target_w, target_h = width * ratio, height * ratio
+            self.assertGreater(
+                max(abs(target_w - int(target_w)),
+                    abs(target_h - int(target_h))), 0.5,
+                "the fixture's device rect at %.3f is %.2fx%.2f on a "
+                "%.1fx%.1f face, and neither axis is fractional by more "
+                "than the bound, so no canvas can fail this ratio"
+                % (ratio, target_w, target_h, width, height))
+            canvas = _new_canvas({"width": width, "height": height,
+                                  "dpr": ratio})
+            self.assertGreater(canvas.width(), 0,
+                               "no canvas at %.3f" % ratio)
+            for axis, made, target in (("width", canvas.width(), target_w),
+                                       ("height", canvas.height(), target_h)):
+                self.assertLessEqual(
+                    abs(target - made), 0.5,
+                    "at %.3f the canvas is %d device px %s for the %.2f px "
+                    "rect the face presents it in: the scene graph stretches "
+                    "the texture and the ink moves with the distance from "
+                    "the raster's origin (truncating the extent would leave "
+                    "%.2f px)" % (ratio, made, axis, target,
+                                  abs(target - int(target))))
+        # The backing clamp's ceiling, where the product is whole again.
+        canvas = _new_canvas({"width": width, "height": height, "dpr": 2.0})
+        self.assertEqual((canvas.width(), canvas.height()),
+                         (int(width * 2.0), int(height * 2.0)),
+                         "a whole ratio must stay exact (%d, %d for %.1fx%.1f)"
+                         % (canvas.width(), canvas.height(), width, height))
+
+        # The live raster, at the ratio this process runs at, through
+        # the real renderer on the real face.
+        layer = self._native_layer(payload, face, dpr=dpr)
+        raster_w = int(layer.property("rasterWidth"))
+        raster_h = int(layer.property("rasterHeight"))
+        self.assertGreater(raster_w, 0, "the worker painted no raster")
+        for axis, made, target in (("width", raster_w, width * dpr),
+                                   ("height", raster_h, height * dpr)):
+            self.assertLessEqual(
+                abs(target - made), 0.5,
+                "the worker's raster is %d device px %s for the %.2f px rect "
+                "the face presents it in at dpr %.3f: the scene graph "
+                "stretches the texture and the ink moves with the distance "
+                "from the raster's origin" % (made, axis, target, dpr))
+
+    def test_the_raster_covers_the_device_rect_at_a_fractional_ratio(self):
+        """The same measurement at 1.375, in its own process.
+
+        Qt fixes the scale factor when the application is built, so a
+        fractional ratio needs a child — QT_SCALE_FACTOR is what the
+        offscreen platform honours, and the child reports the ratio it
+        actually ran at, so this cannot pass by having the variable
+        ignored. 1.375 is where the truncation is furthest outside the
+        bound on BOTH axes on this face: 0.75 px wide and 0.875 px
+        high, against 0.25 and 0.125 for the rounding canvas.
+        """
+        import subprocess
+        import textwrap
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        # The driver must NOT build the application itself: the suite's
+        # _start_application raises SkipTest when one already exists, so
+        # a probe that creates it turns the whole child into "Ran 0
+        # tests ... skipped=1" — a green that ran nothing. The ratio is
+        # read after the run, from the application the suite built.
+        driver = textwrap.dedent("""
+            import sys, unittest
+            import test_qml_real_engine as module
+            suite = unittest.TestSuite([module.PlateFaceRenderTests(
+                "test_the_worker_raster_covers_the_faces_device_rect")])
+            result = unittest.TextTestRunner(verbosity=2).run(suite)
+            from PyQt6.QtGui import QGuiApplication
+            print("DPR %.3f" % QGuiApplication.primaryScreen().devicePixelRatio(),
+                  flush=True)
+            sys.exit(0 if result.wasSuccessful() else 1)
+            """)
+        script = pathlib.Path(tempfile.gettempdir()) / "mpf-raster-dpr.py"
+        script.write_text(driver)
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        env["QT_SCALE_FACTOR"] = "1.375"
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(root / "tests"), str(root),
+             env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+        result = subprocess.run([sys.executable, str(script)], cwd=str(root),
+                                env=env, capture_output=True, text=True,
+                                timeout=300)
+        # Both streams: TextTestRunner writes its report to stderr, so
+        # a check that reads stdout alone sees the driver's own line
+        # and nothing else.
+        said = (result.stdout or "") + (result.stderr or "")
+        # All three, or the child can report success without having
+        # measured anything: a skipped test passes, and so does a child
+        # that quietly ran at the ambient ratio.
+        self.assertIn("Ran 1 test", said,
+                      "the child did not EXECUTE the census, so it proves "
+                      "nothing:\n%s" % said[-3000:])
+        self.assertNotIn("skipped", said,
+                         "the child skipped the census:\n%s" % said[-3000:])
+        self.assertIn("DPR 1.375", said,
+                      "the child did not run at DPR 1.375, so it proves "
+                      "nothing:\n%s" % said[-3000:])
+        self.assertEqual(result.returncode, 0,
+                         "the raster did not cover the device rect at 1.375:"
+                         "\n%s" % said[-3000:])
+
     def test_the_raster_and_the_vector_place_the_ink_identically(self):
         """The two producers of the printed prefix, measured against
         each other at the same view and split.

@@ -431,9 +431,30 @@ def _paint_segments(painter: QPainter, pen: QPen, payload: dict, plot: dict, vie
     return True
 
 
+def _device_extent(logical: float, dpr: float) -> int:
+    """The canvas's extent for a logical span, rounded rather than
+    truncated.
+
+    The face presents this raster across its own device extent, which
+    is `logical * dpr` and fractional at every fractional scaling: the
+    scene graph draws the texture into it, so the picture is scaled by
+    `target / raster` and the ink moves further the further it sits
+    from the raster's origin. Measured on the real engine, a wall
+    census against the raster the face actually presented: the
+    truncated canvas came up 0.75 device px short of the target's
+    height at 1.75, and the extra ink rose with the distance from the
+    anchor (at 1.5, where the width is exact, 0 in the top band
+    against 142 in the bottom). Rounding holds the residue under half
+    a device pixel, which is under half a logical pixel at every dpr
+    of 1 or more — half away from zero, matching the transform's own
+    rounding, so the two disagree by at most a device pixel's half."""
+    return int(math.floor(logical * dpr + 0.5))
+
+
 def _new_canvas(view: dict) -> QImage:
     dpr = _backing_scale(view)
-    image = QImage(int(view["width"] * dpr), int(view["height"] * dpr),
+    image = QImage(_device_extent(view["width"], dpr),
+                   _device_extent(view["height"], dpr),
                    QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(QColor(0, 0, 0, 0))
     return image
