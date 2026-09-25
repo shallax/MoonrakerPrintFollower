@@ -115,11 +115,18 @@ class HydrationYield(Exception):
     """
 
 
-# The reader's own gate: the clock call and the cancellation check are
-# kept out of the per-line path by a counter, and the counter is small
-# enough that even a slow line cannot stretch the interval past a few
-# of the yield gate's periods.
-_HYDRATE_YIELD_MASK = 63
+# The line loops' own gate: the clock call and the cancellation check
+# are kept out of the per-line path by a counter, and the counter is
+# small enough that even a slow line cannot stretch the interval past a
+# few of the yield gate's periods. The scan and the hydration walk
+# share it: the hand-back cadence is a property of the wall-clock gate,
+# not of either loop, and a mask that only the loop can honour is what
+# let the scan run a whole file's worth of lines between hand-backs.
+_YIELD_CHECK_MASK = 63
+# The build's byte-offset progress keeps its own, much coarser beat: it
+# is a readout rather than a hand-back, and the reader's clock call per
+# event is what the coarse beat exists to avoid.
+_BUILD_PROGRESS_MASK = 0xFFF
 
 _CACHE_MAGIC = b"MPFI110\0"
 # The header is a length-prefixed JSON blob inside the container, so the
@@ -779,13 +786,16 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         while True:
             if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
                 return LayerMotionIndex()
-            if (line_number & 0xFFF) == 0 and line_number:
+            if (line_number & _YIELD_CHECK_MASK) == 0 and line_number:
                 # Release the GIL on the workers' own wall-clock gate:
                 # the parse is a tight Python loop, and what starves the
                 # UI thread is the TIME between hand-backs, not the line
-                # count that separates them. The same beat reports the
-                # byte-offset progress.
+                # count that separates them. The count decides only how
+                # often the gate can be ASKED, so it has to be fine
+                # enough that the wall-clock period is what governs the
+                # hand-back.
                 yield_at = passive_yield(time.monotonic(), yield_at)
+            if (line_number & _BUILD_PROGRESS_MASK) == 0 and line_number:
                 if progress is not None:
                     _emit_progress(handle, progress)
             offset = handle.tell()
@@ -1230,7 +1240,7 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             checked = 0
             while handle.tell() < end:
                 checked += 1
-                if (checked & _HYDRATE_YIELD_MASK) == 0:
+                if (checked & _YIELD_CHECK_MASK) == 0:
                     updated = passive_yield(time.monotonic(), yield_at)
                     if updated != yield_at:
                         yield_at = updated

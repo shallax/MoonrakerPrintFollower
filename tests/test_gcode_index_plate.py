@@ -3281,6 +3281,44 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             len(asked) - before, lines // 64 - 64,
             "the walk to the end asked its gate %d times" % (len(asked) - before))
 
+    def test_the_scan_asks_its_gate_throughout_its_walk(self):
+        # The scan's own gate, on the same structural claim the
+        # hydration walk is held to. The build loop is a per-line parse
+        # of a file that can be megabytes long, and it hands the
+        # interpreter back only where it ASKS: a beat coarser than the
+        # wall-clock period lets a whole file's worth of lines run
+        # between hand-backs, and the gate cannot fire more often than
+        # it is consulted. Measured on a 300k-line single layer: 26.5 ms
+        # between hand-backs on the old 4096-line beat against 6.7 ms
+        # with the 64-line one (p95 25.0 -> 6.4 ms), for ~1% more scan
+        # time. The asks are counted rather than timed, so the claim is
+        # a property of the walk; the hand-backs are printed as
+        # evidence, since a descheduled process cannot hand back a GIL
+        # it does not hold.
+        path = self._dense_layer_file()
+        lines = 60000
+        module = self.qt.load("GCodeIndex")
+        asked = []
+        fires = []
+        real = module.passive_yield
+
+        def recorded(now, last):
+            asked.append(now)
+            updated = real(now, last)
+            if updated != last:
+                fires.append(now)
+            return updated
+
+        with patch.object(module, "passive_yield", recorded):
+            index = module.build_index_from_file(path, compact=True)
+        self.assertTrue(index.ranges, "the fixture built no layers")
+        self.assertGreaterEqual(
+            len(asked), lines // 64 - 64,
+            "the scan walked %d lines and asked its gate %d times"
+            % (lines, len(asked)))
+        print("scan gate evidence: %d asks, %d hand-backs over %d lines"
+              % (len(asked), len(fires), lines))
+
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class DecodedBudgetTests(unittest.TestCase):
     """The decoded tier's pin accounting: a render wrapper's
