@@ -62,6 +62,11 @@ class PrintCoordinator(QObject):
         # dialog is asking about, held while the prompt is up (None
         # when no prompt is up, or after it has been answered).
         self._replace_action = None
+        # The pause-at-layer block last published (see _pause_values):
+        # the Monitor's popover reads it back through pause_block. The
+        # Preview card and the popover therefore share ONE derivation
+        # and can never disagree about what is scheduled.
+        self._pause_block = {}
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -868,9 +873,26 @@ class PrintCoordinator(QObject):
     def remove_pause(self, human_layer):
         self._pauses.remove(int(human_layer) - 1)
 
-    def _publish(self):
-        if self._closed: return
-        config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
+    def clear_pauses(self):
+        # The popover's clear-all, the card's own intent (they share
+        # the one schedule).
+        self._pauses.clear()
+
+    @property
+    def pause_block(self):
+        """The pause-at-layer block last published, as the Preview
+        card received it. The Monitor's popover reads it back through
+        the model — the SAME derivation, never a second one — and
+        re-reads only the candidate, which belongs to its own layer
+        slider rather than to Cura's Preview selection."""
+        return self._pause_block
+
+    def _pause_values(self, snapshot):
+        """The pause-at-layer block: one derivation per publish, read
+        by the Preview card (through the presentation) and by the
+        Monitor's popover (through the model). The candidate here is
+        CURA'S selected layer, which is what the Preview card shows;
+        the popover's own candidate is re-derived at its model."""
         selected, current, total = self._cura.selected_layer, snapshot.layer.index, snapshot.layer.total
         if total is None and self._cura.max_layer is not None: total = self._cura.max_layer + 1
         scheduled = selected is not None and selected in self._pauses.layers
@@ -883,6 +905,26 @@ class PrintCoordinator(QObject):
         unavailable = ("a pause is baked into the gcode at this layer" if baked_block
                        else pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected))
         items = self._next_pause.rows(current)
+        block = {
+            "pauseAtLayerActive": snapshot.active,
+            "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
+            "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
+            "pauseAtLayerSummary": pause_summary(items),
+            "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
+            # The card shows the pause list without a toolpath when
+            # baked rows exist (the improve-Eta path: the index alone
+            # must reveal them) — the flag separates that case from a
+            # stale manual schedule. Its pair: the clear-all control
+            # hides while only baked rows are listed (the ruling).
+            "pauseAtLayerHasBaked": any(item["state"] == "baked" for item in items),
+            "pauseAtLayerHasClearable": bool(self._pauses.layers),
+        }
+        self._pause_block = block
+        return block
+
+    def _publish(self):
+        if self._closed: return
+        config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
         compact = status_text(
             detail=self._detail,
             load_requested=self._loads.load_requested,
@@ -947,17 +989,7 @@ class PrintCoordinator(QObject):
             "sceneHasObjects": self._cura.scene_has_objects,
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
-            "pauseAtLayerActive": snapshot.active, "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
-            "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
-            "pauseAtLayerSummary": pause_summary(items),
-            "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
-            # The card shows the pause list without a toolpath when
-            # baked rows exist (the improve-Eta path: the index alone
-            # must reveal them) — the flag separates that case from a
-            # stale manual schedule. Its pair: the clear-all control
-            # hides while only baked rows are listed (the ruling).
-            "pauseAtLayerHasBaked": any(item["state"] == "baked" for item in items),
-            "pauseAtLayerHasClearable": bool(self._pauses.layers),
+            **self._pause_values(snapshot),
             # The status bar's printer-side readouts (the ruling):
             # the live layer and Z height, never the preview's
             # selection. The row hides whole while the resolver has

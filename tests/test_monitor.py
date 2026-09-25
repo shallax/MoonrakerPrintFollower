@@ -1524,6 +1524,91 @@ class MonitorModelContractTests(unittest.TestCase):
         # legend makes (the request).
         self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", MONITOR_QML)
 
+    def test_the_popover_schedules_the_pause_at_its_own_layer(self):
+        # The popover's pause-at-layer block (4.6.0): the CARD's own
+        # schedule read from the POPOVER's own layer — the nine keys
+        # published on the monitor model, the three intents its
+        # controls send, and the QML that reads them. The card's own
+        # behaviour is untouched (the locked-surface ruling).
+        for token in (
+            'pauseAtLayerItems = value_property(QVariant, "pauseAtLayerItems", pauseAtLayerChanged, [])',
+            'pauseAtLayerCandidate = value_property(int, "pauseAtLayerCandidate", pauseAtLayerChanged, 0)',
+            'pauseAtLayerHasClearable = value_property(bool, "pauseAtLayerHasClearable", pauseAtLayerChanged, False)',
+            "def togglePauseAtLayer(self, layer):",
+            "def removePauseAtLayer(self, layer):",
+            "def clearPauseAtLayer(self):",
+            # The candidate's source is the FOLLOWER's layer, never
+            # Cura's Preview selection.
+            "index = self._follower_layer_anchor",
+        ):
+            self.assertIn(token, MONITOR_MODEL)
+        for token in (
+            'objectName: "moonrakerFollowerPauseButton"',
+            "root.printer.togglePauseAtLayer(root.printer.pauseAtLayerCandidate);",
+            "root.printer.removePauseAtLayer(pauseRow.pauseLayer);",
+            "root.printer.clearPauseAtLayer();",
+            "root.printer.pauseAtLayerItems",
+            "model.pauseAtLayerUnavailableText",
+            "root.printer.pauseAtLayerHasClearable === true",
+            # The schedule's column and its scrollable list (the live
+            # report): the rows belong BESIDE the plate — under it they
+            # squeezed the face onto the card's clipped bottom edge —
+            # and the list scrolls with the card's own chevrons rather
+            # than stopping at a counted remainder.
+            "id: pauseColumn",
+            "Layout.preferredWidth: 340 * screenScaleFactor",
+            "Layout.minimumWidth: 240 * screenScaleFactor",
+            "id: pauseBlockModel",
+            "model: pauseBlockModel",
+            "interactive: contentHeight > height",
+            # The list owns the column's remaining height (the live
+            # request) — the popover only, never the card's capped list.
+            "Layout.fillHeight: true",
+            "function onPauseAtLayerChanged() {",
+            "Component.onCompleted: syncPauseRows()",
+            '"↑"',
+            '"↓"',
+            "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
+        ):
+            self.assertIn(token, MONITOR_QML)
+        # The chevrons reuse the card's own expressions, so the
+        # no-reflow allow-list carries them once for both hosts.
+        for token in (
+            "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
+            "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+        ):
+            self.assertIn(token, MONITOR_QML)
+        # No control disappears with the schedule: the list, its heading,
+        # the reason line and the clear button collapse by HEIGHT while
+        # empty (the no-reflow rule's own replacement for a visibility
+        # gate). The reason line and the heading share the one idiom.
+        self.assertEqual(MONITOR_QML.count("Layout.preferredHeight: text.length > 0 ? implicitHeight : 0"), 2)
+        self.assertIn("readonly property bool clearAvailable: root.printer != null && root.printer.pauseAtLayerHasClearable === true", MONITOR_QML)
+        # The two actions share one row at the foot of the column (the
+        # live request): the pause button takes the slack and Clear keeps
+        # a width sized to its own word, side by side rather than stacked.
+        self.assertLess(MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'),
+                        MONITOR_QML.index("id: clearPausesButton"))
+        # The popover's own screen says the short word; the card keeps the
+        # longer line (its own file, its own pin). Both the width AND the
+        # height collapse with the clear action, so the row's other button
+        # expands into the whole foot — a collapsed slot that kept its
+        # width would leave the button beside a gap (the live request).
+        clear_block = MONITOR_QML[MONITOR_QML.index("id: clearPausesButton"):MONITOR_QML.index("root.printer.clearPauseAtLayer();")]
+        self.assertIn('text: "Clear"', clear_block)
+        self.assertIn("Layout.preferredWidth: pauseColumn.clearAvailable ? 60 * screenScaleFactor : 0", clear_block)
+        self.assertIn("Layout.preferredHeight: pauseColumn.clearAvailable ? UM.Theme.getSize(\"action_button\").height : 0", clear_block)
+        self.assertIn("enabled: pauseColumn.clearAvailable", clear_block)
+        # Both foot buttons centre their labels: the theme's content row
+        # packs from the left, so the fixed-width mode is what centring
+        # needs — without it the label hugs its text against the left edge
+        # (the live report).
+        pause_block = MONITOR_QML[MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'):MONITOR_QML.index("root.printer.togglePauseAtLayer(")]
+        for block in (pause_block, clear_block):
+            self.assertIn("fixedWidthMode: true", block)
+        self.assertNotIn("scheduledPauseList", MONITOR_QML, "the popover kept the static capped list")
+        self.assertNotIn("+ pauseColumn.hiddenRows", MONITOR_QML, "the popover counts a remainder instead of scrolling")
+
 
 class MonitorFormattingTests(unittest.TestCase):
     def test_preview_temperature_pair_renders_the_fixed_pair(self):
@@ -5037,10 +5122,15 @@ Item {
             # the scrolled edge.
             "visible: flick.height > 0 && flick.contentY > 2",
             "visible: flick.height > 0 && flick.contentY < flick.contentHeight - flick.height - 2",
-            # The preview card's pause-list chevrons: the same idiom,
-            # on the capped five-row ListView.
+            # The pause-list chevrons: the file manager's idiom, on
+            # the capped five-row ListView the preview card and the
+            # follower popover each keep.
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+            # The follower face's travel raster: it hands over with the
+            # class raster (a peer's commit) — decoration inside the
+            # face's own slot, never a layout shift.
+            "visible: _travelsShown()",
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
@@ -5069,7 +5159,7 @@ Item {
             # ownership swap. The continuation lines ride the same
             # pin (the regex reads the visible line's first clause).
             "visible: _partialPrefixReady() || root._prefixHold",
-            "visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !root._retainedStanding",
+            "visible: (_partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) || _prefixHoldsFull()) && !root._retainedStanding",
             "visible: root._interactionActive",
             # The full raster's standing: the full state OR the
             # 100% -> partial entry's transaction — the predicate

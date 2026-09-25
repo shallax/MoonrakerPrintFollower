@@ -905,6 +905,30 @@ for e in app.getExtensions():
         break
 """
 
+P_PAUSE_BLOCK_READ = """window = _main_window()
+result = {"pauseAtLayerRead": False}
+model = None
+for item in _walk(window.contentItem(), depth=64):
+    try:
+        candidate = item.property("printer")
+    except Exception:
+        candidate = None
+    if candidate is not None and hasattr(candidate, "pauseAtLayerCandidate"):
+        model = candidate
+        break
+if model is not None:
+    result["pauseAtLayerRead"] = True
+    result["pauseAtLayerActive"] = bool(model.pauseAtLayerActive)
+    result["pauseAtLayerCandidate"] = int(model.pauseAtLayerCandidate)
+    result["pauseAtLayerCanToggle"] = bool(model.pauseAtLayerCanToggle)
+    result["pauseAtLayerScheduled"] = bool(model.pauseAtLayerScheduled)
+    result["pauseAtLayerSummary"] = str(model.pauseAtLayerSummary)
+    result["pauseAtLayerItems"] = len(model.pauseAtLayerItems or [])
+    result["pauseAtLayerUnavailableText"] = str(model.pauseAtLayerUnavailableText)
+    result["pauseAtLayerHasBaked"] = bool(model.pauseAtLayerHasBaked)
+    result["pauseAtLayerHasClearable"] = bool(model.pauseAtLayerHasClearable)
+result"""
+
 P_ATTACH_EMIT = """window = _main_window()
 result = {}
 for item in _walk(window.contentItem()):
@@ -1525,6 +1549,13 @@ SCENARIOS = [
          {"op": "wait_model", "prop": "followerShowTravels", "value": True, "budget": 15},
          {"op": "click_text", "text": "Travels"},
          {"op": "wait_model", "prop": "followerShowTravels", "value": False, "budget": 15},
+         # The popover's pause block: the button is laid out with the
+         # rest of the follower's controls, and the block behind it is
+         # read off the live model so the nine published keys carry
+         # execution evidence rather than a bookkeeping-only entry
+         # (the travel-ratio precedent above).
+         {"op": "wait_rect", "objectName": "moonrakerFollowerPauseButton", "budget": 15},
+         {"op": "wait_exec", "code": P_PAUSE_BLOCK_READ, "contains": '"pauseAtLayerRead": true', "budget": 20},
          # The jump rides a view scale only the picture's wheel and
          # right-drag can raise, and the harness's input set carries
          # neither: at the fit it must be absent while the row-mate that

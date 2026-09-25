@@ -158,6 +158,7 @@ SCENARIO_MAP = {
     "moonrakerFollowerAttach": "b11",
     "moonrakerFollowerLayerProgress": "b11",
     "moonrakerFollowerLayerProgressReadout": "b11",
+    "moonrakerFollowerPauseButton": "b11",
     "followerShowPrevious": "b11",
     # The webcam pane's FPS/zoom controls (4.6.0): the bar, its chip
     # readouts, the gesture area and the badges — the camera scenario.
@@ -180,6 +181,23 @@ SCENARIO_MAP = {
     "followerShowTravels": "b11",
     "followerLineScale": "b11",
     "followerTravelVisualRatio": "b11",
+    # The popover's pause-at-layer block (4.6.0): the card's own
+    # schedule, read from the popover's own layer — the nine published
+    # keys, the three intents its controls send, and the button itself.
+    # b11 opens the popover over the live print and reads the block
+    # back off the model.
+    "pauseAtLayerActive": "b11",
+    "pauseAtLayerCandidate": "b11",
+    "pauseAtLayerCanToggle": "b11",
+    "pauseAtLayerScheduled": "b11",
+    "pauseAtLayerSummary": "b11",
+    "pauseAtLayerItems": "b11",
+    "pauseAtLayerUnavailableText": "b11",
+    "pauseAtLayerHasBaked": "b11",
+    "pauseAtLayerHasClearable": "b11",
+    "MoonrakerMonitorModel.togglePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.removePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.clearPauseAtLayer": "b11",
     "sectionConfigurePopOver": "x1",
     "sectionConfigureRowTitle": "x1",
     "configureControlsSectionsButton": "x1",
@@ -556,6 +574,16 @@ EXCLUSIONS = {
         "evidence": "the container repro reads the synced rows end to end",
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
+    },
+    # The follower popover's own pause list: the same seam as the
+    # card's model above — the b11 scenario reads the block off the
+    # live model and the rows through the list view, never the model
+    # object itself.
+    "moonrakerFollowerPauseListModel": {
+        "reason": "probe seam for the popover list's in-place sync; no scenario reads the model object itself",
+        "evidence": "b11 reads the published pause block off the model and the QML syncs it into this model in place",
+        "date": "2026-09-25",
+        "recheck": "a popover pause-row scenario that presses the row's ✕ lands",
     },
     # The status column's two geometry address points (the status-width
     # fix): the flickable and the column it holds are measured, never
