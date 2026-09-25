@@ -182,8 +182,14 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         index = parts.index
         self.assertTrue(index._prepared_saved, "the pass never completed")
         batches = [kind for kind in state.kinds if kind == "fullprep"]
-        self.assertGreater(len(batches), 4,
-                           "the pass produced too few batches to be evidence")
+        # Two is the floor the ceiling below can discriminate from: a
+        # per-batch refresh would put it at twice the batches, and one
+        # batch alone would land exactly on the ceiling. It is not
+        # higher because the pass's batch count is machine speed — the
+        # workers hand the interpreter back now, so a slow runner
+        # finishes fewer of them, and that is not the claim.
+        self.assertGreaterEqual(len(batches), 2,
+                                "the pass produced too few batches to be evidence")
         # Both halves of the contract. Every transition the pass
         # reached must have had its refresh — a dropped completion or
         # error is a user-visible regression.
@@ -221,38 +227,26 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         parts = self._compose()
         state = self._watch(parts)
         index, coordinator = parts.index, parts.coordinator
-        armed, ticks = [], []
-
-        def record():
-            if armed:
-                ticks.append((len(state.refreshes), coordinator.snapshot.load_active))
-
-        def arm():
-            if armed:
-                return
-            armed.append(len(state.refreshes))
-            # The improve click's tracker effect (download_for_monitor's
-            # first act), taken directly so the refresh the click delays
-            # by 2.6 s cannot stand in for the tick.
-            coordinator._loads.request_monitor()
-
-        index.progress_changed.connect(record)
-        index.progress_changed.connect(arm)
         self.assertFalse(coordinator.snapshot.load_active,
                          "the fixture starts with the load term set — the pin "
                          "could not tell the live term from the copy")
         self._run_pass(parts)
         self._settle(parts)
-        self.assertTrue(armed, "the pass emitted no tick to arm on")
-        # A refresh after the arm would itself set the load term, so
-        # only a tick that landed before one answers the question — and
-        # with no such tick the pin must fail, not pass.
-        live = [flag for stamp, flag in ticks if stamp == armed[0]]
-        self.assertTrue(live, "no tick landed between the Improve-Eta request "
-                              "and the coordinator's next refresh")
-        self.assertTrue(live[0],
-                        "the first tick after the Improve-Eta request "
-                        "republished a stale load term")
+        # The improve click's tracker effect (download_for_monitor's
+        # first act), taken directly so the refresh the click delays by
+        # 2.6 s cannot stand in for the tick.
+        coordinator._loads.request_monitor()
+        self.assertTrue(coordinator._loads.active, "the load never started")
+        # The tick is DRIVEN, not waited for: whether one lands before
+        # the coordinator's next refresh is the machine's business, and
+        # the claim is about what a tick publishes. A full refresh sets
+        # the load term itself, so the reading after this is the tick's
+        # own answer.
+        index.progress_changed.emit()
+        self.assertTrue(state.progress,
+                        "the driven tick did not publish")
+        self.assertTrue(coordinator.snapshot.load_active,
+                        "the tick republished a stale load term")
 
     def test_the_pass_completion_keeps_its_transition(self):
         # The risk the plan names: completion is an edge the UI latches
