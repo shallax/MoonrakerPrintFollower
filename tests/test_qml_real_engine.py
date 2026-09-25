@@ -3531,7 +3531,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return image
 
     def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
-                      line_scale=8.0, grey=True, pan_x=0.0):
+                      line_scale=8.0, grey=True, pan_x=0.0, scale=1.0):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -3553,7 +3553,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # colour census cannot see — the fixture paints its proofs
         # solid. The parity test passes the production 0.7.
         view = {"width": int(face.width()), "height": int(face.height()),
-                "scale": 1.0, "lineScale": line_scale, "compact": False,
+                "scale": scale, "lineScale": line_scale, "compact": False,
                 "panX": pan_x, "panY": 0.0, "dpr": dpr}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
@@ -6816,6 +6816,112 @@ class PlateFaceRenderTests(RealEngineTestCase):
             "sweep (%s) — the prefix, the canvas tail and the full raster "
             "do not place the same stroke at the same row"
             % (spread, ", ".join("s%d=%.2f" % (m[0], m[1]) for m in measured)))
+
+    def test_the_gesture_overlay_places_the_ink_where_the_exact_scene_does(self):
+        """Two presentations of one geometry, measured against each other.
+
+        A gesture presents the warm 4x composite (``navigationImage``)
+        with the carried tail's vector canvas over it; idle presents
+        the exact scene's own raster. Same bed, same split, same view
+        — the ink has to land on the same device row, because the flip
+        between the two is a visibility change and nothing else.
+
+        It does not, quite: measured, the overlay sits up to 0.5 px
+        lower and draws a narrower band (at 100% zoom the exact
+        scene's wall is rows 262-265 and the overlay's is 263-264).
+        The 0.5 px is a defect to be driven to zero, not a contract —
+        this pin exists so it cannot GROW, and a 1 px disagreement
+        fails it.
+
+        Matching the two sampling modes does NOT remove it: forcing
+        ``navigationImage.smooth: false`` clears the 0.5 px at zoom
+        1.37 and leaves or introduces it at 1.00 and 2.00. Whatever
+        places the overlay's ink, it is not the sampling mode alone.
+
+        A progress-slider scrub never enters this state, so nothing
+        here can explain a judder seen during a scrub: the only
+        entries are the wheel and drag handlers, the scope's drag and
+        the centre-on-toolhead button."""
+        from plugins.PlateQt import render_navigation_layer, png_file
+        monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+        self._printer.setScrub(payload)
+        self._printer.setSplit(21)
+        pv = face.property("plot")
+        if hasattr(pv, "toVariant"):
+            pv = pv.toVariant()
+        plot = {"offsetX": float(pv["bed"]["offsetX"]),
+                "offsetY": float(pv["bed"]["offsetY"]),
+                "sx": float(pv["sx"]), "sy": float(pv["sy"]),
+                "bedXMin": float(pv["bed"]["bedXMin"]),
+                "bedYMax": float(pv["bed"]["bedYMax"])}
+        nav_view = {"width": int(face.width()), "height": int(face.height()),
+                    "scale": 1.0, "lineScale": 8.0, "compact": False,
+                    "panX": 0.0, "panY": 0.0, "dpr": 4.0}
+        nav = render_navigation_layer({"prev": None, "current": payload,
+                                       "next": None}, plot, nav_view, 21)
+        url = png_file(nav, "/tmp/mpf/raster-probe", "nav-overlay")
+        self._printer.setNavigation(url)
+
+        def rows(image):
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            out = []
+            for row in range(0, int(face.height())):
+                for col in range(0, int(face.width())):
+                    if self._matches(image.pixel(int(origin.x()) + col,
+                                                 int(origin.y()) + row),
+                                     (0xD3, 0x2F, 0x2F)):
+                        out.append(row)
+                        break
+            return out
+
+        def settle():
+            self.pump(30)
+            window.grabWindow()
+            self.pump(30)
+            return rows(window.grabWindow())
+
+        def centroid(rs):
+            return sum(rs) / float(len(rs)) if rs else None
+
+        measured = []
+        for zoom in (1.0, 1.37, 1.5, 1.79, 2.0):
+            face.setProperty("_interactionActive", False)
+            face.setProperty("viewScale", zoom)
+            face.setProperty("displayScale", zoom)
+            # The exact scene bakes the zoom into its own raster; the
+            # warm composite is camera-independent and never re-bakes.
+            layer = self._native_layer(payload, face, scale=zoom)
+            self._printer.setLayers({"prev": None, "current": layer,
+                                     "next": None})
+            self.pump(20)
+            exact = settle()
+            face.setProperty("_gestureNavSource", url)
+            face.setProperty("_interactionActive", True)
+            self.pump(30)
+            gesture = settle()
+            self.assertTrue(exact, "the exact scene painted nothing at %s" % zoom)
+            self.assertTrue(gesture,
+                            "the gesture overlay painted nothing at %s" % zoom)
+            measured.append((zoom, centroid(exact), centroid(gesture),
+                             len(exact), len(gesture)))
+
+        for zoom, exact, gesture, exact_rows, gesture_rows in measured:
+            self.assertLessEqual(
+                abs(gesture - exact), 0.5,
+                "the gesture overlay places the wall %.2f px off the exact "
+                "scene at zoom %.2f (%s vs %s)"
+                % (gesture - exact, zoom, gesture, exact))
+            self.assertLessEqual(
+                gesture_rows, exact_rows + 1,
+                "the overlay's stroke is thicker than the exact scene's at "
+                "zoom %.2f (%d rows vs %d) — a resampled blur, not the same "
+                "stroke" % (zoom, gesture_rows, exact_rows))
 
     @staticmethod
     def _arc_payload(gcode, split=None):
