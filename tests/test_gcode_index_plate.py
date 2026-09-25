@@ -3140,9 +3140,11 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         INSIDE one — a single uninterrupted interval unless the reader
         gates it, which is what a seek arriving mid-walk waits out."""
         holder = tempfile.mkdtemp(prefix="dense-layer-fixture-")
-        # mkdtemp, not TemporaryDirectory: the latter's finalizer
-        # removed the directory while the test was still using it,
-        # which surfaced as the scan finding no file (and, before the
+        # The name is the point. Under an mpf-* name this directory was
+        # removed WHILE the test was using it: RemoteFileService's
+        # stale-root sweep deletes every mpf-* root with no live pid
+        # outright, and a parallel test process constructs that service.
+        # It surfaced as the scan finding no file (and, before the
         # fixture asserted it, as a walk that hydrated nothing).
         self.addCleanup(shutil.rmtree, holder, ignore_errors=True)
         path = os.path.join(holder, "dense.gcode")

@@ -141,6 +141,39 @@ class TempRootSweepTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(live), "a live second instance lost its temp root")
         self.assertFalse(os.path.exists(stale), "an abandoned root survived the sweep")
 
+    def test_the_sweep_never_touches_a_test_fixture_directory(self):
+        # The reproduction of a fixture that vanished mid-test: the
+        # dense-layer fixture lived under an mpf-* name, and the sweep
+        # deletes every mpf-* root with no live pid OUTRIGHT — so a
+        # PARALLEL test process constructing the service removed the
+        # fixture the running test was about to read. That surfaced as
+        # the scan finding no file at all, and one layer up as a
+        # hydration that returned False.
+        fixture = os.path.join(self.root, "dense-layer-fixture-abc123")
+        os.makedirs(fixture, exist_ok=True)
+        sample = os.path.join(fixture, "dense.gcode")
+        with open(sample, "w", encoding="ascii") as handle:
+            handle.write("M82\n;LAYER:0\n")
+        abandoned = os.path.join(self.root, "mpf-dense-abc123")
+        os.makedirs(abandoned, exist_ok=True)
+
+        # The property that makes it safe, asserted directly: a name
+        # the sweep does not CLAIM at all. An mpf-* name is deleted
+        # outright whatever its age, and any other claimed name is
+        # deleted once old enough — so "the sweep happened to leave it"
+        # is not the claim (a fresh non-mpf name survives on the age
+        # gate alone and is still unsafe for a long-running process).
+        self.assertFalse(
+            os.path.basename(fixture).startswith(sweep_module._SWEPT_PREFIXES),
+            "the fixture's name is one the stale-root sweep claims")
+
+        sweep_module._sweep_stale_roots(self.root, self.current)
+
+        self.assertTrue(os.path.exists(sample),
+                        "the sweep deleted a test fixture's own file")
+        self.assertFalse(os.path.exists(abandoned),
+                         "the sweep left a pid-less root behind")
+
     def test_the_windows_probe_verdicts_are_conservative(self):
         # The probe's own failure semantics, mirrored from the
         # PreparedStore probe (the architecture rule keeps this module
