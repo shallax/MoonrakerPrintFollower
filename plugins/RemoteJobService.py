@@ -28,6 +28,7 @@ class RemoteJobState:
     key: Optional[JobKey] = None
     serial: int = 0
     observation: Optional[PrintObservation] = None
+    carried_position: Optional[int] = None
 
 
 class RemoteJobService:
@@ -100,6 +101,11 @@ class RemoteJobService:
         observation = PrintObservation(
             state, filename, file_size, file_position, print_duration
         )
+        carried = self._state.carried_position
+        if carried is not None and observation.file_position != carried:
+            # The print has read bytes of its own: the value the
+            # boundary carried over is spent, once and for all.
+            self._state.carried_position = None
         previous = self._state.observation
         active = observation.state in self._active_states and bool(observation.filename)
         new_job = False
@@ -129,9 +135,28 @@ class RemoteJobService:
                     observation.file_size,
                     self._state.serial,
                 )
+                # The byte offset the finished print left standing. It
+                # survives a stop (virtual_sdcard holds it until the
+                # next file read), so the new job's first polls can
+                # report it — see position_attributed.
+                self._state.carried_position = (
+                    previous.file_position if previous is not None else None
+                )
 
         self._state.observation = observation
         return PrintTransition(self._state.key, new_job, self._state.serial)
+
+    def position_attributed(self, position: int) -> bool:
+        """Whether *position* is the current job's own reading.
+
+        A new job's first polls can still report the offset the
+        previous print ended on; crediting it painted the restarted
+        print's first layer with the finished print's fraction. That
+        value stays refused until the printer replaces it — same file
+        or not, it is not this print's evidence.
+        """
+        carried = self._state.carried_position
+        return carried is None or int(position) != carried
 
     def reset(self) -> None:
         self._state = RemoteJobState()

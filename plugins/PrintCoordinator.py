@@ -292,6 +292,14 @@ class PrintCoordinator(QObject):
                 live_position_in_gcode_space(
                     self._status.get("motion_report") or {}, self._status.get("gcode_move") or {})
                 if isinstance(self._status, dict) else None)
+            # The job boundary's refusal: while the printer still
+            # reports the byte offset the finished print left standing,
+            # this frame is that print's — its offset opened the
+            # refinement onto the parked nozzle's old place and painted
+            # the restarted print's first layer with the old fraction.
+            if position is not None and not self._jobs.position_attributed(position):
+                position = 0
+                live_position = None
             layer_progress = None
             if view is not None and physical.index is not None and 0 <= physical.index < len(view.ranges):
                 start, end = view.ranges[physical.index]

@@ -671,6 +671,102 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(model.plateProgressAvailable,
                         "the seek's layer never published without new telemetry")
 
+    def test_a_restarted_print_does_not_read_the_finished_prints_fraction(self):
+        # The live report: a print stopped partway into its first
+        # layer, the same file started again, and the follower read the
+        # old fraction the moment the new print came up — the first
+        # layer stayed pinned at the finished print's boundary for its
+        # whole life. The printer holds the stopped print's byte offset
+        # until the new file is read, and the split credited it.
+        service = self.parts.index
+        source = b"".join(
+            b";LAYER:%d\nG0 X0 Y0\nG1 X1 Y0 E1\n" % layer
+            + b"".join(b"G1 X%d Y0 E1\n" % m for m in range(2, 101))
+            for layer in range(3))
+        index = self.qt.load("GCodeIndex").build_index_from_bytes(source)
+        module = self.qt.load("GCodeIndexService")
+        prepare = self.qt.load("PlateProgress").prepare_layer
+        count = index.motion_count(0)
+        stop = int(count * 0.36)                 # the stop: 36% of layer 1
+        stop_position = int(index.motion_offsets[0][stop])
+        stop_x = float(index.motion_x[0][stop])
+        stop_z = float(index.motion_z[0][stop])
+        self.assertGreater(stop, 2, "the fixture's layer is too short to test")
+
+        def install():
+            for layer in range(len(index.ranges)):
+                service._decoded_lru[layer] = prepare(index, layer)
+            service._view = module.IndexView(self.parts.files.job_key, index)
+
+        def status(*, state="printing", position=0, duration=0.0, x=0.0):
+            return {"print_stats": {"filename": "part.gcode", "state": state,
+                                    "print_duration": duration,
+                                    "info": {"current_layer": 0, "total_layer": 3}},
+                    "virtual_sdcard": {"file_size": 4096, "file_position": position},
+                    "gcode_move": {"gcode_position": [x, 0.0, stop_z, 10.0], "speed_factor": 1},
+                    "motion_report": {"live_position": [x, 0.0, stop_z, 10.0]}}
+
+        def split():
+            payload = self.parts.coordinator.snapshot.plate_progress
+            return None if payload is None else payload.get("split")
+
+        def published():
+            value = model.plateLiveSplit
+            return value.value() if hasattr(value, "value") else value
+
+        model = self.monitor()
+        self.connect()
+        # Print A runs into layer 1's stop point: the warm boundary the
+        # follower must be holding when the job switches.
+        self.deliver(status(position=stop_position - 200, duration=100.0,
+                            x=max(0.0, stop_x - 20)))
+        install()
+        for _ in range(3):
+            self.deliver(status(position=stop_position, duration=120.0, x=stop_x))
+            install()
+            self.qt.events(10)
+        warm = split()
+        self.assertIsNotNone(warm, "print A never published a boundary")
+        self.assertAlmostEqual(warm, stop, delta=2)
+        # Stopped, then the same file again with the printer still
+        # reporting A's byte offset and the nozzle parked where the
+        # stop left it — the new print's first layer has printed
+        # nothing, and reads nothing.
+        for _ in range(2):
+            self.deliver(status(state="cancelled", position=stop_position,
+                                duration=121.0, x=stop_x))
+        seen = []
+        for poll in range(3):
+            self.deliver(status(position=stop_position, duration=0.1 * poll, x=stop_x))
+            install()
+            self.qt.events(10)
+            self.assertEqual(self.parts.coordinator.snapshot.job_key[2], 2,
+                             "the restart never became a new job")
+            seen.append(split())
+            if split() is not None:
+                self.assertEqual(published(), 0,
+                                 "the face was published the finished print's fraction")
+        boundaries = [value for value in seen if value is not None]
+        self.assertTrue(boundaries, "the restart never published a boundary")
+        self.assertEqual(boundaries, [0] * len(boundaries),
+                         "the restarted print's first layer read the finished "
+                         "print's fraction")
+        # The new print reads bytes of its own: the refusal lifts and
+        # the boundary follows the new print's own progress.
+        self.deliver(status(position=0, duration=0.3, x=0.0))
+        install()
+        self.qt.events(10)
+        self.assertLessEqual(split() or 0, 2,
+                             "the new print's own start jumped the boundary")
+        for step in (20, 40):
+            self.deliver(status(position=int(index.motion_offsets[0][step]),
+                                duration=1.0 + step,
+                                x=float(index.motion_x[0][step])))
+            install()
+            self.qt.events(10)
+            self.assertGreaterEqual(split() or 0, step - 1,
+                                    "the new print's own progress stopped being painted")
+
     def test_the_job_bar_band_tracks_the_prepared_share(self):
         # The optimisation band's value: the share of layers the
         # prepared store holds — the cache is the evidence, so a
