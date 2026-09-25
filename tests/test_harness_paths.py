@@ -210,11 +210,18 @@ class TestingDocPinTests(unittest.TestCase):
         self.assertIn("macOS legs run without pictures", text)
         self.assertIn("macOS has no visual-regression detection in CI", text)
         self.assertIn("HARNESS_CAPTURE=on", text)
-        # Pictures are what the gate gives up; whether the app painted is
-        # not, so the liveness verdict and its own outcomes are documented
-        # beside the gate rather than folded into its cost.
-        self.assertIn("The renderer-liveness verdict is NOT part of the capture gate", text)
+        # The liveness verdict rides the leg rather than the platform, and
+        # what a miss MEANS there is documented beside the gate rather
+        # than folded into its cost: a judged stall where the leg reads
+        # its screen, a report-only diagnostic where it does not.
+        self.assertIn("The renderer-liveness verdict rides the leg, not the platform", text)
+        self.assertIn("report-only diagnostic", text)
+        self.assertIn("HEARTBEAT REPORT-ONLY", text)
         self.assertIn("frames_outcome", text)
+        # The heartbeat itself: what it forces, and the limitation that
+        # keeps the software-rendered platform report-only.
+        self.assertIn("mpfLivenessHeartbeat", text)
+        self.assertIn("No macOS hardware validation is possible here", text)
         # The still-span rule's own change, which is what clears the
         # windows group-status red without retiring the check.
         self.assertIn("A still span nobody drove is not judged", text)

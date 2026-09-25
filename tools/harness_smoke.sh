@@ -65,8 +65,11 @@ for run in smoke-1 smoke-2; do
         # red unit must say why here: the failed steps and the
         # renderer-liveness verdicts behind them, or the log's tail when
         # the leg died before it could report a step (a boot that never
-        # came up, a timeout).
-        why="$(grep -E '^ui_test: .*(FAILED|NO FRAMES|FRAMES UNVERIFIED)' \
+        # came up, a timeout). A report-only heartbeat miss carries no
+        # failure of its own, so it is named here beside them: on the
+        # leg that cannot judge its screen it is the only record that
+        # the window stopped answering.
+        why="$(grep -E '^ui_test: .*(FAILED|NO FRAMES|HEARTBEAT REPORT-ONLY|FRAMES UNVERIFIED)' \
                    "$RUN_ROOT/$run.log" | tail -n 20 || true)"
         if [ -n "$why" ]; then
             printf '%s\n' "$why"

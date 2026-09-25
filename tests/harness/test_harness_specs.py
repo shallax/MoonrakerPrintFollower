@@ -389,23 +389,48 @@ class HarnessSpecTests(unittest.TestCase):
         # A window whose scene graph stopped presenting answers every
         # tree read, so a leg can pass every assertion over a screen
         # that never moved (the static-green ruling). The probe must
-        # therefore read the app's own frame count: the driver attaches
-        # to frameSwapped and reports it, and the runner samples it at
-        # the start and the end of every scenario.
+        # therefore make a frame DUE and report whether it came: the
+        # driver attaches to frameSwapped, changes a temporary visible
+        # item in the window's own scene, verifies the change landed and
+        # awaits the frame, and the runner samples it at the start and
+        # the end of every scenario.
         driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "driver", "__init__.py")
         with open(driver, encoding="utf-8") as handle:
             driver_source = handle.read()
         self.assertIn('if cmd == "frames":', driver_source)
         self.assertIn("frameSwapped.connect", driver_source)
-        self.assertIn("requestUpdate", driver_source)
         self.assertIn("isExposed", driver_source)
-        # The sample says whether the render was ASKED for and how long
-        # the loop had to deliver it: a count read cold would call an
-        # idle window frozen, and a signal that never attached would
-        # look exactly like one that stopped.
-        self.assertIn('"kicked": kicked', driver_source)
-        self.assertIn('"settle_ms": settle_ms', driver_source)
+        # The heartbeat is the measurement: an item in the app's own
+        # scene graph, driven on the GUI thread this server is served
+        # on, verified by read-back, awaited with a bounded deadline,
+        # and removed before the verb returns so no still can carry it.
+        self.assertIn("HEARTBEAT_OBJECT", driver_source)
+        self.assertIn('objectName: "mpfLivenessHeartbeat"', driver_source)
+        self.assertIn("item.setParentItem(window.contentItem())", driver_source)
+        self.assertIn("item.setProperty(name, value)", driver_source)
+        self.assertIn("item.property(name)", driver_source)
+        self.assertIn("def _await_frames(", driver_source)
+        self.assertIn("def _remove_heartbeat(", driver_source)
+        self.assertIn("item.setParentItem(None)", driver_source)
+        self.assertIn("item.deleteLater()", driver_source)
+        # The wait is event-driven and bounded, never one sleep: the
+        # deadline is checked against the clock in short qWait slices,
+        # so the render loop keeps running while it is awaited.
+        self.assertIn("deadline = started + max(0.0, float(deadline_ms) / 1000.0)",
+                      driver_source)
+        self.assertIn("while _FRAMES.count <= before:", driver_source)
+        wait = driver_source[driver_source.index("def _await_frames("):]
+        wait = wait[:wait.index("\ndef ")]
+        self.assertIn("_settle(min(50.0, left * 1000.0))", wait)
+        self.assertNotIn("time.sleep", wait)
+        # The record rides the sample whether or not a frame arrived,
+        # and says which change was made and what answered it: a change
+        # that did not land, or an item that would not build, made no
+        # frame due and must not read as a renderer that stopped.
+        self.assertIn('"verified": False', driver_source)
+        self.assertIn('attempt["verified"] = _same_number(', driver_source)
+        self.assertIn('reply["heartbeat"] = heartbeat', driver_source)
         self.assertIn('"frame_signal": attached', driver_source)
         # And whether the counter had to attach to a window it was not
         # counting: the first count on a replacement window has no
@@ -422,13 +447,17 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertLess(start, end)
         self.assertIn('run["frames"] = FRAME_PROBES', source)
         # The outcome and its log lines are the leg's own fault lines,
-        # so a scenario that stalled fails whatever the leg captured.
+        # so a scenario that stalled fails whatever the leg captured —
+        # and where the leg does not judge its screen the miss is a
+        # report-only diagnostic rather than a silent pass.
         self.assertIn('run["frames_outcome"] = outcomes', source)
         self.assertIn("ui_test: NO FRAMES", source)
-        # The kick must not assume the Qt6 spelling: Cura 5.x ships
-        # Qt 5.15, where the same request is update().
-        self.assertIn("getattr(window, \"requestUpdate\", None) or window.update",
-                      driver_source)
+        self.assertIn("ui_test: HEARTBEAT REPORT-ONLY", source)
+        self.assertIn("def liveness_gating(", source)
+        # The sample asks for the heartbeat and carries its deadline:
+        # a count read cold would call an idle window frozen.
+        self.assertIn('"heartbeat": True', source)
+        self.assertIn("FRAME_HEARTBEAT_DEADLINE_MS", source)
         # And the enums go out as names: PyQt6 hands back the wrapper
         # (QWindow.Visibility) and int() on it raises — the first live
         # run of the probe answered every sample with that TypeError.

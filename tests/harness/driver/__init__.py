@@ -403,10 +403,13 @@ class HarnessServer(QObject):
             # the QML tree, so a window whose scene graph stopped
             # painting still answers every read and every step still
             # passes over a screen that never moved (the static-green
-            # ruling). This reports the frame count instead: attach to
-            # the main window's frameSwapped, ask for a repaint, and
-            # say how many frames arrived. A live app emits at least
-            # one; a stalled one emits none, whatever the tree says.
+            # ruling). This makes a frame DUE and reports whether it
+            # came: attach to the main window's frameSwapped, change a
+            # temporary visible item in the window's own scene graph,
+            # verify the change landed, and await the frame it made due.
+            # The counts ride beside the heartbeat as diagnostics only —
+            # an idle window has no reason to paint, so a count that
+            # stopped moving is not evidence of a freeze.
             try:
                 window = _main_window()
                 if window is None:
@@ -414,34 +417,30 @@ class HarnessServer(QObject):
                 # A window the counter was not counting is that window's
                 # first count: a leg's boot can replace the window, and
                 # a count with no history on it is a different answer
-                # from a count that stopped moving.
+                # from a count that stopped moving. The window's
+                # heartbeat calibration starts over with it.
                 fresh = _FRAMES.window is not window
                 attached = _FRAMES.attach(window)
                 if request.get("reset"):
                     _FRAMES.count = 0
-                before = _FRAMES.count
-                kicked = bool(request.get("kick", True))
-                if kicked:
-                    # requestUpdate is the Qt6 spelling; Cura 5.x ships
-                    # Qt 5.15, where update() is the same request.
-                    kick = getattr(window, "requestUpdate", None) or window.update
-                    kick()
-                settle_ms = int(request.get("settle_ms", 300))
-                # The settle is what lets the event loop deliver the
-                # frame the kick asked for, so the count that follows is
-                # frames the app returned on request rather than frames
-                # that happened to land.
-                _settle(settle_ms)
-                return {"id": request_id, "ok": True, "swapped": _FRAMES.count,
-                        "since": before, "gained": _FRAMES.count - before,
-                        "kicked": kicked, "settle_ms": settle_ms,
-                        "frame_signal": attached, "fresh_window": fresh,
-                        "exposed": bool(window.isExposed()),
-                        "visible": bool(window.isVisible()),
-                        "active": bool(window.isActive()),
-                        "visibility": _enum_name(window.visibility()),
-                        "state": _enum_name(window.windowState()),
-                        "platform": QGuiApplication.platformName()}
+                since = _FRAMES.count
+                heartbeat = None
+                if request.get("heartbeat", True):
+                    heartbeat = _heartbeat(
+                        window,
+                        request.get("deadline_ms", HEARTBEAT_DEADLINE_MS))
+                reply = {"id": request_id, "ok": True, "swapped": _FRAMES.count,
+                         "since": since, "gained": _FRAMES.count - since,
+                         "frame_signal": attached, "fresh_window": fresh,
+                         "exposed": bool(window.isExposed()),
+                         "visible": bool(window.isVisible()),
+                         "active": bool(window.isActive()),
+                         "visibility": _enum_name(window.visibility()),
+                         "state": _enum_name(window.windowState()),
+                         "platform": QGuiApplication.platformName()}
+                if heartbeat is not None:
+                    reply["heartbeat"] = heartbeat
+                return reply
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "foreground":
@@ -2014,18 +2013,32 @@ def _os_foreground_owner():
 _FOREGROUND_SEEN = [False]
 
 
+# A per-run number for the window the counter is attached to, so the
+# evidence can name which window a heartbeat was placed on.
+_WINDOW_SEQ = [0]
+
+
 class _FrameCounter:
-    """Counts the main window's delivered frames.
+    """Counts the main window's delivered frames, and remembers how
+    the window answered the heartbeats placed on it.
 
     frameSwapped is emitted on the render thread and delivered to the
     connectING thread, so a slot here is called on the driver's thread
     and a plain counter is enough — no lock, no cross-thread reads.
-    The window is remembered because a leg's boot can replace it.
+    The window is remembered because a leg's boot can replace it, and
+    the heartbeat bookkeeping is the WINDOW's rather than the run's:
+    a count with no history on this window says nothing about it, so a
+    window the counter has just attached to is uncalibrated until a
+    heartbeat of its own is answered.
     """
 
     def __init__(self):
         self.count = 0
         self.window = None
+        self.window_id = 0
+        self.heartbeats = 0
+        self.answered = 0
+        self.calibrated = False
 
     def _swapped(self):
         self.count += 1
@@ -2050,10 +2063,218 @@ class _FrameCounter:
             except Exception:
                 pass
         self.count = 0
+        _WINDOW_SEQ[0] += 1
+        self.window_id = _WINDOW_SEQ[0]
+        self.heartbeats = 0
+        self.answered = 0
+        self.calibrated = False
         return True
 
 
 _FRAMES = _FrameCounter()
+
+
+# ─── The visual heartbeat (the liveness proof) ───
+# A passive frame count cannot tell an idle window from a frozen one:
+# the render request that read it proves nothing about whether Qt had a
+# reason to paint, and a scenario whose steps changed only model state
+# answers zero correctly (measured: every flat span of the 4.6.0 release
+# run, on windows that painted again later in the same leg). What
+# separates the two is a change the scene graph cannot ignore, so the
+# sample makes one: a temporary item is parented into the window's
+# content item, its opacity is driven on Cura's GUI thread (this server
+# is served on it), the change is read back off the item, and the
+# sample then waits for the frameSwapped the change made due —
+# event-driven and bounded, twice, because a software rasteriser's
+# frame interval is of the same order as a fixed settle and one missed
+# frame is not a stopped renderer.
+#
+# The item is 4x4 px and lives only for the heartbeat: it is out of the
+# scene before the verb returns, so no step's still can carry it, and
+# its footprint is three orders of magnitude below the static verdict's
+# frame-mean tolerance (MAD 1.0 of 255).
+HEARTBEAT_OBJECT = "mpfLivenessHeartbeat"
+HEARTBEAT_DEADLINE_MS = 1500
+HEARTBEAT_CHANGES = (("opacity", 1.0), ("opacity", 0.0))
+HEARTBEAT_QML = b"""
+import QtQuick 2.15
+Rectangle {
+    objectName: "mpfLivenessHeartbeat"
+    x: 2
+    y: 2
+    width: 4
+    height: 4
+    z: 1e9
+    color: "#ff00ff"
+    opacity: 0.0
+}
+"""
+
+
+def _heartbeat_engine(window):
+    """The engine the heartbeat item is built with: the app's own, so
+    the item lands in the scene the frame must come from."""
+    engine = HarnessServer._engine
+    if engine is None:
+        try:
+            from UM.Qt.QtApplication import QtApplication
+            engine = QtApplication.getInstance()._qml_engine
+        except Exception:
+            engine = None
+    if engine is None and window is not None:
+        try:
+            engine = qmlEngine(window.contentItem())
+        except Exception:
+            engine = None
+    return engine
+
+
+def _place_heartbeat(window):
+    """The item, parented into the window's scene, or why not."""
+    engine = _heartbeat_engine(window)
+    if engine is None:
+        return None, "no qml engine was reachable to build the heartbeat item"
+    component = QQmlComponent(engine)
+    component.setData(HEARTBEAT_QML, QUrl())
+    item = component.create()
+    if item is None:
+        errors = "; ".join(str(error.toString()) for error in component.errors())
+        return None, ("the heartbeat item did not build"
+                      + (f": {errors}" if errors else ""))
+    try:
+        item.setParentItem(window.contentItem())
+    except Exception as exc:
+        return None, f"the heartbeat item could not be placed in the window: {exc!r}"
+    return item, ""
+
+
+def _remove_heartbeat(item):
+    """Out of the scene and gone: a test-only item that outlived its
+    heartbeat would sit in every later still."""
+    try:
+        item.setParentItem(None)
+        item.deleteLater()
+        return True
+    except Exception:
+        return False
+
+
+def _await_frames(before, deadline_ms):
+    """Wait for a frame past `before`, event-driven and bounded.
+
+    qWait runs the event loop — the render loop lives in it, and on a
+    software rasteriser so does the paint — in short slices, so the
+    deadline is checked against the clock rather than trusted to one
+    sleep, and the GUI thread keeps serving the loop it must."""
+    started = time.monotonic()
+    deadline = started + max(0.0, float(deadline_ms) / 1000.0)
+    while _FRAMES.count <= before:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        _settle(min(50.0, left * 1000.0))
+    return _FRAMES.count - before, int((time.monotonic() - started) * 1000.0)
+
+
+def _plain(value):
+    """A value the evidence can hold: json will not take a QVariant."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _same_number(left, right):
+    try:
+        return abs(float(left) - float(right)) < 1e-6
+    except (TypeError, ValueError):
+        return False
+
+
+def _drive_heartbeat(item, window, name, value, deadline_ms):
+    """One change to the item, read back off it, then awaited."""
+    attempt = {"property": name, "to": value, "verified": False,
+               "in_scene": False, "is_visible": False, "answered": False,
+               "gained": 0, "waited_ms": 0}
+    try:
+        attempt["from"] = _plain(item.property(name))
+        item.setProperty(name, value)
+        attempt["read_back"] = _plain(item.property(name))
+        attempt["verified"] = _same_number(attempt["read_back"], value)
+        attempt["in_scene"] = item.parentItem() is window.contentItem()
+        attempt["is_visible"] = bool(item.isVisible())
+    except Exception as exc:
+        attempt["error"] = repr(exc)
+        return attempt
+    if not (attempt["verified"] and attempt["in_scene"] and attempt["is_visible"]):
+        # A change that did not land is a measurement that could not be
+        # taken, never a renderer that did not paint.
+        return attempt
+    attempt["swapped_before"] = _FRAMES.count
+    gained, waited = _await_frames(_FRAMES.count, deadline_ms)
+    attempt["swapped_after"] = _FRAMES.count
+    attempt["gained"] = gained
+    attempt["waited_ms"] = waited
+    attempt["answered"] = gained > 0
+    return attempt
+
+
+def _heartbeat_reason(record):
+    """What the heartbeat saw, in one line: the change it made, the
+    count it moved and how long it took, or that no frame answered."""
+    plot = "; ".join(
+        f"{attempt.get('property')} {attempt.get('from')}->{attempt.get('to')} "
+        f"gained {attempt.get('gained')} in {attempt.get('waited_ms')}ms"
+        for attempt in record.get("attempts") or [])
+    if record.get("answered"):
+        return f"the window answered the heartbeat ({plot})"
+    if not record.get("asked"):
+        return record.get("reason") or "the heartbeat was not placed"
+    if any(attempt.get("error") or not attempt.get("verified")
+           for attempt in record.get("attempts") or []):
+        return ("the heartbeat change did not verifiably land on the item "
+                f"({plot}), so no frame was due from it")
+    return (f"the window answered no frame to {len(record.get('attempts') or [])} "
+            f"forced scene change(s) inside {record.get('deadline_ms')}ms each "
+            f"({plot})")
+
+
+def _heartbeat(window, deadline_ms=HEARTBEAT_DEADLINE_MS):
+    """One sample's forced scene change, awaited and recorded.
+
+    The record rides the evidence whether or not a frame arrived, and
+    it names what could not be measured (an item that would not build,
+    a change that did not land) as its own reason, so a missing
+    measurement can never read as a renderer that painted."""
+    record = {"asked": False, "item": HEARTBEAT_OBJECT,
+              "sequence": _FRAMES.heartbeats + 1,
+              "window": f"win#{_FRAMES.window_id}",
+              "calibrated": bool(_FRAMES.calibrated),
+              "answered": False, "deadline_ms": int(deadline_ms),
+              "waited_ms": 0, "attempts": [], "cleaned": False}
+    item, error = _place_heartbeat(window)
+    if item is None:
+        record["reason"] = error
+        return record
+    record["asked"] = True
+    _FRAMES.heartbeats += 1
+    try:
+        for name, value in HEARTBEAT_CHANGES:
+            attempt = _drive_heartbeat(item, window, name, value, deadline_ms)
+            record["attempts"].append(attempt)
+            record["waited_ms"] += attempt["waited_ms"]
+            if attempt["answered"]:
+                record["answered"] = True
+                break
+    finally:
+        record["cleaned"] = _remove_heartbeat(item)
+    if record["answered"]:
+        _FRAMES.calibrated = True
+        _FRAMES.answered += 1
+    record["reason"] = _heartbeat_reason(record)
+    return record
 
 
 def _enum_name(value):

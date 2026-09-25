@@ -652,67 +652,108 @@ SimulationView is the ACTIVE view (the Preview stage click).
   The macOS legs therefore capture nothing: no recorder, no stills,
   no static verdict, no display guard. **Every step assertion is
   untouched** — the steps are answered in-process from the live QML
-  tree and the models, so the pictures are the whole of what is lost.
-  The mode and its reason are recorded in every leg's
-  `evidence.json` (`capture: {mode, reason, judged}`), the gallery
-  says why it has no recording, and the exit path prints
-  `STATIC LEG — not judged`. `HARNESS_CAPTURE=on` restores the
-  pictures for a local look at the same leg. The cost is stated
-  plainly: **macOS has no visual-regression detection in CI.** The
-  render assertions that matter (the follower's raster composition,
+  tree and the models, so the pictures are the whole of what a step
+  loses. Liveness is the one reading that goes with them, and it goes
+  as a judged verdict rather than as a check (next bullet). The mode
+  and its reason are recorded in every leg's `evidence.json`
+  (`capture: {mode, reason, judged}`), the gallery says why it has no
+  recording, and the exit path prints `STATIC LEG — not judged`.
+  `HARNESS_CAPTURE=on` restores the pictures — and with them the
+  judged liveness verdict — for a local look at the same leg. The cost
+  is stated plainly: **macOS has no visual-regression detection in CI.**
+  The render assertions that matter (the follower's raster composition,
   the preview card, the readouts' contrast) run offscreen on Linux,
   where rendering is deterministic, and a CI mac was never where they
   lived.
-- **The renderer-liveness verdict is NOT part of the capture gate
-  (2026-09-25).** The gate was carrying one measurement it should
-  never have carried. Every step assertion is answered from the QML
-  tree, and a tree keeps answering after the renderer has stopped —
-  so on the mac the leg above passed all 45 steps of a scenario whose
-  window was frozen, which is the exact failure the gate was there to
-  tolerate, not to certify. The frame probe now runs and is judged in
-  **both** modes: it reads the app's own `frameSwapped` count (the
-  driver attaches, asks for a render with `requestUpdate`/`update`,
-  lets the event loop deliver it, then reads the count), so it says
-  whether the app painted, and it has nothing to do with the screen.
-  A scenario whose window is visible and exposed, painted earlier in
-  the run, and then paints no frame **across the scenario or after
-  the render request that closes it** is a **failing scenario**, on
-  every platform, capture or no capture. The verdict reads both of
-  the scenario's samples: the span between them is what a
-  software-rasterised leg needs, because its frame interval is close
-  to the probe's own window and a healthy window answers a single
-  request with nothing — measured on the smoke legs (2026-09-25),
-  three scenarios' closing samples gained 0 while their counts had
-  advanced 29-104 frames over the scenario, and one of them was still
-  to paint 92 frames when its own recording was read. Everything the
-  probe cannot tell apart from that is its own named outcome in the
+- **The renderer-liveness verdict rides the leg, not the platform
+  (2026-09-25, the visual heartbeat).** Every step assertion is
+  answered from the QML tree, and a tree keeps answering after the
+  renderer has stopped — so on the mac the leg above passed all 45
+  steps of a scenario whose window was frozen. Reading the app's own
+  `frameSwapped` count was the first answer to that, and it was wrong
+  in the other direction: `requestUpdate()` plus a settle proves only
+  that a render was *asked for*, never that a frame was **due**. The
+  release run of 2026-09-25 (`36119887491`) failed 12 gate legs
+  (four groups × three platforms): 29 of that run's judged scenarios
+  were called frozen, every one of them on a window that was visible
+  and exposed with `gained 0` (`swapped 14 -> 14` on status/ubuntu
+  `b6`), and 28 of the 29 painted again later in the same leg. The
+  same false positive reproduces locally on `group-status`
+  (`swapped=11->11 gained=0 platform=xcb`, capture on). The probe
+  therefore makes a frame due. On every sample the driver parents a
+  temporary 4x4 px item (`objectName: mpfLivenessHeartbeat`) into the
+  window's own scene graph, drives its opacity on Cura's GUI thread —
+  the RPC server is served on that thread, so nothing blocks it, and
+  the wait drives the event loop (`QTest.qWait` slices through
+  `_settle`, whose plain-sleep fallback is reachable only where QTest
+  is unavailable) — reads the property back off the item,
+  checks the item is still in the scene and visible, and then awaits
+  a `frameSwapped` past the count it recorded: event-driven `qWait`
+  slices against a monotonic deadline, `FRAME_HEARTBEAT_DEADLINE_MS`
+  (1500 ms) per change, two changes per sample (`opacity 0.0->1.0`,
+  then `1.0->0.0`) because a software rasteriser's frame interval is
+  of the same order as a fixed settle and one missed change is not a
+  stopped renderer. The item is out of the scene before the verb
+  returns (`setParentItem(None)` + `deleteLater()`), so no still can
+  carry it, and its footprint is ~0.002 of the static verdict's
+  frame-mean tolerance (MAD 1.0 of 255), so it cannot mask a still
+  recording.
+  The verdict reads a scenario's two samples. `rendered` when a frame
+  answered the closing heartbeat, or when the window's own count
+  advanced across the scenario (the span a software-rasterised leg
+  needs, measured on the smoke legs at 29-104 frames of real painting
+  under a closing sample that gained 0). `stalled` only where every
+  gate holds: the window is visible and exposed, the forced change
+  verifiably landed on a visible item in that window's own scene, the
+  count did not move, the window was not replaced under the sample,
+  and this window has been **calibrated** — a heartbeat of its own was
+  answered earlier in the run, or it has delivered frames. Calibration
+  is per window: the counter carries its window's identity, the
+  heartbeat sequence and the answered count, and a boot that replaces
+  the window (`fresh_window`) resets all of it, so frames the old
+  window painted are never read as this one's history. Everything the
+  probe cannot tell apart from a stall is its own named outcome in the
   log and in `evidence.json` (`frames_outcome`), never a silent pass
   and never a silent freeze: `unverified` with the reason — a window
   that is not on the display (hidden or minimised, no frame is due
-  from it), a run in which no frame has been delivered at all yet (an
+  from it), a window never seen to present in this run (an
   initialising renderer and a platform that never emits the signal
-  look identical from here), a sample read without a render request
-  and a settle, a probe that did not answer, a frame signal that
-  could not be attached, and a window the counter attached to fresh
-  (a boot replaced the window: its count has no history, and the
-  frames seen before it belong to the window it replaced). The
-  stalls print `NO FRAMES — scenario …`, the rest print `FRAMES
-  UNVERIFIED — scenario …`, in both capture modes, the failing smoke
-  unit prints them into the job log itself rather than only into the
-  uploaded run root, and the raw samples ride beside them in
-  `evidence.json`.
-  **Known limitation, recorded rather than hidden:** the probe
-  measures frame delivery, not pixels. A mac freeze that leaves the
-  render loop swapping buffers while the window stops updating on
-  screen would still read healthy. It reads a span, so a freeze that
-  begins in a scenario's closing moments is named by the NEXT
-  scenario's span rather than by that one, and one that begins at the
-  very end of a leg's last scenario is not named at all — the
-  single-window reading that would catch that is the reading that
-  called three healthy smoke scenarios frozen, so the span is the
-  measurement and the window is its support. It also cannot see a
-  window that was never shown — that leg reports unverified, which is
-  why the display guard's stand-down is named in the same breath.
+  look identical from here), a change that did not verifiably land
+  (no frame was due from it), a heartbeat that could not be placed (no
+  engine reachable), a sample that carried no heartbeat at all, a
+  probe that did not answer, and a frame signal that could not be
+  attached. `asked`, `attempts`, `verified`, `in_scene`,
+  `is_visible`, `swapped_before/after`, `gained`, `waited_ms`,
+  `deadline_ms`, `sequence`, `window`, `cleaned` and `reason` all ride
+  in the artifact, and every sample prints its own line: `ui_test:
+  heartbeat <scenario>/<phase>: … — a frame answered it|no frame
+  answered it`.
+  **What a miss means is decided per leg, and the decision is
+  recorded rather than implied** (`liveness_gating`, `judged` and
+  `gating` on every outcome): a leg that captures reads the screen
+  beside the app, so a stall is a **failing scenario** — Linux and
+  Windows keep their pixel and video checks, and the verdict fails the
+  scenario through the same `zz-frames` fold whatever the leg
+  captured. A leg that captures nothing has declared its own screen
+  unjudgeable, so a stall there is a **report-only diagnostic**:
+  announced as `ui_test: HEARTBEAT REPORT-ONLY — scenario …`, listed
+  under `frames_report_only` (kept apart from `frames_stalled`), never
+  a functional scenario's verdict, and never renderer coverage the
+  platform has not demonstrated. The failing smoke unit prints both
+  lines into the job log itself rather than only into the uploaded run
+  root.
+  **Remaining limitations, recorded rather than hidden.**
+  No macOS hardware validation is possible here, so the mac leg's
+  presentation is not judged and its report-only misses are the only
+  record — the heartbeat runs and reports there, and does not claim
+  coverage. It measures frame delivery, not pixels: a renderer that
+  swaps buffers while the window stops updating on screen still reads
+  healthy, and that is measured, not theoretical — on the hosted mac
+  (2026-09-24, `4ad8278`) the count ran 0 → 483 over two minutes while
+  the pixels stayed byte-identical, which is why that platform is
+  report-only rather than judged. A window that was never shown reads
+  unverified, and the display guard's stand-down is named in the same
+  breath.
 - **A still span nobody drove is not judged (2026-09-24).** The
   static rule asks whether the screen moved, and it cannot tell
   "nothing was supposed to happen" from "the window froze".
