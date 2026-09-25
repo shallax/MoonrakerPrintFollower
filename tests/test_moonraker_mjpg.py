@@ -732,6 +732,10 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # parsed/displayed counts, the app state and the oldest
         # buffered frame's age must all be on it.
         self._start()
+        # A rate the pane actually asked for: at the default 0 the two
+        # fields below would read 0 ms/0.0 fps and a hardcoded constant
+        # would satisfy them, which is the pin measuring nothing.
+        self.item.setTargetFps(25.0)
         self._reply().deliver(_multipart(_jpeg(40, 30)))
         self.assertTrue(
             self._drain_until(lambda: self.item._recent_displayed_count >= 1),
@@ -743,6 +747,12 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.assertIn("[%s]" % self.item._app_state, line)
         self.assertIn("parsed %d frames" % self.item._recent_parsed_count, line)
         self.assertIn("displayed %d frames" % self.item._recent_displayed_count, line)
+        # The cadence the pane asked for, beside what came out: the pair
+        # is what tells a rate capped by the request from a rate the Qt
+        # thread could not keep up with.
+        self.assertEqual(self.item._render_timer.interval(), 40)
+        self.assertIn("render tick 40 ms", line)
+        self.assertIn("asked 25.0 fps", line)
         self.assertIn("pending frame age %.1f ms" % self.item._recent_pending_age_ms,
                       line)
         self.assertIn("Qt thread", line)

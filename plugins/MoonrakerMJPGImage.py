@@ -867,7 +867,8 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         elapsed = max(0.001, time.monotonic() - self._stream_epoch)
         fmt = (
             "Moonraker MJPEG summary [%s] over %.2f s: parsed %d frames (%.1f fps), "
-            "displayed %d frames (%.1f fps), latest-frame drops %.1f fps, "
+            "displayed %d frames (%.1f fps), render tick %d ms (asked %.1f fps), "
+            "latest-frame drops %.1f fps, "
             "decode failures %d, oversized drops %d, "
             "Qt thread %.1f ms/s (decode %.1f, drain %.1f), "
             "decode %.2f ms/frame (max %.2f), drain %.2f ms/frame (max %.2f ms), "
@@ -885,6 +886,11 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             self._recent_incoming,
             self._recent_displayed_count,
             self._recent_displayed,
+            # The cadence the pane asked for, beside the rate that came
+            # out of it: the pair is what tells a display rate capped by
+            # the request from one the Qt thread could not keep up with.
+            self._render_timer.interval(),
+            self._target_fps,
             self._latest_wins_drops / elapsed,
             self._decode_failures,
             self._oversized_drops,
