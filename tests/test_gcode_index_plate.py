@@ -42,6 +42,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from itertools import pairwise
 from unittest.mock import patch
@@ -2514,7 +2515,6 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         with patch.object(module, "passive_yield", recorded):
             frontier, _encoded, _uncacheable = captured[0][1]()
         elapsed = time.monotonic() - started
-        gaps = sorted(b - a for a, b in pairwise(yields))
         self.assertGreaterEqual(
             len(asked), 64,
             "the batch walked %d layers in %.0f ms and asked the gate %d times"
@@ -2531,10 +2531,32 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             len(yields), 1,
             "the batch walked %d layers in %.0f ms and never handed back"
             % (frontier, elapsed * 1000.0))
-        if len(gaps) >= 1:
-            self.assertLess(gaps[len(gaps) // 2], _YIELD_MAX_GAP_S,
-                            "the batch's median yield gap was %.0f ms"
-                            % (gaps[len(gaps) // 2] * 1000.0))
+        # The cadence is evidence, not a bound: a median gap is still a
+        # reading of the machine's scheduling, and the contract above is
+        # what fails when the gate is not consulted.
+
+    def test_the_passive_yield_sleeps_when_due_and_only_then(self):
+        # The helper's own contract, with a controlled clock and a
+        # RECORDED sleeper. Counting a changed watermark is not proof of
+        # a hand-back: the helper returns a fresh monotonic() whether or
+        # not it slept, so a version with the sleep REMOVED still "hands
+        # back" by that measure — measured, both integration pins passed
+        # with only time.sleep(_YIELD_SLEEP_S) deleted. This is the pin
+        # that fails on that mutation.
+        module = self.qt.load("GCodeIndex")
+        slept = []
+        stub = SimpleNamespace(monotonic=lambda: 123.0,
+                               sleep=lambda seconds: slept.append(seconds))
+        with patch.object(module, "time", stub):
+            early = module.passive_yield(10.0, 10.0 - module._PASSIVE_YIELD_S / 2)
+            self.assertEqual(slept, [], "the gate slept before it was due")
+            self.assertAlmostEqual(early, 10.0 - module._PASSIVE_YIELD_S / 2,
+                                   msg="an early ask moved the watermark")
+            due = module.passive_yield(10.0, 10.0 - module._PASSIVE_YIELD_S)
+            self.assertEqual(len(slept), 1, "a due ask never handed back")
+            self.assertEqual(slept[0], module._YIELD_SLEEP_S,
+                             "the gate slept for the wrong interval")
+            self.assertEqual(due, 123.0, "a due ask left the watermark")
 
     def test_the_pass_hands_the_interpreter_back_throughout_its_walk(self):
         # The scheduling contract, asserted deterministically: while the
@@ -2585,11 +2607,11 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             len(fires), 1,
             "the pass never handed the interpreter back in %.0f ms"
             % (elapsed * 1000.0))
+        # Timing is EVIDENCE here, never a bound: a median under 50 ms
+        # still depends on a shared runner's scheduling, and the beats a
+        # timer sees cannot tell a descheduled process from a worker
+        # holding the GIL.
         gaps = sorted(b - a for a, b in pairwise(fires))
-        if gaps:
-            self.assertLess(gaps[len(gaps) // 2], _YIELD_MAX_GAP_S,
-                            "the pass's median hand-back gap was %.0f ms"
-                            % (gaps[len(gaps) // 2] * 1000.0))
         print("heartbeat evidence: %d beats, %d gate asks, %d hand-backs, "
               "median hand-back gap %.1f ms over %.0f ms"
               % (len(beats), len(asked), len(fires),
