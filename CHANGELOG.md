@@ -50,6 +50,22 @@ disk.
   **Keep toolhead centred** hold the live position at a zoom; and
   Detach/Attach is explicit. The view re-rasters once the interaction
   settles instead of on every tick.
+- **The follower can schedule a pause.** Slide the pop-over's Layer
+  slider to a layer and the button at the foot of the schedule offers
+  the END of that layer: one press schedules it, and the same button
+  becomes its removal. Beside it sits the schedule itself — every
+  pause with its own ETA ("in 31m · ≈14:32"), a row's ✕ cancelling
+  that one pause and **Clear** cancelling the rest of what you
+  scheduled, with the countdown following the print as it runs. A
+  pause the printer has already taken dims to "passed"; one whose
+  moment went by untaken stays listed as "pause not taken" rather
+  than vanishing, and a layer already printed or the print's final
+  layer has nothing to offer. The plugin fires the pauses you
+  schedule here, sending Klipper's `PAUSE` as the print crosses the
+  layer, so the follower must be watching the print for one to land.
+  A pause the gcode itself carries is listed too, marked "baked" and
+  read-only — that one belongs to the slicer and cannot be cancelled
+  from the list.
 - **The follower tracks the print's real position.** The live layer's
   motion arrays now hydrate for every layer the follower serves — a
   cache-served layer used to keep them empty forever, and the live

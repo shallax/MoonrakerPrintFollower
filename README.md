@@ -44,6 +44,11 @@ disk.
   current layer by hand, set the line thickness, jump the view onto
   the toolhead and keep it centred, and detach or attach whenever you
   like.
+- **Schedule a pause from the follower** — slide the pop-over's Layer
+  slider to a layer and one button schedules the pause at the end of
+  it. The list beside the plate carries each pause with its own ETA,
+  cancels the ones you scheduled, and marks the ones the gcode
+  already carries as baked and read-only.
 - **The prepared geometry gets its own home** — each printer's
   prepared layers and G-code index share one folder per print under
   that machine's cache namespace, so a print reopened from the picker
@@ -586,6 +591,8 @@ A click on the pane's map opens the picker. **Triple-click an object to exclude 
 The Information pane's second plate section draws what the printer is actually doing: the previous and next layers ghosted, the current layer with its printed portion filling in at the poll cadence, and the live toolhead. Every motion type the index knows has its own colour in a key under the map, and travel moves stay hidden until switched on.
 
 The plate is a tool rather than a picture. The plate zooms and pans; the Layer slider seeks any layer, and the seek itself detaches the follow; the layer-progress slider plays the frozen layer through by hand; the line thickness scales from 0.5× to 2×; **Jump to toolhead** and **Keep toolhead centred** hold the live position at the current zoom. Detach and Attach are explicit, and the view re-rasters once the interaction settles instead of on every tick.
+
+The follower can also pause the print. Click the pane's plate to open the pop-over, slide its Layer slider to a layer, and the button at the foot of the schedule offers the end of that layer: one press schedules the pause, and the same button then removes it. The list beside the plate carries the whole schedule — each pause with its own ETA (`in 31m · ≈14:32`), a row's ✕ cancelling that one and **Clear** cancelling the rest — with a pause the printer has already taken dimmed to "passed" and one whose moment went by untaken left in the list as "pause not taken". Two kinds of row share the list. The pauses you schedule are fired by the plugin: it sends Klipper's `PAUSE` itself as the print crosses the layer, so the schedule lives with that print — it is dropped when the print ends, a new print starts with an empty list, and nothing survives a Cura restart. A pause the gcode already carries is listed as "baked" and is read-only — it belongs to the slicer, so the ✕ does nothing on it and the layer cannot be scheduled again from here.
 
 ### Power
 
