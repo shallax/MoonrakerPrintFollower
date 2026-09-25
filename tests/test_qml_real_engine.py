@@ -7345,6 +7345,180 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     "decoded (%s -> %s, status %d)"
                     % (travel_before, travel_run_now, status))
 
+    def test_the_travels_never_present_with_the_previous_view_s_walls(self):
+        """The travels Image presents ONLY on the exact pair.
+
+        The reported displacement: the new view's travel ink standing
+        over the previous view's walls — a shift that grows with the
+        move, not a hole. Its premise is a travels texture that is
+        available while the class raster's is not, and the guard is the
+        travels Image's own presentation: it may present only when BOTH
+        textures are here (`_exactFullStanding()`), never on the
+        payload's presence alone. The pre-fix binding presented on
+        presence (`opacity: 0.8` with a payload-only `visible`), which
+        stands any travels texture that is in hand over whatever the
+        canvas is holding.
+
+        Measured on this rig: the reverse ordering is unreachable by
+        making the travels' decode the faster one. Qt's pixmap reader
+        decodes one job at a time in bind order, and the face declares
+        the class raster first — with the class raster's decode
+        stretched to ~400 ms (a 12x-stretched 119 KB PNG), its 5.7 KB
+        travels sibling was still Loading in every sample of four
+        separate runs, and a base64 data URL for the travels (no file
+        read at all) was queued behind it just the same. So the frame
+        half below rules on a picture that is coherent either way (the
+        canvas' hold, or its own re-bake: both move the two inks
+        together), and the guard is read where it lives — the
+        presentation property the composition itself binds, which the
+        mutation check (reverting it to the constant 0.8) turns red on
+        this rig. The frame half stays: on a host where a travels
+        texture can be in hand early (a warm cache, an image-provider
+        source) it is the direct symptom check.
+
+        The pan is baked into both rasters, so the two views' ink
+        differ by the pan in pixels: the census compares the travel
+        ink's OFFSET to the wall ink against the offset the settled
+        previous view held, which is a displacement of `pan` when the
+        pair is mixed and zero when the picture is coherent.
+        """
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        payload = {"classes": {"WALL-OUTER": [self.PAN_WALL]},
+                   "travels": [self.PAN_TRAVEL],
+                   "travelStarts": [], "travelEnds": [], "motions": 26}
+        plot = self._bed_point(face, 0.0, 0.0)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        pan = float(plot_value["bed"]["plotWidth"]) * 0.25
+
+        def travel_run(image):
+            return self._feature_run(image, face, window, plot, 120.0,
+                                     self._is_travel)
+
+        def wall_run(image):
+            return self._feature_run(image, face, window, plot, 200.0,
+                                     lambda p: self._matches(p, (0xD3, 0x2F,
+                                                                 0x2F)))
+
+        def travels_painted(image):
+            return travel_run(image)[0] is not None
+
+        # The view the pan starts from, landed whole: the held picture
+        # the mixed ordering would stand over, and the offset the two
+        # producers agree on while nothing is in flight.
+        layer = self._native_layer(payload, face, pan_x=0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(26)
+        self.pump(10)
+        before = self._settled_frame(window, face, differs_from=baseline,
+                                     painted=travels_painted)
+        held_travel, held_wall = travel_run(before), wall_run(before)
+        self.assertIsNotNone(held_travel[0], "the travels never painted at pan 0")
+        self.assertIsNotNone(held_wall[0], "the walls never painted at pan 0")
+        held_offset = held_travel[0] - held_wall[0]
+
+        # The pan: both rasters are baked for the new view, and the
+        # class raster's decode is the slow one — the ordering the
+        # displacement needs is the travels texture arriving first.
+        moved = self._native_layer(payload, face, pan_x=pan)
+        moved.set_raster(moved.raster, "fixture-key",
+                         self._slow_raster(moved.rasterData, "slow-class",
+                                           factor=12))
+        status_of = self._status_probe()
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": moved, "next": None})
+        self._printer.setSplit(26)
+        face.setProperty("viewPanX", pan)
+        face.setProperty("viewPanY", 0.0)
+
+        # The travels Image's OWN texture: the slow class raster's
+        # sibling, found by the source the payload published for it.
+        travels_item = None
+        deadline = time.monotonic() + 5.0
+        while travels_item is None and time.monotonic() < deadline:
+            self._pump_ms(2)
+            travels_item = self._image_with_source(face, "-t.png")
+        self.assertIsNotNone(travels_item, "the travels Image never bound a source")
+        wall_item = self._image_with_source(face, "slow-class")
+        self.assertIsNotNone(wall_item, "the class raster never bound the slow source")
+
+        # Sampled from the install to the pair's own arrival: the
+        # guard's whole window, both halves of the pair in flight and
+        # the beat between them (Image.Ready is 1).
+        frames = []
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            self.pump(3)
+            image = window.grabWindow()
+            frames.append((status_of.statusOf(wall_item),
+                           status_of.statusOf(travels_item),
+                           bool(travels_item.property("visible")),
+                           float(travels_item.property("opacity") or 0.0),
+                           travel_run(image), wall_run(image)))
+            if frames[-1][0] == 1 and frames[-1][1] == 1:
+                break
+
+        # The non-vacuity controls: the guard was sampled — frames were
+        # read while the class raster's texture was still decoding, and
+        # the travels Image was SHOWN through them (its payload belongs
+        # to the view; only its ink is withheld). A pin that sampled
+        # after the pair landed, or one whose travels Image was hidden,
+        # would clear the invariant below by never having looked at the
+        # state it is about.
+        pending = [frame for frame in frames if frame[0] != 1]
+        self.assertTrue(
+            pending, "the walls' texture was never pending: %r"
+            % ([frame[0] for frame in frames],))
+        self.assertTrue(
+            [frame for frame in pending if frame[2]],
+            "the travels Image was never shown while the walls' texture "
+            "was pending: %r" % ([(frame[0], frame[2]) for frame in pending],))
+
+        # The invariant: the travels Image presents on the exact pair
+        # and on nothing less — not on the payload's presence (the
+        # pre-fix binding), and not on the walls' texture alone (the
+        # beat measured here, where the class raster is Ready and the
+        # travels are still decoding). The frame's own ruling rides
+        # along: while either texture is in flight, the travel ink may
+        # not stand at the new view's columns over the old walls, which
+        # is the held offset broken by `pan`.
+        for wall_status, travels_status, _shown, opacity, run, wall in frames:
+            if wall_status == 1 and travels_status == 1:
+                continue
+            self.assertEqual(
+                opacity, 0.0,
+                "the travels Image presented at opacity %r with the pair "
+                "not exact (wall status %d, travels status %d)"
+                % (opacity, wall_status, travels_status))
+            if run[0] is not None and wall[0] is not None:
+                self.assertAlmostEqual(
+                    float(run[0] - wall[0]), float(held_offset), delta=2.0,
+                    msg="travel ink stood %d px from the wall ink (held %d, "
+                        "pan %.1f px) with the pair not exact (wall status "
+                        "%d, travels status %d): the two producers disagree "
+                        "about the view" % (run[0] - wall[0], held_offset,
+                                            pan, wall_status, travels_status))
+
+        # The arrival: the travels DO present once the pair is exact —
+        # the predicate is a gate, not a permanent hide, so the
+        # invariant above cannot be cleared by never presenting at all.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            self._pump_ms(10)
+            if float(travels_item.property("opacity") or 0.0) >= 0.79:
+                break
+        self.assertAlmostEqual(
+            float(travels_item.property("opacity") or 0.0), 0.8, delta=0.01,
+            msg="the travels never presented after the pair arrived (wall "
+                "status %d, travels status %d)"
+                % (status_of.statusOf(wall_item),
+                   status_of.statusOf(travels_item)))
+
     def test_no_split_moves_the_ink_vertically(self):
         """The judder probe the split sweep could not be.
 
