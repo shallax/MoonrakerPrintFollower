@@ -6203,19 +6203,30 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # back to the full walk — the stale half would otherwise
         # stay at the old scale while the new half strokes the new
         # one, one print drawn twice, two sizes.
+        #
+        # The probe is POSITIONAL and per frame: the strict-colour
+        # ink's column SPAN in the wall's own row band, sampled
+        # through the whole handover. It counted strict-colour ROWS
+        # at bed x=35 before, and that probe could not see the defect
+        # at all: the wheel zoom is anchored at the face's CENTRE, so
+        # it holds bed y=125 — the row the wall occupies — fixed,
+        # which leaves the column invariant under the gesture the
+        # test performs, and a row count at a fixed column moves only
+        # with the PEN's device width (the parity policy scales the
+        # stroke with the view: 2 core rows at scale 1.0, 4 at 1.25)
+        # against a tolerance of 3. It passed on the stale mapping
+        # and failed on the committed one. Do not re-point this back
+        # at a row count on a fixed bed point.
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
         self.pump(10)
         payload = self._stroke_payload(motions=2000, dx=0.05)
-        census_before = self._bed_point(face, 0.0, 0.0)
+        plot = self._bed_point(face, 0.0, 0.0)
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": payload, "next": None})
         self._printer.setSplit(1000)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the initial partial never drew")
-        self.assertGreater(
-            self._stroke_ink(image, face, window, census_before, 35.0, 125.0),
-            0, "the pre-zoom history never drew")
         # Zoom in at the face's centre: the interaction settles and
         # the view commits at a new render key.
         from PyQt6.QtCore import QPoint, QPointF, Qt
@@ -6243,24 +6254,69 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # ghost — the settled picture must keep the history only at
         # the new view's mapping.
         self._printer.setSplit(1150)
-        census_after = self._bed_point(face, 0.0, 0.0)
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        row = int(origin.y() + plot["offsetY"]
+                  + (plot["bedYMax"] - 125.0) * plot["sy"])
+
+        def span(image):
+            # The strict-colour ink's column range along the wall's
+            # own row band, in face-local pixels.
+            cols = [col - int(origin.x())
+                    for col in range(int(origin.x()),
+                                     int(origin.x()) + int(face.width()))
+                    if any(self._matches(image.pixel(col, py),
+                                         (0xD3, 0x2F, 0x2F), tolerance=20)
+                           for py in range(row - 3, row + 4))]
+            return (cols[0], cols[-1]) if cols else None
+
+        def end_col(bed_x, scale, pan_x):
+            return ((plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+                    * scale + pan_x)
+
+        def current_view():
+            value = face.property("_view")
+            return value.toVariant() if hasattr(value, "toVariant") else value
+
+        worst_end = None
+        leftmost = None
         deadline = time.monotonic() + 10.0
-        old_ink = 0
-        moved = False
         while time.monotonic() < deadline:
             self._pump_ms(50)
-            grab = window.grabWindow()
-            if self._stroke_ink(grab, face, window, census_after, 35.0, 125.0) > 0:
-                moved = True
-            old_ink = max(old_ink, self._stroke_ink(grab, face, window,
-                                                    census_before, 35.0, 125.0))
-            if old_ink > 3:
-                break
-        self.assertTrue(moved, "the zoomed prefix never re-rendered")
+            current = span(window.grabWindow())
+            if current is None:
+                continue
+            worst_end = current[1] if worst_end is None else max(worst_end, current[1])
+            leftmost = current[0] if leftmost is None else min(leftmost, current[0])
+        self.assertIsNotNone(worst_end, "the zoomed picture never drew")
+        view = current_view()
+        committed_end = end_col(77.5, view["scale"], view["panX"])
+        committed_head = end_col(20.0, view["scale"], view["panX"])
+        # The re-render's own arrival: the printed boundary is at bed
+        # 77.5 under the committed view, and no frame may end short
+        # of it (that would be a lost tail, not a ghost).
+        self.assertGreaterEqual(
+            float(worst_end), committed_end - 4.0,
+            "no frame of the handover re-rendered the history at the "
+            "committed view (the furthest ink ends at %s, the committed "
+            "view ends at %.1f): the zoomed prefix never re-rendered"
+            % (worst_end, committed_end))
+        # The ghost, in both directions. The picture's HEAD is the
+        # sharpest witness: the committed view maps the printed
+        # history's start (bed 20) far to the LEFT of where the old
+        # view had it, so a frame still carrying the old-scale
+        # picture starts tens of pixels right of the committed head.
         self.assertLessEqual(
-            old_ink, 3,
-            "the old-scale history half survived the zoom "
-            "(the out-of-scale ghost)")
+            float(leftmost), committed_head + 4.0,
+            "a frame of the handover still starts at the OLD view's "
+            "mapping (the leftmost ink is at %s, the committed view "
+            "starts at %.1f): the out-of-scale ghost"
+            % (leftmost, committed_head))
+        self.assertLessEqual(
+            float(worst_end), committed_end + 4.0,
+            "a frame of the handover still ends at the OLD view's "
+            "mapping (the furthest ink is at %s, the committed view "
+            "ends at %.1f): the out-of-scale ghost"
+            % (worst_end, committed_end))
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
