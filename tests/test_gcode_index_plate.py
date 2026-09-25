@@ -36,6 +36,7 @@ from array import array
 import gzip
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -3138,9 +3139,13 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         batches cover the loop BETWEEN layers, and this is the walk
         INSIDE one — a single uninterrupted interval unless the reader
         gates it, which is what a seek arriving mid-walk waits out."""
-        holder = tempfile.TemporaryDirectory(prefix="mpf-dense-")
-        self.addCleanup(holder.cleanup)
-        path = os.path.join(holder.name, "dense.gcode")
+        holder = tempfile.mkdtemp(prefix="mpf-dense-")
+        # mkdtemp, not TemporaryDirectory: the latter's finalizer
+        # removed the directory while the test was still using it,
+        # which surfaced as the scan finding no file (and, before the
+        # fixture asserted it, as a walk that hydrated nothing).
+        self.addCleanup(shutil.rmtree, holder, ignore_errors=True)
+        path = os.path.join(holder, "dense.gcode")
         with open(path, "w", encoding="ascii") as handle:
             handle.write("M82\n;LAYER:0\n;TYPE:SKIN\n")
             for step in range(lines):
