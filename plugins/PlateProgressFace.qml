@@ -689,6 +689,44 @@ Item {
         _drawLayer(ctx, current, 0.55, -1, true, -1);
     }
 
+    function _pendingDraws() {
+        // Exactly the conditions _paintPending draws under, named once
+        // so the REQUEST can skip a paint that would leave the canvas
+        // empty. In the steady state the native grey sibling owns the
+        // base, so the fallback draws nothing — yet the split advances
+        // every poll, and each request cleared and re-uploaded the
+        // whole canvas texture for no pixels.
+        if (!root.available() || mapping._plot == null || !_partialBase()) {
+            return false;
+        }
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        return layer != null && !_baseOf(layer) && _scrubVector() != null;
+    }
+
+    // Whether the canvas holds — or is owed — a picture. A skip is
+    // only safe while nothing stands: a state that stops drawing must
+    // still repaint ONCE to clear the pixels the fallback left.
+    property bool _pendingStanding: false
+    // The fallback's own arrival word, the pending canvas' `_paints`:
+    // written by a paint that ran, never by a skipped request.
+    property int _pendingPaints: 0
+
+    function _requestPendingPaint() {
+        var draws = _pendingDraws();
+        if (draws || root._pendingStanding) {
+            root._pendingStanding = draws;
+            pendingCanvas.requestPaint();
+            return;
+        }
+        // Nothing to draw and nothing standing: the picture-word is
+        // recorded without painting. The canvas holds no pixels, so its
+        // picture IS this key's — and the arrival word the composition
+        // gates on (_lastPendingKey) stays honest for a canvas that was
+        // never painted at all.
+        root._lastPendingKey = root._pendingKey;
+    }
+
     function _partialBase() {
         // The base marks the unprinted suffix of a PARTIAL layer
         // — 0% included: the whole layer reads as the grey ghost
@@ -1052,7 +1090,7 @@ Item {
         var pendingKey = _pendingKeyOf();
         if (pendingKey !== root._pendingKey) {
             root._pendingKey = pendingKey;
-            pendingCanvas.requestPaint();
+            _requestPendingPaint();
         }
         var progressKey = _progressKeyOf();
         if (progressKey !== root._progressKey) {
@@ -1108,7 +1146,7 @@ Item {
         var pendingKey = _pendingKeyOf();
         if (pendingKey !== root._pendingKey) {
             root._pendingKey = pendingKey;
-            pendingCanvas.requestPaint();
+            _requestPendingPaint();
         }
         // The progress repaint follows its OWN key: an unchanged split/anchor/payload — a
         // raster or ghost arrival, a quiet poll — never wakes the
@@ -1196,7 +1234,7 @@ Item {
         var key = _pendingKeyOf();
         if (key !== root._pendingKey) {
             root._pendingKey = key;
-            pendingCanvas.requestPaint();
+            _requestPendingPaint();
         }
     }
     onShowTravelsChanged: {
@@ -1436,7 +1474,9 @@ Item {
                 _paintPending(ctx);
                 // Landed last, and on every path: the picture the next
                 // frame composites belongs to the key read here, cleared
-                // base included.
+                // base included. The count is the arrival's own word —
+                // a request that skipped the paint never reaches here.
+                root._pendingPaints += 1;
                 root._lastPendingKey = root._pendingKey;
             }
         }

@@ -287,17 +287,36 @@ Item {
     // IMAGE: without the repaint the buffer keeps the last picture it
     // was given, so turning the grid off left it on screen.
     onShowGridChanged: plateCanvas.requestPaint()
+    // A CAMERA step repaints the mapping only while the canvas is on
+    // screen: the progress face switches it out at opacity 0 for the
+    // whole gesture (the warm raster presents the grid), and an
+    // opacity-zero canvas still rasterises and re-uploads its entire
+    // texture per pan step for a picture nothing composites. The view
+    // is published either way — the restore repaints through it.
+    function _cameraRepaint() {
+        if (root.opacity > 0 && root.visible) {
+            plateCanvas.requestPaint();
+        }
+    }
+
+    // The restore: the gesture's end brings the canvas back with ONE
+    // repaint of the transform it last published.
+    onOpacityChanged: {
+        if (root.opacity > 0 && root.visible) {
+            plateCanvas.requestPaint();
+        }
+    }
     onViewScaleChanged: {
         _publishView();
-        plateCanvas.requestPaint();
+        _cameraRepaint();
     }
     onViewPanXChanged: {
         _publishView();
-        plateCanvas.requestPaint();
+        _cameraRepaint();
     }
     onViewPanYChanged: {
         _publishView();
-        plateCanvas.requestPaint();
+        _cameraRepaint();
     }
 
     // The threaded image-backed canvas (the TemperatureChart

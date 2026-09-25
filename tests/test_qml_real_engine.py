@@ -3531,11 +3531,13 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return image
 
     def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
-                      line_scale=8.0):
+                      line_scale=8.0, grey=True):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
-        scrub vector's fallback cannot rescue a missing blit."""
+        scrub vector's fallback cannot rescue a missing blit.
+        `grey=False` leaves the base sibling unset — the pre-arrival
+        wrapper the fallback exists for."""
         from plugins.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
         raster_dir = "/tmp/mpf/raster-probe"
         plot_value = face.property("plot")
@@ -3561,7 +3563,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         layer.set_raster(coloured, "fixture-key",
                          png_file(coloured, raster_dir, stem + "-c"))
         layer.set_expected_key("fixture-key")
-        if base.width() > 0:
+        if grey and base.width() > 0:
             layer.set_base(base, "fixture-key",
                            png_file(base, raster_dir, stem + "-b"))
         if travels.width() > 0:
@@ -5109,6 +5111,155 @@ class PlateFaceRenderTests(RealEngineTestCase):
         for dpr in (1.0, 2.0):
             for orientation in ("horizontal", "vertical", "diagonal"):
                 self._parity_leg(dpr, orientation)
+
+    def _mount_interaction_fixture(self):
+        """The interaction's own fixture: a mounted face carrying a REAL
+        4x warm navigation raster (the model's role) and one native layer
+        with a painted prefix — enough for the gesture to enter the
+        interaction and for the exit barrier to pass."""
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        from plugins.PlateQt import render_navigation_layer, png_file
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload}, plot,
+            {"width": int(face.width()), "height": int(face.height()),
+             "scale": 1.0, "lineScale": 8.0, "compact": False,
+             "panX": 0.0, "panY": 0.0, "backing": 4.0,
+             "bedWidth": 250.0, "bedDepth": 250.0}, split=18)
+        self._printer.setNavigation(png_file(
+            nav, "/tmp/mpf/raster-probe", "nav-fixture-%d" % time.monotonic_ns()))
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        self._wait_red(window, face, want=True)
+        return monitor, window, face, payload
+
+    def test_a_camera_gesture_leaves_the_hidden_mapping_canvas_alone(self):
+        # The mapping canvas IS the gesture's own picture input: the pan
+        # and the zoom are baked into its paint, so every camera step
+        # requests a whole-canvas repaint — and the face switches the
+        # canvas out (opacity 0, never visibility) for the whole gesture,
+        # because the warm raster presents the grid. An opacity-zero
+        # canvas still rasterises and re-uploads its entire texture for a
+        # picture nothing composites, so the steps must leave it alone;
+        # the restore must repaint it ONCE, or the grid returns at the
+        # transform the gesture started from.
+        monitor, window, face, payload = self._mount_interaction_fixture()
+        from PyQt6.QtQuick import QQuickItem
+        grid = face.findChild(QQuickItem, "moonrakerPlateCanvas")
+        self.assertIsNotNone(grid, "the mapping canvas never mounted")
+        # The pan is the zoomed-in gesture (the handler returns at the
+        # 100% fit): the camera starts where a viewer would have it.
+        face.setProperty("viewScale", 2.0)
+        face.setProperty("displayScale", 2.0)
+        self.pump(20)
+        self.assertEqual(grid.property("opacity"), 1.0,
+                         "the idle mapping is not on screen")
+        painted = grid.property("_paints")
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QGuiApplication, QMouseEvent
+
+        def mouse(kind, x, y, buttons):
+            faced = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove \
+                else Qt.MouseButton.LeftButton
+            scene = face.mapToItem(window.contentItem(), QPointF(x, y))
+            event = QMouseEvent(
+                kind, QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                faced, buttons, Qt.KeyboardModifier.NoModifier)
+            QGuiApplication.sendEvent(window, event)
+
+        # A drag that pans for real: every move writes viewPanX — the
+        # mapping's own paint input — while the canvas is switched out.
+        mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
+        for step in range(1, 7):
+            mouse(QEvent.Type.MouseMove, cx + step * 4, cy + step * 3,
+                  Qt.MouseButton.LeftButton)
+            self._pump_ms(20)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the drag never entered the interaction")
+        self.assertEqual(grid.property("opacity"), 0.0,
+                         "the mapping stayed on screen mid-gesture")
+        self.assertEqual(grid.property("_paints"), painted,
+                         "the hidden mapping repainted during the gesture")
+        mouse(QEvent.Type.MouseButtonRelease, cx + 24, cy + 18,
+              Qt.MouseButton.NoButton)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the pan gesture never settled back to the exact scene")
+        self.assertEqual(grid.property("opacity"), 1.0,
+                         "the restored mapping is not on screen")
+        self.assertGreater(grid.property("_paints"), painted,
+                           "the restored mapping never repainted the "
+                           "transform the pan left")
+
+    def test_the_pending_canvas_skips_a_paint_it_would_leave_empty(self):
+        # With the native grey sibling up the vector base fallback draws
+        # NOTHING — yet the split advances on every poll, and each
+        # request cleared and re-uploaded the whole canvas texture for no
+        # pixels. The request must skip that paint, and the composition's
+        # arrival word (the key the pending canvas has painted) must
+        # still advance: the exact scene's readiness barrier reads it.
+        monitor, window, face, payload = self._mount_interaction_fixture()
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        # The fixture's layer carries a native grey base, so the fallback
+        # has nothing to draw while it stands.
+        self.assertTrue(face.property("showBase"),
+                        "the fixture is not in the base state")
+        self.assertTrue(QMetaObject.invokeMethod(face, "available",
+                                                 Q_RETURN_ARG(QVariant)),
+                        "the fixture is not available")
+        self.assertFalse(QMetaObject.invokeMethod(
+            face, "_pendingDraws", Q_RETURN_ARG(QVariant)),
+            "the fixture's fallback has pixels to draw")
+        painted = face.property("_pendingPaints")
+        # The split advance is the per-poll key change that used to buy a
+        # cleared canvas: the request skips the paint and records the key.
+        self._printer.setSplit(19)
+        self.pump(30)
+        self.assertEqual(face.property("_pendingPaints"), painted,
+                         "the empty fallback repainted on a split advance")
+        asked = QMetaObject.invokeMethod(face, "_pendingKeyOf",
+                                        Q_RETURN_ARG(QVariant))
+        self.assertEqual(face.property("_lastPendingKey"), asked,
+                         "the skipped paint never recorded its key — the "
+                         "exact scene's barrier would wait forever")
+        # The converse, so the skip cannot pass vacuously: a layer with no
+        # native base must still DRAW the fallback (the pre-arrival path).
+        empty = self._native_layer(
+            {"classes": {"WALL-OUTER": [[[10.0 + i * 5.0, 100.0, float(i)]
+                                         for i in range(4)]]},
+             "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21},
+            face, grey=False)
+        self.assertFalse(empty.baseValid, "the empty fixture shipped a base")
+        self._printer.setLayers({"prev": None, "current": empty, "next": None})
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline \
+                and face.property("_pendingPaints") == painted:
+            self.pump(10)
+        self.assertGreater(face.property("_pendingPaints"), painted,
+                           "the vector base fallback never painted")
 
     def test_the_interaction_raster_owns_the_camera_and_swaps_atomically(self):
         # The camera interaction: a warm navigation raster owns the
