@@ -709,6 +709,32 @@ class NativeIncrementalPrefixTests(unittest.TestCase):
         self.assertGreater(mixed.pixelColor(*new).alpha(), 0,
                            "the panned picture lost the printed history")
 
+    def test_a_previous_of_another_size_never_sets_the_composite_size(self):
+        # The wrong-size previous, CONSTRUCTED rather than waited for:
+        # a bake at a view one pixel taller, handed to the bake that
+        # asks for the shorter one. A copy takes the picture's size
+        # from the previous, so the pre-guard composite came back a
+        # pixel off the canvas the caller asked for -- a raster the
+        # face then blits at the wrong geometry, which is the
+        # one-pixel layer bounce's own shape. No display configuration
+        # has to produce this: the mismatch is handed over directly.
+        payload = _payload()
+        plot = _plot()
+        asked = _view(lineScale=8.0)
+        taller = _view(lineScale=8.0, height=301)
+        held = render_layer_prefix(payload, plot, taller, 12)
+        self.assertEqual((held.width(), held.height()), (400, 301),
+                         "the held bake is not the taller canvas")
+        mixed = render_layer_prefix(payload, plot, asked, 16,
+                                    previous=held, previous_split=12)
+        self.assertEqual((mixed.width(), mixed.height()),
+                         (asked["width"], asked["height"]),
+                         "the composite took its size from the previous "
+                         "picture")
+        clean = render_layer_prefix(payload, plot, asked, 16)
+        self.assertEqual(_byte_diffs(clean, mixed), [],
+                         "the narrower bake kept the taller pane's ink")
+
     def test_a_long_segment_stops_at_the_cancel_poll(self):
         # A segment longer than the poll interval is abandoned whole
         # when the cancel trips inside it — the superseded job publishes

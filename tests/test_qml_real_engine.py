@@ -433,6 +433,25 @@ class RealEngineTestCase(unittest.TestCase):
             image = window.grabWindow()
         return image
 
+    def _settle_picture(self, window, face, timeout=15.0):
+        """Pump, with grabs, until the full raster's texture is up.
+
+        The full state's decode is off-thread (asynchronous: true), and
+        the composition holds the standing picture until it lands: a
+        sample taken a fixed distance after the install reads the HELD
+        frame, so the settled composition needs this landmark. False on
+        the cap means the caller's own assertion reads the held frame —
+        the failure stays visible instead of being waited away.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if face.property("_rasterStatusReady"):
+                return True
+            self.app.processEvents()
+            time.sleep(0.05)
+            window.grabWindow()
+        return bool(face.property("_rasterStatusReady"))
+
     def new_messages(self):
         return [message for message in _APPLICATION["messages"][self._message_start:]
                 if "MoonrakerMonitor.qml" in message or "MoonrakerPreviewCard.qml" in message]
@@ -5847,6 +5866,130 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return prefix, png_file(prefix, "/tmp/mpf/raster-probe",
                                 "%s-%d" % (stem, time.monotonic_ns()))
 
+    def _nav_raster_for(self, payload, face, split, stem):
+        """The 4x interaction raster at the size the model publishes
+        it — the transport whose decode is 66 ms at the face's own
+        geometry."""
+        from plugins.PlateQt import render_navigation_layer, png_file
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0, "backing": 4.0,
+                "bedWidth": 250.0, "bedDepth": 250.0}
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload},
+            self._bed_plot(face), view, split=split)
+        return nav, png_file(nav, "/tmp/mpf/raster-probe",
+                             "%s-%d" % (stem, time.monotonic_ns()))
+
+    def _status_probe(self):
+        """A QML-side reader for an Image's status.
+
+        The engine hands a C++ enum back to Python as an opaque
+        handle (reading the property throws), but QML itself reads it
+        as the number the face's own gates compare against — so the
+        probe asks the engine, exactly as the face does.
+        """
+        from PyQt6.QtCore import QUrl as _QUrl
+        from PyQt6.QtQml import QQmlComponent
+        component = QQmlComponent(self.engine)
+        component.setData(
+            b"import QtQuick\nItem { function statusOf(item) "
+            b"{ return item ? item.status : -1 } }", _QUrl())
+        self.assertFalse(component.isError(),
+                         [str(error) for error in component.errors()])
+        probe = component.create()
+        self.assertIsNotNone(probe, "the status probe never built")
+        return probe
+
+    def test_every_plate_raster_with_a_png_source_loads_asynchronously(self):
+        """The plate's rasters arrive as file:// PNGs, so every
+        published one is a decode on whichever thread holds the bind.
+        Measured at the transport's own sizes (the 4x interaction
+        raster, 2252x2324): 66 ms to decode, on top of the ~225 ms
+        the worker spends ENCODING the same picture and the 5-25 ms
+        the render itself costs. The decode is the one part of that
+        handover the face owns, and an Image that is not asynchronous
+        decodes it inline — a stall the size of a frame, once per
+        bake, in the middle of a live print.
+
+        The pin reads the MOUNTED face, so what it checks is the
+        images actually carrying rasters, not a property name in the
+        file: every item whose own source is one of those files must
+        have handed its decode to the image thread. The set is the
+        plate's own published PNGs — the theme's SVG icons carry a
+        file:// source too and are not this transport.
+        """
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showPrevious", True)
+        face.setProperty("showNext", True)
+        self.pump(10)
+        payload = self._stroke_payload()
+        ghost = self._native_layer(payload, face, prefix_split=100)
+        layer = self._native_layer(payload, face, prefix_split=100)
+        _nav, nav_url = self._nav_raster_for(payload, face, 120, "decode-async")
+        self._printer.setScrub(payload)
+        self._printer.setNavigation(nav_url)
+        self._printer.setLayers({"prev": ghost, "current": layer, "next": ghost})
+        self._printer.setSplit(120)
+        deadline = time.monotonic() + 5.0
+        sourced = []
+        while time.monotonic() < deadline:
+            self._pump_ms(50)
+            sourced = [item for item in face.findChildren(QQuickItem)
+                       if "/raster-probe/" in str(item.property("source") or "")]
+            if len(sourced) >= 5:
+                break
+        self.assertGreaterEqual(
+            len(sourced), 5,
+            "the face never bound its plate rasters: %r"
+            % [str(item.property("source") or "") for item in
+               face.findChildren(QQuickItem)])
+        for item in sourced:
+            self.assertTrue(
+                item.property("asynchronous"),
+                "%s loads %s on the GUI thread"
+                % (item.metaObject().className(), item.property("source")))
+
+    def test_a_navigation_raster_load_never_decodes_on_the_gui_thread(self):
+        """The 4x raster's decode runs off the GUI thread — pinned as
+        the Loading state itself.
+
+        A synchronous Image is Ready on the turn its source binds:
+        there is nothing for the engine to do but decode inline, so
+        no Loading state is ever observable. An asynchronous one
+        shows Loading until its own thread finishes. The observation
+        is taken through QML (the face's own comparison), so it is
+        the state the gates see, not a proxy.
+        """
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        _nav, nav_url = self._nav_raster_for(payload, face, 120, "decode-window")
+        stem = nav_url.rsplit("/", 1)[-1]
+        probe = self._status_probe()
+        self._printer.setNavigation(nav_url)
+        image = None
+        seen = []
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            self.pump(1)
+            if image is None:
+                for item in face.findChildren(QQuickItem):
+                    if stem in str(item.property("source") or ""):
+                        image = item
+                        break
+                if image is None:
+                    continue
+            seen.append(probe.statusOf(image))
+            if seen[-1] == 1:  # Image.Ready
+                break
+        self.assertIsNotNone(image, "the interaction raster never bound")
+        self.assertIn(2, seen,  # Image.Loading
+                      "the raster was never seen loading: %r" % (seen,))
+        self.assertEqual(seen[-1], 1, "the raster never became ready: %r" % (seen,))
+
     def test_a_forward_scrub_through_prefix_refreshes_never_drops_the_history(self):
         # The critical's core: a refresh renders AT the requested
         # split (the equality edge) while the previous prefix is
@@ -6118,6 +6261,110 @@ class PlateFaceRenderTests(RealEngineTestCase):
             old_ink, 3,
             "the old-scale history half survived the zoom "
             "(the out-of-scale ghost)")
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
+    def test_a_zoom_never_leaves_the_history_at_the_old_views_mapping(self):
+        # The out-of-scale ghost's own measurement, positional. The
+        # sibling test counts strict-colour ROWS in a band at bed
+        # y=125 — the row the wheel zoom holds fixed, since that bed
+        # row maps to the face's centre — so its count moves only with
+        # the PEN's device width, which the parity policy scales with
+        # the view. The printed line's right END does not sit still: it
+        # lands at 20 + split*dx on the bed and the committed view maps
+        # it to a column per scale. The settled picture must end there,
+        # with nothing of the old view standing beyond it.
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload(motions=2000, dx=0.05)
+        plot = self._bed_point(face, 0.0, 0.0)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": payload, "next": None})
+        self._printer.setSplit(1000)
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0, "the initial partial never drew")
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        row = int(origin.y() + plot["offsetY"]
+                  + (plot["bedYMax"] - 125.0) * plot["sy"])
+
+        def span(image):
+            # The strict-colour ink's column range along the wall's
+            # own row band, in face-local pixels.
+            cols = [col - int(origin.x())
+                    for col in range(int(origin.x()),
+                                     int(origin.x()) + int(face.width()))
+                    if any(self._matches(image.pixel(col, py),
+                                         (0xD3, 0x2F, 0x2F), tolerance=20)
+                           for py in range(row - 3, row + 4))]
+            return (cols[0], cols[-1]) if cols else None
+
+        def end_col(bed_x, scale, pan_x):
+            return ((plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+                    * scale + pan_x)
+
+        def view():
+            # The live view the canvas walks with (a JS object; PyQt
+            # hands it back as a QJSValue on some builds).
+            value = face.property("_view")
+            return value.toVariant() if hasattr(value, "toVariant") else value
+
+        before = span(image)
+        self.assertIsNotNone(before, "the printed wall never drew")
+        self.assertAlmostEqual(
+            float(before[1]), end_col(70.0, view()["scale"], view()["panX"]),
+            delta=4.0, msg="the unzoomed history does not end where it was asked to")
+        # Zoom in at the face's centre, the sibling test's own gesture.
+        cx = int(face.width() / 2)
+        cy = int(face.height() / 2)
+        scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+        event = QWheelEvent(
+            QPointF(scene),
+            QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+            QPoint(0, 0), QPoint(0, 120),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase, False)
+        QGuiApplication.sendEvent(window, event)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(face.property("_interactionActive"),
+                         "the zoom gesture never settled")
+        self.assertGreater(face.property("viewScale"), 1.0,
+                           "the zoom never moved the view")
+        # The forward scrub past the refresh threshold re-renders the
+        # history under the committed view.
+        self._printer.setSplit(1150)
+        settled = None
+        stable = 0
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            self._pump_ms(50)
+            grab = window.grabWindow()
+            current = span(grab)
+            stable = stable + 1 if current == settled else 0
+            settled = current
+            if stable >= 3:
+                break
+        self.assertIsNotNone(settled, "the zoomed wall never drew")
+        expected = end_col(77.5, view()["scale"], view()["panX"])
+        self.assertEqual(
+            span(window.grabWindow()), settled,
+            "the picture was still moving at the assertion")
+        self.assertLessEqual(
+            float(settled[1]), expected + 4.0,
+            "the history still ends at the OLD view's mapping (ends at %s, "
+            "the committed view ends at %.1f): the out-of-scale ghost"
+            % (settled[1], expected))
+        self.assertGreaterEqual(
+            float(settled[1]), expected - 4.0,
+            "the history ends short of the committed view's mapping (ends at "
+            "%s, the committed view ends at %.1f): the re-render lost ink"
+            % (settled[1], expected))
         window.grabWindow()
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
@@ -6801,6 +7048,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(30)
         window.grabWindow()
         self.pump(30)
+        # The install's decode is off-thread: the gate holds the
+        # standing composition until the raster's texture is here, so
+        # the sample waits for that landmark before reading the frame.
+        self.assertTrue(self._settle_picture(window, face),
+                        "the full raster's texture never arrived")
         moved = red_rows(window.grabWindow())
         self.assertTrue(moved, "the liveness control painted nothing")
         self.assertAlmostEqual(
@@ -6832,6 +7084,189 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # producer. The two mutations together are what says the sweep
         # covers both producers rather than one that happens to be on
         # screen throughout.
+
+    def test_the_full_entry_never_blanks_the_standing_picture(self):
+        """The async install's own hole, and the gate that closes it.
+
+        The full raster's decode is off-thread: at the entry to the
+        full state the model's validity already names the raster as
+        the picture's owner while no texture is there yet, and the
+        model publishes no scrub vector at 100%, so the canvas has
+        nothing to redraw the interval from. Without the retention gate
+        the canvas cleared on that null vector and the prefix hid on
+        the split arithmetic, and the whole printed history went blank
+        for the decode's length. The gate keeps the standing picture —
+        the prefix' head over the canvas' accumulated tail — until the
+        texture is here, so the entry frame is the same wall. The
+        cadence is the sweep's own (measured here: the decode lands
+        several hundred ms in, so this window is inside the hole).
+        """
+        monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+
+        def red_span(image):
+            origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+            columns = []
+            for row in range(0, int(face.height())):
+                for column in range(0, int(face.width())):
+                    if self._matches(image.pixel(int(origin.x()) + column,
+                                                 int(origin.y()) + row),
+                                     (0xD3, 0x2F, 0x2F)):
+                        columns.append(column)
+            return None if not columns else (min(columns), max(columns))
+
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(15)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        # The partial composition has to SETTLE before the entry: the
+        # prefix' own pixels decode off-thread too, and until they are
+        # up the canvas owns the whole interval untrimmed — which would
+        # hide the head's own producer behind the tail's and leave this
+        # pin's prefix half vacuous.
+        deadline = time.monotonic() + 20.0
+        while not face.property("_prefixWasShown") and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.05)
+            window.grabWindow()
+        self.assertTrue(face.property("_prefixWasShown"),
+                        "the partial composition never settled: the "
+                        "prefix' pixels never came up")
+        partial = red_span(window.grabWindow())
+        self.assertIsNotNone(partial, "the partial composition never painted")
+
+        # A full seek publishes no scrub vector (the model nulls it at
+        # 100%), so the canvas can only hold its bitmap, never redraw
+        # the interval: the standing picture is the only owner there is.
+        self._printer.setScrub(None)
+        self._printer.setSplit(21)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        entry = red_span(window.grabWindow())
+        self.assertIsNotNone(
+            entry, "the full state's entry blanked the standing picture "
+                   "while the raster's texture was still decoding")
+        self.assertLessEqual(
+            entry[0], partial[0] + 1,
+            "the entry lost the wall's low-motion end (%s -> %s): the "
+            "prefix' head did not hold" % (partial, entry))
+        self.assertGreaterEqual(
+            entry[1], partial[1] - 1,
+            "the entry lost the wall's high-motion end (%s -> %s): the "
+            "canvas' accumulated tail did not hold" % (partial, entry))
+
+    def test_a_camera_move_never_holds_the_previous_views_ink(self):
+        """The hold's boundary: the retained ink was painted for one
+        view, so a camera move must repaint it, never stand on it.
+
+        Mutation: dropping the view clause from the hold's predicate
+        keeps the old view's bitmap (the accumulation's view key never
+        advances) while the raster decodes, and this pin fails.
+        """
+        monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        pan = float(plot_value["bed"]["plotWidth"]) * 0.25
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(15)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        painted = face.property("_accumViewKey")
+        self.assertTrue(painted, "the canvas never recorded a view key")
+
+        # The full state and the camera move arrive together: the
+        # texture is still decoding, so the hold is the only thing that
+        # could keep the old view's ink on screen.
+        self._printer.setSplit(21)
+        face.setProperty("viewPanX", pan)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        self.assertNotEqual(
+            face.property("_accumViewKey"), painted,
+            "the canvas never repainted for the new view: the hold kept "
+            "the previous view's ink while the raster decoded")
+
+    def test_a_camera_move_never_holds_the_prefix_at_the_previous_view(self):
+        """The prefix hold's boundary, the canvas hold's own pin.
+
+        The prefix' standing pixels are a bake of ONE view (the model
+        re-bakes them per view), so a camera move must drop the hold —
+        else the entry keeps the previous view's scale on screen while
+        the raster decodes. Mutation: dropping the view clause from
+        ``_prefixHoldsFull`` keeps the prefix standing at the old view
+        and this pin fails.
+        """
+        monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {"classes": {"WALL-OUTER": [points]}, "travels": [],
+                   "travelStarts": [], "travelEnds": [], "motions": 21}
+        prefix = face.findChild(QQuickItem, "moonrakerPlatePrefixImage")
+        self.assertIsNotNone(prefix, "the prefix image never mounted")
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        pan = float(plot_value["bed"]["plotWidth"]) * 0.25
+        layer = self._native_layer(payload, face, prefix_split=10)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(15)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        deadline = time.monotonic() + 20.0
+        while not face.property("_prefixWasShown") and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(0.05)
+            window.grabWindow()
+        self.assertTrue(face.property("_prefixWasShown"),
+                        "the partial composition never settled: the "
+                        "prefix' pixels never came up")
+        # The full seek: no scrub vector, and the raster decoding, so
+        # the hold is the only thing that can stand the head.
+        self._printer.setScrub(None)
+        self._printer.setSplit(21)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        self.assertFalse(
+            face.property("_rasterStatusReady"),
+            "the raster's texture landed before the assertion: the hold is "
+            "no longer the picture's owner")
+        self.assertTrue(
+            prefix.property("visible"),
+            "the entry's hold never stood: the prefix' head was not the "
+            "picture while the raster decoded")
+        face.setProperty("viewPanX", pan)
+        self.pump(30)
+        window.grabWindow()
+        self.pump(30)
+        self.assertFalse(
+            prefix.property("visible"),
+            "the hold kept the prefix standing at the previous view while "
+            "the raster decoded")
 
     def test_the_gesture_overlay_places_the_ink_where_the_exact_scene_does(self):
         """Two presentations of one geometry, measured against each other.

@@ -106,6 +106,13 @@ Item {
     // the retained ITEM's visible, whose mutual read the engine
     // flagged as a binding loop (the live warning).
     property bool _retainedStanding: false
+    // The full raster's status, mirrored for the canvas: that paint
+    // runs on the canvas' render thread, where a live read of this
+    // item's status lands whenever it lands (the handover's yield
+    // fired on some runs and not others). Written by the signal that
+    // owns the transition, read like any other property.
+    property bool _rasterStatusReady: false
+    property bool _rasterStatusFailed: false
     // The prefix Image's Ready status as a one-way mirror: the
     // visible binding reads THIS (written by the image's own status
     // handler), never the status directly — reading the live status
@@ -540,6 +547,20 @@ Item {
         root._retainedPrefixAnchor = -2;
     }
 
+    function _prefixHoldsFull() {
+        // The full state's entry, the mirror of the leaving-full
+        // hold: the raster owns the picture but its texture is still
+        // decoding, and no other producer holds the printed head at a
+        // full layer — the prefix' pixels stand until the raster's
+        // mirror says they may go. Both mirrors are handler-written:
+        // reading an image's live status inside its own source binding
+        // is the loop the engine warns about. A new layer's world never holds here (its
+        // reset cleared the shown record).
+        var layers = root.progress != null ? root.progress.layers : null;
+        var layer = layers != null ? layers.current : null;
+        return _fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._prefixWasShown && root._prefixStatusReady && _viewKey() === root._prefixShownViewKey && layer != null && layer.prefixValid === true;
+    }
+
     function _prefixApplies() {
         // The split arithmetic still names the prefix as the history
         // owner — PURE structural terms, no transient inputs (the
@@ -930,6 +951,16 @@ Item {
     // interval the prefix used to own (the swap must be atomic:
     // never a frame with neither renderer owning the history).
     property int _vectorCoversFrom: -1
+    // The view the accumulated bitmap was rastered at. The delta path
+    // strokes only the motions past the last split, so ink that was
+    // rastered at another zoom, pan or line width stays where the old
+    // transform put it and the new transform's delta lands beside it
+    // (measured: the same wall read as a mixed 57.8 px offset). Every
+    // other reset trigger — a backward split, an anchor change, a
+    // payload swap — is blind to the view, and the key's own repaint
+    // request never invalidated, so the re-bake waits for a paint that
+    // notices this.
+    property string _accumViewKey: ""
     // The coverage of the last DELIVERED paint — what the scene has
     // actually pulled. The committed record above runs a frame ahead
     // of the display (the threaded canvas commits its bitmap before
@@ -941,6 +972,10 @@ Item {
     property int _vectorCoversShown: -2
     property bool _prefixHold: false
     property bool _prefixWasShown: false
+    // The view the standing prefix' pixels were shown at: they are a
+    // bake of ONE view, so a camera move must not hold them (the
+    // out-of-scale ghost is exactly this record read across views).
+    property string _prefixShownViewKey: ""
     // The 100% -> partial entry's transaction: the full raster's
     // picture stands until the replacement partial composition is
     // presentation-ready. The seen flag records that the full state
@@ -1175,11 +1210,17 @@ Item {
         // terminal state (the retained no longer applies AND the
         // model publishes no prefix for this anchor).
         if (root._prefixWasShown) {
-            if (!root._prefixApplies() && !root._prefixHold && !_prefixModelReady()) {
+            // The full state's clear is terminal only once the
+            // replacement's texture is HERE: until then the prefix is
+            // still the printed head's owner (the gate), and clearing
+            // the record here would drop the head before the raster
+            // could take it.
+            if (!root._prefixApplies() && !root._prefixHold && !_prefixModelReady() && !_prefixHoldsFull()) {
                 root._prefixWasShown = false;
             }
         } else if (_partialPrefixReady() || (root._prefixHold && _leavingFull())) {
             root._prefixWasShown = true;
+            root._prefixShownViewKey = _viewKey();
             // The set edge must carry the record with it. The shown
             // flag is what keeps the canvas's old tail standing
             // through a handover, so the interior below the boundary
@@ -1342,6 +1383,15 @@ Item {
     // the displayScale/4 presentation of the specification.
     Image {
         id: navigationImage
+        // Every plate raster is file-backed (a PNG the model published
+        // or a data PNG's URL), so a source install is a DECODE. An
+        // inline decode holds the Qt thread for the whole raster --
+        // ~66 ms for the 4x navigation image -- which the live report
+        // reads as the camera stalling whenever a raster lands. The
+        // bake is unchanged and the worker's cost is unchanged: the
+        // decode moves off the Qt thread and the presentation is the
+        // same pixels, one thread later.
+        asynchronous: true
         x: root.displayPanX
         y: root.displayPanY
         width: root.width * root.displayScale
@@ -1393,6 +1443,7 @@ Item {
         Image {
             id: prevGhostImage
             anchors.fill: parent
+            asynchronous: true
             smooth: false
             opacity: 0.30
             visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
@@ -1401,6 +1452,7 @@ Item {
         Image {
             id: nextGhostImage
             anchors.fill: parent
+            asynchronous: true
             smooth: false
             opacity: 0.30
             visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
@@ -1413,6 +1465,7 @@ Item {
         Image {
             id: progressRasterImage
             anchors.fill: parent
+            asynchronous: true
             // No smoothing (the stack's rule): the canvas rasterizes
             // crisp at the painted scale, and a bilinear-filtered
             // raster against it reads as a soft ghost — every raster
@@ -1428,6 +1481,14 @@ Item {
             // standing pixels, a blank the visibility flag cannot
             // hide).
             source: _fullPictureStanding() ? (_fullRaster() ? root.progress.layers.current.rasterData : root._heldFullSource) : ""
+            // The texture's arrival is what withdraws the canvas below
+            // (its yield reads the mirror) and what ends the two
+            // holds' ink.
+            onStatusChanged: {
+                root._rasterStatusReady = status === Image.Ready;
+                root._rasterStatusFailed = status === Image.Error;
+                progressCanvas.requestPaint();
+            }
             onVisibleChanged: {
                 // The entry's hold needs no handler: the standing
                 // predicate owns the transaction (a hide-fired arm
@@ -1444,6 +1505,7 @@ Item {
         Image {
             id: progressTravelImage
             anchors.fill: parent
+            asynchronous: true
             smooth: false
             opacity: 0.8
             visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)
@@ -1456,6 +1518,7 @@ Item {
         Image {
             id: pendingBaseImage
             anchors.fill: parent
+            asynchronous: true
             smooth: false
             opacity: 0.55
             visible: _partialBase() && _baseOf(root.progress.layers.current)
@@ -1495,6 +1558,7 @@ Item {
             id: progressPrefixImage
             objectName: "moonrakerPlatePrefixImage"
             anchors.fill: parent
+            asynchronous: true
             // Nearest, like the retained frame it swaps with: any
             // filter difference across the handover is a whole-raster
             // shimmer, and the canvas's crisp rasterization is the
@@ -1517,8 +1581,8 @@ Item {
             // its source: the source is written by this image's own
             // status/paint handlers, and reading it here looped the
             // binding (the live QML warning).
-            visible: _partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) && !root._retainedStanding
-            source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies())) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
+            visible: (_partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) || _prefixHoldsFull()) && !root._retainedStanding
+            source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies()) || _prefixHoldsFull()) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
             onVisibleChanged: {
                 // Track what was actually on screen. A hide caused by
                 // the model's invalidation (prefixValid flipped false —
@@ -1585,6 +1649,7 @@ Item {
             id: retainedPrefixImage
             objectName: "moonrakerPlateRetainedPrefixImage"
             anchors.fill: parent
+            asynchronous: true
             // The interior below the boundary is owned by the live
             // prefix's PIXELS, not by its composition bookkeeping: the
             // moment its Image has none (a source swap mid-load, a
@@ -1609,6 +1674,16 @@ Item {
             anchors.fill: parent
             renderTarget: Canvas.Image
             renderStrategy: Canvas.Threaded
+            // The full state's handover in ONE beat: the standing
+            // bitmap is the picture until the replacement's texture is
+            // HERE, and the swap is then a compositing change, so the
+            // frame that first shows the raster is the frame that
+            // drops the canvas. Withdrawing on the predicate alone
+            // blanked the whole printed history for the decode;
+            // withdrawing on the paint beat left the old ink over the
+            // new texture (the liveness control's doubling). Opacity,
+            // never visibility: hiding a Canvas discards its buffer.
+            opacity: (_fullRaster() && root._rasterStatusReady) ? 0 : 1
             onPainted: {
                 // The paint's bitmap is delivered: its coverage record
                 // now describes the scene's committed texture. A held
@@ -1659,10 +1734,23 @@ Item {
                 // longer owns the interval below the boundary.
                 if (_partialPrefixReady()) {
                     root._prefixWasShown = true;
+                    root._prefixShownViewKey = _viewKey();
                 }
             }
             onPaint: {
                 var ctx = getContext("2d");
+                // The full state's HOLD: the model says the raster owns
+                // the picture, but its texture is still decoding, so
+                // the accumulated ink stands rather than blanking the
+                // printed history for the decode's length. A new
+                // layer's world never reaches here (its reset dropped
+                // the accumulation), nor does another view's: the
+                // standing ink was baked for the view it was painted
+                // at, and a pan holds nothing. The mirror ends the
+                // hold in the same beat the texture lands.
+                if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
+                    return;
+                }
                 // The settled single-owner trim is a REFINEMENT of an
                 // already presentation-complete picture (the full
                 // bitmap under the prefix, or the settled tail beside
@@ -1717,7 +1805,18 @@ Item {
                 // layer), so a full raster hit never depends on the
                 // giant vector. The vector canvas clears so nothing
                 // doubles up.
-                if (_fullRaster()) {
+                //
+                // The clear waits for the raster's own TEXTURE: the
+                // image's decode is off-thread, so a clear on the
+                // predicate alone withdrew the whole printed history
+                // for the length of the decode (measured: the frame at
+                // the full split was bit-identical to the face with no
+                // raster at all). Until the texture lands the canvas IS
+                // the picture — the vector places the same stroke at
+                // the same row (the invariance sweep) — and the slot's
+                // own onStatusChanged repaints this canvas the moment
+                // it does.
+                if (_fullRaster() && root._rasterStatusReady) {
                     ctx.reset();
                     ctx.clearRect(0, 0, width, height);
                     root._lastSplit = split;
@@ -1790,7 +1889,15 @@ Item {
                 // mid-drag is the live hitch the forward scrub showed
                 // on a dense layer.
                 var resetCadence = (root._prefixWasShown || _prefixModelReady()) ? 200 : 20;
-                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged) {
+                // A view change is a re-bake, never a delta: the
+                // accumulated bitmap holds the old transform's ink, and
+                // stroking the new transform's delta over it leaves the
+                // same stroke at two rows. Read here — after the early
+                // returns that clear the bitmap whole — so a paint that
+                // skipped the reset still sees the change next time.
+                var viewRebaked = _viewKey() !== root._accumViewKey;
+                root._accumViewKey = _viewKey();
+                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged || viewRebaked) {
                     ctx.reset();
                     ctx.clearRect(0, 0, width, height);
                     root._lastSplit = -1;
