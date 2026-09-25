@@ -407,6 +407,11 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn('"kicked": kicked', driver_source)
         self.assertIn('"settle_ms": settle_ms', driver_source)
         self.assertIn('"frame_signal": attached', driver_source)
+        # And whether the counter had to attach to a window it was not
+        # counting: the first count on a replacement window has no
+        # history, which is a different answer from a count that
+        # stopped moving.
+        self.assertIn('"fresh_window": fresh', driver_source)
         with open(_runner.__file__, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('"cmd": "frames"', source)

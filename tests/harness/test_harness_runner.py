@@ -35,6 +35,7 @@ def _probe(scenario, phase, ok=True, **fields):
     one it overrides."""
     sample = {"scenario": scenario, "phase": phase, "ok": ok,
               "kicked": True, "settle_ms": 300, "frame_signal": True,
+              "fresh_window": False,
               "visible": True, "exposed": True, "active": True,
               "visibility": "Windowed", "state": "WindowNoState",
               "platform": "cocoa", "swapped": 5, "gained": 1}
@@ -802,6 +803,53 @@ class RendererLivenessTests(unittest.TestCase):
         self.assertEqual(len(steps), 1)  # the scenario's own step, alone
         self.assertEqual(runner._verdict(steps), 0)
 
+    def test_a_scenario_that_painted_across_its_span_is_not_a_freeze(self):
+        # The smoke regression, as measured on it: the Linux legs render
+        # through a software rasteriser, whose frame interval is close
+        # to the probe's own window, and a healthy window answers one
+        # request with nothing — s3's closing sample gained 0 while its
+        # count had advanced 160 -> 189, and the leg's own recording was
+        # driven, not still. One window reads the moment; the scenario's
+        # span reads the scenario.
+        steps = self._scenario([_probe("g2", "start", swapped=160, gained=2),
+                                _probe("g2", "end", swapped=189, gained=0)])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "rendered")
+        self.assertIn("painted 29 frame(s) across the scenario",
+                      outcome["reason"])
+        self.assertIn("swapped=160->189", outcome["reason"])
+
+    def test_a_window_the_counter_just_attached_to_is_not_a_freeze(self):
+        # A leg's boot can replace the main window. The sample that
+        # attaches the counter to the replacement is that window's first
+        # count, so a small one against a large baseline is a new window
+        # rather than a renderer that stopped.
+        steps = self._scenario([_probe("g2", "start", swapped=160, gained=1),
+                                _probe("g2", "end", swapped=3, gained=0,
+                                       fresh_window=True)])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("was replaced for this sample", outcome["reason"])
+
+    def test_frames_on_a_replaced_window_are_not_the_new_one_s_history(self):
+        # The history the verdict reads starts at the last fresh
+        # attachment, so frames the replaced window delivered are not
+        # evidence that this one has ever painted: judged against the
+        # whole run the new window's zero would read as a freeze.
+        runner.FRAME_PROBES[:] = [
+            _probe("g1", "start", swapped=400, gained=1),
+            _probe("g1", "end", swapped=520, gained=1),
+            _probe("g2", "start", swapped=0, gained=0, fresh_window=True),
+            _probe("g2", "end", swapped=0, gained=0),
+        ]
+        outcomes = {record["scenario"]: record for record in self._outcomes()}
+        self.assertEqual(outcomes["g1"]["outcome"], "rendered")
+        self.assertEqual(outcomes["g2"]["outcome"], "unverified")
+        self.assertIn("no frame has been delivered on this platform in this run "
+                      "yet", outcomes["g2"]["reason"])
+
     def test_an_idle_scene_is_not_a_freeze(self):
         # A scene no step changed: the sample asks for a render, the
         # renderer answers, so the count moves. The distinction is the
@@ -1081,6 +1129,20 @@ class CaptureGateTests(unittest.TestCase):
         # cannot be delegated to argv.
         self.assertIn("python3 -u /tmp/mpf/harness_runner.py",
                       (ROOT / "tools" / "ui_test.sh").read_text(encoding="utf-8"))
+
+    def test_a_failed_smoke_unit_says_why_in_the_job_log(self):
+        # The leg's own output goes into the run root, which the job
+        # uploads as an artifact — and a CI reader has only the job log.
+        # A red smoke unit that prints neither its failed steps nor the
+        # liveness verdicts behind them reads as a failure with no
+        # reason (the 2026-09-25 smoke red named nothing at all).
+        script = (ROOT / "tools" / "harness_smoke.sh").read_text(encoding="utf-8")
+        failure = script[script.index('echo "harness smoke $run FAILED"'):]
+        self.assertIn("grep -E '^ui_test: .*(FAILED|NO FRAMES|FRAMES UNVERIFIED)'",
+                      failure)
+        # And the tail covers the leg that died before it reported a
+        # step: a boot that never came up, a timeout.
+        self.assertIn('tail -n 20 "$RUN_ROOT/$run.log"', failure)
 
     def test_the_gallery_opens_with_its_verdict(self):
         # A 169-step page is read for its failures; hunting them by eye

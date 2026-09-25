@@ -60,6 +60,19 @@ for run in smoke-1 smoke-2; do
         echo "harness smoke $run PASSED"
     else
         echo "harness smoke $run FAILED"
+        # The leg's own output is inside the run root, which the job
+        # uploads as an artifact — and a CI reader has only this log. A
+        # red unit must say why here: the failed steps and the
+        # renderer-liveness verdicts behind them, or the log's tail when
+        # the leg died before it could report a step (a boot that never
+        # came up, a timeout).
+        why="$(grep -E '^ui_test: .*(FAILED|NO FRAMES|FRAMES UNVERIFIED)' \
+                   "$RUN_ROOT/$run.log" | tail -n 20 || true)"
+        if [ -n "$why" ]; then
+            printf '%s\n' "$why"
+        else
+            tail -n 20 "$RUN_ROOT/$run.log"
+        fi
         fail=1
     fi
 done

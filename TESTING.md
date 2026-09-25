@@ -674,29 +674,45 @@ SimulationView is the ACTIVE view (the Preview stage click).
   driver attaches, asks for a render with `requestUpdate`/`update`,
   lets the event loop deliver it, then reads the count), so it says
   whether the app painted, and it has nothing to do with the screen.
-  A scenario whose window is visible and exposed, answered the render
-  request earlier in the run, and then delivers no frame after a
-  fresh request is a **failing scenario**, on every platform, capture
-  or no capture. Everything the probe cannot tell apart from that is
-  its own named outcome in the log and in `evidence.json`
-  (`frames_outcome`), never a silent pass and never a silent freeze:
-  `unverified` with the reason — a window that is not on the display
-  (hidden or minimised, no frame is due from it), a run in which no
-  frame has been delivered at all yet (an initialising renderer and a
-  platform that never emits the signal look identical from here), a
-  sample read without a render request and a settle, a probe that did
-  not answer, and a frame signal that could not be attached. The
+  A scenario whose window is visible and exposed, painted earlier in
+  the run, and then paints no frame **across the scenario or after
+  the render request that closes it** is a **failing scenario**, on
+  every platform, capture or no capture. The verdict reads both of
+  the scenario's samples: the span between them is what a
+  software-rasterised leg needs, because its frame interval is close
+  to the probe's own window and a healthy window answers a single
+  request with nothing — measured on the smoke legs (2026-09-25),
+  three scenarios' closing samples gained 0 while their counts had
+  advanced 29-104 frames over the scenario, and one of them was still
+  to paint 92 frames when its own recording was read. Everything the
+  probe cannot tell apart from that is its own named outcome in the
+  log and in `evidence.json` (`frames_outcome`), never a silent pass
+  and never a silent freeze: `unverified` with the reason — a window
+  that is not on the display (hidden or minimised, no frame is due
+  from it), a run in which no frame has been delivered at all yet (an
+  initialising renderer and a platform that never emits the signal
+  look identical from here), a sample read without a render request
+  and a settle, a probe that did not answer, a frame signal that
+  could not be attached, and a window the counter attached to fresh
+  (a boot replaced the window: its count has no history, and the
+  frames seen before it belong to the window it replaced). The
   stalls print `NO FRAMES — scenario …`, the rest print `FRAMES
-  UNVERIFIED — scenario …`, in both capture modes, and the raw
-  samples ride beside them in `evidence.json`.
+  UNVERIFIED — scenario …`, in both capture modes, the failing smoke
+  unit prints them into the job log itself rather than only into the
+  uploaded run root, and the raw samples ride beside them in
+  `evidence.json`.
   **Known limitation, recorded rather than hidden:** the probe
   measures frame delivery, not pixels. A mac freeze that leaves the
   render loop swapping buffers while the window stops updating on
-  screen would still read healthy; so would a freeze that begins and
-  recovers entirely between a scenario's two samples. It also cannot
-  see a window that was never shown — that leg reports unverified,
-  which is why the display guard's stand-down is named in the same
-  breath.
+  screen would still read healthy. It reads a span, so a freeze that
+  begins in a scenario's closing moments is named by the NEXT
+  scenario's span rather than by that one, and one that begins at the
+  very end of a leg's last scenario is not named at all — the
+  single-window reading that would catch that is the reading that
+  called three healthy smoke scenarios frozen, so the span is the
+  measurement and the window is its support. It also cannot see a
+  window that was never shown — that leg reports unverified, which is
+  why the display guard's stand-down is named in the same breath.
 - **A still span nobody drove is not judged (2026-09-24).** The
   static rule asks whether the screen moved, and it cannot tell
   "nothing was supposed to happen" from "the window froze".

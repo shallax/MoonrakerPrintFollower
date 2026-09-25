@@ -707,7 +707,7 @@ def frames_probe(phase, scenario_id):
         reply = {"ok": False, "error": repr(exc)}
     for key in ("swapped", "gained", "exposed", "visible", "active",
                 "visibility", "state", "platform", "error", "kicked",
-                "settle_ms", "frame_signal"):
+                "settle_ms", "frame_signal", "fresh_window"):
         if key in reply:
             sample[key] = reply[key]
     sample["ok"] = bool(reply.get("ok"))
@@ -736,6 +736,21 @@ def _saw_frames(sample):
     return (_count(sample.get("swapped")) or 0) > 0 or _delivered(sample)
 
 
+def _advanced(start, end):
+    """Whether the window painted across the scenario: the count it
+    carried at the scenario's start against the count at its end.
+
+    This is the comparison the two samples exist for, and one fixed
+    post-request window cannot stand in for it. A software-rasterised
+    leg renders at a frame interval close to that window, so a healthy
+    window answers one request with nothing and is presenting all the
+    same: measured on the smoke legs, a scenario whose closing request
+    gained nothing had advanced the count by 29-104 frames while it
+    ran."""
+    before, after = _count(start.get("swapped")), _count(end.get("swapped"))
+    return before is not None and after is not None and after > before
+
+
 def _shown(sample):
     """Whether the display can be expected to show this window: an
     explicit yes on both flags. A hidden or minimised window delivers
@@ -753,63 +768,93 @@ def _shape(sample):
             f"state={sample.get('state')} platform={sample.get('platform')}")
 
 
-def liveness_of(sample, seen):
-    """One sample's outcome and the reason for it.
+def _span(start, end):
+    # The pair a stall is read from: the baseline the scenario's own
+    # advance is measured against, the window it was measured on, and
+    # the closing sample's own counts.
+    return (f"swapped={start.get('swapped')}->{end.get('swapped')} "
+            f"gained={end.get('gained')} visible={end.get('visible')} "
+            f"exposed={end.get('exposed')} active={end.get('active')} "
+            f"visibility={end.get('visibility')} state={end.get('state')} "
+            f"platform={end.get('platform')}")
 
-    `seen` says whether any EARLIER sample in this run saw a frame, and
-    it is what separates a freeze from a platform whose window never
-    painted: a signal never observed working cannot be read as one that
-    stopped, so a zero before the first frame is its own outcome rather
-    than a stall."""
-    if sample.get("frame_signal") is False:
+
+def liveness_of(start, end, seen):
+    """One scenario's outcome and the reason for it.
+
+    `end` is the measurement and `start` is the baseline the scenario's
+    own advance is read against — one fixed post-request window is a
+    reading of the moment, not of the scenario. `seen` says whether any
+    EARLIER sample on THIS window saw a frame, and it is what separates
+    a freeze from a platform whose window never painted: a signal never
+    observed working cannot be read as one that stopped, so a zero
+    before the first frame is its own outcome rather than a stall."""
+    if end.get("frame_signal") is False:
         return (LIVENESS_UNVERIFIED,
                 "the frame signal could not be attached to the window")
-    if not sample.get("ok"):
-        detail = sample.get("error")
+    if not end.get("ok"):
+        detail = end.get("error")
         return (LIVENESS_UNVERIFIED, "the window did not answer the probe"
                 + (f": {detail}" if detail else ""))
-    if _count(sample.get("swapped")) is None:
+    if _count(end.get("swapped")) is None:
         return (LIVENESS_UNVERIFIED,
                 "the probe answered without a frame count, so it measured nothing")
-    if sample.get("kicked") is False or sample.get("settle_ms") == 0:
+    if end.get("kicked") is False or end.get("settle_ms") == 0:
         # The count is only a verdict about the renderer if a render was
         # asked for and the event loop was given room to deliver it.
         return (LIVENESS_UNVERIFIED,
                 "the count was read without a render request and a settle, "
                 "so a zero in it says nothing about the renderer")
-    if _delivered(sample):
+    if _delivered(end):
         return (LIVENESS_RENDERED,
-                f"the window delivered {sample.get('gained')} frame(s) after the "
-                f"render request ({_shape(sample)})")
-    if not _shown(sample):
+                f"the window delivered {end.get('gained')} frame(s) after the "
+                f"render request ({_shape(end)})")
+    if end.get("fresh_window") is True:
+        # The counter attached to a window it had not been counting, so
+        # this is that window's first count and the scenario's span was
+        # read off the window it replaced: neither end is a reading of
+        # this one, so it cannot carry a verdict.
+        return (LIVENESS_UNVERIFIED,
+                "the window was replaced for this sample, so the count has no "
+                f"history to be read against ({_shape(end)})")
+    if _advanced(start, end):
+        return (LIVENESS_RENDERED,
+                f"the window painted {_count(end['swapped']) - _count(start['swapped'])} "
+                "frame(s) across the scenario, so the renderer was presenting; the "
+                f"request that closed it gained none ({_span(start, end)})")
+    if not _shown(end):
         return (LIVENESS_UNVERIFIED,
                 "the window is not on the display, so no frame is due from it "
-                f"({_shape(sample)})")
+                f"({_shape(end)})")
     if seen:
         return (LIVENESS_STALLED,
-                "the window is visible and exposed and delivered no frame after "
-                "the render request, having delivered frames earlier in this run: "
-                f"{_shape(sample)}")
+                "the window is visible and exposed and painted no frame across "
+                "the scenario or after the render request that closed it, having "
+                f"painted earlier in this run ({_span(start, end)})")
     return (LIVENESS_UNVERIFIED,
             "no frame has been delivered on this platform in this run yet, so an "
             "initialising renderer and a platform that never emits the frame "
-            f"signal look the same here ({_shape(sample)})")
+            f"signal look the same here ({_shape(end)})")
 
 
 def liveness_outcome(samples):
     """Every scenario's presentation outcome, in scenario order.
 
-    The verdict reads the END sample — the one taken after the
-    scenario's own steps — and only a visible, exposed window that
-    delivered no frame after a render request, having delivered frames
-    earlier in the run, counts as a stall. Everything the probe cannot
-    tell apart from that is its own outcome: a hidden or minimised
-    window, a renderer that has not painted yet, an unanswered probe
-    and a platform that never emits the signal are named as unverified
-    with their reason, so neither a freeze nor a missing measurement
-    can pass as the other. Capture plays no part in it — the frame
-    count is read from the app, and the leg's pictures are not
-    evidence in it."""
+    The verdict reads a scenario's two samples together: the END one is
+    the measurement and the START one is the baseline the scenario's
+    own advance is read against. Frames delivered across that span, or
+    by the render request that closed it, mean the renderer was
+    presenting. Only a visible, exposed window that painted no frame
+    across the scenario AND none after its closing request, having
+    painted earlier in the run, counts as a stall. Everything the probe
+    cannot tell apart from that is its own outcome: a hidden or
+    minimised window, a renderer that has not painted yet, an
+    unanswered probe, a window the counter attached to fresh (no
+    history on it) and a platform that never emits the signal are named
+    as unverified with their reason, so neither a freeze nor a missing
+    measurement can pass as the other. Capture plays no part in it —
+    the frame count is read from the app, and the leg's pictures are
+    not evidence in it."""
     phases = {}
     for index, sample in enumerate(samples):
         phases.setdefault(sample.get("scenario"), {})[sample.get("phase")] = index
@@ -822,8 +867,16 @@ def liveness_outcome(samples):
             # than a threshold; a scenario with one sample is not
             # judged (the boot-only legs record none at all).
             continue
-        seen = any(_saw_frames(sample) for sample in samples[:end_index])
-        outcome, reason = liveness_of(samples[end_index], seen)
+        # A leg's boot can replace the window, and frames seen on the
+        # window that was replaced say nothing about this one: the
+        # history the verdict reads starts at the last fresh
+        # attachment at or before the sample it judges.
+        fresh = [index for index in range(start_index, end_index + 1)
+                 if samples[index].get("fresh_window") is True]
+        floor = fresh[-1] if fresh else 0
+        seen = any(_saw_frames(sample) for sample in samples[floor:end_index])
+        outcome, reason = liveness_of(samples[start_index], samples[end_index],
+                                      seen)
         records.append({"scenario": scenario_id, "outcome": outcome,
                         "reason": reason, "start": samples[start_index],
                         "end": samples[end_index]})
@@ -3355,8 +3408,8 @@ def suite_scenario(spec, step_fn=None):
     if records and records[0]["outcome"] == LIVENESS_STALLED:
         record = records[0]
         name = f"{spec['id']}-zz-frames"
-        action = ("the presentation probe: the render request after the "
-                  "scenario's last step")
+        action = ("the presentation probe: the scenario's own frame span and "
+                  "the render request after its last step")
         assertion = record["reason"]
         # A still of the stalled window is the one picture worth taking
         # on a failing scenario — and there is none to take on a leg

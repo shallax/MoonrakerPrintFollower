@@ -411,6 +411,11 @@ class HarnessServer(QObject):
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no main window"}
+                # A window the counter was not counting is that window's
+                # first count: a leg's boot can replace the window, and
+                # a count with no history on it is a different answer
+                # from a count that stopped moving.
+                fresh = _FRAMES.window is not window
                 attached = _FRAMES.attach(window)
                 if request.get("reset"):
                     _FRAMES.count = 0
@@ -430,7 +435,7 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True, "swapped": _FRAMES.count,
                         "since": before, "gained": _FRAMES.count - before,
                         "kicked": kicked, "settle_ms": settle_ms,
-                        "frame_signal": attached,
+                        "frame_signal": attached, "fresh_window": fresh,
                         "exposed": bool(window.isExposed()),
                         "visible": bool(window.isVisible()),
                         "active": bool(window.isActive()),
