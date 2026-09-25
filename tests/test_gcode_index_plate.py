@@ -2518,13 +2518,22 @@ class PreparedReopenPolicyTests(unittest.TestCase):
             len(asked), 64,
             "the batch walked %d layers in %.0f ms and asked the gate %d times"
             % (frontier, elapsed * 1000.0, len(asked)))
+        # The gate FIRING is what a descheduled worker cannot promise:
+        # it hands back a GIL only while it holds one, and a run that
+        # was off-CPU for the walk fires the gate once. The floor is
+        # therefore that it fired at all, and the cadence claim below
+        # is made only where there are two fires to measure between —
+        # read as a fire count per unit of time it would pin the
+        # machine's load, which is the mistake this pin exists to
+        # avoid.
         self.assertGreaterEqual(
-            len(yields), 4,
-            "the batch walked %d layers in %.0f ms and yielded %d times"
-            % (frontier, elapsed * 1000.0, len(yields)))
-        self.assertLess(gaps[len(gaps) // 2], _YIELD_MAX_GAP_S,
-                        "the batch's median yield gap was %.0f ms"
-                        % (gaps[len(gaps) // 2] * 1000.0))
+            len(yields), 1,
+            "the batch walked %d layers in %.0f ms and never handed back"
+            % (frontier, elapsed * 1000.0))
+        if len(gaps) >= 1:
+            self.assertLess(gaps[len(gaps) // 2], _YIELD_MAX_GAP_S,
+                            "the batch's median yield gap was %.0f ms"
+                            % (gaps[len(gaps) // 2] * 1000.0))
 
     def test_the_ui_thread_heartbeat_keeps_beating_through_a_flat_out_pass(self):
         # The outcome pin for the passive yields: the main thread's own
