@@ -2137,6 +2137,31 @@ Item {
         return low;
     }
 
+    // The first run of a class that can still meet `from`: the runs
+    // ascend in motion order, so a run whose LAST motion is below the
+    // boundary holds nothing the walk could draw, and the runs below
+    // it can be skipped unread. Without the bound a delta paint reads
+    // EVERY run of the class — on a layer whose runs are short, that
+    // per-run read is the paint's cost, not the stroke it draws.
+    function _firstRunAt(segments, from) {
+        if (from <= 0) {
+            // The reset path repaints from the layer's start.
+            return 0;
+        }
+        var low = 0;
+        var high = segments.length;
+        while (low < high) {
+            var mid = (low + high) >> 1;
+            var points = segments[mid];
+            if (points.length > 0 && points[points.length - 1][2] >= from) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        return low;
+    }
+
     function _edgePrinted(points, i, split) {
         return i < points.length && (split < 0 || points[i][2] < split);
     }
@@ -2219,7 +2244,10 @@ Item {
             // overlap, which is the alpha-accumulation this file
             // documents elsewhere rather than a look worth keeping.
             ctx.beginPath();
-            for (var s = 0; s < segments.length; ++s) {
+            // The walk starts at the first run that can still draw, so
+            // the printed runs below the boundary are never read.
+            var first_run = _firstRunAt(segments, from);
+            for (var s = first_run; s < segments.length; ++s) {
                 var points = segments[s];
                 // Every segment is at least one EDGE — two vertices — so
                 // a one-motion extrusion draws its true line, never a

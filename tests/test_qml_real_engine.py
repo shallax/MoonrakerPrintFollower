@@ -4953,6 +4953,119 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
 
+    def test_the_bounded_walk_leaves_the_full_repaint_s_picture(self):
+        # The walk skips the runs whose last motion is below the paint's
+        # own start — a bound that is only sound while the geometry it
+        # skips really holds nothing the paint could draw. Reach the
+        # SAME printed split twice and compare: once as a delta over an
+        # already-printed canvas (the bounded path — the canvas holds
+        # the history below the start, so only the tail is stroked) and
+        # once as a cleared repaint of that split from the layer's start
+        # (the unbounded path — every run is read). A bound that is off
+        # by a run, or that trusts a run whose motions do not ascend,
+        # leaves geometry missing from the delta picture.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        # 60 short runs, nine vertices each, motions ascending across
+        # the whole layer: the bound has to land on a run boundary, and
+        # a run read from its wrong end draws the wrong edges.
+        runs = []
+        motion = 0
+        for run in range(60):
+            points = []
+            for vertex in range(9):
+                points.append([20.0 + vertex * 12.0, 40.0 + run * 3.0,
+                               float(motion)])
+                motion += 1
+            runs.append(points)
+        target, history = 480, 200
+        payload = {
+            "classes": {"WALL-OUTER": runs},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": motion,
+        }
+        layer = self._native_layer(payload, face)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+
+        def settled_grab():
+            self._pump_ms(350)  # past the view settle and the paints
+            return window.grabWindow()
+
+        def seek_to(split):
+            # One paint per split: a split that lands before the canvas
+            # has painted the previous one is coalesced, and the paint
+            # that follows starts from the split before last.
+            self._printer.setSplit(split)
+            self._pump_ms(120)
+
+        seek_to(0)        # the layer's first paint, from its start
+        seek_to(history)  # a forward paint over the printed history
+        seek_to(target)   # the delta: from the history's split forward
+        delta = settled_grab()
+        delta_ink = self._red_pixels(delta, face, window)
+        self.assertGreater(delta_ink, 0, "the delta path never drew")
+        # The comparison means nothing unless the delta grab followed a
+        # paint that EXTENDED the canvas: a reset clears it and reads
+        # the whole layer, which is the very path being compared.
+        self.assertGreater(
+            face.property("_paintsSinceReset"), 0,
+            "the delta grab followed a reset — the bound was never "
+            "exercised, so this comparison proved nothing")
+        # The same split, reached backward: the reset clears the canvas,
+        # so `from` is -1 and the walk reads the layer from its start.
+        seek_to(motion - 1)
+        seek_to(target)
+        full = settled_grab()
+        full_ink = self._red_pixels(full, face, window)
+        self.assertGreater(full_ink, 0, "the cleared repaint never drew")
+        # The core ink is a census, not a sampled grid: a run the bound
+        # skipped drops hundreds of its pixels, while the seam the
+        # delta's own composition creates can drop one — this container
+        # drops exactly one on the correct walk, and 532 on a bound
+        # that skipped a run straddling the boundary.
+        print("bounded-walk delta vs full repaint ink: %d vs %d"
+              % (delta_ink, full_ink))
+        self.assertLessEqual(abs(delta_ink - full_ink), max(8, full_ink // 500),
+                             "the bounded walk's delta carried %d core-ink "
+                             "pixels, the full repaint %d"
+                             % (delta_ink, full_ink))
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        rows = range(0, int(face.height()), 4)
+        cols = range(0, int(face.width()), 4)
+        strict, loose = 0, 0
+        for row in rows:
+            for col in cols:
+                left = delta.pixel(int(origin.x()) + col, int(origin.y()) + row)
+                right = full.pixel(int(origin.x()) + col, int(origin.y()) + row)
+                if left == right:
+                    continue
+                strict += 1
+                if any(abs(((left >> shift) & 0xFF) - ((right >> shift) & 0xFF)) > 60
+                       for shift in (0, 8, 16)):
+                    loose += 1
+        sampled = len(rows) * len(cols)
+        print("bounded-walk delta vs full repaint: %d exact, %d past the "
+              "antialias tolerance, of %d sampled" % (strict, loose, sampled))
+        # The delta and the repaint stroke the SAME edges of the same
+        # layer at the same alpha over the same canvas, and this
+        # container renders them identically — 0 of the samples differ
+        # exactly — so the allowance below is the platform rasteriser's
+        # fringe shading and nothing this test is measuring. It must
+        # never become a hiding place: a bound that skipped a run
+        # straddling the boundary put 44 samples past it here (and cost
+        # the ink census 532 pixels), both well outside these bounds.
+        self.assertLessEqual(loose, max(8, sampled // 500),
+                             "the bounded walk's delta settled to a different "
+                             "picture (%d of %d sampled pixels differ beyond "
+                             "the antialias tolerance, %d exactly)"
+                             % (loose, sampled, strict))
+        window.grabWindow()
+        self.pump(30)
+        self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
+        self.pump(20)
+
     def test_reverse_scrub_frames_never_show_a_hybrid_composition(self):
         # The compositor contract: every frame displayed while the
         # split moves presents ONE COMPLETE composition — the

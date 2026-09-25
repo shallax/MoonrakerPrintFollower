@@ -669,6 +669,156 @@ class SplitCountTests(unittest.TestCase):
         self.assertIsNone(split_index(index, 0, 5))
 
 
+class PayloadRunOrderTests(unittest.TestCase):
+    """The painter's walk starts at the first run that can still meet
+    the split — a binary search over a class's runs, and only correct
+    while those runs ascend in motion order: a run out of order is a run
+    the walk never reads and never draws. The payload's producers are
+    the composer's two functions below (the layer bundle and the scrub
+    vector are the same prepared payload), so the order is pinned here,
+    on the paths that could break it."""
+
+    def assertRunsAscend(self, payload, where):
+        classes = payload["classes"]
+        self.assertTrue(classes, "%s: the payload carries no class" % where)
+        for name, runs in classes.items():
+            self.assertTrue(runs, "%s: %s carries no run" % (where, name))
+            for index, run in enumerate(runs):
+                indices = [int(point[2]) for point in run]
+                self.assertGreaterEqual(
+                    len(run), 2,
+                    "%s: %s run %d carries %d vertices — the payload never "
+                    "carries a point, and the walk reads a run's LAST "
+                    "vertex as the motion its last edge belongs to"
+                    % (where, name, index, len(run)))
+                self.assertEqual(
+                    indices, sorted(indices),
+                    "%s: %s run %d's motions do not ascend (%s), so the "
+                    "run's own edge search is a guess"
+                    % (where, name, index, indices))
+                if index:
+                    self.assertLessEqual(
+                        int(runs[index - 1][-1][2]), indices[0],
+                        "%s: %s run %d starts at motion %d, at or behind "
+                        "run %d's last motion %d — a walk bounded to the "
+                        "first run that can still meet the split starts "
+                        "past it and never draws it"
+                        % (where, name, index, indices[0], index - 1,
+                           int(runs[index - 1][-1][2])))
+
+    def test_the_runs_of_a_class_ascend_across_travels(self):
+        index = _index(
+            "M82\n"
+            ";LAYER:0\n"
+            ";TYPE:SKIN\n"
+            "G1 X10 Y0 E1\n"
+            "G1 X20 Y0 E2\n"
+            "G0 X20 Y5\n"
+            "G1 X10 Y5 E3\n"
+            "G1 X0 Y5 E4\n"
+            "G0 X0 Y10\n"
+            "G1 E0\n"
+            "G0 X12 Y10\n"
+            "G1 E1\n"
+            "G1 X22 Y10 E5\n")
+        payload = layer_polylines(index, 0)
+        self.assertEqual(len(payload["classes"]["SKIN"]), 3)
+        self.assertRunsAscend(payload, "a travelled class")
+
+    def test_the_runs_of_a_class_ascend_across_a_feature_change(self):
+        index = _index(
+            "M82\n"
+            ";LAYER:0\n"
+            ";TYPE:WALL-OUTER\n"
+            "G1 X10 Y0 E1\n"
+            ";TYPE:SKIN\n"
+            "G1 X10 Y10 E2\n"
+            ";TYPE:WALL-OUTER\n"
+            "G1 X0 Y10 E3\n"
+            ";TYPE:SKIN\n"
+            "G1 X0 Y0 E4\n")
+        payload = layer_polylines(index, 0)
+        self.assertEqual(len(payload["classes"]["WALL-OUTER"]), 2)
+        self.assertEqual(len(payload["classes"]["SKIN"]), 2)
+        self.assertRunsAscend(payload, "a changed feature")
+
+    def test_the_runs_of_a_class_ascend_through_a_retract_and_prime(self):
+        # A pure-E retract/prime pair is a seam with no travel: the run
+        # breaks where the head never moved, so the next run opens at
+        # the position the head already held.
+        index = _index(
+            "M82\n"
+            ";LAYER:0\n"
+            ";TYPE:SKIN\n"
+            "G1 X10 Y0 E1\n"
+            "G1 E0\n"
+            "G1 X20 Y0 E1\n"
+            "G1 X20 Y5 E2\n")
+        payload = layer_polylines(index, 0)
+        self.assertRunsAscend(payload, "a retracted class")
+
+    def test_the_published_bundle_carries_ascending_runs(self):
+        # The exact object QML reads: plate_layers' per-slot payload —
+        # every slot, since the face paints the delta on the current
+        # layer and the carry on the previous one.
+        index = _index(
+            "M82\n"
+            ";LAYER:0\n"
+            ";TYPE:WALL-OUTER\n"
+            "G1 X10 Y0 E1\n"
+            "G0 X20 Y0\n"
+            "G1 X20 Y10 E2\n"
+            ";LAYER:1\n"
+            ";TYPE:WALL-OUTER\n"
+            "G1 X0 Y10 E3\n"
+            "G0 X0 Y0\n"
+            "G1 X10 Y0 E4\n"
+            ";LAYER:2\n"
+            ";TYPE:WALL-OUTER\n"
+            "G1 X10 Y10 E5\n"
+            "G0 X0 Y10\n"
+            "G1 X0 Y0 E6\n")
+        bundle = plate_layers(index, 1)
+        for slot in ("prev", "current", "next"):
+            self.assertRunsAscend(bundle[slot], "the published %s layer" % slot)
+
+    def test_the_run_order_survives_the_cache_round_trip(self):
+        # The prepared store hands the painter a DECODED payload: for a
+        # layer that comes back from the cache the compact form IS the
+        # geometry the walk reads, so the ordering has to hold there.
+        from plugins.PlateProgress import decode_layer, encode_layer
+        index = _index(
+            "M82\n"
+            ";LAYER:0\n"
+            ";TYPE:SKIN\n"
+            "G1 X10 Y0 E1\n"
+            "G1 X20 Y0 E2\n"
+            "G0 X20 Y5\n"
+            "G1 X10 Y5 E3\n"
+            "G0 X10 Y15\n"
+            "G1 X20 Y15 E4\n")
+        payload = layer_polylines(index, 0)
+        decoded = decode_layer(encode_layer(payload))
+        self.assertEqual(decoded["motions"], payload["motions"])
+        self.assertRunsAscend(decoded, "a decoded layer")
+
+    def test_the_run_order_survives_the_point_budget(self):
+        # 3000 runs of 99 edges: above MAX_POINTS_PER_CLASS, so every
+        # run simplifies alone — and a simplification that reordered or
+        # merged runs would leave the walk's bound reading a class as
+        # ordered when it is not.
+        count = 300000
+        index = make_index(motions=count)
+        index.travel_starts[0] = [motion for motion in range(0, count, 100)]
+        index.travel_ends[0] = [motion + 1 for motion in range(0, count, 100)]
+        payload = layer_polylines(index, 0)
+        runs = payload["classes"]["WALL-OUTER"]
+        self.assertEqual(len(runs), 3000)
+        kept = sum(len(run) for run in runs)
+        self.assertLess(kept, 200000, "the budget never simplified the class")
+        self.assertRunsAscend(payload, "a class above the budget")
+
+
 class SyntheticIndexTests(unittest.TestCase):
     """The surfaces a literal file cannot reach cheaply: the budget's
     simplification and the evicted/unhydrated states."""
