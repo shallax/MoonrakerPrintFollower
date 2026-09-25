@@ -4,8 +4,9 @@
 # Modified for Moonraker Print Follower: the receive path drains
 # readyRead (not downloadProgress), parses multipart/x-mixed-replace
 # framing with the SOI/EOI scan as the fallback, keeps only the newest
-# complete frame, and only the render timer decodes — the network
-# arrival cadence no longer decides the repaint cadence. The retained
+# complete frame, and only the render timer hands a frame to the
+# decoder — the network arrival cadence no longer decides the repaint
+# cadence. The retained
 # data limits resynchronise to the newest frame marker instead of
 # reconnecting, and the QNAM lives for the item's lifetime.
 # imageSizeChanged now tracks the decoded dimensions correctly.
@@ -23,8 +24,8 @@ from PyQt6.QtQuick import QQuickPaintedItem
 
 from UM.Logger import Logger
 
-# The render ceiling: decode and repaint at most this often while no
-# target rate is set. The source is NEVER throttled — the drain parses
+# The render ceiling: one decode and a repaint at most this often
+# while no target rate is set. The source is NEVER throttled — the drain parses
 # everything promptly and the superseded frames count as intentionally
 # dropped. The Precise timer type keeps the presentation cadence even.
 RENDER_INTERVAL_MS = 33
@@ -138,7 +139,8 @@ class _FrameDecoder(QThread):
 class MoonrakerMJPGImage(QQuickPaintedItem):
     """A plugin-owned MJPEG renderer forked from Cura's
     NetworkMJPGImage: drains the stream, keeps only the newest
-    complete frame, and decodes on a bounded display cadence."""
+    complete frame, and decodes on a bounded display cadence of its own
+    thread."""
 
     statsChanged = pyqtSignal()
     traceEnabledChanged = pyqtSignal()
@@ -164,7 +166,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._trace_enabled = False
         # The decode throttle (0 = the ceiling above): the pane's FPS
         # control writes it, and only the render timer's cadence — the
-        # spot that decodes and repaints — follows it.
+        # spot that hands a frame over and repaints — follows it.
         self._target_fps = 0.0
 
         # The render scheduler: install-and-paint only while the stream
@@ -337,8 +339,9 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     def getRenderIntervalMs(self) -> int:
         """The cadence the target implies: the interval IS the effective
-        decode rate, because the render tick is what decodes. The 1 ms
-        floor only keeps a corrupt value from spinning the timer."""
+        decode rate, because the render tick is the one hand-over per
+        decode. The 1 ms floor only keeps a corrupt value from spinning
+        the timer."""
         if self._target_fps <= 0.0:
             return RENDER_INTERVAL_MS
         return max(1, int(round(1000.0 / self._target_fps)))
