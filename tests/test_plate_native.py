@@ -21,7 +21,7 @@ if QT_AVAILABLE:
 
     from plugins.PlateQt import (PlateLayer, _paint_segments, png_file,
                                  render_layer_prefix, render_layer_raster,
-                                 render_navigation_layer)
+                                 render_navigation_layer, stamped)
 
 
 def _payload():
@@ -659,6 +659,12 @@ class NativeIncrementalPrefixTests(unittest.TestCase):
         plot, view = _plot(), _view()
         blank = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
         blank.fill(QColor(0, 0, 0, 0))
+        # A hand-built base must carry the context stamp: the copy is
+        # refused without it, and a refused copy is a whole walk (which
+        # would stroke the below-bound edge and read as a re-stroke).
+        # `stamped` is the supported way to assert that a picture of
+        # one's own was drawn at this plot and this view.
+        stamped(blank, plot, view)
         delta = render_layer_prefix(payload, plot, view, 10,
                                     previous=blank, previous_split=5)
         above = _device_pixel(plot, view, 20.0, 100.0)
@@ -671,6 +677,37 @@ class NativeIncrementalPrefixTests(unittest.TestCase):
         full = render_layer_prefix(payload, plot, view, 10)
         self.assertGreater(full.pixelColor(*below).alpha(), 0,
                            "the control walk never painted the second edge")
+
+    def test_a_copy_from_another_view_never_composites_into_the_new_one(self):
+        # The stale-previous repro, and the live symptom's own shape:
+        # a prefix baked at one view, then a second bake at a PANNED
+        # view handed the first. The copy carries the old pane's ink,
+        # so a delta taken here leaves the printed history behind by
+        # the whole pan while the fresh tail draws at the new one, so
+        # the ink lands tens of pixels from where the view puts it. The
+        # assertion is on the composite's own pixels, never on a
+        # helper's return.
+        payload = _payload()
+        plot = _plot()
+        before, after = _view(lineScale=8.0), _view(lineScale=8.0, panX=40.0)
+        held = render_layer_prefix(payload, plot, before, 12)
+        clean = render_layer_prefix(payload, plot, after, 16)
+        mixed = render_layer_prefix(payload, plot, after, 16,
+                                    previous=held, previous_split=12)
+        # The two views genuinely disagree about where the ink lies,
+        # or the parity below would prove nothing.
+        self.assertNotEqual(_byte_diffs(clean,
+                                        render_layer_prefix(payload, plot,
+                                                            before, 16)), [],
+                            "the two views paint the same picture")
+        self.assertEqual(_byte_diffs(clean, mixed), [],
+                         "the panned bake kept the old pane's ink")
+        old = _device_pixel(plot, before, 10.0, 100.0)
+        new = _device_pixel(plot, after, 10.0, 100.0)
+        self.assertEqual(mixed.pixelColor(*old).alpha(), 0,
+                         "the printed history stayed at the old pane")
+        self.assertGreater(mixed.pixelColor(*new).alpha(), 0,
+                           "the panned picture lost the printed history")
 
     def test_a_long_segment_stops_at_the_cancel_poll(self):
         # A segment longer than the poll interval is abandoned whole
@@ -867,8 +904,16 @@ class NativeIncrementalNavigationTests(unittest.TestCase):
         incremental = render_navigation_layer(window, plot, view, split=15,
                                               previous=base, previous_split=10)
         whole = render_navigation_layer(window, plot, view, split=15)
-        self._bounds(incremental, whole, _byte_diffs(whole, incremental),
-                     4 * self.SEAM_PIXELS)
+        diffs = _byte_diffs(whole, incremental)
+        # Liveness: the resume vertex's re-covered fringe is the delta's
+        # own signature. A refused copy bakes whole, which reproduces
+        # the full bake EXACTLY and would slip past the upper bound
+        # below -- so without this the context guard could refuse every
+        # delta in the codebase and this test would still pass.
+        self.assertGreater(len(diffs), 0,
+                           "the bake never took the delta: the copy was "
+                           "refused, so every refresh is a whole bake")
+        self._bounds(incremental, whole, diffs, 4 * self.SEAM_PIXELS)
         # The picture the delta must carry, not merely its parity with
         # the full bake: the class colour below the live split, the grey
         # silhouette beyond it, and the travel token ending at the split.
@@ -994,6 +1039,38 @@ class NativeIncrementalNavigationTests(unittest.TestCase):
                                             previous=QImage(), previous_split=10)
         self.assertEqual(_byte_diffs(whole, null_copy), [],
                          "a null copy was composited anyway")
+
+    def test_a_same_sized_copy_from_another_view_bakes_whole(self):
+        # The size check above cannot see a camera change: a pan keeps
+        # the canvas identical in size while moving every pixel the
+        # copy holds, so a delta taken across it leaves the printed
+        # history and the travels at the old pane, tens of pixels from
+        # where the view puts them (the furthest move accumulates the
+        # whole shift). The context stamp is what refuses it.
+        plot = _plot()
+        view = _travel_view(lineScale=8.0, backing=4.0)
+        moved = _travel_view(lineScale=8.0, backing=4.0, panX=30.0)
+        window = {"prev": None, "next": None, "current": _travel_scene()}
+        held = render_navigation_layer(window, plot, view, split=12)
+        clean = render_navigation_layer(window, plot, moved, split=16)
+        mixed = render_navigation_layer(window, plot, moved, split=16,
+                                        previous=held, previous_split=12)
+        # The travel raster's own pixels: the assertion is worthless
+        # unless the two views really do disagree about where they lie.
+        old = _device_pixel(plot, view, 60.0, 200.0)
+        new = _device_pixel(plot, moved, 60.0, 200.0)
+        settled = render_navigation_layer(window, plot, view, split=16)
+        self.assertGreater(clean.pixelColor(*new).blue(), 0,
+                           "the moved view never drew the travels")
+        self.assertNotEqual(_byte_diffs(clean, settled), [],
+                            "the two views paint the same picture")
+        self.assertEqual(_byte_diffs(clean, mixed), [],
+                         "the panned composite kept the old pane's ink")
+        self.assertGreater(mixed.pixelColor(*new).blue(), 0,
+                           "the moved composite lost the travels")
+        self.assertEqual(mixed.pixelColor(*old).getRgb(),
+                         clean.pixelColor(*old).getRgb(),
+                         "the travels stayed at the old pane")
 
     def test_a_chain_of_deltas_never_takes_ink_away(self):
         # The live cadence is a CHAIN: every window's bake resumes from

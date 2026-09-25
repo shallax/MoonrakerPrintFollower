@@ -324,6 +324,62 @@ def _backing_scale(view: dict) -> float:
     return min(2.0, max(1.0, float(view.get("dpr", 1.0))))
 
 
+# An incremental bake copies PIXELS, so a `previous` from any other
+# transform blits the history at the old geometry — measured: a delta
+# taken across a 40 px pan leaves a 158 px ghost of the old pane, and
+# the live travels landing tens of pixels out (worst on the furthest
+# move) is the same class. The docstrings
+# demanded the caller prove the scene; the image now carries that
+# proof itself, so a caller cannot get it wrong by forgetting: every
+# bake stamps the image it returns with the context it painted, and a
+# copy is taken only from an image stamped with the context being
+# asked for. A `previous` from anywhere else — an older view, a
+# hand-built image, a caller of an older build — carries no matching
+# stamp and is refused, at the cost of one whole bake and no pixels.
+_CONTEXT_STAMP = "mpf-render-context"
+
+# Every input the painters read out of `view` and `plot` beyond the
+# split (which is a parameter). The list is written against the
+# painters' own reads; a key the signature misses is a hole, so a
+# change to a painter's inputs belongs here in the same pass.
+_CONTEXT_VIEW = ("width", "height", "scale", "panX", "panY", "backing",
+                 "dpr", "zoom", "lineScale", "compact", "nominalWidthMm",
+                 "travelVisualRatio", "bedWidth", "bedDepth")
+_CONTEXT_FLAGS = (("showPrevious", True), ("showNext", True),
+                  ("showBase", True), ("showTravels", False))
+_CONTEXT_PLOT = ("offsetX", "offsetY", "sx", "sy", "bedXMin", "bedYMax")
+
+
+def scene_context(plot: dict, view: dict) -> str:
+    """The identity of one render context: what the painters read out
+    of *plot* and *view*, normalised so an int/float respelling of
+    the same number is one context. The same context and the same
+    payload draw the same pixels for the same motions."""
+    def number(value, default):
+        try:
+            return round(float(value), 6)
+        except (TypeError, ValueError):
+            return default
+    return repr((
+        tuple(number(view.get(key), 0.0) for key in _CONTEXT_VIEW),
+        tuple(bool(view.get(key, fallback))
+              for key, fallback in _CONTEXT_FLAGS),
+        tuple(number(plot.get(key), 0.0) for key in _CONTEXT_PLOT),
+    ))
+
+
+def stamped(image: QImage, plot: dict, view: dict) -> QImage:
+    """Mark *image* as belonging to this render context — the same
+    stamp every bake writes on the picture it returns. For a caller
+    that builds a base of its own (a blank canvas, a frame out of a
+    cache) and wants it accepted as an incremental ``previous``: the
+    stamp is the caller's assertion that the pixels it is handing
+    over were drawn at exactly this plot and this view, and a
+    picture carrying no matching stamp is refused."""
+    image.setText(_CONTEXT_STAMP, scene_context(plot, view))
+    return image
+
+
 def _transform(plot: dict, view: dict):
     """The shared mapping (the face's painters' own): the WHOLE
     plate term — offset plus delta — rides the zoom, exactly as the
@@ -461,8 +517,10 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
     the same render context (the caller passes the committed
     wrapper's own image). A cooperative cancel between segments lets
     a superseded job stop at the next large unit."""
+    stamp = scene_context(plot, view)
     if previous is not None and 0 < previous_split <= split \
-            and previous.width() > 0 and previous.height() > 0:
+            and previous.width() > 0 and previous.height() > 0 \
+            and previous.text(_CONTEXT_STAMP) == stamp:
         image = QImage(previous)
         start = previous_split
     else:
@@ -478,7 +536,7 @@ def render_layer_prefix(payload: dict, plot: dict, view: dict, split: int,
         painter.setPen(pen)
         _paint_below_split(painter, pen, payload, plot, view, split,
                            cancel=cancel, first=start)
-    return image
+    return stamped(image, plot, view)
 
 
 def _segment_first(points, first: int) -> int:
@@ -697,6 +755,7 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
     full-layer branch, no grey base — cannot be reached by adding
     strokes. The completion therefore bakes whole, once per layer."""
     image = _new_canvas(view)
+    stamp = scene_context(plot, view)
     current = window.get("current")
     motions = (current or {}).get("motions") or 0
     delta = (previous is not None and previous_split is not None
@@ -704,7 +763,9 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
              and 0 <= split < motions
              and current is not None and not previous.isNull()
              and previous.width() == image.width()
-             and previous.height() == image.height())
+             and previous.height() == image.height()
+             and previous.text(_CONTEXT_STAMP) == stamp)
+
     if delta:
         image = QImage(previous)
         with _painting(image) as painter:
@@ -716,7 +777,10 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
             if view.get("showTravels", False):
                 _paint_travels(painter, pen, current, plot, view, split,
                                cancel=cancel, first=previous_split)
-        return image
+        # The delta's own copy is re-stamped: the live cadence is a
+        # CHAIN, so the stamp has to survive each link or the next
+        # refresh bakes whole.
+        return stamped(image, plot, view)
     with _painting(image) as painter:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         _paint_grid(painter, plot, view)
@@ -767,11 +831,14 @@ def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,
         else:
             _paint_segments(painter, pen, current, plot, view, cancel=cancel)
         if not view.get("showTravels", False) or not current.get("travels"):
-            return image
+            return stamped(image, plot, view)
         if not _paint_travels(painter, pen, current, plot, view, split,
                               cancel=cancel):
-            return image
-    return image
+            return stamped(image, plot, view)
+    # Every exit carries the context, the delta's own copy included:
+    # the live cadence is a CHAIN, so the stamp has to survive each
+    # link or the next refresh bakes whole.
+    return stamped(image, plot, view)
 
 
 def render_layer_raster(payload: dict, plot: dict, view: dict, cancel=None) -> tuple:

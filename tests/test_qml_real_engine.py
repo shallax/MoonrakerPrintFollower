@@ -5050,11 +5050,44 @@ class PlateFaceRenderTests(RealEngineTestCase):
         def metrics(band):
             return max(band), sum(band), sum(1 for v in band if v > 4)
 
+        def centre(band):
+            # The stroke's sub-pixel centre along the perpendicular
+            # band, in pixels from the band's middle sample.
+            total = sum(band)
+            if total <= 0:
+                return None
+            return sum(i * v for i, v in enumerate(band)) / float(total) - 8.0
+
         label = "dpr %s %s" % (dpr, orientation)
         prefix_band = band_at(*spec["prefix"])
         tail_band = band_at(*spec["tail"])
         prefix_peak, prefix_energy, prefix_extent = metrics(prefix_band)
         tail_peak, tail_energy, tail_extent = metrics(tail_band)
+        # WHERE the stroke sits, not merely how much of it there is:
+        # the prefix raster and the canvas tail draw the same path
+        # through the same plot, so their perpendicular centres of mass
+        # must land on the same device pixel: a sub-pixel disagreement
+        # between the two producers is what the eye reads as the layer
+        # bouncing a pixel up and down while the composition hands over
+        # between them.
+        #
+        # The measurement's own floor, stated: at the production width
+        # the stroke is one or two device rows with a flat profile, so
+        # the centre quantises to about half a pixel (a one-row profile
+        # and a symmetric two-row one are the same physical position).
+        # The slack below is that floor and nothing more -- a whole
+        # pixel of seam, which is the reported magnitude, still fails
+        # here; a sub-half-pixel seam is not something this measurement
+        # can see, and is not claimed to be.
+        prefix_centre = centre(prefix_band)
+        tail_centre = centre(tail_band)
+        self.assertIsNotNone(prefix_centre,
+                             "%s: no ink at the prefix probe" % label)
+        self.assertLessEqual(abs(prefix_centre - tail_centre), 0.75,
+                             "%s: the prefix raster and the canvas tail draw "
+                             "the same path at different device positions "
+                             "(centre %s vs %s)"
+                             % (label, prefix_centre, tail_centre))
         self.assertGreater(prefix_peak, 10,
                            "%s: the native prefix drew nothing measurable" % label)
         self.assertGreater(tail_peak, 10,
