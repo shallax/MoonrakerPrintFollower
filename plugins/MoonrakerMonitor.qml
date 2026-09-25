@@ -3684,6 +3684,18 @@ Component {
                     }
                 }
 
+                // The rule between the plate and the schedule. It is a
+                // hairline, and it takes its width from the schedule
+                // column's slack — that column's minimum is zero — so the
+                // plate's own width, the layout's invariant, is untouched.
+                Rectangle {
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 1
+                    Layout.minimumWidth: 1
+                    Layout.maximumWidth: 1
+                    color: UM.Theme.getColor("border")
+                }
+
                 // The pause at the end of a layer (the 4.6.0 request):
                 // the popover's OWN slider picks the layer, so the
                 // schedule targets the END of the layer it stands on —
