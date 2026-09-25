@@ -411,18 +411,26 @@ class HarnessServer(QObject):
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no main window"}
-                _FRAMES.attach(window)
+                attached = _FRAMES.attach(window)
                 if request.get("reset"):
                     _FRAMES.count = 0
                 before = _FRAMES.count
-                if request.get("kick", True):
+                kicked = bool(request.get("kick", True))
+                if kicked:
                     # requestUpdate is the Qt6 spelling; Cura 5.x ships
                     # Qt 5.15, where update() is the same request.
                     kick = getattr(window, "requestUpdate", None) or window.update
                     kick()
-                _settle(request.get("settle_ms", 300))
+                settle_ms = int(request.get("settle_ms", 300))
+                # The settle is what lets the event loop deliver the
+                # frame the kick asked for, so the count that follows is
+                # frames the app returned on request rather than frames
+                # that happened to land.
+                _settle(settle_ms)
                 return {"id": request_id, "ok": True, "swapped": _FRAMES.count,
                         "since": before, "gained": _FRAMES.count - before,
+                        "kicked": kicked, "settle_ms": settle_ms,
+                        "frame_signal": attached,
                         "exposed": bool(window.isExposed()),
                         "visible": bool(window.isVisible()),
                         "active": bool(window.isActive()),
@@ -2018,8 +2026,11 @@ class _FrameCounter:
         self.count += 1
 
     def attach(self, window):
+        """Attach to `window`, and say whether the counter is on it:
+        a window that never took the connection has no count to report,
+        which is a different answer from a count of zero."""
         if self.window is window:
-            return
+            return self.window is not None
         previous = self.window
         self.window = window
         if window is not None:
@@ -2027,13 +2038,14 @@ class _FrameCounter:
                 window.frameSwapped.connect(self._swapped)
             except Exception:
                 self.window = previous
-                return
+                return False
         if previous is not None:
             try:
                 previous.frameSwapped.disconnect(self._swapped)
             except Exception:
                 pass
         self.count = 0
+        return True
 
 
 _FRAMES = _FrameCounter()

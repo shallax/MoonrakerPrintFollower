@@ -650,10 +650,10 @@ SimulationView is the ACTIVE view (the Preview stage click).
   slower — `group-printing` measured 3.5× (2.8 → 9.7 min) against a
   15-minute budget — so that pin was removed.
   The macOS legs therefore capture nothing: no recorder, no stills,
-  no frame probe, no static verdict, no display guard. **Every step
-  assertion is untouched** — the steps are answered in-process from
-  the live QML tree and the models, so the pictures are the whole of
-  what is lost. The mode and its reason are recorded in every leg's
+  no static verdict, no display guard. **Every step assertion is
+  untouched** — the steps are answered in-process from the live QML
+  tree and the models, so the pictures are the whole of what is lost.
+  The mode and its reason are recorded in every leg's
   `evidence.json` (`capture: {mode, reason, judged}`), the gallery
   says why it has no recording, and the exit path prints
   `STATIC LEG — not judged`. `HARNESS_CAPTURE=on` restores the
@@ -663,6 +663,40 @@ SimulationView is the ACTIVE view (the Preview stage click).
   the preview card, the readouts' contrast) run offscreen on Linux,
   where rendering is deterministic, and a CI mac was never where they
   lived.
+- **The renderer-liveness verdict is NOT part of the capture gate
+  (2026-09-25).** The gate was carrying one measurement it should
+  never have carried. Every step assertion is answered from the QML
+  tree, and a tree keeps answering after the renderer has stopped —
+  so on the mac the leg above passed all 45 steps of a scenario whose
+  window was frozen, which is the exact failure the gate was there to
+  tolerate, not to certify. The frame probe now runs and is judged in
+  **both** modes: it reads the app's own `frameSwapped` count (the
+  driver attaches, asks for a render with `requestUpdate`/`update`,
+  lets the event loop deliver it, then reads the count), so it says
+  whether the app painted, and it has nothing to do with the screen.
+  A scenario whose window is visible and exposed, answered the render
+  request earlier in the run, and then delivers no frame after a
+  fresh request is a **failing scenario**, on every platform, capture
+  or no capture. Everything the probe cannot tell apart from that is
+  its own named outcome in the log and in `evidence.json`
+  (`frames_outcome`), never a silent pass and never a silent freeze:
+  `unverified` with the reason — a window that is not on the display
+  (hidden or minimised, no frame is due from it), a run in which no
+  frame has been delivered at all yet (an initialising renderer and a
+  platform that never emits the signal look identical from here), a
+  sample read without a render request and a settle, a probe that did
+  not answer, and a frame signal that could not be attached. The
+  stalls print `NO FRAMES — scenario …`, the rest print `FRAMES
+  UNVERIFIED — scenario …`, in both capture modes, and the raw
+  samples ride beside them in `evidence.json`.
+  **Known limitation, recorded rather than hidden:** the probe
+  measures frame delivery, not pixels. A mac freeze that leaves the
+  render loop swapping buffers while the window stops updating on
+  screen would still read healthy; so would a freeze that begins and
+  recovers entirely between a scenario's two samples. It also cannot
+  see a window that was never shown — that leg reports unverified,
+  which is why the display guard's stand-down is named in the same
+  breath.
 - **A still span nobody drove is not judged (2026-09-24).** The
   static rule asks whether the screen moved, and it cannot tell
   "nothing was supposed to happen" from "the window froze".

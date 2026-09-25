@@ -97,8 +97,12 @@ def record_argv(path, framerate=15):
 # The capture gate. A leg whose screen cannot be relied on to present
 # runs its steps with no recorder and no stills: every step assertion
 # is answered in-process from the live QML tree and the models, so the
-# picture is the only thing lost — the static verdict and the frame
-# probe judge pictures, and nothing else reads one.
+# pictures are the whole of what is lost — the static verdict and the
+# display guard read them, and nothing else does. The renderer-liveness
+# verdict is deliberately NOT part of this gate: it reads the app's own
+# frame count, has nothing to do with the screen or the recorder, and
+# is the one measurement a picture-less leg must keep, because a
+# responsive QML tree is not proof of rendering.
 #
 # The LEG says so, not the platform: tools/native_harness.sh exports
 # HARNESS_CAPTURE=off with its reason for the CI mac, whose runner has
@@ -679,9 +683,22 @@ EVIDENCE = []
 # stalled capture.
 FRAME_PROBES = []
 
+# The sample's own vocabulary. Only a stall is a claim about the app:
+# everything the probe could not tell apart from a stall is named as
+# unverified with the reason, because a measurement that could not be
+# taken must not read as one that was.
+LIVENESS_RENDERED = "rendered"
+LIVENESS_STALLED = "stalled"
+LIVENESS_UNVERIFIED = "unverified"
+
 
 def frames_probe(phase, scenario_id):
-    """One frame-count sample, recorded; never fails a step itself."""
+    """One frame-count sample, recorded.
+
+    Every sample asks for a frame explicitly: the driver requests a
+    render and lets the event loop deliver it before it reads the
+    count, so the difference the verdict reads is frames the app chose
+    to deliver after being asked, not frames that happened to land."""
     sample = {"scenario": scenario_id, "phase": phase}
     try:
         reply = rpc({"id": 1, "cmd": "frames", "kick": True, "settle_ms": 300},
@@ -689,7 +706,8 @@ def frames_probe(phase, scenario_id):
     except Exception as exc:
         reply = {"ok": False, "error": repr(exc)}
     for key in ("swapped", "gained", "exposed", "visible", "active",
-                "visibility", "state", "platform", "error"):
+                "visibility", "state", "platform", "error", "kicked",
+                "settle_ms", "frame_signal"):
         if key in reply:
             sample[key] = reply[key]
     sample["ok"] = bool(reply.get("ok"))
@@ -697,26 +715,126 @@ def frames_probe(phase, scenario_id):
     return sample
 
 
-def frames_verdict(samples):
-    """The scenarios whose window never painted: a run of steps that
-    all passed over a window that delivered no frame is the shape the
-    static check then finds in the recording, and naming it here says
-    which mechanism it was."""
-    by_scenario = {}
-    for sample in samples:
-        if not sample.get("ok"):
+def _count(value):
+    """A frame count, or None when the sample did not carry one: an
+    absent count must never be read as zero, which is a stall."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _delivered(sample):
+    """Whether the render request this sample made brought a frame
+    back: the count it gained during its own settle."""
+    return (_count(sample.get("gained")) or 0) > 0
+
+
+def _saw_frames(sample):
+    """Whether this sample knows of a frame at all — the cumulative
+    count moved, now or earlier in the run. This is what separates a
+    renderer that stopped from one that was never seen to paint."""
+    return (_count(sample.get("swapped")) or 0) > 0 or _delivered(sample)
+
+
+def _shown(sample):
+    """Whether the display can be expected to show this window: an
+    explicit yes on both flags. A hidden or minimised window delivers
+    no frame by design, so it must not be read as a freeze, and a flag
+    that did not arrive must not be read as either."""
+    return sample.get("visible") is True and sample.get("exposed") is True
+
+
+def _shape(sample):
+    # What the sample saw, for a diagnostic that names the window it
+    # judged rather than only the count.
+    return (f"swapped={sample.get('swapped')} gained={sample.get('gained')} "
+            f"visible={sample.get('visible')} exposed={sample.get('exposed')} "
+            f"active={sample.get('active')} visibility={sample.get('visibility')} "
+            f"state={sample.get('state')} platform={sample.get('platform')}")
+
+
+def liveness_of(sample, seen):
+    """One sample's outcome and the reason for it.
+
+    `seen` says whether any EARLIER sample in this run saw a frame, and
+    it is what separates a freeze from a platform whose window never
+    painted: a signal never observed working cannot be read as one that
+    stopped, so a zero before the first frame is its own outcome rather
+    than a stall."""
+    if sample.get("frame_signal") is False:
+        return (LIVENESS_UNVERIFIED,
+                "the frame signal could not be attached to the window")
+    if not sample.get("ok"):
+        detail = sample.get("error")
+        return (LIVENESS_UNVERIFIED, "the window did not answer the probe"
+                + (f": {detail}" if detail else ""))
+    if _count(sample.get("swapped")) is None:
+        return (LIVENESS_UNVERIFIED,
+                "the probe answered without a frame count, so it measured nothing")
+    if sample.get("kicked") is False or sample.get("settle_ms") == 0:
+        # The count is only a verdict about the renderer if a render was
+        # asked for and the event loop was given room to deliver it.
+        return (LIVENESS_UNVERIFIED,
+                "the count was read without a render request and a settle, "
+                "so a zero in it says nothing about the renderer")
+    if _delivered(sample):
+        return (LIVENESS_RENDERED,
+                f"the window delivered {sample.get('gained')} frame(s) after the "
+                f"render request ({_shape(sample)})")
+    if not _shown(sample):
+        return (LIVENESS_UNVERIFIED,
+                "the window is not on the display, so no frame is due from it "
+                f"({_shape(sample)})")
+    if seen:
+        return (LIVENESS_STALLED,
+                "the window is visible and exposed and delivered no frame after "
+                "the render request, having delivered frames earlier in this run: "
+                f"{_shape(sample)}")
+    return (LIVENESS_UNVERIFIED,
+            "no frame has been delivered on this platform in this run yet, so an "
+            "initialising renderer and a platform that never emits the frame "
+            f"signal look the same here ({_shape(sample)})")
+
+
+def liveness_outcome(samples):
+    """Every scenario's presentation outcome, in scenario order.
+
+    The verdict reads the END sample — the one taken after the
+    scenario's own steps — and only a visible, exposed window that
+    delivered no frame after a render request, having delivered frames
+    earlier in the run, counts as a stall. Everything the probe cannot
+    tell apart from that is its own outcome: a hidden or minimised
+    window, a renderer that has not painted yet, an unanswered probe
+    and a platform that never emits the signal are named as unverified
+    with their reason, so neither a freeze nor a missing measurement
+    can pass as the other. Capture plays no part in it — the frame
+    count is read from the app, and the leg's pictures are not
+    evidence in it."""
+    phases = {}
+    for index, sample in enumerate(samples):
+        phases.setdefault(sample.get("scenario"), {})[sample.get("phase")] = index
+    records = []
+    for scenario_id in sorted(phases, key=str):
+        start_index = phases[scenario_id].get("start")
+        end_index = phases[scenario_id].get("end")
+        if start_index is None or end_index is None:
+            # Both ends are what make the reading a comparison rather
+            # than a threshold; a scenario with one sample is not
+            # judged (the boot-only legs record none at all).
             continue
-        entry = by_scenario.setdefault(sample["scenario"], {})
-        entry[sample.get("phase")] = sample
-    stalled = []
-    for scenario_id, phases in sorted(by_scenario.items(),
-                                      key=lambda item: str(item[0])):
-        start, end = phases.get("start"), phases.get("end")
-        if start is None or end is None:
-            continue
-        if end.get("swapped", 0) <= start.get("swapped", 0):
-            stalled.append(scenario_id)
-    return stalled
+        seen = any(_saw_frames(sample) for sample in samples[:end_index])
+        outcome, reason = liveness_of(samples[end_index], seen)
+        records.append({"scenario": scenario_id, "outcome": outcome,
+                        "reason": reason, "start": samples[start_index],
+                        "end": samples[end_index]})
+    return records
+
+
+def stalled_scenarios(records):
+    """The scenarios whose renderer stopped presenting: the ones that
+    fail, whatever the leg captured."""
+    return [record["scenario"] for record in records
+            if record["outcome"] == LIVENESS_STALLED]
 
 # F08's evidence classification: a step's class derives from its
 # MECHANISM, never from a declared label — the scenario's claim is
@@ -892,17 +1010,25 @@ def write_evidence(title):
     }
     if FRAME_PROBES:
         run["frames"] = FRAME_PROBES
-        stalled = frames_verdict(FRAME_PROBES)
-        if not CAPTURE:
-            # Recorded, never named as a fault: this leg makes no claim
-            # about the screen, and on macOS every scenario would trip
-            # it — the stall is the environment the capture gate exists
-            # for, and it is measured here rather than announced.
-            run["frames_stalled"] = stalled
-        else:
-            for scenario_id in stalled:
-                print(f"ui_test: NO FRAMES — scenario {scenario_id}: the window "
-                      f"delivered no frame between its start and its end sample")
+        outcomes = liveness_outcome(FRAME_PROBES)
+        # The outcome list rides beside the samples so a reader of the
+        # artifact gets the verdict the leg acted on, not only the
+        # counts it was derived from.
+        run["frames_outcome"] = outcomes
+        run["frames_stalled"] = stalled_scenarios(outcomes)
+        # Announced in BOTH capture modes: the pictures are what the
+        # capture gate gives up, and whether the app painted is the one
+        # measurement that must not go with them. An unverified
+        # scenario says so too — a leg whose window was never shown, or
+        # was never seen to deliver a frame, must not read as one where
+        # rendering was confirmed.
+        for record in outcomes:
+            if record["outcome"] == LIVENESS_STALLED:
+                print(f"ui_test: NO FRAMES — scenario {record['scenario']}: "
+                      f"{record['reason']}")
+            elif record["outcome"] == LIVENESS_UNVERIFIED:
+                print(f"ui_test: FRAMES UNVERIFIED — scenario {record['scenario']}: "
+                      f"{record['reason']}")
 
     with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
         json.dump(run, handle, indent=2)
@@ -3160,7 +3286,7 @@ def suite_scenario(spec, step_fn=None):
     if step_fn is None:
         step_fn = suite_step
     steps = []
-    frames_probe("start", spec["id"])
+    start_sample = frames_probe("start", spec["id"])
     # The calibration pre-step (a suite default, not a per-spec
     # field): every scenario starts from the baseline geometry, so no
     # scenario's resize can leak into the next inside a group's
@@ -3220,7 +3346,28 @@ def suite_scenario(spec, step_fn=None):
             EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
                                             f"{spec['name']}: {step.get('op')}",
                                             f"step error: {exc!r}", capture, started))
-    frames_probe("end", spec["id"])
+    end_sample = frames_probe("end", spec["id"])
+    # The liveness verdict, folded into the scenario's own steps: a
+    # renderer that stopped presenting FAILS the scenario in both
+    # capture modes, because a scenario whose every assertion was
+    # answered over a window that had stopped painting is not a pass.
+    records = liveness_outcome([start_sample, end_sample])
+    if records and records[0]["outcome"] == LIVENESS_STALLED:
+        record = records[0]
+        name = f"{spec['id']}-zz-frames"
+        action = ("the presentation probe: the render request after the "
+                  "scenario's last step")
+        assertion = record["reason"]
+        # A still of the stalled window is the one picture worth taking
+        # on a failing scenario — and there is none to take on a leg
+        # that captures nothing, where shot() answers (None, None).
+        capture = shot(name)
+        steps.append((name, action, assertion, False, capture))
+        # Index -4: the negative block is the harness's own steps, not a
+        # spec step, and the classification reads it as a diagnostic.
+        EVIDENCE.append(_evidence_entry(spec, -4, {"op": "frames_probe"}, name,
+                                        False, action, assertion, capture,
+                                        time.monotonic()))
     return steps
 
 # ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────

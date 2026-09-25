@@ -210,6 +210,11 @@ class TestingDocPinTests(unittest.TestCase):
         self.assertIn("macOS legs run without pictures", text)
         self.assertIn("macOS has no visual-regression detection in CI", text)
         self.assertIn("HARNESS_CAPTURE=on", text)
+        # Pictures are what the gate gives up; whether the app painted is
+        # not, so the liveness verdict and its own outcomes are documented
+        # beside the gate rather than folded into its cost.
+        self.assertIn("The renderer-liveness verdict is NOT part of the capture gate", text)
+        self.assertIn("frames_outcome", text)
         # The still-span rule's own change, which is what clears the
         # windows group-status red without retiring the check.
         self.assertIn("A still span nobody drove is not judged", text)

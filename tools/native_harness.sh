@@ -1163,15 +1163,18 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         # and the dock keep ticking, and a real click on Cura's own
         # stage header changes nothing on screen. Every step assertion
         # is answered in-process from the QML tree, so the pictures are
-        # the whole of what is lost; the static verdict and the frame
-        # probe judge pictures and stand down with them. A Mac with a
-        # real GPU presents normally, which is why this rides the leg
-        # rather than the platform: HARNESS_CAPTURE=on restores the
-        # pictures here for a local look.
+        # the whole of what is lost: the static verdict and the display
+        # guard read them and stand down with them. The frame probe is
+        # NOT in that set — it reads the app's own frame count, and on
+        # exactly this leg it is the only thing that can tell a frozen
+        # renderer from a working one. A Mac with a real GPU presents
+        # normally, which is why this rides the leg rather than the
+        # platform: HARNESS_CAPTURE=on restores the pictures here for a
+        # local look.
         echo "export HARNESS_CAPTURE='off'"
         # No apostrophes: this file is SOURCED, and one would close the
         # quote early and silently truncate the reason.
-        echo "export HARNESS_CAPTURE_REASON='macOS runs without capture by design. This runner has no GPU, so Cura boots the Apple software renderer and the window stops presenting partway through a leg. Every step assertion is answered in-process from the QML tree, so only the pictures are lost. See TESTING.md.'"
+        echo "export HARNESS_CAPTURE_REASON='macOS runs without pictures by design. This runner has no GPU, so Cura boots the Apple software renderer and the window stops presenting partway through a leg. The pictures and the static verdict stand down with the recorder; the renderer-liveness probe still runs and still fails a scenario whose window stops delivering frames. See TESTING.md.'"
     } >"$ENV_FILE"
     mkdir -p "$ARTIFACT_DIR"
     echo

@@ -7,6 +7,8 @@ outside the slow loop. Run directly (like test_harness_specs.py):
 `python3 tests/harness/test_harness_runner.py`.
 """
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -24,6 +26,20 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 # /tmp/mpf collects files owned by the harness container's root user,
 # which the host-side legs cannot then overwrite (the live gate error).
 SCRATCH = tempfile.mkdtemp(prefix="test-harness-runner-", dir="/tmp/mpf")
+
+
+def _probe(scenario, phase, ok=True, **fields):
+    """One frame-probe sample as the driver answers it: a window that is
+    on the display and delivering frames unless the test says otherwise.
+    Every field a verdict rests on is here, so a test can only mean the
+    one it overrides."""
+    sample = {"scenario": scenario, "phase": phase, "ok": ok,
+              "kicked": True, "settle_ms": 300, "frame_signal": True,
+              "visible": True, "exposed": True, "active": True,
+              "visibility": "Windowed", "state": "WindowNoState",
+              "platform": "cocoa", "swapped": 5, "gained": 1}
+    sample.update(fields)
+    return sample
 
 
 def _png_bytes(width, height):
@@ -661,27 +677,33 @@ class StaticLegTests(unittest.TestCase):
         self.assertIn("sys.exit(_rc or _static_rc)", tail)
 
     def test_a_scenario_that_delivered_no_frame_is_named(self):
-        # The probe's verdict is a comparison of the two samples, not a
-        # threshold: a window that gained no frame between them is the
-        # one whose recording the static check then finds frozen.
-        stalled = runner.frames_verdict([
-            {"scenario": "g1", "phase": "start", "swapped": 12, "ok": True},
-            {"scenario": "g1", "phase": "end", "swapped": 12, "ok": True},
-            {"scenario": "g2", "phase": "start", "swapped": 30, "ok": True},
-            {"scenario": "g2", "phase": "end", "swapped": 94, "ok": True},
+        # The probe's verdict is a reading of the END sample: a window
+        # that was on the display and delivering frames, then stopped,
+        # is the one whose recording the static check finds frozen.
+        records = runner.liveness_outcome([
+            _probe("g1", "start", swapped=12, gained=1),
+            _probe("g1", "end", swapped=12, gained=0),
+            _probe("g2", "start", swapped=30, gained=1),
+            _probe("g2", "end", swapped=94, gained=1),
         ])
-        self.assertEqual(stalled, ["g1"])
+        self.assertEqual([r["scenario"] for r in records if r["outcome"] == "stalled"],
+                         ["g1"])
+        self.assertEqual([r["scenario"] for r in records if r["outcome"] == "rendered"],
+                         ["g2"])
 
     def test_an_unanswered_probe_is_not_a_stall(self):
         # A platform that cannot answer is recorded, never judged: an
         # unanswered sample must not read as "the window never painted".
-        stalled = runner.frames_verdict([
+        records = runner.liveness_outcome([
             {"scenario": "g1", "phase": "start", "ok": False, "error": "boom"},
             {"scenario": "g1", "phase": "end", "ok": False, "error": "boom"},
-            {"scenario": "g2", "phase": "start", "swapped": 1, "ok": True},
-            {"scenario": "g2", "phase": "end", "swapped": 1, "ok": True},
+            _probe("g2", "start", swapped=1, gained=1),
+            _probe("g2", "end", swapped=1, gained=0),
         ])
-        self.assertEqual(stalled, ["g2"])
+        by_scenario = {record["scenario"]: record["outcome"] for record in records}
+        self.assertEqual(by_scenario["g1"], "unverified")
+        self.assertIn("did not answer", records[0]["reason"])
+        self.assertEqual(by_scenario["g2"], "stalled")
 
     def test_the_thresholds_are_the_measured_ones(self):
         # 60 s clears every legitimate idle measured across the 51
@@ -691,6 +713,214 @@ class StaticLegTests(unittest.TestCase):
         self.assertEqual(runner.STATIC_LEG_SECONDS, 60.0)
         self.assertEqual(runner.STATIC_LEG_SHARE, 0.35)
         self.assertEqual(runner.STATIC_FRAME_MAD, 1.0)
+
+
+class RendererLivenessTests(unittest.TestCase):
+    """The presentation verdict, capture or no capture.
+
+    A hosted mac boots Cura on the Apple software renderer, where the
+    window stops presenting partway through a leg, and that leg captures
+    nothing — so every step is answered in-process from the QML tree.
+    The consequence was that a frozen renderer PASSED: a responsive tree
+    is not proof of rendering. The frame probe is the measurement that
+    says the app painted; it reads the app rather than the screen, so
+    the capture gate must not reach it, and a scenario whose window
+    stopped delivering frames must be red in both modes.
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        runner.EVIDENCE[:] = []
+        runner.FRAME_PROBES[:] = []
+        self._old = (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON,
+                     runner.rpc)
+        runner.RUN_DIR = SCRATCH
+        runner.CAPTURE = False
+
+    def tearDown(self):
+        (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON,
+         runner.rpc) = self._old
+        runner.EVIDENCE[:] = []
+        runner.FRAME_PROBES[:] = []
+
+    def _rpc_over(self, samples, seen=None):
+        """Answer the frames commands from `samples`, in order, and the
+        calibration resize with the geometry it was asked for."""
+        pending = list(samples)
+
+        def rpc(request, timeout=None):
+            if request.get("cmd") == "frames":
+                if seen is not None:
+                    seen.append(dict(request))
+                return dict(pending.pop(0))
+            if request.get("cmd") == "resize":
+                return {"ok": True,
+                        "size": [int(part) for part in runner.WINDOW_SIZE.split("x")]}
+            return {"ok": True}
+        return rpc
+
+    def _scenario(self, samples, seen=None):
+        """One scenario whose single step read the tree, over a window
+        the samples describe."""
+        runner.rpc = self._rpc_over(samples, seen)
+        return runner.suite_scenario(
+            {"id": "g2", "name": "the frozen stage",
+             "steps": [{"op": "dwell", "ms": 1}]},
+            step_fn=lambda step: (True, "dwell", "the simulator was read"))
+
+    def _outcomes(self):
+        return runner.liveness_outcome(runner.FRAME_PROBES)
+
+    def _failed(self, steps):
+        return [name for name, _action, _assertion, ok, _capture in steps if not ok]
+
+    def test_a_frozen_renderer_fails_the_scenario_without_capture(self):
+        # The macOS hole: every step of this scenario passed over a
+        # window whose renderer had stopped, and the leg captured
+        # nothing. It is a red scenario all the same.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0)])
+        self.assertEqual(self._failed(steps), ["g2-zz-frames"])
+        _name, action, assertion, _ok, _capture = steps[-1]
+        self.assertIn("render request", action)
+        self.assertIn("swapped=40", assertion)
+        self.assertIn("platform=cocoa", assertion)
+        # And it rides the evidence spine, so the artifact names the
+        # sample that failed it.
+        self.assertEqual([entry["name"] for entry in runner.EVIDENCE],
+                         ["g2-00", "g2-zz-frames"])
+        self.assertFalse(runner.EVIDENCE[-1]["ok"])
+        self.assertEqual(runner.EVIDENCE[-1]["class"], "diagnostic-probe")
+        # And the verdict the group hands the leg is the failing one.
+        self.assertEqual(runner._verdict(steps), 1)
+
+    def test_a_healthy_renderer_passes_the_same_scenario(self):
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=41, gained=1)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertEqual(len(steps), 1)  # the scenario's own step, alone
+        self.assertEqual(runner._verdict(steps), 0)
+
+    def test_an_idle_scene_is_not_a_freeze(self):
+        # A scene no step changed: the sample asks for a render, the
+        # renderer answers, so the count moves. The distinction is the
+        # render request, never a wall clock.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=41, gained=1,
+                                       active=False)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertEqual([r["outcome"] for r in self._outcomes()], ["rendered"])
+
+    def test_a_window_that_never_delivered_a_frame_is_not_a_freeze(self):
+        # A platform that never emits the signal and a renderer that has
+        # not painted yet look identical from here. Both get their own
+        # outcome and the reason, and neither is called a freeze.
+        steps = self._scenario([_probe("g2", "start", swapped=0, gained=0),
+                                _probe("g2", "end", swapped=0, gained=0)])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("initialising renderer", outcome["reason"])
+
+    def test_a_hidden_window_is_not_a_freeze(self):
+        # A minimised window delivers no frame by design; it must not be
+        # read as a renderer that stopped, and it must not pass as one
+        # that rendered either.
+        hidden = dict(visible=False, exposed=False, visibility="Minimized",
+                      state="WindowMinimized")
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=0, **hidden),
+                                _probe("g2", "end", swapped=40, gained=0, **hidden)])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("not on the display", outcome["reason"])
+        self.assertIn("Minimized", outcome["reason"])
+
+    def test_a_count_read_without_a_render_request_is_not_a_stall(self):
+        # The count only says something about the renderer if a render
+        # was asked for and the loop had room to deliver it.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       kicked=False)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertIn("without a render request", self._outcomes()[0]["reason"])
+
+    def test_a_detached_frame_signal_is_not_a_stall(self):
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       frame_signal=False)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertIn("could not be attached", self._outcomes()[0]["reason"])
+
+    def test_every_sample_asks_for_a_render_and_lets_it_land(self):
+        # A count read cold would call an idle window frozen, so the
+        # request goes out with every sample.
+        requests = []
+        self._scenario([_probe("g2", "start", swapped=1, gained=1),
+                        _probe("g2", "end", swapped=2, gained=1)],
+                       seen=requests)
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertIs(request.get("kick"), True)
+            self.assertGreater(request.get("settle_ms", 0), 0)
+
+    def test_the_stall_is_announced_with_and_without_capture(self):
+        # The verdict is the same measurement in both modes: the capture
+        # gate gives up the pictures, never the reading of whether the
+        # app painted.
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=40, gained=1),
+                                  _probe("g2", "end", swapped=40, gained=0)]
+        for capture in (False, True):
+            runner.CAPTURE = capture
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                runner.write_evidence("test run")
+            self.assertIn("ui_test: NO FRAMES — scenario g2", out.getvalue())
+            with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+                data = json.load(handle)
+            self.assertEqual(data["frames_stalled"], ["g2"], capture)
+            self.assertEqual(data["frames_outcome"][0]["outcome"], "stalled")
+            # The samples themselves are kept, so the counts behind the
+            # verdict are readable in the artifact.
+            self.assertEqual([s["phase"] for s in data["frames"]],
+                             ["start", "end"])
+
+    def test_an_unverified_outcome_is_announced_too(self):
+        # A leg whose window was never shown, or never seen to paint,
+        # must not read as one where rendering was confirmed: the
+        # outcome is its own, and it says so in the log.
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=0, gained=0),
+                                  _probe("g2", "end", swapped=0, gained=0),
+                                  _probe("g3", "start", swapped=9, gained=0,
+                                         visible=False, exposed=False),
+                                  _probe("g3", "end", swapped=9, gained=0,
+                                         visible=False, exposed=False)]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        log = out.getvalue()
+        self.assertIn("ui_test: FRAMES UNVERIFIED — scenario g2", log)
+        self.assertIn("ui_test: FRAMES UNVERIFIED — scenario g3", log)
+        self.assertNotIn("NO FRAMES", log)
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual([record["outcome"] for record in data["frames_outcome"]],
+                         ["unverified", "unverified"])
+        self.assertEqual(data["frames_stalled"], [])
+
+    def test_a_leg_that_recorded_one_sample_is_not_judged(self):
+        # The boot-only legs record none at all; a scenario that lost
+        # one end of its pair is not judged rather than guessed at.
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=0, gained=0)]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        self.assertEqual(out.getvalue(), "")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["frames_outcome"], [])
+        self.assertEqual(data["frames_stalled"], [])
 
 
 class CaptureGateTests(unittest.TestCase):
@@ -704,7 +934,9 @@ class CaptureGateTests(unittest.TestCase):
     screen. Every step assertion is answered in-process, so the
     pictures are the whole of what is lost. These pins hold that loss
     to exactly the pictures: no capture, no capture failure, no
-    display guard, no static verdict — and never a silent one.
+    display guard, no static verdict — and never a silent one. The
+    presentation verdict is not in that set (see
+    RendererLivenessTests): it reads the app, not the screen.
     """
 
     def setUp(self):
@@ -802,23 +1034,20 @@ class CaptureGateTests(unittest.TestCase):
         self.assertNotIn("static_leg", data)
         self.assertFalse(os.path.exists(os.path.join(SCRATCH, "static_leg.json")))
 
-    def test_the_frame_stall_is_recorded_not_announced(self):
-        # The probe is kept: on macOS it is the measurement of the freeze
-        # the gate exists for. But a leg that claims nothing about the
-        # screen must not print a fault per scenario, so the stall list
-        # rides the evidence instead of the log.
-        runner.CAPTURE = False
-        runner.FRAME_PROBES[:] = [
-            {"scenario": "g1", "phase": "start", "swapped": 0, "ok": True},
-            {"scenario": "g1", "phase": "end", "swapped": 0, "ok": True},
-        ]
-        try:
-            runner.write_evidence("test run")
-        finally:
-            runner.FRAME_PROBES[:] = []
-        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
-        self.assertEqual(data["frames_stalled"], ["g1"])
+    def test_the_frame_probe_is_not_part_of_the_capture_gate(self):
+        # The probe judges the APP, not a picture: it is the one
+        # measurement a picture-less leg must keep, so no capture guard
+        # may stand it down (RendererLivenessTests holds the behaviour;
+        # this is the structural half — the verdict and its log lines
+        # carry no capture condition).
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        verdict = source[source.index("def liveness_outcome("):]
+        verdict = verdict[:verdict.index("\ndef ")]
+        self.assertNotIn("CAPTURE", verdict)
+        printer = source[source.index('run["frames_outcome"] = outcomes'):]
+        printer = printer[:printer.index("with open(os.path.join(RUN_DIR")]
+        self.assertNotIn("CAPTURE", printer)
+        self.assertIn("ui_test: NO FRAMES", printer)
 
     def test_the_verdict_lines_survive_a_cp1252_stdout(self):
         # CI's Windows runners give Python a cp1252 stdout. The verdict

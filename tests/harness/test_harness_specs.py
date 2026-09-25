@@ -400,15 +400,26 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("frameSwapped.connect", driver_source)
         self.assertIn("requestUpdate", driver_source)
         self.assertIn("isExposed", driver_source)
+        # The sample says whether the render was ASKED for and how long
+        # the loop had to deliver it: a count read cold would call an
+        # idle window frozen, and a signal that never attached would
+        # look exactly like one that stopped.
+        self.assertIn('"kicked": kicked', driver_source)
+        self.assertIn('"settle_ms": settle_ms', driver_source)
+        self.assertIn('"frame_signal": attached', driver_source)
         with open(_runner.__file__, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('"cmd": "frames"', source)
         self.assertIn("def frames_probe(", source)
-        self.assertIn("def frames_verdict(", source)
+        self.assertIn("def liveness_outcome(", source)
         start = source.index('frames_probe("start", spec["id"])')
         end = source.index('frames_probe("end", spec["id"])')
         self.assertLess(start, end)
         self.assertIn('run["frames"] = FRAME_PROBES', source)
+        # The outcome and its log lines are the leg's own fault lines,
+        # so a scenario that stalled fails whatever the leg captured.
+        self.assertIn('run["frames_outcome"] = outcomes', source)
+        self.assertIn("ui_test: NO FRAMES", source)
         # The kick must not assume the Qt6 spelling: Cura 5.x ships
         # Qt 5.15, where the same request is update().
         self.assertIn("getattr(window, \"requestUpdate\", None) or window.update",
