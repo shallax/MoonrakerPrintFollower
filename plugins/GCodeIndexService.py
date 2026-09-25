@@ -15,6 +15,7 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .GCodeIndex import (
+    HydrationYield,
     LayerMotionIndex,
     build_index_from_file,
     hydrate_layer_from_file,
@@ -1972,7 +1973,17 @@ class GCodeIndexService(QObject):
                         frontier = layer + 1
                         continue
                     if index.compact and layer not in index.hydrated_layers:
-                        if lease is None or not hydrate_layer_from_file(index, lease.path, layer):
+                        try:
+                            if lease is None or not hydrate_layer_from_file(
+                                    index, lease.path, layer,
+                                    should_stop=self._foreground_pending.is_set):
+                                break
+                        except HydrationYield:
+                            # A demand outranks the pass, and the layer
+                            # is abandoned BEFORE its arrays publish, so
+                            # nothing is latched and the frontier does
+                            # not advance: the foreground runs first and
+                            # this layer is reached again.
                             break
                     try:
                         payload = _prepare_layer(index, layer, demand_pending)
@@ -2030,10 +2041,18 @@ class GCodeIndexService(QObject):
             yield_at = time.monotonic()
             for layer in owed:
                 yield_at = passive_yield(time.monotonic(), yield_at)
-                if index.compact and layer not in index.hydrated_layers \
-                        and not hydrate_layer_from_file(index, lease.path, layer):
-                    Logger.log("w", "layer %d arrays failed to hydrate from %s — "
-                               "the split rides the estimate", layer, lease.path)
+                if not index.compact or layer in index.hydrated_layers:
+                    continue
+                try:
+                    if not hydrate_layer_from_file(
+                            index, lease.path, layer,
+                            should_stop=self._foreground_pending.is_set):
+                        Logger.log("w", "layer %d arrays failed to hydrate from %s — "
+                                   "the split rides the estimate", layer, lease.path)
+                except HydrationYield:
+                    # The debt is a background errand: a demand stops it
+                    # here rather than latching the rest as failures.
+                    break
             return [], {}
 
         self._submit("hydrate", hydrate_arrays, lease)

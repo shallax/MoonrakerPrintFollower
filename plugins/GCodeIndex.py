@@ -16,7 +16,7 @@ from .CachePolicy import evict_to_budget
 from array import array
 from bisect import bisect_right
 from dataclasses import dataclass, field
-from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
+from typing import BinaryIO, Callable, Dict, List, Optional, Sequence, Tuple
 
 try:
     from UM.Logger import Logger as _Logger
@@ -99,6 +99,27 @@ def passive_yield(now: float, last: float) -> float:
         return last
     time.sleep(_YIELD_SLEEP_S)
     return time.monotonic()
+
+
+class HydrationYield(Exception):
+    """Cooperative interruption of a layer hydration.
+
+    The reader walks a whole layer in one loop, so a dense layer is one
+    long interval between hand-backs — the interval a foreground seek
+    waits out. Nothing has been published when this is raised: the
+    arrays commit under the index's lock after the walk, so an
+    interrupted layer is still unhydrated and simply reached again.
+
+    It is not PlateProgress's PreparationYield because that module
+    imports this one.
+    """
+
+
+# The reader's own gate: the clock call and the cancellation check are
+# kept out of the per-line path by a counter, and the counter is small
+# enough that even a slow line cannot stretch the interval past a few
+# of the yield gate's periods.
+_HYDRATE_YIELD_MASK = 63
 
 _CACHE_MAGIC = b"MPFI110\0"
 # The header is a length-prefixed JSON blob inside the container, so the
@@ -1146,7 +1167,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
 
 
 def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
-                            keep_anchor: Optional[int] = None) -> bool:
+                            keep_anchor: Optional[int] = None,
+                            should_stop: Optional[Callable[[], bool]] = None) -> bool:
     """Populate motion data for one layer of a compact large-file index.
 
     Boundary indexing keeps RAM bounded for huge files. Motion commands are then
@@ -1165,6 +1187,13 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
     the E axis for the travel boundaries and the ;TYPE: markers for the
     feature runs. Both are seeded from the scan's per-layer opening state,
     so a hydrated layer matches the full scan it stands in for.
+
+    should_stop is consulted on the walk's own wall-clock gate, and the
+    layer is abandoned with HydrationYield when it answers True. It is
+    the background pass's caller that passes one: the pass runs on
+    speculation and must yield to a demand, while a demand's own
+    hydration is the foreground and has nothing to yield to. Callers
+    that pass nothing keep the plain hand-back and no interruption.
     """
     if not index.compact or layer in index.hydrated_layers:
         return True
@@ -1194,7 +1223,21 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             ys = array("f")
             zs = array("f")
             arcs: Dict[int, tuple] = {}
+            # The walk's own hand-back. Without it a dense layer is a
+            # single uninterrupted hold on the interpreter, and the
+            # seek that arrives while it runs waits the layer out.
+            yield_at = time.monotonic()
+            checked = 0
             while handle.tell() < end:
+                checked += 1
+                if (checked & _HYDRATE_YIELD_MASK) == 0:
+                    updated = passive_yield(time.monotonic(), yield_at)
+                    if updated != yield_at:
+                        yield_at = updated
+                        if should_stop is not None and should_stop():
+                            # Before the commit below: the layer keeps
+                            # every array it had, which is none of them.
+                            raise HydrationYield()
                 offset = handle.tell()
                 line = handle.readline(_MAX_LINE_BYTES + 1)
                 if not line:

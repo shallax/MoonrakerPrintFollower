@@ -3124,6 +3124,127 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                          "the restored follower's window was never re-raised")
 
 
+    def _dense_layer_file(self, lines=60000):
+        """ONE layer, and nothing else. The density is the point: the
+        batches cover the loop BETWEEN layers, and this is the walk
+        INSIDE one — a single uninterrupted interval unless the reader
+        gates it, which is what a seek arriving mid-walk waits out."""
+        holder = tempfile.TemporaryDirectory(prefix="mpf-dense-")
+        self.addCleanup(holder.cleanup)
+        path = os.path.join(holder.name, "dense.gcode")
+        with open(path, "w", encoding="ascii") as handle:
+            handle.write("M82\n;LAYER:0\n;TYPE:SKIN\n")
+            for step in range(lines):
+                handle.write("G1 X%d.%03d Y%d.%03d E%.5f\n"
+                             % (step % 180, step % 997, (step // 180) % 180,
+                                step % 991, step * 0.001))
+        return path
+
+    def test_a_dense_layer_yields_and_an_abandoned_walk_publishes_nothing(self):
+        # The reader's own gate, and the guarantee that rides it. The
+        # asks are counted, never timed: the gate is consulted on a line
+        # counter, so how often it was reached is a structural fact
+        # about the walk rather than a reading of the machine.
+        path = self._dense_layer_file()
+        index = build_index_from_file(path, compact=True)
+        lines = 60000
+        self.assertEqual(len(index.ranges), 1, "the fixture is not one layer")
+        self.assertNotIn(0, index.hydrated_layers)
+        module = self.qt.load("GCodeIndex")
+        asked = []
+        fires = []
+        real = module.passive_yield
+
+        def recorded(now, last):
+            asked.append(now)
+            updated = real(now, last)
+            if updated != last:
+                fires.append(now)
+            return updated
+
+        stops = []
+
+        def stop():
+            stops.append(1)
+            return len(stops) >= 2          # abandon on the second gate
+
+        with patch.object(module, "passive_yield", recorded):
+            with self.assertRaises(module.HydrationYield):
+                module.hydrate_layer_from_file(index, path, 0, should_stop=stop)
+        # The abandoned walk stops early by design, so its count is a
+        # floor; the walk that matters is the one below.
+        self.assertGreaterEqual(len(asked), 8, "the dense walk never gated")
+        self.assertGreaterEqual(len(fires), 2)
+        # Prompt, and counted rather than timed: the walk abandons on
+        # the consultation that first answers True, not several gates
+        # later.
+        self.assertEqual(len(stops), 2,
+                         "the walk consulted the stop %d times" % len(stops))
+        # Abandoned BEFORE the commit: the layer keeps every array it
+        # had, which is none of them, and nothing is latched as failed.
+        self.assertNotIn(0, index.hydrated_layers,
+                         "an abandoned hydration marked the layer hydrated")
+        if index.motion_x:
+            self.assertEqual(len(index.motion_x[0]), 0,
+                             "an abandoned hydration published motion arrays")
+        # Non-vacuity, and the structural claim: the same layer walked
+        # to the end asks its gate throughout — once per 64 lines, which
+        # is a property of the walk rather than of the machine.
+        before = len(asked)
+        with patch.object(module, "passive_yield", recorded):
+            self.assertTrue(module.hydrate_layer_from_file(index, path, 0),
+                            "the fixture's layer never hydrates at all")
+        self.assertIn(0, index.hydrated_layers)
+        self.assertGreater(len(index.motion_x[0]), 1000,
+                           "the control walk published no geometry")
+        self.assertGreaterEqual(
+            len(asked) - before, lines // 64 - 64,
+            "the walk to the end asked its gate %d times" % (len(asked) - before))
+
+    def test_the_ui_thread_heartbeat_keeps_beating_through_a_dense_hydration(self):
+        # The same one dense layer, walked on a worker while the main
+        # thread's own timer runs. A reader that never hands the
+        # interpreter back starves that timer for the whole walk.
+        #
+        # Its reach is the WIN32 leg. On Linux the interpreter's own
+        # 5 ms switch interval releases the GIL anyway, so this pin is
+        # green here with the walk's gate disabled — measured, and the
+        # reason the structural pin above carries the regression on
+        # this platform. Windows is where an explicit sleep is what
+        # wakes the GUI thread, and that leg runs this file.
+        path = self._dense_layer_file()
+        index = build_index_from_file(path, compact=True)
+        module = self.qt.load("GCodeIndex")
+        beats = []
+        heartbeat = self.qt.QTimer()
+        heartbeat.setInterval(_HEARTBEAT_INTERVAL_MS)
+        heartbeat.timeout.connect(lambda: beats.append(time.monotonic()))
+        self.addCleanup(heartbeat.stop)
+        heartbeat.start()
+        done = []
+
+        def walk():
+            module.hydrate_layer_from_file(index, path, 0)
+            done.append(True)
+
+        worker = threading.Thread(target=walk, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 60.0
+        while not done and time.monotonic() < deadline:
+            self.qt.events(_HEARTBEAT_INTERVAL_MS)
+        worker.join(5.0)
+        heartbeat.stop()
+        self.assertTrue(done, "the dense hydration never finished")
+        self.assertIn(0, index.hydrated_layers)
+        self.assertGreaterEqual(len(beats), 4,
+                                "the heartbeat produced %d beats" % len(beats))
+        worst = max(b - a for a, b in pairwise(beats))
+        self.assertLess(
+            worst - _HEARTBEAT_INTERVAL_MS / 1000.0, _YIELD_MAX_GAP_S,
+            "the UI thread's heartbeat stalled %.0f ms (interval %d ms)"
+            % (worst * 1000.0, _HEARTBEAT_INTERVAL_MS))
+
+
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class DecodedBudgetTests(unittest.TestCase):
     """The decoded tier's pin accounting: a render wrapper's
