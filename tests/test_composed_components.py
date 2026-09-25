@@ -3619,6 +3619,42 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         self.assertEqual(surface.nav["key"][-1], 2.0,
                          "the settled raster baked a superseded zoom")
 
+    def test_the_live_bake_hands_its_committed_composite_forward(self):
+        # The incremental path is WIRED, not merely available: the next
+        # window's bake of the SAME scene must receive the composite the
+        # last one committed, with its split, and a scene change (a new
+        # layer's payload) must receive nothing — a copy is only ever
+        # handed over for a picture the caller proves is this scene.
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        module = self.qt.load("MoonrakerMonitorModel")
+        real_nav = module.render_navigation_layer
+        handed = []
+
+        def recording_nav(window, plot, view, split=None, cancel=None,
+                          previous=None, previous_split=0):
+            handed.append((previous is not None, previous_split, split))
+            return real_nav(window, plot, view, split=split, cancel=cancel,
+                            previous=previous, previous_split=previous_split)
+
+        with patch.object(module, "render_navigation_layer", recording_nav):
+            payload = self._payload(600)
+            self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
+            self._drain_job(model, surface, self.qt)
+            self.assertTrue(surface.nav["url"], "the first bake never landed")
+            committed = surface.nav["key"][3]
+            clock.t += 4.0
+            self._poll(model, surface, payload, 5, 300, clock, armed,
+                       self.qt)
+            self._drain_job(model, surface, self.qt)
+            clock.t += 4.0
+            self._poll(model, surface, self._payload(600), 6, 60, clock,
+                       armed, self.qt)
+            self._drain_job(model, surface, self.qt)
+        self.assertEqual(handed, [(False, 0, 50), (True, committed, 300),
+                                  (False, 0, 60)],
+                         "the live bake mis-handed its composite")
+
     def test_attached_prefix_checkpoints_on_a_five_second_cadence(self):
         # 30 s of attached polls: the native prefix advances at most
         # once per cadence (never per motion threshold), and the last

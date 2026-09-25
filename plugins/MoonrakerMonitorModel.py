@@ -392,7 +392,17 @@ class _RenderSurface:
                     # settle. The settle must land its raster even with
                     # the popover closed (nothing else re-fires that
                     # demand), so the wake is not gated on visibility.
-                    "wake_settle": False}
+                    "wake_settle": False,
+                    # The committed composite itself, with the split it
+                    # was painted to and the key it carries. It is the
+                    # next bake's incremental base: a follow tick that
+                    # only advances the split strokes the delta over a
+                    # copy instead of re-walking the whole scene (the
+                    # measured cadence cost). The SPLIT is why this
+                    # image exists, so the key is kept beside it — a
+                    # demand whose hard key differs must never reuse
+                    # pixels from another scene.
+                    "image": None, "image_key": None, "image_split": None}
 
     def render_key(self):
         """The key a raster must carry to display on this surface
@@ -3546,6 +3556,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         plot = dict(surface.plot)
         split = desired.get("split")
         epoch = surface.job_epoch
+        # The incremental base: the last committed composite serves as
+        # the delta's canvas when it carries the SAME scene — the hard
+        # key matches on every field but the split — and the demand
+        # only moved the boundary forward. Anything else (a layer, a
+        # toggle, the zoom, a backward move) is a different picture
+        # and bakes whole.
+        previous = None
+        previous_split = 0
+        if surface.nav["image"] is not None and split is not None \
+                and self._nav_key_hard(surface.nav["image_key"]) \
+                == self._nav_key_hard(key):
+            held_split = surface.nav["image_split"]
+            if held_split is not None and 0 < held_split <= split:
+                previous = surface.nav["image"]
+                previous_split = held_split
         surface.nav["serial"] += 1
         serial = surface.nav["serial"]
         cancel = threading.Event()
@@ -3565,7 +3590,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
         def build(ticket=ticket, window=window, plot=plot, view=view,
                   split=split, cancel=cancel, surface=surface,
-                  serial=serial, epoch=epoch, key=key,
+                  serial=serial, epoch=epoch, key=key, previous=previous,
+                  previous_split=previous_split,
                   directory=self._raster_cache_dir,
                   bridge=self._raster_bridge):
             def emit(payload):
@@ -3575,7 +3601,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     emit(("cancelled",))
                     return
                 image = render_navigation_layer(window, plot, view,
-                                                split, cancel=cancel)
+                                                split, cancel=cancel,
+                                                previous=previous,
+                                                previous_split=previous_split)
                 if cancel.is_set():
                     emit(("cancelled",))
                     return
@@ -3676,6 +3704,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
+        # The composite this promotion came from becomes the next
+        # bake's incremental base. It is assigned on the handover, so
+        # exactly one composite beyond the live one is ever resident —
+        # the double-buffered peak the backing policy is written
+        # against, never a growing cache.
+        surface.nav["image"] = images[1]
+        surface.nav["image_key"] = key
+        surface.nav["image_split"] = _split
         if old and old != url:
             try:
                 os.unlink(QUrl(old).toLocalFile())
@@ -3892,6 +3928,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             surface.nav["job"] = None
         surface.nav["key"] = None
         surface.nav["url"] = ""
+        # The retained composite dies with the scene it belongs to:
+        # it is the incremental base for a demand whose hard key
+        # matches, and every lifecycle that lands here has changed
+        # the scene (a print switch, a popover close, a model
+        # teardown) — holding its pixels would be a residency with no
+        # reader.
+        surface.nav["image"] = None
+        surface.nav["image_key"] = None
+        surface.nav["image_split"] = None
         # The failure latch resets with the lifecycle: a reopened
         # popover (or a new print) retries a demand whose earlier
         # failure may have been transient (a payload since rebuilt).

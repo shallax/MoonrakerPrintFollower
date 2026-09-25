@@ -96,6 +96,36 @@ def _inked_total(image: QImage) -> int:
                for col in range(image.width()))
 
 
+def _raw_bytes(image: QImage) -> bytes:
+    bits = image.constBits()
+    bits.setsize(image.sizeInBytes())
+    return bytes(bits)
+
+
+def _byte_diffs(a: QImage, b: QImage) -> list:
+    """The pixels two renders disagree on, as (col, row) pairs.
+
+    The 4x canvas is 1.92 M pixels, so the scan compares raw rows and
+    refines only the rows that differ; the delta's anti-aliased seam is
+    a real, bounded deviation, never a blanket "approximately equal"."""
+    if a.size() != b.size() or a.format() != b.format():
+        raise AssertionError("the two canvases are not comparable")
+    width, line = a.width(), a.bytesPerLine()
+    raw_a, raw_b = _raw_bytes(a), _raw_bytes(b)
+    out = []
+    for row in range(a.height()):
+        start = row * line
+        head_a = raw_a[start:start + 4 * width]
+        head_b = raw_b[start:start + 4 * width]
+        if head_a == head_b:
+            continue
+        for col in range(width):
+            off = 4 * col
+            if head_a[off:off + 4] != head_b[off:off + 4]:
+                out.append((col, row))
+    return out
+
+
 def _travel_scene() -> dict:
     """The travels scene: one run crossing the live split, one lying
     entirely beyond it and one degenerate single point."""
@@ -791,6 +821,198 @@ class NativeNavigationTravelTests(unittest.TestCase):
         self.assertTrue(opened, "the render opened no painter to check")
         self.assertTrue(all(recorder.ended for recorder in opened),
                         "a raised render left its painter active on the canvas")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class NativeIncrementalNavigationTests(unittest.TestCase):
+    """The incremental nav bake: what the copied composite must
+    reproduce, what it may never lose, and the demands that bake
+    whole instead."""
+
+    # The resume vertex's own footprint: the delta's start cap
+    # re-covers a few anti-aliased fringe pixels the copy already
+    # inked at partial coverage (measured 6 per fringe row per seam
+    # at the 4x backing).
+    SEAM_PIXELS = 16
+
+    def _bounds(self, image, whole, diffs, allowance):
+        """Assert the delta's deviation is the seam and nothing else:
+        bounded in count, never LESS ink, and always inside the
+        stroke's own fringe (a deviation out in clear space would be a
+        mark the picture never had)."""
+        self.assertLessEqual(len(diffs), allowance,
+                             "the incremental bake diverged from the full one")
+        for col, row in diffs:
+            self.assertGreaterEqual(
+                image.pixelColor(col, row).alpha(),
+                whole.pixelColor(col, row).alpha(),
+                "the incremental bake took ink away at (%d, %d)" % (col, row))
+            neighbours = [(col - 1, row), (col + 1, row),
+                          (col, row - 1), (col, row + 1)]
+            self.assertTrue(
+                any(0 <= c < whole.width() and 0 <= r < whole.height()
+                    and whole.pixelColor(c, r).alpha() > 0
+                    for c, r in neighbours),
+                "the deviation at (%d, %d) reached clear space" % (col, row))
+
+    def test_the_incremental_bake_reproduces_the_full_composite(self):
+        # The delta's parity: the copied picture already carries the
+        # grid, the ghosts, the grey base and the printed prefix, so the
+        # strokes it adds are the full bake's own — but for the resume
+        # vertex, whose re-covered fringe is the whole measured
+        # deviation (22 pixels of this canvas's 1.92 M).
+        plot, view = _plot(), _travel_view(lineScale=8.0, backing=4.0)
+        window = {"prev": None, "next": None, "current": _travel_scene()}
+        base = render_navigation_layer(window, plot, view, split=10)
+        incremental = render_navigation_layer(window, plot, view, split=15,
+                                              previous=base, previous_split=10)
+        whole = render_navigation_layer(window, plot, view, split=15)
+        self._bounds(incremental, whole, _byte_diffs(whole, incremental),
+                     4 * self.SEAM_PIXELS)
+        # The picture the delta must carry, not merely its parity with
+        # the full bake: the class colour below the live split, the grey
+        # silhouette beyond it, and the travel token ending at the split.
+        tail = incremental.pixelColor(*_device_pixel(plot, view, 100.0, 230.0))
+        self.assertGreater(tail.alpha(), 0,
+                           "the delta lost the grey base's silhouette")
+        self.assertLess(abs(tail.red() - tail.green()), 20,
+                        "the delta printed past the live split")
+        under = incremental.pixelColor(*_device_pixel(plot, view, 40.0, 200.0))
+        self.assertEqual(under.alpha(), 255, "the delta lost the travel below the split")
+        self.assertGreater(under.blue(), under.red() + 30,
+                           "the delta's travel drew a foreign colour")
+        self.assertEqual(
+            incremental.pixelColor(*_device_pixel(plot, view, 100.0, 200.0)).alpha(), 0,
+            "the delta drew a travel past the live split")
+
+    def test_a_completed_layer_bakes_whole(self):
+        # The grey base lies UNDER the printed prefix, so its ink shows
+        # through the coloured stroke's fringes. The completed layer is
+        # the full-layer branch — no grey base — and that picture cannot
+        # be reached by adding strokes: the copy would keep the tint
+        # (measured 1412 fringe pixels of this canvas when it did). The
+        # completion bakes whole and lands the full bake's pixels
+        # exactly, with no seam at all.
+        plot, view = _plot(), _view(lineScale=8.0, backing=4.0)
+        window = {"prev": None, "next": None, "current": _payload()}
+        base = render_navigation_layer(window, plot, view, split=16)
+        completion = render_navigation_layer(window, plot, view, split=20,
+                                             previous=base, previous_split=16)
+        whole = render_navigation_layer(window, plot, view, split=20)
+        self.assertEqual(_byte_diffs(whole, completion), [],
+                         "the completed layer's picture kept the copied "
+                         "grey base's tint instead of baking whole")
+        # The control: the same copy under a PARTIAL demand is a
+        # stroke-add and does differ — the demand's own branch decides,
+        # not the presence of a copy.
+        partial = render_navigation_layer(window, plot, view, split=19,
+                                          previous=base, previous_split=16)
+        self.assertTrue(_byte_diffs(render_navigation_layer(
+            window, plot, view, split=19), partial) != [],
+            "the partial demand never took the copy at all")
+
+    def test_a_print_ordered_graze_band_bakes_exactly(self):
+        # The payload shape the model builds: motion indices are GLOBAL
+        # and monotone in print order (motion_edges numbers a layer's
+        # motions continuously), so a class's strokes are added after
+        # the geometry they overlap — which is exactly the order the
+        # delta composites in. The pin is the one shape where the order
+        # could disagree: two classes whose presented strokes graze,
+        # the later-printed one carrying the delta's range. Its new
+        # strokes land over the copy's pixels of the earlier class,
+        # and the full bake's later class wins the band in both.
+        #
+        # Where a class's LATER run grazes a class the paint loop
+        # strokes after it, the copy can hold pixels the new strokes
+        # would have gone under and the band takes the earlier class's
+        # colour until the next whole bake. That shape needs runs
+        # interleaved against the class order; it is not reachable here
+        # and is recorded in the commit message rather than pinned as
+        # an accepted deviation.
+        plot, view = _plot(), _view(lineScale=8.0, backing=4.0)
+        wall = [[20.0 + i * 20.0, 200.0, float(i)] for i in range(10)]
+        fill = [[20.0 + i * 20.0, 200.3, float(10 + i)] for i in range(10)]
+        window = {"prev": None, "next": None,
+                  "current": {"classes": {"WALL-INNER": [wall], "FILL": [fill]},
+                              "travels": [], "travelStarts": [],
+                              "travelEnds": [], "motions": 20}}
+        base = render_navigation_layer(window, plot, view, split=12)
+        incremental = render_navigation_layer(window, plot, view, split=18,
+                                              previous=base, previous_split=12)
+        whole = render_navigation_layer(window, plot, view, split=18)
+        self._bounds(incremental, whole, _byte_diffs(whole, incremental),
+                     4 * self.SEAM_PIXELS)
+        # The band where both strokes cover: the later-printed class
+        # (FILL, #1976d2) wins it in the full bake, and the delta must
+        # land that same pixel — the copy's green wall is what an
+        # ordering slip would leave showing.
+        band = _device_pixel(plot, view, 100.0, 200.0)
+        held = incremental.pixelColor(*band)
+        self.assertEqual(held.getRgb(), whole.pixelColor(*band).getRgb(),
+                         "the delta's graze band holds a foreign colour")
+        self.assertGreater(held.blue(), held.green() + 30,
+                           "the graze band kept the class the copy held")
+
+    def test_a_backward_move_bakes_whole(self):
+        # Painting cannot erase: a copy baked BEYOND the demand holds
+        # the printed colour on motions the demand's picture must show
+        # as the grey silhouette only. The guard refuses the delta (the
+        # prefix path's own rule), so the backward move lands the full
+        # bake's pixels exactly.
+        plot, view = _plot(), _view(lineScale=8.0, backing=4.0)
+        window = {"prev": None, "next": None, "current": _travel_scene()}
+        base = render_navigation_layer(window, plot, view, split=19)
+        held = base.pixelColor(*_device_pixel(plot, view, 100.0, 230.0))
+        self.assertGreater(held.red(), held.green() + 50,
+                           "the control's tail was never coloured")
+        backward = render_navigation_layer(window, plot, view, split=12,
+                                           previous=base, previous_split=19)
+        whole = render_navigation_layer(window, plot, view, split=12)
+        self.assertEqual(_byte_diffs(whole, backward), [],
+                         "the backward move kept a painted motion's ink")
+        tail = backward.pixelColor(*_device_pixel(plot, view, 100.0, 230.0))
+        self.assertGreater(tail.alpha(), 0,
+                           "the backward move dropped the silhouette")
+        self.assertLess(abs(tail.red() - tail.green()), 20,
+                        "the backward move kept the printed colour")
+
+    def test_a_foreign_copy_bakes_whole(self):
+        # The delta's canvas is the same render context at the same
+        # size: a copy from another view or a null one is refused, so a
+        # resize can never composite a stale-sized picture into the new
+        # canvas at the wrong places.
+        plot, view = _plot(), _view(lineScale=8.0, backing=4.0)
+        window = {"prev": None, "next": None, "current": _payload()}
+        other = _view(width=200, height=150, lineScale=8.0, backing=4.0)
+        foreign = render_navigation_layer(window, plot, other, split=10)
+        whole = render_navigation_layer(window, plot, view, split=12)
+        mixed = render_navigation_layer(window, plot, view, split=12,
+                                        previous=foreign, previous_split=10)
+        self.assertEqual(_byte_diffs(whole, mixed), [],
+                         "a differently-sized copy was composited anyway")
+        null_copy = render_navigation_layer(window, plot, view, split=12,
+                                            previous=QImage(), previous_split=10)
+        self.assertEqual(_byte_diffs(whole, null_copy), [],
+                         "a null copy was composited anyway")
+
+    def test_a_chain_of_deltas_never_takes_ink_away(self):
+        # The live cadence is a CHAIN: every window's bake resumes from
+        # the composite the last one committed. Each seam re-covers a
+        # few fringe pixels, so the chain's ink may only ever GROW — a
+        # pixel that lost ink is a hole in the warm raster, and a
+        # deviation far from the strokes would be a mark the scene never
+        # had.
+        steps = 18
+        plot, view = _plot(), _view(lineScale=8.0, backing=4.0)
+        window = {"prev": None, "next": None, "current": _payload()}
+        chain = render_navigation_layer(window, plot, view, split=1)
+        for step in range(2, steps + 1):
+            chain = render_navigation_layer(window, plot, view, split=step,
+                                            previous=chain,
+                                            previous_split=step - 1)
+        whole = render_navigation_layer(window, plot, view, split=steps)
+        self._bounds(chain, whole, _byte_diffs(whole, chain),
+                     self.SEAM_PIXELS * steps)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
