@@ -3531,7 +3531,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return image
 
     def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
-                      line_scale=8.0, grey=True):
+                      line_scale=8.0, grey=True, pan_x=0.0):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -3554,7 +3554,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # solid. The parity test passes the production 0.7.
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": line_scale, "compact": False,
-                "panX": 0.0, "panY": 0.0, "dpr": dpr}
+                "panX": pan_x, "panY": 0.0, "dpr": dpr}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
         stem = "fixture-%d" % PlateFaceRenderTests._raster_stem
@@ -3611,6 +3611,46 @@ class PlateFaceRenderTests(RealEngineTestCase):
             baseline = check
         return monitor, window, face, baseline
 
+
+    @staticmethod
+    def _is_travel(pixel):
+        """The travels' purple — the face's own established test, not a
+        loose tolerance: the bed's grey fill sits inside a wide colour
+        window and reads as ink otherwise."""
+        red, green, blue = (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF
+        return blue - red > 40 and blue > 120 and green < red + 60
+
+    def _colour_runs(self, image, face, window, predicate):
+        """The CONTIGUOUS runs of face columns carrying the predicate's
+        colour.
+
+        A per-column colour match on antialiased ink catches isolated
+        specks at a run's ends, so the raw column bounds wobble by a
+        pixel or two between two pictures of the same geometry. A drawn
+        stroke is a long run, so the run's own start and end are the
+        placements worth comparing — and its LENGTH is the control: a
+        translation preserves it, a threshold artifact does not."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        runs, start = [], None
+        for col in range(0, int(face.width())):
+            hit = False
+            for row in range(0, int(face.height())):
+                if predicate(image.pixel(int(origin.x()) + col,
+                                         int(origin.y()) + row)):
+                    hit = True
+                    break
+            if hit and start is None:
+                start = col
+            elif not hit and start is not None:
+                runs.append((start, col - 1))
+                start = None
+        if start is not None:
+            runs.append((start, int(face.width()) - 1))
+        return runs
+
+    @staticmethod
+    def _longest_run(runs):
+        return max(runs, key=lambda run: run[1] - run[0]) if runs else None
 
     def _pixel_diff(self, image, baseline, face, window):
         """The sampled pixels that differ from the baseline grab (a
@@ -6593,6 +6633,104 @@ class PlateFaceRenderTests(RealEngineTestCase):
     ARC_RUNS = ("M82\n;LAYER:0\n;TYPE:SKIN\n"
                 "G0 X105 Y125\nG3 X15 Y125 I-45 J0 E1\n"
                 "G0 X235 Y125\nG3 X145 Y125 I-45 J0 E2\n")
+
+    # The pan fixture: a wall and a travel on DIFFERENT rows but the
+    # same bed columns, so a displacement between the two producers
+    # shows as a change in their horizontal separation, whatever the
+    # rest of the face does.
+    PAN_WALL = [[30.0 + i * 4.0, 200.0, float(i)] for i in range(26)]
+    PAN_TRAVEL = [[30.0 + i * 4.0, 120.0, float(i)] for i in range(26)]
+
+    def test_a_pan_moves_the_travels_with_the_walls(self):
+        """The live pan symptom's own shape: after a camera move the
+        travels must land where the walls are, not where the pane used
+        to be. Both are baked into their rasters and the exact scene
+        anchors both to fill the face, so the pan rides in the pixels —
+        the wall and the travel have to move by the SAME amount. A
+        travels raster carried over across a pan leaves the travel
+        exactly where it was while the walls move, which is the reported
+        tens-of-pixels miss (worst on the furthest move)."""
+        monitor, window, face, _baseline = self._mount_empty()
+        # The dot is a red mark of its own: left live it is what a red
+        # census finds, and the wall it stands in for is never measured
+        # at all. _mount_empty clears it.
+        self.assertIsNone(face.property("dot"),
+                          "the toolhead dot would be read as wall ink")
+        face.setProperty("lineScale", 8.0)
+        # Off by default, and the travels image is gated on it.
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        # The payload here is the LAYER payload — the same dict the
+        # scrub vector carries and the renderer's painters read.
+        payload = {"classes": {"WALL-OUTER": [self.PAN_WALL]},
+                   "travels": [self.PAN_TRAVEL],
+                   "travelStarts": [], "travelEnds": [], "motions": 26}
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        bed = plot_value["bed"]
+        # plotWidth is already device px and sx is plotWidth/mm, so the
+        # pan is a quarter of the plot width and NOT scaled again.
+        pan = float(bed["plotWidth"]) * 0.25
+
+        def install(pan_x):
+            # The pan is BAKED: the renderer paints the shifted picture
+            # and the scene anchors it to fill the face, so the ink
+            # moves by pan_x and the image itself never translates.
+            layer = self._native_layer(payload, face, pan_x=pan_x)
+            self._printer.setScrub(payload)
+            self._printer.setLayers({"prev": None, "current": layer, "next": None})
+            self._printer.setSplit(26)
+            face.setProperty("viewPanX", pan_x)
+            face.setProperty("viewPanY", 0.0)
+            self.pump(30)
+            window.grabWindow()
+            self.pump(30)
+            return self._wait_purple(window, face)[0]
+
+        def wall_run(image):
+            return self._longest_run(self._colour_runs(
+                image, face, window,
+                lambda p: self._matches(p, (0xD3, 0x2F, 0x2F))))
+
+        def travel_run(image):
+            return self._longest_run(
+                self._colour_runs(image, face, window, self._is_travel))
+
+        before = install(0.0)
+        wall_before, travel_before = wall_run(before), travel_run(before)
+        self.assertIsNotNone(wall_before, "the walls never painted at pan 0")
+        self.assertIsNotNone(travel_before, "the travels never painted at pan 0")
+
+        after = install(pan)
+        wall_after, travel_after = wall_run(after), travel_run(after)
+        self.assertIsNotNone(wall_after, "the walls never painted after the pan")
+        self.assertIsNotNone(travel_after, "the travels never painted after the pan")
+
+        wall_shift = wall_after[0] - wall_before[0]
+        travel_shift = travel_after[0] - travel_before[0]
+        # The pan has to be big enough that a stale pane is unmistakable
+        # rather than a pixel of resampling noise.
+        self.assertAlmostEqual(float(wall_shift), pan, delta=2.0,
+                               msg="the pan never moved the walls to where "
+                                   "it was asked to (%d px for %.1f)"
+                                   % (wall_shift, pan))
+        # The translation control: the same stroke is the same length.
+        # A threshold artifact or a re-clipped raster changes it.
+        for label, run_before, run_after in (("wall", wall_before, wall_after),
+                                             ("travel", travel_before,
+                                              travel_after)):
+            self.assertAlmostEqual(
+                float(run_after[1] - run_after[0]),
+                float(run_before[1] - run_before[0]), delta=2.0,
+                msg="the %s changed length across the pan (%s -> %s) — it "
+                    "was not translated, it was redrawn" % (label, run_before,
+                                                            run_after))
+        self.assertAlmostEqual(
+            float(travel_shift), float(wall_shift), delta=2.0,
+            msg="the travels moved %d px while the walls moved %d px — the "
+                "two producers disagree about the pan"
+                % (travel_shift, wall_shift))
 
     @staticmethod
     def _arc_payload(gcode, split=None):
