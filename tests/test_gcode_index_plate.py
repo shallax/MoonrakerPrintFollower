@@ -3214,6 +3214,14 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         # wakes the GUI thread, and that leg runs this file.
         path = self._dense_layer_file()
         index = build_index_from_file(path, compact=True)
+        # A layer only hydrates from a COMPACT index, and only if the
+        # scan found it; without either the call returns immediately
+        # and this test would measure nothing. Both are asserted here
+        # so a bad fixture names itself instead of reading as a walk
+        # that failed.
+        self.assertTrue(index.compact, "the fixture did not build a compact index")
+        self.assertEqual(len(index.ranges), 1,
+                         "the scan found %d layers in the fixture" % len(index.ranges))
         module = self.qt.load("GCodeIndex")
         beats = []
         heartbeat = self.qt.QTimer()
@@ -3221,20 +3229,19 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         heartbeat.timeout.connect(lambda: beats.append(time.monotonic()))
         self.addCleanup(heartbeat.stop)
         heartbeat.start()
-        done = []
+        walked = []
 
         def walk():
-            module.hydrate_layer_from_file(index, path, 0)
-            done.append(True)
+            walked.append(module.hydrate_layer_from_file(index, path, 0))
 
         worker = threading.Thread(target=walk, daemon=True)
         worker.start()
         deadline = time.monotonic() + 60.0
-        while not done and time.monotonic() < deadline:
+        while not walked and time.monotonic() < deadline:
             self.qt.events(_HEARTBEAT_INTERVAL_MS)
         worker.join(5.0)
         heartbeat.stop()
-        self.assertTrue(done, "the dense hydration never finished")
+        self.assertEqual(walked, [True], "the dense hydration did not complete")
         self.assertIn(0, index.hydrated_layers)
         self.assertGreaterEqual(len(beats), 4,
                                 "the heartbeat produced %d beats" % len(beats))
