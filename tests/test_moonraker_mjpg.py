@@ -4,6 +4,7 @@ contracts. Qt-guarded — the container runs them for real against the
 production class with a fake network manager and a fake reply."""
 
 import os
+import threading
 import time
 import unittest
 
@@ -12,7 +13,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
+    from PyQt6.QtCore import QByteArray, QObject, QThread, QUrl, pyqtSignal
     from PyQt6.QtGui import QColor, QImage
     from qt_runtime_support import QT_AVAILABLE, runtime
     if QT_AVAILABLE:
@@ -135,6 +136,16 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
                 return True
             self.qt.events(25)
         return predicate()
+
+    def _tick_and_install(self):
+        """Drive one render tick by hand and wait for its frame to reach
+        the screen. The decode runs off the Qt thread, so the tick only
+        hands the frame over — the install lands on a later Qt turn."""
+        rendered = self.item._decodes_rendered
+        self.item._render()
+        self.assertTrue(
+            self._drain_until(lambda: self.item._decodes_rendered > rendered),
+            "the decoded frame never reached the screen")
 
     def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
         def _get_with_type(request):
@@ -669,13 +680,13 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         started = time.monotonic()
         self._drain(250)  # the frame waits while the Qt thread is busy
         waited = (time.monotonic() - started) * 1000.0
-        self.item._render()
+        self._tick_and_install()
         held = self.item._display_lag_ms_total
         self.assertGreaterEqual(held, waited * 0.8)
         # A frame rendered at once is a small lag: the measurement is
         # THIS frame's age, not a constant and not a stale stamp.
         self._reply().deliver(_multipart(frame))
-        self.item._render()
+        self._tick_and_install()
         self.assertLess(self.item._display_lag_ms_total - held, waited * 0.5)
 
     def test_the_stats_interval_separates_parsed_from_displayed(self):
@@ -894,6 +905,233 @@ class DecodeThrottleTests(unittest.TestCase):
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class DecodeOffTheQtThreadTests(unittest.TestCase):
+    """The decode worker: the Qt thread keeps the hand-over and the
+    install, and the JPEG decode — the one large piece of per-frame work
+    — happens on a thread of the renderer's own. What these pin is that
+    the split holds: which thread decodes, that at most one decode is in
+    flight (the rate cap and the memory budget), that a superseded or
+    post-shutdown result is never installed, and that the Qt thread's
+    share per frame is the hand-over rather than the decode."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        self.nam = FakeNam()
+        self.item = MoonrakerMJPGImage()
+        self.item._network_manager = self.nam  # the injection seam
+        self.item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
+        self.addCleanup(self.item.stop)
+
+    def _reply(self):
+        return self.nam.requests[-1]
+
+    def _drain(self, milliseconds):
+        self.qt.events(milliseconds)
+
+    def _drain_until(self, predicate, milliseconds=4000):
+        deadline = time.monotonic() + milliseconds / 1000.0
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            self.qt.events(25)
+        return predicate()
+
+    def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
+        def _get_with_type(request):
+            reply = FakeReply(content_type)
+            self.nam.requests.append(reply)
+            return reply
+        self.nam.get = _get_with_type
+        self.item.start()
+
+    def _patch_decode(self, replacement):
+        """Patch the module-level decode seam the worker resolves. The
+        patch targets the function's own globals — the binding the
+        worker actually calls — because the unittest runtime's double
+        entry can alias the module."""
+        globals_dict = MoonrakerMJPGImage._render.__globals__
+        old = globals_dict.get("_decode_jpeg")
+        globals_dict["_decode_jpeg"] = replacement
+        self.addCleanup(globals_dict.__setitem__, "_decode_jpeg", old)
+
+    def _tick_and_install(self):
+        """Drive one render tick by hand and wait for its frame to reach
+        the screen: the tick hands the frame over, and the install lands
+        on a later Qt turn."""
+        rendered = self.item._decodes_rendered
+        self.item._render()
+        self.assertTrue(
+            self._drain_until(lambda: self.item._decodes_rendered > rendered),
+            "the decoded frame never reached the screen")
+
+    def test_the_decode_runs_off_the_qt_thread(self):
+        # The whole job: the JPEG decode must not run on the Qt thread.
+        # The seam is module-level for exactly this — the worker's call
+        # is observable, and what it observes is which thread ran it.
+        threads = []
+
+        def recording(frame):
+            threads.append((threading.get_ident(), QThread.currentThread()))
+            return QImage.fromData(frame)
+
+        self._patch_decode(recording)
+        main_ident = threading.get_ident()
+        main_thread = QThread.currentThread()
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.assertTrue(
+            self._drain_until(lambda: self.item.framesDisplayed == 1),
+            "the frame never reached the screen")
+        self.assertTrue(threads, "the worker never called the decode seam")
+        self.assertNotIn(main_ident, [ident for ident, _ in threads],
+                         "the decode ran on the thread the test runs on")
+        self.assertEqual(len({ident for ident, _ in threads}), 1,
+                         "the decodes did not all run on the one worker")
+        for _ident, thread in threads:
+            self.assertIsNot(thread, main_thread,
+                             "the decode ran on the Qt thread the item was made on")
+            self.assertIsNot(thread, self.item.thread(),
+                             "the decode ran on the thread the item lives on")
+        self.assertEqual(self.item.imageWidth, 40,
+                         "the frame on screen is the one the worker decoded")
+
+    def test_a_burst_keeps_one_decode_in_flight_and_installs_the_newest(self):
+        # The rate cap survives the move: the tick hands over at most one
+        # frame per decode, so a fast source can neither pile decodes up
+        # nor hold more than one decoded image outside the Qt thread.
+        # What arrives during a decode stays pending — the picture that
+        # lands is the one the decode started on, and the newest arrival
+        # takes the very next tick.
+        gate = threading.Event()
+        entered = threading.Event()
+        calls = []
+
+        def blocking(frame):
+            calls.append(frame)
+            if not entered.is_set():
+                entered.set()
+                gate.wait(2.0)
+            return QImage.fromData(frame)
+
+        self._patch_decode(blocking)
+        self._start()
+        self.item._render_timer.stop()  # every tick from here is by hand
+        first = [_jpeg(40, 30, shade=40 + index) for index in range(5)]
+        self._reply().deliver(b"".join(_multipart(frame) for frame in first))
+        self.item._render()  # one tick: one frame handed over, held there
+        self.assertTrue(self._drain_until(entered.is_set),
+                        "the worker never picked the frame up")
+        # The stream keeps delivering while that decode is out — the
+        # case the cap exists for: the newer frames must wait, not
+        # queue another decode (or another decoded image) behind it.
+        later = [_jpeg(40, 30, shade=45 + index) for index in range(4)]
+        self._reply().deliver(b"".join(_multipart(frame) for frame in later))
+        self.assertEqual(self.item.framesParsed, 9)
+        for _ in range(4):
+            self.item._render()  # ticks while that decode is still out
+            self._drain(5)
+        self.assertEqual(self.item._decodes_rendered, 0,
+                         "a frame reached the screen before its decode returned")
+        gate.set()
+        self.assertTrue(
+            self._drain_until(lambda: self.item._decodes_rendered == 1),
+            "the held decode's frame never reached the screen")
+        self._drain(50)  # anything queued behind it would land in here
+        self.assertEqual(len(calls), 1,
+                         "a second frame was handed over while one decoded")
+        self.assertEqual(self.item.framesDisplayed, 1)
+        # Nine parsed: one through the held decode, one still pending
+        # (the newest arrival), the other seven superseded in the buffer.
+        self.assertEqual(self.item.framesDropped, 7)
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 44,
+                         "the installed frame is not the one handed over")
+        self.assertEqual(self.item._decode_in_flight, 0,
+                         "the in-flight slot never came back")
+        # The newer arrivals were held, not lost: the next tick — the
+        # first after the decode came back — displays the newest one.
+        self._tick_and_install()
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
+                         "the newest arrival never reached the screen")
+        self.assertEqual(self.item.framesDisplayed, 2)
+
+    def test_a_decode_in_flight_at_shutdown_is_never_installed(self):
+        # Cancellation and teardown together: a decode that started
+        # before the stream stopped belongs to a stream that no longer
+        # exists, so its result is discarded on arrival — and the worker
+        # is joined rather than left running behind the item.
+        gate = threading.Event()
+        entered = threading.Event()
+        decoded = threading.Event()
+
+        def blocking(frame):
+            if not entered.is_set():
+                entered.set()
+                gate.wait(2.0)
+            image = QImage.fromData(frame)
+            decoded.set()
+            return image
+
+        self._patch_decode(blocking)
+        self._start()
+        self.item._render_timer.stop()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        self.item._render()
+        self.assertTrue(self._drain_until(entered.is_set),
+                        "the worker never picked the frame up")
+        gate.set()
+        # Wait for the worker without running the event loop: the
+        # result must still be in flight when the stream stops, which is
+        # the case this pins.
+        deadline = time.monotonic() + 4.0
+        while not decoded.is_set() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(decoded.is_set(), "the worker never finished the decode")
+        self.item.stop()
+        self.assertIsNotNone(self.item._decoder,
+                             "the worker was orphaned rather than joined")
+        self.assertFalse(self.item._decoder.isRunning(),
+                         "a worker outlived the item's stop()")
+        self._drain(50)  # the queued result arrives, and is dropped
+        self.assertEqual(self.item._decodes_rendered, 0)
+        self.assertEqual(self.item.framesDisplayed, 0)
+        self.assertTrue(self.item._image.isNull(),
+                        "a decode superseded by stop() reached the screen")
+        self.assertEqual(self.item._decode_in_flight, 0)
+
+    def test_the_tick_hands_the_frame_over_instead_of_decoding_it(self):
+        # What the Qt thread pays per frame is the hand-over plus the
+        # install; the decode's own milliseconds are the worker's. The
+        # two are accounted separately, so the split is measurable
+        # rather than asserted.
+        self._start()
+        self.item._render_timer.stop()
+        self._reply().deliver(_multipart(_jpeg(400, 300)))
+        self._tick_and_install()
+        self.assertGreater(self.item._decode_ms_total, 0.0)
+        self.assertLess(self.item._tick_ms_total,
+                        self.item._decode_ms_total / 4.0,
+                        "the Qt-thread tick cost as much as the decode")
+
+    def test_a_tick_without_a_worker_leaves_the_frame_pending(self):
+        # The worker is built with the stream and joined with it, so a
+        # tick that finds none is the shutdown race's own shape: the
+        # frame must stay where it is, not be consumed by nothing.
+        item = MoonrakerMJPGImage()
+        self.addCleanup(item.stop)
+        item._network_manager = self.nam
+        item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
+        item._pending_frame = _jpeg(40, 30)
+        item._pending_arrival = time.monotonic()
+        item._render()
+        self.assertIsNotNone(item._pending_frame,
+                             "a tick with no worker consumed the frame")
+        self.assertEqual(item._decode_in_flight, 0)
+        self.assertEqual(item._decodes_rendered, 0)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class RendererPathCoverageTests(unittest.TestCase):
     """The renderer's QPainter/sink/teardown paths (the 2026-09-19
     per-file coverage tightening): paint, the diagnostic getters, the
@@ -1021,8 +1259,14 @@ class RendererPathCoverageTests(unittest.TestCase):
     def test_an_undecodable_frame_counts_a_decode_failure(self):
         self._start()
         self.item._pending_frame = b"\xff\xd8\xff\xd9"
+        self.item._pending_arrival = time.monotonic()
         before = self.item._decode_failures
         self.item._render()
+        # The decode runs off the Qt thread now: the failure is counted
+        # when the worker's empty result is delivered back.
+        deadline = time.monotonic() + 4.0
+        while self.item._decode_failures == before and time.monotonic() < deadline:
+            self._drain(25)
         self.assertEqual(self.item._decode_failures, before + 1)
 
     def test_the_trace_line_logs_when_enabled(self):

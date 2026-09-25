@@ -12,10 +12,11 @@
 
 from __future__ import annotations
 
+import queue
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QImage, QPainter
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtQuick import QQuickPaintedItem
@@ -63,6 +64,76 @@ STATS_EMIT_INTERVAL_MS = 1000
 # exactly that.
 SUMMARY_INTERVAL_S = 5.0
 
+# The decode threads that outlived their items (a decode that will not
+# return inside the shutdown wait). A QThread destroyed while running
+# aborts the process, so an item that could not join its worker hands
+# it here instead: the thread still exits at its own next loop turn,
+# and nothing it emits has a receiver left to reach.
+_ORPHANED_DECODERS: list = []
+
+
+def _decode_jpeg(frame: bytes) -> QImage:
+    """The one place a JPEG becomes a QImage.
+
+    Module-level so the thread it runs on is a testable fact rather
+    than an implementation detail: the worker calls this, and nothing
+    Qt-affine is in it — a bytes payload in, a value type out."""
+    return QImage.fromData(frame)
+
+
+class _FrameDecoder(QThread):
+    """The JPEG decode, off the Qt thread.
+
+    What crosses the boundary is a value and nothing else: the frame's
+    bytes go in, a QImage comes back through a queued signal (Qt's
+    implicit sharing makes the hand-over a pointer swap), and the item
+    that installs and paints it never leaves its own thread. The item,
+    its QML bindings and the network reply are all still touched from
+    the Qt thread only.
+
+    One decode is in flight at a time, and the tick that submits is the
+    rate cap's: a fast source therefore cannot pile work up here, and a
+    superseded decode is dropped by generation rather than displayed.
+    """
+
+    # generation, (the decoded image or None for a failed decode, the
+    # decode's own milliseconds).
+    decoded = pyqtSignal(int, object)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._queue: queue.Queue = queue.Queue()
+
+    def submit(self, generation: int, frame: bytes) -> None:
+        self._queue.put((generation, frame))
+
+    def stop(self) -> bool:
+        """Join the worker: an item must not be destroyed under a live
+        thread, and a decode is bounded by one frame's own size. False
+        means the join failed and the thread was orphaned instead."""
+        if not self.isRunning():
+            return True
+        self._queue.put(None)
+        if self.wait(2000):
+            return True
+        # A decode that outlives the wait: the item is about to die and
+        # this thread must not die with it.
+        Logger.log("w", "Moonraker MJPEG: the frame decoder did not stop in time")
+        _ORPHANED_DECODERS.append(self)
+        self.setParent(None)
+        return False
+
+    def run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            generation, frame = item
+            started = time.perf_counter()
+            image = _decode_jpeg(frame)
+            elapsed = (time.perf_counter() - started) * 1000.0
+            self.decoded.emit(generation, (None if image.isNull() else image, elapsed))
+
 
 class MoonrakerMJPGImage(QQuickPaintedItem):
     """A plugin-owned MJPEG renderer forked from Cura's
@@ -96,12 +167,21 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # spot that decodes and repaints — follows it.
         self._target_fps = 0.0
 
-        # The render scheduler: decode-and-paint only while the stream
+        # The render scheduler: install-and-paint only while the stream
         # runs, always from the newest pending frame.
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(RENDER_INTERVAL_MS)
         self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._render_timer.timeout.connect(self._render)
+
+        # The decode worker: the JPEG decode is the one large piece of
+        # work this plugin used to do on the Qt thread, and it is a
+        # value transform — bytes in, QImage out — so it runs here
+        # instead. Created with the stream, joined by stop().
+        self._decoder: Optional[_FrameDecoder] = None
+        self._decode_generation = 0
+        self._decode_in_flight = 0
+        self._in_flight_arrival = 0.0
 
         # The diagnostics snapshot: the counters emit through one
         # low-frequency signal when they actually moved.
@@ -136,17 +216,21 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # The interval accounting (the Windows diagnosis). Everything
         # here answers one of three questions the frame rates alone
         # cannot: how much of the Qt thread this pipeline actually
-        # costs (decode and drain, the only parts that run there),
-        # whether a frame reached the screen late or was never parsed
-        # at all (the display lag), and whether the Qt thread was
-        # between drains long enough for the camera's own send to
-        # block (the drain gap). The maxima are the interval's, reset
-        # by every stats tick, so a spike cannot hide inside an
-        # average.
+        # costs (the tick and the install, with the drain — the parts
+        # that run there now that the decode does not), whether a frame
+        # reached the screen late or was never parsed at all (the
+        # display lag), and whether the Qt thread was between drains
+        # long enough for the camera's own send to block (the drain
+        # gap). The maxima are the interval's, reset by every stats
+        # tick, so a spike cannot hide inside an average.
         self._drain_ms_total = 0.0
         self._drain_ms_max = 0.0
         self._drain_gap_ms_max = 0.0
         self._last_drain_end = 0.0
+        self._tick_ms_total = 0.0
+        self._install_ms_total = 0.0
+        self._recent_tick_ms = 0.0
+        self._recent_install_ms = 0.0
         self._display_lag_ms_total = 0.0
         self._display_lag_ms_max = 0.0
         self._pending_arrival = 0.0
@@ -374,6 +458,15 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         if self._stream_epoch == 0.0:
             self._stream_epoch = time.monotonic()
         self._begin_request()
+        if self._decoder is None:
+            self._decoder = _FrameDecoder(self)
+            # Queued explicitly: the result arrives on the worker and is
+            # installed on this thread, and the connection type is part
+            # of the contract rather than of the emitting thread.
+            self._decoder.decoded.connect(self._on_decoded,
+                                          Qt.ConnectionType.QueuedConnection)
+        if not self._decoder.isRunning():
+            self._decoder.start()
         self._render_timer.start()
         self._stats_timer.start()
 
@@ -388,6 +481,18 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._started = False
         self._render_timer.stop()
         self._stats_timer.stop()
+        # A decode in flight belongs to a stream that no longer exists:
+        # bumping the generation discards its result on arrival, and
+        # the join means no worker outlives the items it would install
+        # into.
+        self._decode_generation += 1
+        self._decode_in_flight = 0
+        self._in_flight_arrival = 0.0
+        if self._decoder is not None and not self._decoder.stop():
+            # The worker could not be joined and now belongs to nobody:
+            # a restart builds a fresh one rather than reusing a thread
+            # that is still winding down.
+            self._decoder = None
         # The last decoded frame stays on the item: the pane's
         # disconnected veil covers a stale frame by design.
 
@@ -452,6 +557,12 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._pending_arrival = 0.0
         self._multipart_boundary = None
         self._requests_started += 1
+        # A result from the previous source must never be installed on
+        # this one: the generation is what a late decode is measured
+        # against.
+        self._decode_generation += 1
+        self._decode_in_flight = 0
+        self._in_flight_arrival = 0.0
         # The recent-delta baselines restart with the stream: a long
         # stopped interval must not dilute the first measurement. Both
         # are seeded here rather than at the first tick, so every
@@ -461,7 +572,8 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._last_stats_snapshot = self._stats_snapshot()
         self._last_stats_at = time.monotonic()
         self._last_meters = (self._drain_ms_total, self._display_lag_ms_total,
-                             self._decode_ms_total, self._decodes_rendered)
+                             self._decode_ms_total, self._decodes_rendered,
+                             self._tick_ms_total, self._install_ms_total)
         self._last_drain_end = 0.0
         self._drain_ms_max = 0.0
         self._drain_gap_ms_max = 0.0
@@ -731,28 +843,65 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
     # -- the render scheduler -----------------------------------------
 
     def _render(self) -> None:
-        if self._pending_frame is None:
+        """The tick: hand the newest frame to the decoder.
+
+        The rate cap IS this tick — it is what a fast source cannot
+        exceed — and the decode it used to do is now the worker's, so
+        all that is left here is the hand-over. One decode at a time:
+        a tick that finds one in flight leaves the newest frame
+        pending rather than queueing a second behind it, which keeps
+        the decodes no more frequent than the cap and the memory at
+        one frame in the worker.
+        """
+        if self._pending_frame is None or self._decode_in_flight:
             return
+        if self._decoder is None:
+            # No worker (a stream that stopped under a queued tick):
+            # nothing to hand a frame to, and nothing lost either — the
+            # frame stays pending where the next stream's tick can take
+            # it.
+            return
+        started = time.perf_counter()
         frame = self._pending_frame
         arrival = self._pending_arrival
         self._pending_frame = None
         self._pending_arrival = 0.0
-        started = time.perf_counter()
-        image = QImage.fromData(frame)
-        elapsed = (time.perf_counter() - started) * 1000.0
-        self._decode_ms_total += elapsed
-        self._decode_ms_max = max(self._decode_ms_max, elapsed)
-        if elapsed > self._recent_decode_ms_max:
-            self._recent_decode_ms_max = elapsed
-        if image.isNull():
+        self._decode_generation += 1
+        self._decode_in_flight = self._decode_generation
+        self._in_flight_arrival = arrival
+        self._decoder.submit(self._decode_generation, frame)
+        self._tick_ms_total += (time.perf_counter() - started) * 1000.0
+
+    def _on_decoded(self, generation: int, payload: object) -> None:
+        """A decoded frame, on the Qt thread.
+
+        The generation gate is latest-wins at the far end of the pipe:
+        a decode whose frame a restart (or a stop) has superseded is
+        dropped here, never installed. Only one decode is ever in
+        flight, so results arrive in order — a late one can never
+        overwrite a newer picture.
+        """
+        if generation != self._decode_in_flight:
+            return
+        self._decode_in_flight = 0
+        image, decode_ms = payload
+        self._decode_ms_total += decode_ms
+        self._decode_ms_max = max(self._decode_ms_max, decode_ms)
+        if decode_ms > self._recent_decode_ms_max:
+            self._recent_decode_ms_max = decode_ms
+        if image is None:
             self._decode_failures += 1
             return
+        started = time.perf_counter()
         self._frames_displayed += 1
         self._decodes_rendered += 1
+        arrival = self._in_flight_arrival
+        self._in_flight_arrival = 0.0
         if arrival:
-            # How old the frame was when it reached the screen: a
-            # stalled Qt thread shows up here first, because the frame
-            # is already in hand and only the hand-off is late.
+            # How old the frame was when it reached the screen: with
+            # the decode off this thread, what is left of the age is
+            # the decode plus however long the Qt thread took to come
+            # back to it.
             lag = (time.monotonic() - arrival) * 1000.0
             self._display_lag_ms_total += lag
             if lag > self._display_lag_ms_max:
@@ -766,6 +915,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             self._image_rect = rect
             self.imageSizeChanged.emit()
         self.update()
+        self._install_ms_total += (time.perf_counter() - started) * 1000.0
 
     # -- the diagnostics snapshot -------------------------------------
 
@@ -792,17 +942,23 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             self._recent_parsed_count = snapshot[1] - self._last_stats_snapshot[1]
             self._recent_displayed_count = snapshot[2] - self._last_stats_snapshot[2]
             meters = (self._drain_ms_total, self._display_lag_ms_total,
-                      self._decode_ms_total, self._decodes_rendered)
+                      self._decode_ms_total, self._decodes_rendered,
+                      self._tick_ms_total, self._install_ms_total)
             if self._last_meters is not None:
                 drain_ms = meters[0] - self._last_meters[0]
                 lag_ms = meters[1] - self._last_meters[1]
                 decode_ms = meters[2] - self._last_meters[2]
                 decodes = meters[3] - self._last_meters[3]
+                tick_ms = meters[4] - self._last_meters[4]
+                install_ms = meters[5] - self._last_meters[5]
                 self._recent_decodes = decodes
-                # The Qt-thread share of the interval, in the unit the
-                # frame-rate complaint is really about.
+                # The Qt-thread share of the interval, split into the
+                # parts that still run there — and, separately, what the
+                # worker now does off it.
                 self._recent_decode_ms = round(decode_ms / interval, 1)
                 self._recent_drain_ms = round(drain_ms / interval, 1)
+                self._recent_tick_ms = round(tick_ms / interval, 1)
+                self._recent_install_ms = round(install_ms / interval, 1)
                 self._recent_decode_ms_per_frame = round(decode_ms / max(1, decodes), 2)
                 self._recent_drain_ms_per_frame = round(
                     drain_ms / max(1, self._recent_parsed_count), 2)
@@ -870,8 +1026,9 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             "displayed %d frames (%.1f fps), render tick %d ms (asked %.1f fps), "
             "latest-frame drops %.1f fps, "
             "decode failures %d, oversized drops %d, "
-            "Qt thread %.1f ms/s (decode %.1f, drain %.1f), "
-            "decode %.2f ms/frame (max %.2f), drain %.2f ms/frame (max %.2f ms), "
+            "Qt thread %.1f ms/s (tick %.1f, install %.1f, drain %.1f), "
+            "worker decode %.1f ms/s (%.2f ms/frame, max %.2f), "
+            "drain %.2f ms/frame (max %.2f ms), "
             "drain gap max %.1f ms, display lag %.1f ms mean (max %.1f ms), "
             "pending frame age %.1f ms, bandwidth %.1f KB/s (%.2f Mbps), "
             "average frame %.1f KB, maximum frame %.1f KB, "
@@ -894,9 +1051,11 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             self._latest_wins_drops / elapsed,
             self._decode_failures,
             self._oversized_drops,
-            self._recent_decode_ms + self._recent_drain_ms,
-            self._recent_decode_ms,
+            self._recent_tick_ms + self._recent_install_ms + self._recent_drain_ms,
+            self._recent_tick_ms,
+            self._recent_install_ms,
             self._recent_drain_ms,
+            self._recent_decode_ms,
             self._recent_decode_ms_per_frame,
             self._recent_decode_ms_max,
             self._recent_drain_ms_per_frame,
