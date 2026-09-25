@@ -3139,7 +3139,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         batches cover the loop BETWEEN layers, and this is the walk
         INSIDE one — a single uninterrupted interval unless the reader
         gates it, which is what a seek arriving mid-walk waits out."""
-        holder = tempfile.mkdtemp(prefix="mpf-dense-")
+        holder = tempfile.mkdtemp(prefix="dense-layer-fixture-")
         # mkdtemp, not TemporaryDirectory: the latter's finalizer
         # removed the directory while the test was still using it,
         # which surfaced as the scan finding no file (and, before the
@@ -3152,6 +3152,8 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                 handle.write("G1 X%d.%03d Y%d.%03d E%.5f\n"
                              % (step % 180, step % 997, (step // 180) % 180,
                                 step % 991, step * 0.001))
+        self.assertTrue(os.path.exists(path),
+                        "the fixture's file vanished before it was read")
         return path
 
     def test_a_dense_layer_yields_and_an_abandoned_walk_publishes_nothing(self):
