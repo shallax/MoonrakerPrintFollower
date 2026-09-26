@@ -431,9 +431,9 @@ class ComposedComponentTests(unittest.TestCase):
         service._plate_layers_memos = {("part.gcode", 100, 1): object()}
         service._manual_anchor = 4
         service._manual_split = 12
-        service._split_floor = 7
-        service._split_refined = 9
-        service._split_floor_key = ("part.gcode", 4)
+        service._split_tracker.begin(("part.gcode", 100, 1), 4)
+        service._split_tracker.floor = 7
+        service._split_tracker.refined = 9
         service._visited = {1, 2}
         service._visited_upto = 5
         service._visited_settled = frozenset({1})
@@ -463,9 +463,9 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(service._plate_layers_memos, {})
         self.assertIsNone(service._manual_anchor)
         self.assertIsNone(service._manual_split)
-        self.assertIsNone(service._split_floor)
-        self.assertIsNone(service._split_refined)
-        self.assertIsNone(service._split_floor_key)
+        self.assertIsNone(service._split_tracker.floor)
+        self.assertIsNone(service._split_tracker.refined)
+        self.assertIsNone(service._split_tracker.key)
         self.assertEqual(service._visited, set())
         self.assertEqual(service._visited_upto, -1)
         self.assertEqual(service._visited_settled, frozenset())
