@@ -777,7 +777,12 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # parsed-but-not-displayed is the backlog, and the Qt-thread
         # share says whether the plugin or the source owns it.
         self._start()
-        frames = [_jpeg(40, 30, shade=50 + index) for index in range(4)]
+        # The workload is SIZED to the metric's own resolution. The
+        # published shares are display-rounded (1 and 2 decimals), so
+        # four 40x30 frames decoded faster than the rounding and the
+        # shares read 0.0 on a fast runner — the live failure was
+        # exactly that at one decimal. Real frames decode measurably.
+        frames = [_jpeg(640, 480, shade=50 + index) for index in range(4)]
         self._reply().deliver(b"".join(_multipart(item) for item in frames))
         self.assertTrue(
             self._drain_until(lambda: self.item._recent_parsed_count == 4),
@@ -787,7 +792,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # 5% tolerance, not a lifetime and not a guess.
         self.assertGreaterEqual(self.item._recent_interval_s, 0.9)
         self.assertLessEqual(self.item._recent_interval_s, 1.5)
-        # A 40x30 JPEG can decode in less than 0.05 ms on a fast
+        # A JPEG can decode in less than 0.05 ms on a fast
         # runner. The diagnostic deliberately rounds to tenths, so
         # zero is a valid displayed rate. Check the measured work and
         # the per-frame arithmetic instead of requiring a slow CPU.
