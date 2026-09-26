@@ -5619,6 +5619,26 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          "the new generation accepted stale Canvas pixels")
         self.assertEqual(face.property("_vectorCoversShown"), -2)
 
+    def test_return_to_standing_split_queues_after_intervening_upload(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        old = {"epoch": epoch, "world": world, "valid": True,
+               "from": 0, "split": 18}
+        face.setProperty("_deliveredComposition", old)
+        intervening = dict(old, split=8)
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 1, "first": intervening,
+            "last": intervening, "consensus": True})
+        self.assertFalse(QMetaObject.invokeMethod(
+            face, "_progressPaintSatisfied", Q_RETURN_ARG(QVariant)))
+        self.assertTrue(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        self.assertTrue(face.property("_canvasTransaction").toVariant()["pending"])
+
     def test_equivalent_extra_canvas_paints_share_one_valid_delivery(self):
         # Qt can coalesce multiple identical onPaint events into one
         # painted() signal. The delivery is not ambiguous when both

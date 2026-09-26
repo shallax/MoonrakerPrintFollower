@@ -1248,6 +1248,11 @@ Item {
     }
 
     function _progressPaintSatisfied() {
+        // A standing receipt cannot satisfy a demand while another bitmap
+        // is being uploaded. Reversing back to that receipt must queue a
+        // replacement for the intervening paint.
+        if (root._canvasTransaction.count > 0)
+            return false;
         var receipt = root._deliveredComposition;
         var split = root.progress != null ? root.progress.split : null;
         if (receipt == null || receipt.epoch !== root._progressWorldEpoch || receipt.world !== _worldKeyOf() || receipt.split !== split || receipt.paintKey !== _progressKeyOf())
@@ -1284,6 +1289,8 @@ Item {
                 view: _viewKey()
             };
         }
+        if (hadPaint && !_progressPaintSatisfied())
+            root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
         return result.accepted;
     }
 
