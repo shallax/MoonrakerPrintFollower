@@ -716,28 +716,20 @@ Item {
 
     function _splitGate() {
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.splitGate(root._textureReady,
-            root._vectorWorldShown, root._progressWorldEpoch,
-            root._vectorSplitShown, split, root.attached);
+        return ExactComposition.splitGate(root._textureReady, root._vectorWorldShown, root._progressWorldEpoch, root._vectorSplitShown, split, root.attached);
     }
 
     function _compositionReady() {
         // Retained image visibility must not read live Image.status.
-        var layer = root.progress != null && root.progress.layers != null
-            ? root.progress.layers.current : null;
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.compositionReady(layer, split,
-            root._textureReady, root._splitGate(), root._vectorCoversShown);
+        return ExactComposition.compositionReady(layer, split, root._textureReady, root._splitGate(), root._vectorCoversShown);
     }
 
     function _partialPrefixReady() {
-        var layer = root.progress != null && root.progress.layers != null
-            ? root.progress.layers.current : null;
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null,
-            root._prefixStatusReady, root._splitGate(),
-            root._vectorCoversShown, root._vectorSplitShown, split,
-            root._prefixWasShown, _vectorInkless(), root._vectorCoversFrom);
+        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null, root._prefixStatusReady, root._splitGate(), root._vectorCoversShown, root._vectorSplitShown, split, root._prefixWasShown, _vectorInkless(), root._vectorCoversFrom);
     }
 
     function _prefixFrom() {
@@ -1179,8 +1171,7 @@ Item {
         root._progressLayerKey = layerKey;
         root._progressWorldKey = key;
         root._progressWorldEpoch += 1;
-        root._canvasTransaction = ExactComposition.newWorld(
-            root._canvasTransaction, root._progressWorldEpoch, key);
+        root._canvasTransaction = ExactComposition.newWorld(root._canvasTransaction, root._progressWorldEpoch, key);
         root._textureReady = false;
         root._vectorCoversShown = -2;
         root._vectorSplitShown = -1;
@@ -1198,12 +1189,12 @@ Item {
     function _requestProgressPaint() {
         var next = ExactComposition.request(root._canvasTransaction);
         root._canvasTransaction = next.state;
-        if (next.start) progressCanvas.requestPaint();
+        if (next.start)
+            progressCanvas.requestPaint();
     }
 
     function _deliverProgressPaint() {
-        var result = ExactComposition.delivered(root._canvasTransaction,
-            root._progressWorldEpoch, _worldKeyOf());
+        var result = ExactComposition.delivered(root._canvasTransaction, root._progressWorldEpoch, _worldKeyOf());
         root._canvasTransaction = result.state;
         if (result.accepted) {
             root._vectorCoversShown = result.receipt.from;
@@ -2222,8 +2213,7 @@ Item {
                         from: root._vectorCoversFrom,
                         split: root._lastSplit
                     };
-                    root._canvasTransaction = ExactComposition.painted(
-                        root._canvasTransaction, nextReceipt);
+                    root._canvasTransaction = ExactComposition.painted(root._canvasTransaction, nextReceipt);
                 }
             }
         }
