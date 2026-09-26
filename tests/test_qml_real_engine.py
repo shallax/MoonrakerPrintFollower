@@ -7449,6 +7449,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._image_with_source(face, "slow-travels"),
             "the travels' decode had started before the split was full")
 
+        # The premise the census judges: a settled partial split hands
+        # the printed history to the prefix, and its shown record is the
+        # delivered word for that. A trim still in flight at the flip
+        # lands after it instead, dropping the printed ink mid-decode
+        # and leaving the census nothing to judge.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not face.property("_prefixWasShown"):
+            self.pump(5)
+        self.assertTrue(
+            face.property("_prefixWasShown"),
+            "the partial composition never handed the printed history to the "
+            "prefix: the full split's hold had no history to stand")
+
         # The full split: the model publishes NO scrub vector here
         # (`_scrub_vector_for` returns None at split == motions), so the
         # canvas has no geometry of its own to redraw — the picture it
