@@ -24,7 +24,8 @@ if QT_AVAILABLE:
 
     from plugins import MonitorControls as controls_module
     from plugins.MonitorControls import MonitorControls
-    from plugins.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN, can_macro,
+    from plugins.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN,
+                                            can_apply_temperature_preset, can_macro,
                                             can_restart, can_z_offset)
     from plugins.MonitorTuning import MonitorTuning
 
@@ -221,6 +222,22 @@ class ProjectionTests(ControlsCase):
         self.assertFalse(values["canRunSetup"])
         self.assertFalse(values["canApplyTemperaturePreset"])
         self.assertFalse(values["canSaveConfig"])
+
+    def test_a_paused_print_still_allows_a_temperature_preset(self):
+        # The presets left the setup row: a firmware restart is unsafe
+        # in either print state, a heater target is not. Paused keeps
+        # the setup one-shots refused while the preset rows stay live.
+        self.data.rebuild(objects=("quad_gantry_level", "bed_mesh"),
+                          auxiliary={"configfile": {"config": {}}},
+                          presets={"presets": {"pla": {"name": "PLA", "values": {}}}})
+        self.assertTrue(self.controls.values["canApplyTemperaturePreset"])
+        self.data.observation = record(state="paused")
+        self.data.rebuild()
+        values = self.controls.values
+        self.assertTrue(values["canApplyTemperaturePreset"],
+                        "a paused print locked the temperature presets")
+        self.assertFalse(values["canRunSetup"],
+                         "a paused print allowed a firmware restart")
 
     def test_the_save_config_summary_is_quiet_on_a_clean_printer(self):
         self.data.rebuild(auxiliary={"configfile": {"config": {}}})
@@ -539,7 +556,8 @@ class PresetTests(ControlsCase):
         self.data.rebuild(presets={"presets": {}, "cooldownGcode": "M104 S0"})
         self.assertEqual(self.controls.values["temperaturePresetNames"], ["Cooldown"])
         self.controls.apply_preset(0)
-        self.assertEqual(self.commands.calls[-1], ("script", "Cooldown", "M104 S0", can_restart))
+        self.assertEqual(self.commands.calls[-1],
+                         ("script", "Cooldown", "M104 S0", can_apply_temperature_preset))
 
     def test_a_non_mapping_preset_payload_is_ignored(self):
         self.data.rebuild(presets={"presets": ["junk"]})
@@ -578,17 +596,34 @@ class PresetTests(ControlsCase):
         self.controls.apply_preset(0)
         self.assertEqual(self.commands.calls[-1], ("script", "PLA", "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200"
                                                    "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=45"
-                                                   "\nM117 PLA", can_restart))
+                                                   "\nM117 PLA", can_apply_temperature_preset))
 
-    def test_apply_preset_honours_the_bounds_and_the_setup_gate(self):
+    def test_apply_preset_honours_the_bounds_and_the_print_state_gate(self):
         self.controls.apply_preset(0)
         self.controls.apply_preset(-1)
         self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {
             "extruder": {"bool": True, "value": 200}}}}})
-        self.commands.setup_allowed = False
+        # The gate is the print state, NOT setup_allowed: that one
+        # refuses a paused print, which is the case this action exists
+        # for (the live report: a live button whose click was dropped
+        # here in silence).
+        self.data.observation = record(state="printing")
         self.controls.apply_preset(0)
         self.controls.apply_preset(7)
         self.assertEqual(self.commands.calls, [])
+
+    def test_a_paused_print_dispatches_the_preset_and_the_cooldown(self):
+        # The whole point of the dedicated row: a paused print holds no
+        # moving toolhead, so the preset has to reach the printer.
+        self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {
+            "extruder": {"bool": True, "value": 200}}}}})
+        self.data.observation = record(state="paused")
+        self.controls.apply_preset(0)
+        self.assertEqual(self.commands.calls[-1][0], "script",
+                         "a paused print dropped the preset's dispatch")
+        self.controls.heaters_off()
+        self.assertEqual(self.commands.calls[-1][1], "Cooldown",
+                         "a paused print dropped the cooldown's dispatch")
 
     def test_a_preset_with_nothing_to_send_stays_silent(self):
         self.data.rebuild(presets={"presets": {"off": {"name": "Off", "values": {
@@ -606,13 +641,13 @@ class PresetTests(ControlsCase):
         self.assertEqual(self.commands.calls[-1], ("script", "Cooldown",
                                                    "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0"
                                                    "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=0",
-                                                   can_restart))
+                                                   can_apply_temperature_preset))
 
-    def test_cooldown_needs_commands_and_the_setup_gate(self):
+    def test_cooldown_needs_commands_and_the_print_state_gate(self):
         self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {
             "extruder": {"bool": False, "value": 200}}}}})
         self.controls.heaters_off()
-        self.commands.setup_allowed = False
+        self.data.observation = record(state="printing")
         self.controls.heaters_off()
         self.assertEqual(self.commands.calls, [])
 

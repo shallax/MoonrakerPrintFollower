@@ -190,6 +190,21 @@ def can_restart(obs: Observation) -> Verdict:
     return Verdict("allowed", "")
 
 
+def can_apply_temperature_preset(obs: Observation) -> Verdict:
+    """Temperature presets and the cooldown: refused while the print
+    RUNS, allowed while it is PAUSED. A paused print holds no moving
+    toolhead, and setting a heater target is what a pause is for; the
+    restart row's blanket refusal covered both states because a
+    firmware restart is unsafe in either. The rest of the map follows
+    can_restart: unknown fails closed, and busy is not a click-time
+    gate."""
+    blocked = _prelude(obs)
+    if blocked: return Verdict("disabled", blocked)
+    if obs.state == "printing": return Verdict("disabled", R_PRINTING)
+    if not obs.state: return Verdict("disabled", R_UNKNOWN)
+    return Verdict("allowed", "")
+
+
 def can_power(obs: Observation, locked_while_printing) -> Verdict:
     """Per power device (the shipped per-row can_toggle, round-2
     A3/F4): a locked device refuses while a print runs; an unlocked

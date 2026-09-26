@@ -10,7 +10,7 @@ from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
 )
-from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
 
 # The in-flight latch's hard ceiling: a gesture's pending state expires
 # on its own after a few multiples of the status lag (the review's
@@ -189,7 +189,11 @@ class MonitorControls(QObject):
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
             "temperaturePresetItems": [{"index": i, "name": item["name"], "active": self.preset_active(item, aux)} for i, item in enumerate(self._presets)],
-            "canApplyTemperaturePreset": setup and bool(self._presets),
+            # The presets do NOT ride the setup row: a firmware restart
+            # is unsafe in either print state, a heater target is not,
+            # so this one action takes its own policy row (a pause is
+            # exactly when a temperature change is wanted).
+            "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
             "speedFactorPercent": self._display("speed-factor", int(round(number(move.get("speed_factor")) * 100))),
             "flowFactorPercent": self._display("flow-factor", int(round(number(move.get("extrude_factor")) * 100))),
             "zOffset": number(origin[2]) if len(origin) > 2 else 0,
@@ -268,7 +272,10 @@ class MonitorControls(QObject):
         self._commands.request("Host restart", "machine/reboot", {}, rule=can_restart)
 
     def apply_preset(self, index):
-        if not self._commands.setup_allowed or not 0 <= index < len(self._presets): return
+        # The dispatch gate is the SAME row the button reads, never
+        # setup_allowed: that one refuses a paused print, so a live
+        # button would have had its click dropped here in silence.
+        if not self._allowed(can_apply_temperature_preset) or not 0 <= index < len(self._presets): return
         # The rule rides the queued entry too (the phase-6 security
         # re-review, D1): the four one-shots below were the only
         # dispatch sites without one.
@@ -283,7 +290,7 @@ class MonitorControls(QObject):
             command = f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}" if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}"
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
-        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_restart)
+        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_apply_temperature_preset)
 
     def heaters_off(self):
         """Cooldown: set every heater appearing in the profiles to 0 target.
@@ -292,7 +299,7 @@ class MonitorControls(QObject):
         auxiliary objects include temperature *sensors*, which take no
         target and must not receive a heater command.
         """
-        if not self._commands.setup_allowed: return
+        if not self._allowed(can_apply_temperature_preset): return
         commands, seen = [], set()
         for item in self._presets:
             for name, attributes in (item.get("preset") or {}).get("values", {}).items():
@@ -304,7 +311,7 @@ class MonitorControls(QObject):
                 command = (f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}"
                            if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}")
                 commands.append(command + " TARGET=0")
-        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_restart)
+        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_apply_temperature_preset)
 
     def factor(self, kind, percent, preview=False):
         percent = max(10 if kind == "speed" else 50, int(percent))

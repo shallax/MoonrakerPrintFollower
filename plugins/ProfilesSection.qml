@@ -72,7 +72,7 @@ ColumnLayout {
             }
             UM.Label {
                 height: 36 * screenScaleFactor
-                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive ? "Disabled during a print" : "—")) : "—"
+                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Disabled during a print" : "—")) : "—"
                 wrapMode: Text.NoWrap
                 elide: Text.ElideRight
                 color: UM.Theme.getColor("text")
@@ -88,7 +88,7 @@ ColumnLayout {
                     width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
                     // sentence in the tooltip (the ruling).
-                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
+                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Temperature profiles are disabled while the print is running. A paused print allows them." : "")) : ""
                 }
             }
         }
