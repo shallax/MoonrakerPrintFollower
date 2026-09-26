@@ -103,6 +103,13 @@ class _FrameDecoder(QThread):
     # can split the round trip without a shared clock: how long the
     # frame waited in the queue is the worker's to measure, and how long
     # the result then waited for the Qt thread is the Qt thread's.
+    #
+    # Every stamp here and beside it is perf_counter. The round trip is
+    # read as the SUM of its shares, and a share measured on a clock of
+    # its own resolution cannot be added to one that is not: monotonic
+    # on Windows is GetTickCount64, quantised to the 15.625 ms tick, so
+    # a queue wait or a return read there is wrong by up to a tick
+    # against a decode that is not.
     decoded = pyqtSignal(int, object)
 
     def __init__(self, parent=None) -> None:
@@ -110,7 +117,7 @@ class _FrameDecoder(QThread):
         self._queue: queue.Queue = queue.Queue()
 
     def submit(self, generation: int, frame: bytes) -> None:
-        self._queue.put((generation, frame, time.monotonic()))
+        self._queue.put((generation, frame, time.perf_counter()))
 
     def stop(self) -> bool:
         """Join the worker: an item must not be destroyed under a live
@@ -134,14 +141,14 @@ class _FrameDecoder(QThread):
             if item is None:
                 return
             generation, frame, submitted = item
-            picked = time.monotonic()
+            picked = time.perf_counter()
             started = time.perf_counter()
             image = _decode_jpeg(frame)
             elapsed = (time.perf_counter() - started) * 1000.0
             self.decoded.emit(
                 generation,
                 (None if image.isNull() else image, elapsed,
-                 (picked - submitted) * 1000.0, time.monotonic()))
+                 (picked - submitted) * 1000.0, time.perf_counter()))
 
 
 class MoonrakerMJPGImage(QQuickPaintedItem):
@@ -599,7 +606,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # and the Qt-thread milliseconds can never disagree about which
         # interval they describe.
         self._last_stats_snapshot = self._stats_snapshot()
-        self._last_stats_at = time.monotonic()
+        self._last_stats_at = time.perf_counter()
         self._last_meters = (self._drain_ms_total, self._display_lag_ms_total,
                              self._decode_ms_total, self._decodes_rendered,
                              self._tick_ms_total, self._install_ms_total,
@@ -729,8 +736,9 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # The arrival stamp the display lag is measured from: the age
         # of the frame when it reaches the screen is the latency the
         # user sees, and the one number a decode-rate readout cannot
-        # show.
-        self._pending_arrival = time.monotonic()
+        # show. perf_counter, because the lag subtracts it from a stamp
+        # taken where the round trip ends.
+        self._pending_arrival = time.perf_counter()
 
     @staticmethod
     def _content_length(header_block: bytes) -> Optional[int]:
@@ -963,7 +971,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         """
         if generation != self._decode_in_flight:
             return
-        arrived_at = time.monotonic()
+        arrived_at = time.perf_counter()
         self._decode_in_flight = 0
         image, decode_ms, queue_wait_ms, emitted_at = payload
         self._decode_ms_total += decode_ms
@@ -1025,7 +1033,10 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     def _emit_stats(self) -> None:
         snapshot = self._stats_snapshot()
-        now = time.monotonic()
+        # perf_counter, with _last_stats_at and _pending_arrival: this
+        # stamp is the far end of the interval and of the pending
+        # frame's age, and both of those are subtracted from it.
+        now = time.perf_counter()
         recent = (self._recent_incoming, self._recent_displayed)
         if self._last_stats_snapshot is not None:
             interval = max(0.001, now - self._last_stats_at)
