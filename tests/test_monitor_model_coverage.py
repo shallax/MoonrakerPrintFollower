@@ -1744,6 +1744,46 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.assertEqual(surface.nav["key"], key)
         self.assertTrue(os.path.isdir(retired), "the promotion removed the live retiree")
 
+    def test_a_superseded_navigation_raster_survives_a_live_gesture(self):
+        # A camera gesture presents its ENTRY raster for the gesture's
+        # whole life, so a bake committing mid-gesture must not unlink
+        # the file the face is showing — and the supersede's unlink
+        # keys off the surface's CURRENT url, which that bake has just
+        # moved on. The hold is explicit and clears with the gesture,
+        # so a released file is still collected.
+        surface = self.surface()
+        self.model.setFollowerAttached(False)
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
+                           "split": None}
+        key = self.model._navigation_key(surface)
+        surface.job_epoch = 0
+        surface.nav["serial"] = 4
+        surface.nav["job"] = {"key": key, "cancel": self.cancelled_event(),
+                              "epoch": 0, "serial": 4, "backing": 4.0}
+        # Inside the cache directory, so the prune is a real test of
+        # the hold rather than of a directory it never scans.
+        held = os.path.join(self.model._raster_cache_dir, "held-nav.png")
+        pathlib.Path(held).write_bytes(b"held")
+        surface.nav["url"] = self.local_url(held)
+        self.model.setFollowerGestureRaster(surface.nav["url"])
+
+        url = self.local_url(os.path.join(tempfile.mkdtemp(prefix="mpfxtest-nav-"),
+                                          "nav.png"))
+        self.model._nav_committed(("nav", None, url, key),
+                                  ("popover", -1, 0, 0, key, "nav", None, 0, 4))
+        self.assertTrue(os.path.exists(held),
+                        "the supersede unlinked the gesture's own picture")
+        self.model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(held),
+                        "the prune collected the gesture's own picture")
+        # The gesture ends: the hold releases and the next prune takes
+        # the file, so nothing accumulates behind the gesture.
+        self.model.setFollowerGestureRaster("")
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(os.path.exists(held),
+                         "the hold outlived the gesture that made it")
+
     @staticmethod
     def cancelled_event():
         import threading

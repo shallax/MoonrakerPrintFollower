@@ -734,6 +734,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # closed popover freezes its payload keys.
         self._follower_popover_open = False
         self._follower_interacting = False
+        # The navigation raster URL an ACTIVE camera gesture has
+        # latched. The face presents that exact file for the gesture's
+        # whole life, so neither a supersede's unlink nor the cache
+        # prune may remove it — both key off the surface's CURRENT
+        # url, which a mid-gesture bake moves on, taking the picture
+        # off the screen. Cleared when the gesture ends, so nothing
+        # accumulates.
+        self._follower_gesture_raster = ""
         self._picker_popover_open = False
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
@@ -2888,6 +2896,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_interacting = interacting
         self._publish()
 
+    @pyqtSlot(str)
+    def setFollowerGestureRaster(self, url):
+        """The navigation raster the face's live gesture is holding.
+
+        The gesture latches its entry raster and presents that exact
+        file for the gesture's whole life, so it has to survive a
+        supersede: a bake committing mid-gesture otherwise unlinked
+        the very picture on screen. Empty when no gesture is live.
+        """
+        url = str(url or "")
+        if url == self._follower_gesture_raster:
+            return
+        self._follower_gesture_raster = url
+
     @pyqtSlot(bool)
     def setPickerPopoverOpen(self, popover_open):
         """The picker popover's open state, the same gate."""
@@ -3839,7 +3861,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.nav["image"] = images[1]
         surface.nav["image_key"] = key
         surface.nav["image_split"] = _split
-        if old and old != url:
+        if old and old != url and not self._gesture_holds_nav(old):
             try:
                 os.unlink(QUrl(old).toLocalFile())
             except OSError:
@@ -3934,6 +3956,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         picture."""
         return os.path.normcase(os.path.normpath(path))
 
+    def _gesture_holds_nav(self, url):
+        """Whether a live gesture still presents this navigation file.
+
+        The prune honours the reference set, but a supersede unlinks
+        directly and would take the gesture's own picture off the
+        screen. The file is not leaked: the hold clears when the
+        gesture ends and the next prune collects it."""
+        held = self._follower_gesture_raster
+        if not held or not url:
+            return False
+        return self._raster_file_key(QUrl(held).toLocalFile()) == \
+            self._raster_file_key(QUrl(url).toLocalFile())
+
     def _referenced_raster_files(self):
         """The asset files the live wrappers still display, plus the
         retained navigation raster: the prune must never unlink a URL
@@ -3941,6 +3976,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         navigation asset (the url cleared) drops out of the set and
         the next prune collects it."""
         referenced = set()
+        # The live gesture's latch, before anything else: it is the
+        # one file whose removal is visible immediately.
+        if self._follower_gesture_raster:
+            referenced.add(self._raster_file_key(
+                QUrl(self._follower_gesture_raster).toLocalFile()))
         for surface in self._plate_surfaces.values():
             nav_url = surface.nav.get("url") if surface.nav else None
             if nav_url:

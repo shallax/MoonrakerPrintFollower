@@ -3415,6 +3415,13 @@ if QT_AVAILABLE:
         def setFollowerInteracting(self, interacting):
             self.calls.append(("interacting", bool(interacting)))
 
+        # The gesture's file hold: the face names the navigation
+        # raster it is presenting, so a mid-gesture supersede cannot
+        # unlink it. An undefined slot aborts the calling handler.
+        @pyqtSlot(str)
+        def setFollowerGestureRaster(self, url):
+            self.calls.append(("gestureRaster", str(url or "")))
+
         @pyqtSlot()
         def setFollowerGestureBake(self):
             self.calls.append(("gestureBake", None))

@@ -125,6 +125,9 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setFollowerInteracting": "b11",
     "MoonrakerMonitorModel.setFollowerGestureBake": "b11",
+    # The gesture's navigation-file hold: the face names the raster it
+    # is presenting so a mid-gesture supersede cannot unlink it.
+    "MoonrakerMonitorModel.setFollowerGestureRaster": "b11",
     "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",

@@ -101,23 +101,6 @@ Item {
     // latch): set at _enterInteraction, irrelevant once the gesture
     // ends (the idle binding reverts to the live eligible URL).
     property string _gestureNavSource: ""
-    // The barrier's bound, in exit re-checks at the panExitCheck
-    // cadence: about 2.4 s of a settled camera with the exact scene
-    // still unassembled. It must clear the SLOWEST honest handover —
-    // the measured cold one is ~1.9 s end to end — or it would cut
-    // short real renders instead of only breaking wedges, and it
-    // must be short enough that a wedge resolves while the user is
-    // still looking at it.
-    readonly property int _barrierMaxTicks: 30
-    // Consecutive exit re-checks made with the camera at rest and the
-    // barrier still unpassed. Nothing else bounds the hold: a
-    // component the barrier waits on can fail to arrive — a load
-    // that errors, or the prefix a frozen model withholds — and a
-    // wheel-only gesture has no release to end it, so the interaction
-    // stands for good with the publications frozen behind it (the
-    // live wedge). Zeroed whenever the camera moves, so a live glide
-    // is never cut short.
-    property int _barrierTicks: 0
     // The retained frame's standing state, written by ITS handler —
     // the live prefix's visible reads this one-way value instead of
     // the retained ITEM's visible, whose mutual read the engine
@@ -258,19 +241,18 @@ Item {
                 if (!zoomAnimator.running && root._progressDirty) {
                     progressCanvas.requestPaint();
                 }
-                if (zoomAnimator.running || root.settleTimer.running) {
-                    // The camera is still moving, so the barrier is
-                    // pending for the honest reason: the bound's
-                    // count has not started.
-                    root._barrierTicks = 0;
-                } else if (root._barrierTicks >= root._barrierMaxTicks) {
-                    // At rest, and the scene still has not
-                    // assembled: hand back on what is there rather
-                    // than hold the warm raster for good.
-                    endInteraction();
-                    return;
-                } else {
-                    root._barrierTicks = root._barrierTicks + 1;
+                // The camera has settled, so the hold no longer needs
+                // the model to stand still: release the publication
+                // freeze HERE, while the warm raster still fronts the
+                // picture. Withholding it until the handover made the
+                // two wait on each other — the freeze withheld the
+                // very assets the barrier was waiting for, and a
+                // wheel-only gesture has no release to break the
+                // cycle. The handover is unchanged: the exact scene
+                // rebuilds BEHIND the raster and the barrier still
+                // decides when it may show.
+                if (!zoomAnimator.running && !root.settleTimer.running) {
+                    root._releasePublishFreeze();
                 }
                 restart();
             }
@@ -488,11 +470,10 @@ Item {
         if (root._interactionActive) {
             progressCanvas.requestPaint();
         }
-        // The RELEASE is the single resume trigger for the model's
-        // publications too (the raster updates resume here).
-        if (root.printerModel != null) {
-            root.printerModel.setFollowerInteracting(false);
-        }
+        // The release resumes the model's publications too — the
+        // settle has usually done it already; this covers a release
+        // that lands before the camera settles.
+        root._releasePublishFreeze();
     }
 
     function _enterInteraction() {
@@ -515,8 +496,14 @@ Item {
             // its split re-paint at its backing, so the entry drops
             // nothing and no gated wait delays the drag.
             root._gestureNavSource = navigationData();
+            // Tell the model which file this gesture is presenting:
+            // a bake committing mid-gesture supersedes the surface's
+            // url and unlinks the old one, which is precisely this
+            // picture.
+            if (root.printerModel != null) {
+                root.printerModel.setFollowerGestureRaster(root._gestureNavSource);
+            }
             root._interactionActive = true;
-            root._barrierTicks = 0;
             // The barrier's own re-check for the whole gesture: a
             // wheel-only interaction has no release to drive it, and
             // the demand's paint defers while the hold stands.
@@ -533,6 +520,18 @@ Item {
             if (root.printerModel != null) {
                 root.printerModel.setFollowerInteracting(true);
             }
+        }
+    }
+
+    function _releasePublishFreeze() {
+        // The model's per-poll publications resume while the gesture
+        // still OWNS the picture. Safe because the ENTRY LATCH is what
+        // keeps the presented raster coherent — a fresher raster
+        // landing mid-hold cannot swap it — so the model may breathe
+        // without the picture moving. Idempotent, and every exit path
+        // routes through it.
+        if (root.printerModel != null) {
+            root.printerModel.setFollowerInteracting(false);
         }
     }
 
@@ -2763,15 +2762,12 @@ Item {
     function endInteraction() {
         zoomAnimator.stop();
         root._interactionActive = false;
-        root._barrierTicks = 0;
         // Every exit — the pan release, the zoom snap, the scrub —
-        // resumes the model's publications. A wheel-only gesture has
-        // no press/release, so the release handler alone can never
-        // cover it: the frozen model withheld the fresh prefix and
-        // the exit barrier waited on it forever (the follower
-        // stopped painting after a zoom until a pan's release).
+        // resumes the model's publications, and releases the file
+        // hold so the cache can collect it.
+        root._releasePublishFreeze();
         if (root.printerModel != null) {
-            root.printerModel.setFollowerInteracting(false);
+            root.printerModel.setFollowerGestureRaster("");
         }
     }
 
