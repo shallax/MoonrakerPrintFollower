@@ -7807,12 +7807,22 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # handovers: the prefix boundary at 10 and the full raster at
         # motions.
         measured = []
+        previous = _baseline
         for split in list(range(2, 22)):
             self._printer.setSplit(split)
-            self.pump(30)
-            window.grabWindow()
-            self.pump(30)
-            image = window.grabWindow()
+            # The split's own picture is the landmark, not a beat: a
+            # fixed pump after the advance reads whatever the last
+            # completed pass painted, and at a handover that is the
+            # composition's own BLANK beat — a stable frame of its
+            # own, which the assertion below then reports as the wall
+            # never having painted. The read waits for the picture to
+            # leave the previous split's, for the wall's ink to stand,
+            # and for two grabs to agree. The assertion is unchanged,
+            # so a split that paints nothing at all still fails.
+            image = self._settled_frame(
+                window, face, differs_from=previous,
+                painted=lambda picture: red_rows(picture))
+            previous = image
             rows = red_rows(image)
             self.assertTrue(rows, "the wall never painted at split %d" % split)
             measured.append((split, sum(rows) / float(len(rows)), len(rows),
@@ -8155,16 +8165,24 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         break
             return out
 
-        def settle():
-            self.pump(30)
-            window.grabWindow()
-            self.pump(30)
-            return rows(window.grabWindow())
+        def settle(differs_from):
+            # The presentation's own ink is the landmark, not a beat: a
+            # fixed pump after the flip reads whatever the last
+            # completed pass painted, and at a handover that is the
+            # composition's own BLANK beat — a stable frame of its own,
+            # which the assertions below then report as the
+            # presentation having painted nothing. The read waits for
+            # the picture to leave the one it replaces, for this
+            # presentation's ink to stand, and for two grabs to agree;
+            # the assertions are unchanged.
+            return self._settled_frame(window, face, differs_from=differs_from,
+                                       painted=rows)
 
         def centroid(rs):
             return sum(rs) / float(len(rs)) if rs else None
 
         measured = []
+        previous = _baseline
         for zoom in (1.0, 1.37, 1.5, 1.79, 2.0):
             face.setProperty("_interactionActive", False)
             face.setProperty("viewScale", zoom)
@@ -8175,16 +8193,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._printer.setLayers({"prev": None, "current": layer,
                                      "next": None})
             self.pump(20)
-            exact = settle()
+            exact_image = settle(previous)
+            exact = rows(exact_image)
             face.setProperty("_gestureNavSource", url)
             face.setProperty("_interactionActive", True)
             self.pump(30)
-            gesture = settle()
+            gesture_image = settle(exact_image)
+            gesture = rows(gesture_image)
             self.assertTrue(exact, "the exact scene painted nothing at %s" % zoom)
             self.assertTrue(gesture,
                             "the gesture overlay painted nothing at %s" % zoom)
             measured.append((zoom, centroid(exact), centroid(gesture),
                              len(exact), len(gesture)))
+            previous = gesture_image
 
         for zoom, exact, gesture, exact_rows, gesture_rows in measured:
             self.assertLessEqual(
