@@ -8683,11 +8683,48 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     weighted += weight * row
             return None if total <= 0.0 else weighted / total
 
-        def settle():
-            self.pump(30)
-            window.grabWindow()
-            self.pump(30)
-            return window.grabWindow()
+        def delivered(split, coverage, prefix):
+            """The scene's DELIVERED record names this serving.
+
+            The canvas writes its delivered coverage and the split it
+            walked to in the paint's own onPainted handler, and its
+            texture flag beside them: all three together are the
+            picture the scene holds, not a paint that was requested.
+            """
+            if split != face.property("_lastSplit"):
+                return False
+            if coverage != face.property("_vectorCoversShown"):
+                return False
+            if not face.property("_textureReady"):
+                return False
+            return not prefix or bool(face.property("_prefixStatusReady"))
+
+        def settle(bed_x0, bed_x1, split, coverage, prefix):
+            """The first frame the serving's composition is IN.
+
+            This was a frame count — pump, grab, pump, grab — which
+            reads the picture a fixed distance after the install: the
+            prefix raster decodes off-thread, and on a loaded runner
+            the census ran before it landed and measured the standing
+            picture instead. The parity assertion then compared the
+            raster with itself at the previous serving's view — the
+            97.7 px at zoom 1.37, which is one serving's zoom (0.37)
+            applied to a ~265 px plate.
+
+            Two waits, because a texture is consumed a beat after its
+            painted signal: the first clears on the delivered record,
+            the second on that same record plus the ink the caller is
+            about to measure in the frame. The centroid comparison
+            below is untouched — a real disagreement still fails it,
+            and a composition that never arrives fails the caller's
+            own assertIsNotNone.
+            """
+            self._wait_until(window,
+                             lambda _image: delivered(split, coverage, prefix))
+            return self._wait_until(
+                window,
+                lambda image: delivered(split, coverage, prefix)
+                and centroid(image, bed_x0, bed_x1) is not None)
 
         # The two servings must not share a retained record: the
         # retained prefix stands on split and anchor alone, so a split
@@ -8711,7 +8748,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 self._printer.setLayers({"prev": None, "current": served,
                                          "next": None})
                 self._printer.setSplit(15)
-                with_raster = settle()
+                with_raster = settle(25.0, 110.0, 15, 10, prefix=True)
                 # Serving B: below the prefix boundary nothing applies,
                 # so the canvas owns the whole rendered interval.
                 vector_only = self._native_layer(payload, face,
@@ -8720,7 +8757,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 self._printer.setLayers({"prev": None, "current": vector_only,
                                          "next": None})
                 self._printer.setSplit(5)
-                by_vector = settle()
+                by_vector = settle(25.0, 60.0, 5, 0, prefix=False)
                 a = centroid(with_raster, 25.0, 110.0)
                 b = centroid(by_vector, 25.0, 60.0)
                 self.assertIsNotNone(
