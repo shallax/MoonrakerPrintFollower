@@ -1140,37 +1140,70 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
     def test_a_decode_slower_than_the_tick_displays_once_per_decode(self):
         # A decode that outlasts its tick must not cost the NEXT tick too.
         # Dispatch quantised to the tick is one display per two ticks at a
-        # 20 ms tick and a 22 ms decode -- and a frame that arrived just
-        # after the wasted tick then waits out another whole period, which
-        # is the lag the live report names. The display rate belongs to the
-        # decode, bounded by the cap, not to a multiple of the tick.
+        # 20 ms tick and a 22 ms decode, and a frame that arrived just after
+        # the wasted tick then waits out another whole period, which is the
+        # lag the live report names. The display rate belongs to the decode,
+        # bounded by the cap, not to a multiple of the tick.
+        #
+        # The pin is a pair of counts rather than a rate, since a rate read
+        # off a fixed window measures the machine as much as the scheduler:
+        # a starved run reaches the same counts later, and cannot reach
+        # different ones. Each decode is held open until the frame the next
+        # hand-over needs is in hand, so the interleaving is the test's to
+        # fix rather than the machine's.
+        frames = 6
         real = QImage.fromData
+        # One slot per decode, claimed under the lock: the worker settles the
+        # order, and each release is held until the test is ready for it.
+        entered = [threading.Event() for _ in range(frames + 2)]
+        release = [threading.Event() for _ in range(frames + 2)]
+        claim = threading.Lock()
+        claimed = []
 
         def slow(frame):
+            with claim:
+                index = len(claimed)
+                claimed.append(index)
             time.sleep(0.022)  # a decode a hair longer than one tick
+            entered[index].set()
+            # The timeout only stops a broken run from hanging the suite:
+            # every release the test reaches is set within a tick of it.
+            release[index].wait(2.0)
             return real(frame)
 
         self._patch_decode(slow)
         self.item.setTargetFps(50.0)  # a 20 ms tick
         self._start()
+        self.item._render_timer.stop()  # every tick from here is by hand
         self.assertEqual(self.item._render_timer.interval(), 20)
-        frame = _jpeg(40, 30)
-        delivered = 0
-        started = time.monotonic()
-        next_frame = started
-        while time.monotonic() - started < 1.0:
-            if time.monotonic() >= next_frame:
-                self._reply().deliver(_multipart(frame))
-                delivered += 1
-                next_frame += 0.010  # a 100 fps source: always one in hand
-            self.qt.events(5)
-        self.assertGreaterEqual(delivered, 80)
-        # ~45 displays in the window at the decode's own rate; one per two
-        # ticks is ~25.
-        self.assertGreaterEqual(
-            self.item.framesDisplayed, 35,
-            "the decode's own rate was not reached: dispatch is quantised "
-            "to the tick")
+        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
+        self.item._render()  # the run's only tick: it hands the first frame over
+        for index in range(frames):
+            self.assertTrue(
+                self._drain_until(entered[index].is_set),
+                "frame %d never reached the worker: the run's one tick is "
+                "spent, so the hand-over had to come from the decode" % index)
+            if index + 1 < frames:
+                # The source stays a frame ahead of the decode, so every
+                # completion has something to hand over.
+                self._reply().deliver(
+                    _multipart(_jpeg(40, 30, shade=41 + index)))
+            release[index].set()
+            self.assertTrue(
+                self._drain_until(
+                    lambda shown=index: self.item.framesDisplayed > shown),
+                "frame %d never reached the screen" % index)
+        self.assertEqual(len(claimed), frames,
+                         "a frame was decoded more than once")
+        self.assertEqual(self.item._decodes_rendered, frames,
+                         "the run cost a tick per frame: a decode's successor "
+                         "waited for a tick that never came")
+        self.assertEqual(self.item.framesDropped, 0,
+                         "a frame was superseded rather than displayed")
+        self.assertGreater(self.item._decode_ms_max, 20.0,
+                           "the decode did not outlast the tick")
+        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 45,
+                         "the frame on screen is not the last one decoded")
 
     def test_the_completion_dispatch_never_shortens_the_cap(self):
         # The hand-over a completion makes must clear the same interval
