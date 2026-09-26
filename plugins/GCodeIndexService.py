@@ -815,9 +815,22 @@ class GCodeIndexService(QObject):
                 self._split_stall_polls = 0
             floor = self._split_floor
             refined = None
+            # The refinement is taken UNCLAMPED and floored only for
+            # publication. refined_split raises its result to the
+            # floor, so asking it for a floored value made the
+            # overshoot-lock below unreachable on the hydrated path
+            # (the normal path): `refined < floor` could never hold,
+            # and a floor that overshot could never step back for the
+            # layer's whole life — the fill stayed ahead of the
+            # nozzle, and the backward delivery it demanded closed
+            # the split gate, which holds the warm raster.
+            refined_truth = None
             if live_position is not None:
-                refined, _method = index.refined_split(anchor, file_position, live_position,
-                                                       minimum_split=floor)
+                refined_truth, _method = index.refined_split(
+                    anchor, file_position, live_position,
+                    minimum_split=None)
+                refined = refined_truth if floor is None or refined_truth is None \
+                    else max(refined_truth, floor)
                 # The unhydrated layer's honest split: the index arrays
                 # are empty until the file hydration lands, and the
                 # byte-fraction seed is NOT proportional to motion
@@ -845,6 +858,12 @@ class GCodeIndexService(QObject):
                             ahead=self._split_advance_max * 2
                             if fresh else 4096,
                             stall=self._split_stall_polls)
+                        # This path returns UNCLAMPED by design (the
+                        # correction reads it unfloored), so it is the
+                        # same truth the stall test compares — without
+                        # this the test read None here and the lock
+                        # could never fire on an unhydrated layer.
+                        refined_truth = refined
                         if refined is not None and floor is not None \
                                 and refined > floor:
                             self._split_advance_max = max(
@@ -886,12 +905,12 @@ class GCodeIndexService(QObject):
             # overshot floor every poll — the long stall, then the
             # snap back to life).
             corrected = False
-            if refined is not None and floor is not None \
-                    and refined <= floor:
+            if refined_truth is not None and floor is not None \
+                    and refined_truth <= floor:
                 self._split_stall_polls += 1
-                if self._split_stall_polls >= 3 and refined < floor:
-                    split = refined
-                    self._split_refined = refined
+                if self._split_stall_polls >= 3 and refined_truth < floor:
+                    split = refined_truth
+                    self._split_refined = refined_truth
                     corrected = True
             else:
                 self._split_stall_polls = 0
