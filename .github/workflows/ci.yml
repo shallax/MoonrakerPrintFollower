@@ -536,12 +536,7 @@ jobs:
         # against a fresh render on every push. The host-user/bind-mount
         # incantation lives in tools/docker_dev.sh.
         run: |
-          tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
-                && python3 tools/capture_preview.py dist/screenshots \
-                && python3 tools/capture_settings.py dist/screenshots \
-                && python3 tools/capture_upload.py dist/screenshots \
-                && python3 tools/capture_whatsnew.py dist/screenshots \
-                && python3 tools/capture_filemanager.py dist/screenshots"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh sh tools/run_captures.sh dist/screenshots
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
         # committed-compare above only has a CHANCE of catching a
@@ -565,6 +560,16 @@ jobs:
           done
           exit "$stale"
 
+      - name: Preserve failed screenshot comparisons
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshot-comparison
+          path: |
+            dist/screenshots/*.png
+            .determinism-check/
+          if-no-files-found: ignore
+
   analyze:
     name: Analyze (CodeQL)
     runs-on: ubuntu-26.04
@@ -584,4 +589,3 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
-

@@ -68,8 +68,4 @@ CMD ["sh", "-c", "python3 -m compileall -q plugins tools tests \
     && gitleaks detect --no-git --no-banner --redact \
     && coverage run -m unittest discover -s tests -p 'test_*.py' \
     && coverage report --include='plugins/*' --fail-under=80 \
-    && python3 tools/capture_monitor.py dist/screenshots \
-    && python3 tools/capture_preview.py dist/screenshots \
-    && python3 tools/capture_settings.py dist/screenshots \
-    && python3 tools/capture_upload.py dist/screenshots \
-    && python3 tools/capture_whatsnew.py dist/screenshots"]
+    && sh tools/run_captures.sh dist/screenshots"]

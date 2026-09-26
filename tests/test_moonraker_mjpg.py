@@ -787,9 +787,18 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # 5% tolerance, not a lifetime and not a guess.
         self.assertGreaterEqual(self.item._recent_interval_s, 0.9)
         self.assertLessEqual(self.item._recent_interval_s, 1.5)
-        self.assertGreater(self.item._recent_decode_ms, 0)
-        self.assertGreater(self.item._recent_decode_ms_per_frame, 0)
-        self.assertGreater(self.item._recent_drain_ms_per_frame, 0)
+        # A 40x30 JPEG can decode in less than 0.05 ms on a fast
+        # runner. The diagnostic deliberately rounds to tenths, so
+        # zero is a valid displayed rate. Check the measured work and
+        # the per-frame arithmetic instead of requiring a slow CPU.
+        self.assertGreater(self.item._decode_ms_total, 0)
+        self.assertGreater(self.item._drain_ms_total, 0)
+        self.assertEqual(self.item._recent_decodes, 1)
+        self.assertGreaterEqual(self.item._recent_decode_ms, 0)
+        self.assertEqual(self.item._recent_decode_ms_per_frame,
+                         round(self.item._decode_ms_total, 2))
+        self.assertEqual(self.item._recent_drain_ms_per_frame,
+                         round(self.item._drain_ms_total / 4, 2))
 
     def test_the_oldest_buffered_frame_reports_its_age(self):
         # A frame that parsed but never rendered is invisible to both

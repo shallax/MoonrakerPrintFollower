@@ -675,6 +675,13 @@ previous incarnation must never claim ownership of the current scene.
 
 ### Exact-scene compositor
 
+Canonical screenshot captures pin the amd64 container architecture as well
+as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
+native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
+entry point. Native test gates may use the host architecture; `make build`
+regenerates canonical captures afterward rather than copying those test images.
+Byte comparison and independent light/dark determinism checks remain strict.
+
 `PlateExactComposition.js` is the single Qt-free owner of the asynchronous
 Canvas delivery transaction, the attached/detached split acceptance rule and
 the exact-picture readiness policy. The QML face now adapts this policy to

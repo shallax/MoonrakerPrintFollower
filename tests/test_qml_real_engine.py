@@ -5054,6 +5054,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "the DPR-2 raster's ink never reached the logical corner")
 
     def test_reverse_scrub_paths_settle_to_the_same_picture(self):
+        from PyQt6.QtCore import Q_RETURN_ARG, QVariant
+
         # F: the reverse scrub is the prefix scheduler's stress path
         # (a backward move demands a fresh prefix immediately). The
         # SAME final {layer, split, view, toggles} must produce the
@@ -5082,8 +5084,26 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._printer.setSplit(split)
 
         def settled_grab():
-            self._pump_ms(350)  # past the view settle and the paints
-            return window.grabWindow()
+            # A fixed delay can photograph the full-history fallback
+            # before the prefix and its matching tail have delivered,
+            # especially with the threaded Canvas on loaded macOS CI.
+            # Compare the settled owner on every path, then require two
+            # unchanged frames; the pixel tolerance remains unchanged.
+            deadline = time.monotonic() + 5.0
+            previous = None
+            while time.monotonic() < deadline:
+                self._pump_ms(30)
+                image = window.grabWindow()
+                ready = (
+                    face.property("_prefixWasShown")
+                    and face.property("_vectorCoversShown") == layer.prefixSplit
+                    and face.property("_vectorSplitShown") == target
+                    and QMetaObject.invokeMethod(face, "_exactReady", Q_RETURN_ARG(QVariant)))
+                if ready and previous is not None and self._pixel_diff(
+                        image, previous, face, window) == 0:
+                    return image
+                previous = image if ready else None
+            self.fail("reverse scrub never delivered a stable prefix/tail composition")
 
         seek_to(target)
         direct = settled_grab()
@@ -5104,19 +5124,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 seek_to(split)
                 self._pump_ms(60)
             image = settled_grab()
-            # The antialias tolerance: a path through the full state
-            # keeps the canvas's FULL bitmap under the prefix (the
-            # re-show gate forbids the trim), while the direct path
-            # trims to the tail — the SAME geometry composites with
-            # fringe shades a few channels apart. Anything beyond a
-            # per-channel 40 is a real composition drift.
+            # Every path now compares the same delivered interval
+            # owners. Preserve the platform antialias tolerance while
+            # rejecting any changed region of the settled picture.
             def differs(pixel_a, pixel_b):
-                # The suite's loose census tolerance: the paths'
-                # canvas keeps the full stroke under the prefix
-                # (the re-show gate forbids the trim), so the
-                # prefix interval's antialiased edge row composites
-                # ~42 channels lighter — the SAME geometry, an
-                # antialias-level shading difference.
                 return any(abs(((pixel_a >> shift) & 0xFF)
                               - ((pixel_b >> shift) & 0xFF)) > 60
                            for shift in (0, 8, 16))

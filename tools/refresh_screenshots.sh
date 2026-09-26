@@ -8,14 +8,10 @@
 # affects the QML the captures render; the sync job fails on push
 # until the copies are fresh.
 set -eu
-if [ "${1:-}" = "--copy-only" ]; then
-    # The gates run has already produced fresh captures (make build);
-    # just refresh the committed copies.
-    root="$(git rev-parse --show-toplevel)"
-    cd "$root"
-    cp dist/screenshots/*.png screenshots/
-    exit 0
-fi
+# The architecture is part of the capture toolchain too. Native ARM
+# rasterisation differs slightly from the x86 CI baseline.
+DOCKER_DEFAULT_PLATFORM=linux/amd64
+export DOCKER_DEFAULT_PLATFORM
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 rm -f dist/screenshots/*.png
@@ -27,10 +23,5 @@ rm -f dist/screenshots/*.png
 # pull/build fails: silently falling back to the stale image commits
 # captures CI will reject.
 "$(dirname "$0")/build_image.sh" moonraker-print-follower-dev . --pull
-tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
-    && python3 tools/capture_preview.py dist/screenshots \
-    && python3 tools/capture_settings.py dist/screenshots \
-    && python3 tools/capture_upload.py dist/screenshots \
-    && python3 tools/capture_whatsnew.py dist/screenshots \
-    && python3 tools/capture_filemanager.py dist/screenshots"
+tools/docker_dev.sh sh tools/run_captures.sh dist/screenshots
 cp dist/screenshots/*.png screenshots/

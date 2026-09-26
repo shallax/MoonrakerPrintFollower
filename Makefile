@@ -47,7 +47,7 @@ help:
 all: build lint run_tests verify_captures package snapshot_package
 
 build: gates
-	./tools/refresh_screenshots.sh --copy-only
+	./tools/refresh_screenshots.sh
 
 gates:
 	./tools/docker_gates.sh
