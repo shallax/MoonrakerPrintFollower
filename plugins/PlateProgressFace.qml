@@ -1143,6 +1143,8 @@ Item {
     property bool _progressPaintQueued: false
     property int _paintEventsSinceDelivery: 0
     property var _paintPrepared: null
+    property var _paintFirst: null
+    property bool _paintConsistent: false
     property string _progressWorldKey: ""
     property string _progressLayerKey: ""
     property int _progressWorldEpoch: 0
@@ -1275,8 +1277,16 @@ Item {
 
     function _deliverProgressPaint() {
         var receipt = root._paintPrepared;
-        var matches = root._paintEventsSinceDelivery === 1 && receipt != null && receipt.epoch === root._progressWorldEpoch && receipt.world === _worldKeyOf() && receipt.valid;
+        // Qt may call onPaint more than once before a single painted()
+        // signal, e.g. after a window resize. Multiple paints are SAFE
+        // only when ALL receipts describe the very same visible scene,
+        // coverage, and split. Reject mixed generations or boundaries.
+        var count = root._paintEventsSinceDelivery;
+        var unambiguous = count === 1 || (count > 1 && root._paintConsistent && root._paintFirst != null);
+        var matches = unambiguous && receipt != null && receipt.epoch === root._progressWorldEpoch && receipt.world === _worldKeyOf() && receipt.valid;
         root._paintPrepared = null;
+        root._paintFirst = null;
+        root._paintConsistent = false;
         root._paintEventsSinceDelivery = 0;
         root._progressPaintInFlight = false;
         if (matches) {
@@ -2300,13 +2310,25 @@ Item {
                 } finally {
                     // A return that retained the previous bitmap is
                     // still a paint delivery, with the same coverage.
-                    root._paintPrepared = {
+                    var nextReceipt = {
                         epoch: paintEpoch,
                         world: paintWorld,
                         valid: _worldKeyOf() === paintWorld,
                         from: root._vectorCoversFrom,
                         split: root._lastSplit
                     };
+                    if (root._paintEventsSinceDelivery === 1) {
+                        root._paintFirst = nextReceipt;
+                        root._paintConsistent = nextReceipt.valid;
+                    } else {
+                        var first = root._paintFirst;
+                        root._paintConsistent = root._paintConsistent && first != null
+                            && nextReceipt.valid && first.epoch === nextReceipt.epoch
+                            && first.world === nextReceipt.world
+                            && first.from === nextReceipt.from
+                            && first.split === nextReceipt.split;
+                    }
+                    root._paintPrepared = nextReceipt;
                 }
             }
         }

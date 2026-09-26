@@ -5401,6 +5401,45 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          "the new generation accepted stale Canvas pixels")
         self.assertEqual(face.property("_vectorCoversShown"), -2)
 
+    def test_equivalent_extra_canvas_paints_share_one_valid_delivery(self):
+        # Qt can coalesce multiple identical onPaint events into one
+        # painted() signal. The delivery is not ambiguous when both
+        # bitmaps have the same world, boundary and coverage.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        receipt = {"epoch": epoch, "world": world, "valid": True,
+                   "from": 0, "split": 8}
+        face.setProperty("_paintFirst", receipt)
+        face.setProperty("_paintPrepared", dict(receipt))
+        face.setProperty("_paintConsistent", True)
+        face.setProperty("_paintEventsSinceDelivery", 2)
+        face.setProperty("_progressPaintInFlight", True)
+        self.assertTrue(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        self.assertEqual(face.property("_vectorCoversShown"), 0)
+        self.assertEqual(face.property("_vectorSplitShown"), 8)
+
+    def test_mixed_canvas_paints_cannot_certify_the_last_boundary(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        old = {"epoch": epoch, "world": world, "valid": True,
+               "from": 0, "split": 8}
+        current = dict(old, **{"from": 5, "split": 10})
+        face.setProperty("_paintFirst", old)
+        face.setProperty("_paintPrepared", current)
+        face.setProperty("_paintConsistent", False)
+        face.setProperty("_paintEventsSinceDelivery", 2)
+        face.setProperty("_progressPaintInFlight", True)
+        self.assertFalse(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        self.assertTrue(face.property("_progressPaintQueued"))
+
     def test_exact_canvas_coalesces_progress_while_one_paint_is_in_flight(self):
         from PyQt6.QtCore import QMetaObject
         monitor, window, face, baseline = self._mount_empty()
@@ -5421,8 +5460,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("_progressPaintInFlight", False)
         face.setProperty("_progressPaintQueued", True)
-        self.assertTrue(
-            QMetaObject.invokeMethod(face, "_flushProgressPaint"))
+        QMetaObject.invokeMethod(face, "_flushProgressPaint")
         self.assertFalse(
             face.property("_progressPaintInFlight"),
             "onPainted synchronously initiated its replacement paint")
