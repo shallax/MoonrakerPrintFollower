@@ -3422,6 +3422,12 @@ if QT_AVAILABLE:
         def setFollowerGestureRaster(self, url):
             self.calls.append(("gestureRaster", str(url or "")))
 
+        # The face's barrier report: the production model writes it with
+        # Logger.log, because Cura's QML handler carries warnings only.
+        @pyqtSlot(str)
+        def followerHoldReport(self, text):
+            self.calls.append(("holdReport", str(text or "")))
+
         @pyqtSlot()
         def setFollowerGestureBake(self):
             self.calls.append(("gestureBake", None))
@@ -5723,6 +5729,57 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertIn(
             ("interacting", False), self._printer.calls,
             "the hold released without resuming the model's publications")
+
+    def test_a_split_that_lands_mid_gesture_is_still_painted(self):
+        # The deferral's DEMAND. While a gesture owns the picture the
+        # progress repaint defers by design — the pan presents one
+        # fixed frame, and new lines mid-pan read as jank — so the key
+        # check that notices the advance has to leave the demand
+        # standing rather than the record of it. Recording the key
+        # along with the deferral told the settle's own key check the
+        # advance had already been met, and every path that lands a
+        # deferred repaint gates on the dirty flag that branch never
+        # set, so a wheel zoom that outlived a poll issued its catch-up
+        # paint never: the canvas stopped painting, its
+        # delivered-coverage record froze where the gesture began, and
+        # the exit barrier waited on a coverage no paint would ever
+        # deliver (the live zoom stick, released only when some
+        # unrelated paint happened to land). The painted split is the
+        # canvas's own record that a paint ran.
+        monitor, window, face, payload = self._mount_interaction_fixture()
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+
+        def wheel(cx, cy, delta):
+            scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+            event = QWheelEvent(
+                QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()),
+                                                  int(scene.y())))),
+                QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+
+        wheel(int(face.width() / 2), int(face.height() / 2), 120)
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the wheel never entered the interaction")
+        # The advance lands while the gesture still owns the picture.
+        self._printer.setSplit(20)
+        self._pump_ms(30)
+        self.assertTrue(
+            face.property("_interactionActive"),
+            "the advance outlived the gesture — nothing was deferred")
+        painted = False
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if face.property("_lastSplit") == 20:
+                painted = True
+                break
+            self._pump_ms(30)
+        self.assertTrue(
+            painted, "the deferred advance was never painted")
 
     def test_a_camera_gesture_leaves_the_hidden_mapping_canvas_alone(self):
         # The mapping canvas IS the gesture's own picture input: the pan

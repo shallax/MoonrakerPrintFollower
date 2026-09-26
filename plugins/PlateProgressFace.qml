@@ -241,19 +241,6 @@ Item {
                 if (!zoomAnimator.running && root._progressDirty) {
                     progressCanvas.requestPaint();
                 }
-                // The barrier is pending and the bitmap CANNOT satisfy
-                // it: the prefix stopped owning the interval (a zoom
-                // re-keys it, and the model marks it invalid) while the
-                // canvas still starts at that old prefix's boundary
-                // from the paint taken before the invalidation. The
-                // whole-interval branch needs the vector to own from
-                // zero, so ask for the paint that recomputes it — the
-                // prefix image's own arrival was otherwise the only
-                // thing that would, which is the stickiness that
-                // resolves by itself after a while.
-                if (!zoomAnimator.running && !_prefixUsable() && root._vectorCoversFrom > 0) {
-                    progressCanvas.requestPaint();
-                }
                 // The camera has settled, so the hold no longer needs
                 // the model to stand still: release the publication
                 // freeze HERE, while the warm raster still fronts the
@@ -518,6 +505,12 @@ Item {
             }
             root._interactionActive = true;
             root._holdTicks = 0;
+            // One line per gesture, at the entry: it proves THIS build
+            // carries the report, and it records the state the hold
+            // started from — a stick needs no separate marker.
+            if (root.printerModel != null) {
+                root.printerModel.followerHoldReport("entered " + _holdTerms());
+            }
             // The barrier's own re-check for the whole gesture: a
             // wheel-only interaction has no release to drive it, and
             // the demand's paint defers while the hold stands.
@@ -545,27 +538,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return "split=" + split
-            + " motions=" + (current != null ? _motionsOf(current) : -1)
-            + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1)
-            + " prefixValid=" + (current != null ? current.prefixValid : "?")
-            + " full=" + _fullRaster()
-            + " modelReady=" + _prefixModelReady()
-            + " prefixReady=" + root._prefixStatusReady
-            + " prefixFailed=" + root._prefixStatusFailed
-            + " partialReady=" + _partialPrefixReady()
-            + " texReady=" + root._textureReady
-            + " shown=" + root._vectorCoversShown
-            + " from=" + root._vectorCoversFrom
-            + " lastSplit=" + root._lastSplit
-            + " shownKey=" + root._prefixShownViewKey
-            + " viewKey=" + _viewKey()
-            + " raster=" + progressRasterImage.status
-            + " travels=" + progressTravelImage.status
-            + " base=" + pendingBaseImage.status
-            + " showHold=" + root._prefixShowHold
-            + " zoomRun=" + zoomAnimator.running
-            + " settleRun=" + root.settleTimer.running;
+        return "split=" + split + " motions=" + (current != null ? _motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " showHold=" + root._prefixShowHold + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
     }
 
     // The live stickiness: an interaction held past a beat is wrong,
@@ -579,8 +552,8 @@ Item {
         running: root._interactionActive
         onTriggered: {
             root._holdTicks += 1;
-            if (root._holdTicks >= 3 && root._holdTicks % 2 === 1) {
-                console.log("MPF-HOLD " + _holdTerms());
+            if (root._holdTicks >= 3 && root._holdTicks % 2 === 1 && root.printerModel != null) {
+                root.printerModel.followerHoldReport("held " + _holdTerms());
             }
         }
     }
@@ -1372,8 +1345,20 @@ Item {
         // paints the accumulated advance in one catch-up.
         var progressKey = _progressKeyOf();
         if (progressKey !== root._progressKey) {
-            root._progressKey = progressKey;
-            if (!root._interactionActive) {
+            if (root._interactionActive) {
+                // The deferral must leave the DEMAND behind, never the
+                // record of it. Consuming the key here told the
+                // settle's own key check the advance had already been
+                // met, and every path that lands a deferred repaint
+                // gates on the dirty flag this branch never set — so a
+                // wheel zoom, which outlives a poll, deferred its
+                // catch-up for good: the canvas stopped painting, its
+                // delivered-coverage record froze where the gesture
+                // began, and the barrier waited on a coverage no
+                // paint would ever deliver.
+                root._progressDirty = true;
+            } else {
+                root._progressKey = progressKey;
                 progressCanvas.requestPaint();
             }
         }

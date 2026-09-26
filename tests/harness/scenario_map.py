@@ -128,6 +128,8 @@ SCENARIO_MAP = {
     # The gesture's navigation-file hold: the face names the raster it
     # is presenting so a mid-gesture supersede cannot unlink it.
     "MoonrakerMonitorModel.setFollowerGestureRaster": "b11",
+    # The face's barrier report (the warm raster's hold diagnostic).
+    "MoonrakerMonitorModel.followerHoldReport": "b11",
     "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",

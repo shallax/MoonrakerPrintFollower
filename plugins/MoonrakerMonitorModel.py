@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
+from UM.Logger import Logger
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
@@ -2882,6 +2883,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not popover_open:
             self._retire_surface(self._plate_surfaces["popover"])
         self._publish()
+
+    @pyqtSlot(str)
+    def followerHoldReport(self, text):
+        """The plate face's barrier report, for the warm raster's hold.
+
+        Routed through THIS logger on purpose: Cura's QML message
+        handler carries warnings only, so a console.log from the face is
+        written into a void — a diagnostic that never reached the log
+        could not say why a hold stood.
+        """
+        Logger.log("i", "MPF-HOLD %s", text)
 
     @pyqtSlot(bool)
     def setFollowerInteracting(self, interacting):

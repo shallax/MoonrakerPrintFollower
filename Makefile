@@ -72,7 +72,7 @@ test_files:
 	@test -n "$(FILES)" || { \
 	    echo 'usage: make test_files FILES="tests.test_monitor tests.test_index"'; \
 	    exit 2; }
-	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),4) tools/run_some.sh $(FILES)"
+	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) tools/run_some.sh $(FILES)"
 
 dev_install:
 	./tools/install_dev.sh
