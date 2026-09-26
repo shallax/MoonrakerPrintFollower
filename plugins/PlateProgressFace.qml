@@ -1103,6 +1103,16 @@ Item {
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
     property bool _textureReady: false
+    // The coverage of every paint the renderer has not delivered yet.
+    // A delivery hands the scene the bitmap of ONE paint, and under
+    // load the painter runs ahead of the renderer: naming the
+    // painter's CURRENT coverage at a delivery claimed a trimmed
+    // bitmap while the scene still held an older, full-interval one,
+    // and the live prefix stacked its raster over it — the seam's
+    // doubled ink, and a layer change's prefix admitted over the
+    // previous layer's bitmap. The queue is consumed WHOLE at the
+    // delivery, because a sync coalesces a burst into one texture.
+    property var _paintCovers: []
     // The hold's expiry waits one frame past the painted delivery:
     // the threaded canvas's scene texture commits in the sync AFTER
     // the painted signal, and a hide in the same sync would leave
@@ -1234,6 +1244,14 @@ Item {
             root._lastSplit = -1;
             root._paintsSinceReset = 0;
             root._progressDirty = true;
+            // The queue belongs to the world it was painted in. A
+            // layer change or a view change drops it: entries left
+            // from the previous world's paints would have the next
+            // deliveries publish a coverage the new bitmap does not
+            // hold, and the new layer's prefix would be admitted over
+            // the old layer's picture (the reported jump straight to
+            // the new prefix's boundary).
+            root._paintCovers = [];
             progressCanvas.requestPaint();
             _holdPrefixThroughRepaint();
         }
@@ -1388,6 +1406,14 @@ Item {
             root._lastSplit = -1;
             root._paintsSinceReset = 0;
             root._progressDirty = true;
+            // The queue belongs to the world it was painted in. A
+            // layer change or a view change drops it: entries left
+            // from the previous world's paints would have the next
+            // deliveries publish a coverage the new bitmap does not
+            // hold, and the new layer's prefix would be admitted over
+            // the old layer's picture (the reported jump straight to
+            // the new prefix's boundary).
+            root._paintCovers = [];
             progressCanvas.requestPaint();
             _holdPrefixThroughRepaint();
         }
@@ -1808,7 +1834,14 @@ Item {
                 // prefix over a delivered FULL bitmap can finally
                 // relinquesh — one frame later, after the scene pulls
                 // the texture (the expiry timer's beat).
-                root._vectorCoversShown = root._vectorCoversFrom;
+                // The record names the paint the renderer actually
+                // pulled: the oldest entry still undelivered. The
+                // queue is also drained by the world reset — a layer
+                // or view change repaints the canvas, and entries left
+                // from the previous world's paints would publish a
+                // coverage the new bitmap does not have, admitting the
+                // new layer's prefix over the old layer's picture.
+                root._vectorCoversShown = root._paintCovers.length > 0 ? root._paintCovers.shift() : root._vectorCoversFrom;
                 root._textureReady = true;
                 if (root._entryPaintArmedHold) {
                     // The entry's delivery: the handover beat starts
@@ -1841,7 +1874,7 @@ Item {
                 // the trim (its visible binding reads the predicate
                 // the trim feeds). Request it here, one paint after
                 // the delivery that completed the picture.
-                if (root._vectorCoversShown === 0 && _prefixFrom() > 0 && !root._interactionActive) {
+                if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
                     progressCanvas.requestPaint();
                 }
                 // The shown record's set edge, the publish cycle's own
@@ -1857,6 +1890,17 @@ Item {
             }
             onPaint: {
                 var ctx = getContext("2d");
+                // This paint's delivery is queued before the paint knows
+                // whether it rebuilds the bitmap: a paint that returns
+                // early leaves the buffer as the last one's, so its
+                // delivery must name the same coverage. The assignment
+                // below rewrites the entry when this paint does rebuild
+                // it. The cap drops the oldest if no delivery ever
+                // comes, so the queue cannot grow without bound.
+                if (root._paintCovers.length >= 8) {
+                    root._paintCovers.shift();
+                }
+                root._paintCovers.push(root._vectorCoversFrom);
                 // The full state's HOLD: the model says the raster owns
                 // the picture, but its texture is still decoding, so
                 // the accumulated ink stands rather than blanking the
@@ -2093,6 +2137,7 @@ Item {
                 // read as a full one (the prefix would trust a hole).
                 if (fresh) {
                     root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
+                    root._paintCovers[root._paintCovers.length - 1] = root._vectorCoversFrom;
                 }
                 // The freeze rides the paint, not only the delivery: a
                 // bitmap starting exactly at the prefix's boundary is
