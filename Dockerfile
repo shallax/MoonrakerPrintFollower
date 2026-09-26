@@ -29,8 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qt6-declarative-dev-tools=6.10.2+dfsg-3 \
         shellcheck=0.11.0-2 \
     && rm -rf /var/lib/apt/lists/* \
+    && case "$(uname -m)" in aarch64) lint_arch=arm64 ;; *) lint_arch=x86_64 ;; esac \
     && wget -qO /usr/local/bin/hadolint \
-        https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
+        "https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-${lint_arch}" \
     && chmod +x /usr/local/bin/hadolint \
     && wget -qO /tmp/gitleaks.tar.gz \
         https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
@@ -67,8 +68,4 @@ CMD ["sh", "-c", "python3 -m compileall -q plugins tools tests \
     && gitleaks detect --no-git --no-banner --redact \
     && coverage run -m unittest discover -s tests -p 'test_*.py' \
     && coverage report --include='plugins/*' --fail-under=80 \
-    && python3 tools/capture_monitor.py dist/screenshots \
-    && python3 tools/capture_preview.py dist/screenshots \
-    && python3 tools/capture_settings.py dist/screenshots \
-    && python3 tools/capture_upload.py dist/screenshots \
-    && python3 tools/capture_whatsnew.py dist/screenshots"]
+    && sh tools/run_captures.sh dist/screenshots"]

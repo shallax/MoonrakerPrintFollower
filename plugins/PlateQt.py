@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import math
 import os
+import time
+from collections import OrderedDict
 from contextlib import contextmanager
+from itertools import count
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QUrl, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
@@ -59,6 +62,22 @@ _PLATE_TRAVEL_VISUAL_RATIO = 0.7
 # QImage-typed property must never return None (the live crash — the
 # TypeError crashed Cura through its handler).
 _NULL_IMAGE = QImage()
+_LAYER_IDENTITIES = count(1)
+
+
+class _CheckpointBudget:
+    """Give interactive rendering time between background geometry chunks."""
+    def __init__(self, cancel):
+        self.cancel = cancel
+        self.deadline = time.monotonic() + 0.008
+
+    def is_set(self):
+        if self.cancel.is_set():
+            return True
+        if time.monotonic() >= self.deadline:
+            self.cancel.wait(0.008)
+            self.deadline = time.monotonic() + 0.008
+        return self.cancel.is_set()
 
 
 def png_file(image: QImage, directory: str, name: str) -> str:
@@ -150,6 +169,7 @@ class PlateLayer(QObject):
     def __init__(self, payload: dict, parent: QObject = None) -> None:
         super().__init__(parent)
         self._payload = payload
+        self._scene_identity = str(next(_LAYER_IDENTITIES))
         self._raster = None
         self._base = None
         self._travels = None
@@ -163,11 +183,46 @@ class PlateLayer(QObject):
         self._base_key = None
         self._travel_key = None
         self._prefix_key = None
+        self._prefix_pending = False
+        self._prefix_checkpoints = OrderedDict()
+        self._rewind_files = {}
+        self._rewind_pending = []
+        self._rewind_ticket = None
+        self._rewind_cancel = None
         self._expected_key = None
 
     @pyqtProperty(int, constant=True)
     def motions(self) -> int:
         return int(self._payload.get("motions") or 0)
+
+    @pyqtProperty(bool, notify=rasterReady)
+    def prefixPending(self):
+        return self._prefix_pending
+
+    def set_prefix_pending(self, pending):
+        if self._prefix_pending != pending:
+            self._prefix_pending = pending
+            self.rasterReady.emit()
+
+    @pyqtProperty(str, constant=True)
+    def sceneIdentity(self) -> str:
+        """An immutable incarnation, independent of layer and motion count."""
+        return self._scene_identity
+
+    @pyqtProperty("QVariantMap", constant=True)
+    def fallbackVector(self) -> dict:
+        """Lazy transport recovery; ordinary raster scenes never read this.
+
+        A missing PNG must leave a complete vector producer available even
+        at 100%, where normal publication deliberately omits this costly
+        QVariant conversion.
+        """
+        return self._payload
+
+    @pyqtProperty(bool, constant=True)
+    def hasFallbackVector(self) -> bool:
+        """Capability check without converting the geometry into QVariant."""
+        return True
 
     @pyqtProperty(QImage, notify=rasterReady)
     def raster(self) -> QImage:
@@ -275,7 +330,25 @@ class PlateLayer(QObject):
         with the coloured raster."""
         if self._expected_key != key:
             self._expected_key = key
+            self._prefix_pending = False
+            self.clear_prefix_checkpoints()
             self.rasterReady.emit()
+
+    def clear_prefix_checkpoints(self):
+        if self._rewind_cancel is not None:
+            self._rewind_cancel.set()
+        self._rewind_cancel = None
+        self._rewind_ticket = None
+        self._rewind_files.clear()
+        self._rewind_pending.clear()
+        self._prefix_checkpoints.clear()
+
+    def prefix_file_seed(self, key, split):
+        if key != self._expected_key:
+            return "", 0
+        boundaries = [p for p in self._rewind_files if p <= split]
+        boundary = max(boundaries) if boundaries else 0
+        return self._rewind_files.get(boundary, ""), boundary
 
     def set_raster(self, image: QImage, key, data: str = None) -> None:
         self._raster = image
@@ -303,16 +376,51 @@ class PlateLayer(QObject):
         self._prefix_data = data
         self._prefix_split = split
         self._prefix_key = key
+        if image is not None and not image.isNull() and data:
+            if self._prefix_checkpoints and next(iter(self._prefix_checkpoints.values()))[2] != key:
+                self._prefix_checkpoints.clear()
+            self._prefix_checkpoints[split] = (image, data, key)
+            self._prefix_checkpoints.move_to_end(split)
+            # Four checkpoints, with a stricter 16 MiB pixel cap. The
+            # current prefix is already charged separately; large views
+            # simply retain fewer historical checkpoints.
+            while self._prefix_checkpoints and (len(self._prefix_checkpoints) > 4
+                    or sum(entry[0].sizeInBytes() for entry in self._prefix_checkpoints.values()) > 16 * 1024 * 1024):
+                self._prefix_checkpoints.popitem(last=False)
         self.rasterReady.emit()
 
+    def prefix_seed(self, key, split):
+        candidates = [(boundary, entry) for boundary, entry in self._prefix_checkpoints.items()
+                      if boundary <= split and entry[2] == key]
+        if not candidates:
+            return None, 0
+        boundary, entry = max(candidates, key=lambda candidate: candidate[0])
+        self._prefix_checkpoints.move_to_end(boundary)
+        return entry[0], boundary
+
+    def restore_prefix(self, key, split):
+        """Reuse a compatible earlier checkpoint without decoding geometry."""
+        image, boundary = self.prefix_seed(key, split)
+        if image is None or (self.prefixValid and self.prefixSplit == boundary):
+            return False
+        data = self._prefix_checkpoints[boundary][1]
+        self.set_prefix(image, data, boundary, key)
+        return True
+
+    def prefix_references(self):
+        return ([entry[1] for entry in self._prefix_checkpoints.values()]
+                + list(self._rewind_files.values()) + self._rewind_pending)
+
     def memory_bytes(self) -> int:
-        """The wrapper's own pixel bytes — the four sibling images.
+        """The wrapper's pixel bytes, including bounded prefix checkpoints.
         The payload's geometry is charged separately, through the
         service's decoded pins."""
         total = 0
         for image in (self._raster, self._base, self._travels, self._prefix):
             if image is not None and not image.isNull():
                 total += image.sizeInBytes()
+        total += sum(entry[0].sizeInBytes() for entry in self._prefix_checkpoints.values()
+                     if entry[0] is not self._prefix)
         return total
 
 

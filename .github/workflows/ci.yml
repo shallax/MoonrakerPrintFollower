@@ -536,12 +536,7 @@ jobs:
         # against a fresh render on every push. The host-user/bind-mount
         # incantation lives in tools/docker_dev.sh.
         run: |
-          tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
-                && python3 tools/capture_preview.py dist/screenshots \
-                && python3 tools/capture_settings.py dist/screenshots \
-                && python3 tools/capture_upload.py dist/screenshots \
-                && python3 tools/capture_whatsnew.py dist/screenshots \
-                && python3 tools/capture_filemanager.py dist/screenshots"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh sh tools/run_captures.sh dist/screenshots
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
         # committed-compare above only has a CHANCE of catching a
@@ -551,19 +546,20 @@ jobs:
         run: ./tools/verify_capture_determinism.sh
 
       - name: Reject stale committed screenshots
-        # Every generated PNG must match its committed copy byte for byte;
-        # extra hand-captured files (e.g. a real 3-D Preview shot) are
-        # allowed and never checked.
+        # Native and emulated CPUs round a few SVG antialias pixels
+        # differently. Same-host determinism above remains byte-exact.
         run: |
-          stale=0
-          for generated in dist/screenshots/*.png; do
-            name="$(basename "$generated")"
-            if ! cmp -s "screenshots/$name" "$generated"; then
-              echo "::error::$name is stale: regenerate inside the dev container (./tools/docker_gates.sh) and commit the PNGs"
-              stale=1
-            fi
-          done
-          exit "$stale"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh python3 tools/compare_screenshots.py screenshots dist/screenshots
+
+      - name: Preserve failed screenshot comparisons
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshot-comparison
+          path: |
+            dist/screenshots/*.png
+            .determinism-check/
+          if-no-files-found: ignore
 
   analyze:
     name: Analyze (CodeQL)
@@ -584,4 +580,3 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
-

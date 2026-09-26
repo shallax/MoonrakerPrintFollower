@@ -123,7 +123,7 @@ class RemoteJobService:
                 new_job = True
             elif previous is None or previous.state not in self._active_states:
                 new_job = True
-            elif observation.file_position > 0 and previous.file_position > 0 and observation.file_position < previous.file_position:
+            elif observation.state == previous.state == "printing" and observation.file_position > 0 and previous.file_position > 0 and observation.file_position < previous.file_position:
                 new_job = True
             elif observation.print_duration + 0.05 < previous.print_duration:
                 new_job = True

@@ -402,6 +402,12 @@ class RealEngineTestCase(unittest.TestCase):
     def setUp(self):
         self._message_start = len(_APPLICATION["messages"])
 
+    def tearDown(self):
+        result = getattr(self, "_result_for_shots", None)
+        if result is not None and len(result.failures) + len(result.errors) > self._shot_failure_count:
+            self._capture_failure_shots()
+            self._shots_captured = True
+
     def pump(self, rounds=20):
         for _ in range(rounds):
             self.app.processEvents()
@@ -468,8 +474,14 @@ class RealEngineTestCase(unittest.TestCase):
             component = document
             document = component.create()
             self.assertIsNotNone(document, qml_error_report(component))
-        self.addCleanup(document.deleteLater)
+        self.addCleanup(self._delete_document, document)
         return document
+
+    @staticmethod
+    def _delete_document(document):
+        from PyQt6 import sip
+        if not sip.isdeleted(document):
+            document.deleteLater()
 
     def find(self, document, object_name):
         item = document.findChild(QQuickItem, object_name)
@@ -504,12 +516,11 @@ class RealEngineTestCase(unittest.TestCase):
         if shot_windows is None:
             shot_windows = self._shot_windows = []
         shot_windows.append(window)
-        self.addCleanup(window.deleteLater)
         # The multi-test crash (engine-proven in the probe): a loaded
         # raster texture's teardown races the next mount unless the
         # window drains its frames hidden first — every window-mount
         # takes the safe teardown.
-        self.addCleanup(self._settle_window, window)
+        self.addCleanup(self._destroy_window, document, window)
         self.pump(30)
         # A platform may lay the window out at a size it chose rather
         # than the one asked for, and the document follows — so every
@@ -543,8 +554,11 @@ class RealEngineTestCase(unittest.TestCase):
         if result is None:
             result = self.defaultTestResult()
         before = len(result.failures) + len(result.errors)
+        self._result_for_shots = result
+        self._shot_failure_count = before
+        self._shots_captured = False
         outcome = super().run(result)
-        if len(result.failures) + len(result.errors) > before:
+        if not self._shots_captured and len(result.failures) + len(result.errors) > before:
             self._capture_failure_shots()
         return outcome
 
@@ -599,11 +613,21 @@ class RealEngineTestCase(unittest.TestCase):
         # QQmlMetaType::propertyCache). Restore the plain-dict
         # payload FIRST — dicts wrap inertly — then drain hidden.
         printer = getattr(self, "_printer", None)
+        printer = getattr(window, "_plate_printer", printer)
         if printer is not None and hasattr(printer, "setLayers"):
             printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
             self.pump(20)
         window.setProperty("visible", False)
         self.pump(60)
+
+    def _destroy_window(self, document, window):
+        # Drain destruction before an earlier cleanup restores the
+        # production model's runtime modules or drops its Python owner.
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        self._settle_window(window)
+        self._delete_document(document)
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def resize_window(self, document, window, width, height):
         window.resize(width, height)
@@ -3173,6 +3197,8 @@ if QT_AVAILABLE:
             self._improving_eta = False
             self._show_base = True
             self.calls = []
+            self.asset_owners = {}
+            self.asset_serial = 0
             self._plate = PlatePrinterDouble.PLATE if PlatePrinterDouble.PLATE is not None else {
                 "objects": [
                     {"name": "Widget", "center": [125.0, 125.0],
@@ -3422,6 +3448,20 @@ if QT_AVAILABLE:
         def setFollowerGestureRaster(self, url):
             self.calls.append(("gestureRaster", str(url or "")))
 
+        @pyqtSlot(result=int)
+        def acquirePlateAssetOwner(self):
+            self.asset_serial += 1
+            self.asset_owners[self.asset_serial] = []
+            return self.asset_serial
+
+        @pyqtSlot(int, "QVariantList")
+        def setPlateAssetReferences(self, owner, urls):
+            self.asset_owners[owner] = list(urls)
+
+        @pyqtSlot(int)
+        def releasePlateAssetOwner(self, owner):
+            self.asset_owners.pop(owner, None)
+
         # The face's barrier report: the production model writes it with
         # Logger.log, because Cura's QML handler carries warnings only.
         @pyqtSlot(str)
@@ -3580,6 +3620,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # with its last Python ref (the QML var takes no ownership),
         # and the monitor's printer dangles null — no plot, no dot.
         self._printer = self._printer()
+        # A parity test mounts several windows. Keep each window's
+        # Python-owned model alive until that window has drained; QML
+        # QVariant references do not own these Python QObjects.
+        fixtures = getattr(self, "_plate_printers", None)
+        if fixtures is None:
+            fixtures = self._plate_printers = []
+        fixtures.append(self._printer)
+        for window in getattr(self, "_shot_windows", []):
+            if monitor.parentItem() is window.contentItem():
+                window._plate_printer = self._printer
+                break
         monitor.setProperty("printer", self._printer)
         monitor.setProperty("openPopOver", popover)
         self.pump(30)
@@ -3632,7 +3683,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
 
     def _native_layer(self, payload, face, prefix_split=None, dpr=1.0,
                       line_scale=8.0, grey=True, pan_x=0.0, scale=1.0,
-                      pan_y=0.0):
+                      pan_y=0.0, layer_type=None):
         """A REAL PlateLayer whose rasters the native renderer
         painted with the face's own mapping — the production object
         the plain-dict fixtures never provide: no .classes, so the
@@ -3663,8 +3714,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "travelVisualRatio": _PLATE_TRAVEL_VISUAL_RATIO}
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
-        stem = "fixture-%d" % PlateFaceRenderTests._raster_stem
-        layer = PlateLayer(payload)
+        stem = "fixture-%d-%d" % (os.getpid(), PlateFaceRenderTests._raster_stem)
+        layer = (layer_type or PlateLayer)(payload)
         coloured, base, travels = render_layer_raster(payload, plot, view)
         layer.set_raster(coloured, "fixture-key",
                          png_file(coloured, raster_dir, stem + "-c"))
@@ -3700,7 +3751,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         big = source.scaled(source.width() * factor, source.height() * factor,
                             Qt.AspectRatioMode.IgnoreAspectRatio,
                             Qt.TransformationMode.FastTransformation)
-        path = "/tmp/mpf/raster-probe/%s-%dx.png" % (tag, factor)
+        path = "/tmp/mpf/raster-probe/%s-%d-%dx.png" % (tag, os.getpid(), factor)
         big.save(path, "PNG")
         return QUrl.fromLocalFile(path).toString()
 
@@ -4097,6 +4148,115 @@ class PlateFaceRenderTests(RealEngineTestCase):
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the partial prefix never drew")
 
+    def test_a_failed_full_asset_uses_complete_vector_geometry_without_a_scrub_payload(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showTravels", True)
+        self.pump(10)
+        for failed in ("class", "travel", "unpublished", "unpublished-travel"):
+            with self.subTest(asset=failed):
+                payload = {
+                    "classes": {"WALL-OUTER": [[[20.0 + i * 10.0, 125.0, float(i)]
+                                                for i in range(21)]]},
+                    "travels": [[[20.0 + i * 10.0, 200.0, float(i)] for i in range(21)]],
+                    "travelStarts": [], "travelEnds": [], "motions": 21}
+                layer = self._native_layer(payload, face)
+                missing = "file:///tmp/mpf/missing-%s-%d.png" % (failed, time.monotonic_ns())
+                if failed == "class":
+                    layer.set_raster(layer.raster, "fixture-key", missing)
+                elif failed == "travel":
+                    layer.set_travels(layer.travelRaster, "fixture-key", missing)
+                elif failed == "unpublished":
+                    layer.set_raster(layer.raster, "fixture-key", "")
+                else:
+                    layer.set_travels(layer.travelRaster, "fixture-key", "")
+                self._printer.setScrub(None)
+                self._printer.setLayers({"prev": None, "current": layer, "next": None})
+                self._printer.setSplit(21)
+                deadline = time.monotonic() + 5.0
+                image = None
+                while time.monotonic() < deadline:
+                    self._pump_ms(20)
+                    image = window.grabWindow()
+                    if face.property("_vectorCoversShown") == 0:
+                        break
+                self.assertEqual(face.property("_vectorCoversShown"), 0,
+                                 "failed transport never delivered a full fallback")
+                plot = self._bed_point(face, 0.0, 0.0)
+                for x in (25.0, 105.0, 215.0):
+                    self.assertGreater(self._stroke_ink(image, face, window, plot, x, 125.0), 0,
+                                       "fallback lost printed history")
+                self.assertGreater(self._purple_pixels(image, face, window), 0,
+                                   "fallback omitted required travel moves")
+                from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+                self.assertTrue(QMetaObject.invokeMethod(face, "_exactReady", Q_RETURN_ARG(QVariant)))
+
+    def test_failed_base_and_ghost_assets_complete_the_exact_background(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        face.setProperty("showPrevious", True)
+        self.pump(10)
+        payload = {"classes": {"WALL-OUTER": [[[20.0, 125.0, 0.0],
+                                                [200.0, 125.0, 20.0]]]},
+                   "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21}
+        ghost_payload = {"classes": {"FILL": [[[20.0, 60.0, 0.0],
+                                               [200.0, 60.0, 20.0]]]},
+                         "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21}
+        current = self._native_layer(payload, face)
+        ghost = self._native_layer(ghost_payload, face)
+        current.set_base(current.baseRaster, "fixture-key",
+                         "file:///tmp/mpf/missing-base-%d.png" % time.monotonic_ns())
+        ghost.set_raster(ghost.raster, "fixture-key",
+                         "file:///tmp/mpf/missing-ghost-%d.png" % time.monotonic_ns())
+        self._printer.setSplit(0)
+        self._printer.setScrub(None)
+        self._printer.setLayers({"prev": ghost, "current": current, "next": None})
+        plot = self._bed_point(face, 0.0, 0.0)
+        image = self._wait_until(window, lambda shot:
+            self._band_changed(shot, baseline, face, window, plot, 100.0, 125.0, radius=6)
+            and self._band_changed(shot, baseline, face, window, plot, 100.0, 60.0, radius=6)
+            and bool(QMetaObject.invokeMethod(face, "_exactReady", Q_RETURN_ARG(QVariant))))
+        for y in (60.0, 125.0):
+            self.assertTrue(self._band_changed(image, baseline, face, window, plot,
+                                               100.0, y, radius=6),
+                            "failed background transport left missing geometry")
+        self.assertTrue(QMetaObject.invokeMethod(face, "_exactReady", Q_RETURN_ARG(QVariant)))
+
+    def test_ordinary_full_rasters_never_convert_the_fallback_geometry(self):
+        from PyQt6.QtCore import pyqtProperty
+        from plugins.PlateQt import PlateLayer
+
+        class CountingLayer(PlateLayer):
+            def __init__(self, payload):
+                super().__init__(payload)
+                self.fallback_reads = 0
+
+            @pyqtProperty("QVariantMap", constant=True)
+            def fallbackVector(self):
+                self.fallback_reads += 1
+                return self._payload
+
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = {"classes": {"WALL-OUTER": [[[20.0, 125.0, 0.0],
+                                                [200.0, 125.0, 20.0]]]},
+                   "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21}
+        layer = self._native_layer(payload, face, layer_type=CountingLayer)
+        self._printer.setScrub(None)
+        # Establish full demand before replacing the scene; publishing the
+        # wrapper at the fixture's previous partial split legitimately asks
+        # the recovery producer for its missing tail.
+        self._printer.setSplit(21)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        image, count = self._wait_red(window, face, want=True)
+        self.assertGreater(count, 0)
+        self._pump_ms(150)
+        window.grabWindow()
+        self.assertEqual(layer.fallback_reads, 0,
+                         "a capability check wrapped geometry on the normal raster path")
+
     def test_partial_prefix_and_canvas_tail_keep_one_stroke_width(self):
         # The live partial composition is TWO render engines: QPainter
         # owns the native prefix and QML Canvas owns the vector tail.
@@ -4286,6 +4446,40 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(30)
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
+
+    def test_a_face_leases_held_assets_and_releases_its_model_on_destruction(self):
+        from PyQt6.QtCore import QEvent
+        component = QQmlComponent(self.engine)
+        component.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / "PlateProgressFace.qml")))
+        first = PlatePrinterDouble()
+        second = PlatePrinterDouble()
+        face = component.createWithInitialProperties({"printerModel": first})
+        self.assertIsNotNone(face, qml_error_report(component))
+        self.pump(10)
+        owner = face.property("_assetOwner")
+        self.assertIn(owner, first.asset_owners)
+        prefix = "file:///tmp/mpf/standing-prefix.png"
+        full = "file:///tmp/mpf/held-full.png"
+        warm = "file:///tmp/mpf/gesture-entry.png"
+        face.setProperty("_standingPrefix", {"source": prefix, "from": 10,
+                         "anchor": -1, "world": "lease-test", "view": ""})
+        face.setProperty("_standingFull", {"source": full, "travels": "",
+                         "anchor": -1, "world": "lease-test"})
+        face.setProperty("_gestureNavSource", warm)
+        self.pump(10)
+        self.assertTrue({prefix, full, warm}.issubset(first.asset_owners[owner]))
+        face.setProperty("_standingPrefix", None)
+        self.pump(5)
+        self.assertNotIn(prefix, first.asset_owners[owner])
+        face.setProperty("printerModel", second)
+        self.pump(10)
+        self.assertFalse(first.asset_owners)
+        self.assertTrue({full, warm}.issubset(
+            second.asset_owners[face.property("_assetOwner")]))
+        face.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.pump(10)
+        self.assertFalse(second.asset_owners)
 
     def test_a_view_change_retires_the_retained_prefix_picture(self):
         # The retained handover's frozen pixels bake the view
@@ -4860,6 +5054,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "the DPR-2 raster's ink never reached the logical corner")
 
     def test_reverse_scrub_paths_settle_to_the_same_picture(self):
+        from PyQt6.QtCore import Q_RETURN_ARG, QVariant
+
         # F: the reverse scrub is the prefix scheduler's stress path
         # (a backward move demands a fresh prefix immediately). The
         # SAME final {layer, split, view, toggles} must produce the
@@ -4888,8 +5084,30 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self._printer.setSplit(split)
 
         def settled_grab():
-            self._pump_ms(350)  # past the view settle and the paints
-            return window.grabWindow()
+            # A fixed delay can photograph the full-history fallback
+            # before the prefix and its matching tail have delivered,
+            # especially with the threaded Canvas on loaded macOS CI.
+            # Compare the settled owner on every path, then require two
+            # unchanged frames; the pixel tolerance remains unchanged.
+            deadline = time.monotonic() + 5.0
+            previous = None
+            while time.monotonic() < deadline:
+                self._pump_ms(30)
+                image = window.grabWindow()
+                ready = (
+                    face.property("_prefixWasShown")
+                    and face.property("_vectorCoversShown") == layer.prefixSplit
+                    and face.property("_vectorSplitShown") == target
+                    and QMetaObject.invokeMethod(face, "_exactReady", Q_RETURN_ARG(QVariant)))
+                if ready and previous is not None and self._pixel_diff(
+                        image, previous, face, window) == 0:
+                    return image
+                previous = image if ready else None
+            state = face.property("_canvasTransaction")
+            if hasattr(state, "toVariant"):
+                state = state.toVariant()
+            self.fail("reverse scrub never delivered a stable prefix/tail composition: %s; transaction=%r" % (
+                QMetaObject.invokeMethod(face, "_holdTerms", Q_RETURN_ARG(QVariant)), state))
 
         seek_to(target)
         direct = settled_grab()
@@ -4910,19 +5128,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 seek_to(split)
                 self._pump_ms(60)
             image = settled_grab()
-            # The antialias tolerance: a path through the full state
-            # keeps the canvas's FULL bitmap under the prefix (the
-            # re-show gate forbids the trim), while the direct path
-            # trims to the tail — the SAME geometry composites with
-            # fringe shades a few channels apart. Anything beyond a
-            # per-channel 40 is a real composition drift.
+            # Every path now compares the same delivered interval
+            # owners. Preserve the platform antialias tolerance while
+            # rejecting any changed region of the settled picture.
             def differs(pixel_a, pixel_b):
-                # The suite's loose census tolerance: the paths'
-                # canvas keeps the full stroke under the prefix
-                # (the re-show gate forbids the trim), so the
-                # prefix interval's antialiased edge row composites
-                # ~42 channels lighter — the SAME geometry, an
-                # antialias-level shading difference.
                 return any(abs(((pixel_a >> shift) & 0xFF)
                               - ((pixel_b >> shift) & 0xFF)) > 60
                            for shift in (0, 8, 16))
@@ -5210,6 +5419,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
                            face.property("_vectorCoversFrom"),
                            layer.prefixValid, layer.prefixSplit,
                            progress_now.get("split") if progress_now else "?"))
+                    details.append("owners=%s receipt=%s" % (
+                        face.property("_presentation").toVariant(),
+                        face.property("_deliveredComposition").toVariant()))
+                    full_image = self._image_with_source(face, layer.rasterData)
+                    details.append("held=%r fullImage=%s" % (
+                        face.property("_heldFullSource"),
+                        (full_image.isVisible(), full_image.property("opacity"),
+                         full_image.property("status")) if full_image is not None else None))
                     failures.append("%s: beat %d presented no complete "
                                     "composition (%s)"
                                     % (name, beat, " | ".join(details)))
@@ -5315,27 +5532,33 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # the scene), and a fixture that forced only the committed
         # record would leave the delivered record claiming a canvas
         # state the test does not mean.
-        face.setProperty("_textureReady", True)
         face.setProperty("_vectorCoversFrom", 0)
-        face.setProperty("_vectorCoversShown", 0)
+        receipt = {"epoch": face.property("_progressWorldEpoch"),
+                   "from": 0, "split": 5, "prefixSource": ""}
+        face.setProperty("_deliveredComposition", receipt)
         face.setProperty("_lastSplit", 5)
         self.assertFalse(predicate(),
-                         "an older split's delivery readied the prefix")
-        # The current split's delivery lands — readiness follows.
+                         "an older split's delivered frame readied the prefix")
+        # The painter may have already advanced to 18; only the
+        # DELIVERED receipt can allow the prefix to stand on that bitmap.
         face.setProperty("_lastSplit", 18)
-        self.assertTrue(predicate(),
-                        "the current delivery never readied the prefix")
+        self.assertFalse(predicate(),
+                         "the painter's split impersonated delivered pixels")
+        receipt["split"] = 18
+        face.setProperty("_deliveredComposition", receipt)
+        self.assertFalse(predicate(), "a full Canvas admitted overlapping prefix ink")
+        receipt["from"] = 10
+        receipt["prefixSource"] = layer.prefixData
+        face.setProperty("_deliveredComposition", receipt)
+        self.assertTrue(predicate(), "the matching tail delivery never readied the prefix")
 
-    def test_a_delivery_publishes_the_paint_the_scene_actually_pulled(self):
-        # The seam's doubled ink: a delivery published the painter's
-        # CURRENT coverage for a bitmap an EARLIER paint produced, so
-        # the record claimed a trimmed canvas while the scene still
-        # showed the full-interval one and the live prefix stacked its
-        # raster over it (band mass +13%, hundreds of frames under
-        # load). The state needs no load to reach — a grab's own paint
-        # is not delivered by that grab, so "a paint in flight while
-        # the painter has already committed a later coverage" is
-        # planted here and the delivery is read as it lands.
+    def test_a_stale_scene_or_ambiguous_canvas_delivery_cannot_admit_a_prefix(self):
+        # A pure delivery-controller probe through the REAL QML engine.
+        # The backend may publish a new layer while a previous paint
+        # is still in the render thread. Neither the old paint nor
+        # multiple paints collapsed into one delivery is evidence
+        # that the new layer's Canvas texture is presentation-ready.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
         self.pump(10)
@@ -5350,76 +5573,149 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(18)
-        # The settle's landmark is the face's own show record, not a
-        # beat: the prefix's upload is off-thread, so any budget that
-        # fits one host reads the front gates still shut on another.
-        # The timeout is a hang guard; the assertion is what fails when
-        # the prefix never shows.
         deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and \
-                not face.property("_prefixWasShown"):
+        while time.monotonic() < deadline and not face.property("_prefixWasShown"):
             self._pump_ms(10)
         self.assertTrue(face.property("_prefixWasShown"),
-                        "the settled prefix never showed")
-        self.assertEqual(face.property("_vectorCoversShown"), 10,
-                         "the settled delivery is not the trim")
+                        "the baseline prefix was never presented")
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        self.assertGreater(epoch, 0)
+        self.assertTrue(world)
 
-        def covers():
-            value = face.property("_paintCovers")
-            if hasattr(value, "toVariant"):
-                value = value.toVariant()
-            return list(value or [])
+        def deliver(receipt, paints=1):
+            face.setProperty("_canvasTransaction", {
+                "epoch": face.property("_progressWorldEpoch"),
+                "world": face.property("_progressWorldKey"),
+                "inFlight": True, "pending": False, "count": paints,
+                "first": receipt, "last": receipt, "consensus": paints == 1})
+            result = QMetaObject.invokeMethod(
+                face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant))
+            self.assertIsInstance(result, bool)
+            return result
 
-        # The record each delivery publishes is read AT the delivery:
-        # the drain's first sync carries a burst of paints, and a
-        # sampled read of the face's record then sees only the burst's
-        # last one — the full-interval bitmap's record is published and
-        # consumed inside one event turn.
-        published = []
-        for canvas in [item for item in face.findChildren(QQuickItem)
-                       if item.metaObject().className() == "QQuickCanvasItem"]:
-            canvas.painted.connect(
-                lambda: published.append(face.property("_vectorCoversShown")))
-        # The state under test, planted: the scene holds the
-        # full-interval bitmap and its delivery is still in flight,
-        # while the painter commits the trim on top of it. The settle's
-        # own queue bookkeeping is not that state, so it is set aside
-        # rather than asserted.
-        face.setProperty("_paintCovers", [])
-        face.setProperty("_paintCovers", [0])
-        face.setProperty("_vectorCoversFrom", 0)
-        # The split advance is what makes the canvas dirty, so the grab
-        # below paints — and that paint is undelivered, leaving the
-        # plant's full-interval entry at the head with the paint's own
-        # trim entry behind it.
-        self._printer.setSplit(12)
-        window.grabWindow()
-        self.assertEqual(covers(), [0, 10],
-                         "the forced paint did not leave the full-interval "
-                         "bitmap's record at the head of the undelivered "
-                         "queue (queue %r)" % (covers(),))
-        self.assertEqual(face.property("_vectorCoversFrom"), 10,
-                         "the paint did not commit the trim: the delivered "
-                         "and the painter's records are indistinguishable "
-                         "here (painter %r)"
-                         % (face.property("_vectorCoversFrom"),))
+        correct = {"epoch": epoch, "world": world, "valid": True,
+                   "from": 10, "split": 18}
+        face.setProperty("_deliveredComposition", None)
+        self.assertFalse(deliver({**correct, "epoch": epoch - 1}),
+                         "an earlier layer's callback certified this one")
+        self.assertNotEqual(face.property("_vectorCoversShown"), 10)
 
-        # The delivery of a canvas paint rides the renderer's own sync,
-        # so keep rendering until one lands rather than assuming a pump
-        # is enough. The backlog falls one paint per delivery, so the
-        # FIRST delivery after the plant publishes the full-interval
-        # bitmap's own record; a face that names the painter's latest
-        # record instead publishes the trim for the bitmap the scene
-        # holds, and the prefix stacks over it. The wait's timeout is a
-        # hang guard, not a budget: the assertion is what fails when the
-        # head's record is never published.
-        self._wait_until(window, lambda image: 0 in published, timeout=10.0)
-        self.assertIn(0, published,
-                      "the delivery of the full-interval paint never "
-                      "published that paint's own coverage, so the record "
-                      "names a bitmap the scene does not hold and the "
-                      "prefix stacks over the full one (records published: "
-                      "%r)" % (published,))
+        self.assertFalse(deliver(correct, paints=2),
+                         "two paints collapsed into one ambiguous texture")
+        self.assertNotEqual(face.property("_vectorCoversShown"), 10)
+
+        self.assertTrue(deliver(correct), "a matching delivery was refused")
+        self.assertEqual(face.property("_vectorCoversShown"), 10)
+        self.assertEqual(face.property("_vectorSplitShown"), 18)
+        self.assertEqual(face.property("_vectorWorldShown"), epoch)
+
+        # Advancing the print or layer incarnation invalidates the
+        # previously delivered bitmap without changing its motion
+        # count or accidentally reusing a previous anchor's bytes.
+        face.setProperty("_progressWorldEpoch", epoch + 1)
+        face.setProperty("_deliveredComposition", None)
+        self.assertFalse(deliver(correct),
+                         "the new generation accepted stale Canvas pixels")
+        self.assertEqual(face.property("_vectorCoversShown"), -2)
+
+    def test_return_to_standing_split_queues_after_intervening_upload(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        old = {"epoch": epoch, "world": world, "valid": True,
+               "from": 0, "split": 18}
+        face.setProperty("_deliveredComposition", old)
+        intervening = dict(old, split=8)
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 1, "first": intervening,
+            "last": intervening, "consensus": True})
+        self.assertFalse(QMetaObject.invokeMethod(
+            face, "_progressPaintSatisfied", Q_RETURN_ARG(QVariant)))
+        self.assertTrue(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        self.assertTrue(face.property("_canvasTransaction").toVariant()["pending"])
+
+    def test_equivalent_extra_canvas_paints_share_one_valid_delivery(self):
+        # Qt can coalesce multiple identical onPaint events into one
+        # painted() signal. The delivery is not ambiguous when both
+        # bitmaps have the same world, boundary and coverage.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        receipt = {"epoch": epoch, "world": world, "valid": True,
+                   "from": 0, "split": 8}
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 2, "first": receipt,
+            "last": dict(receipt), "consensus": True})
+        self.assertTrue(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        self.assertEqual(face.property("_vectorCoversShown"), 0)
+        self.assertEqual(face.property("_vectorSplitShown"), 8)
+
+    def test_mixed_canvas_paints_cannot_certify_the_last_boundary(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(10)
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        old = {"epoch": epoch, "world": world, "valid": True,
+               "from": 0, "split": 8}
+        current = dict(old, **{"from": 5, "split": 10})
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 2, "first": old,
+            "last": current, "consensus": False})
+        self.assertFalse(QMetaObject.invokeMethod(
+            face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertTrue(state["pending"])
+
+    def test_exact_canvas_coalesces_progress_while_one_paint_is_in_flight(self):
+        from PyQt6.QtCore import QMetaObject
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("_deliveredComposition", None)
+        face.setProperty("_canvasTransaction", {
+            "epoch": face.property("_progressWorldEpoch"),
+            "world": face.property("_progressWorldKey"),
+            "inFlight": True, "pending": False, "count": 0,
+            "first": None, "last": None, "consensus": False})
+        QMetaObject.invokeMethod(face, "_requestProgressPaint")
+        QMetaObject.invokeMethod(face, "_requestProgressPaint")
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertTrue(state["pending"], "rapid live polls did not coalesce")
+        self.assertTrue(state["inFlight"])
+
+    def test_a_delivery_does_not_reenter_canvas_paint_in_its_own_turn(self):
+        # Qt may render extra canvas windows during a resize. An
+        # ambiguous single-flight receipt must schedule one later
+        # retry, not spin requestPaint() synchronously from onPainted
+        # and starve the GUI/camera under repeated invalidation.
+        from PyQt6.QtCore import QMetaObject
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("_canvasTransaction", {
+            "epoch": face.property("_progressWorldEpoch"),
+            "world": face.property("_progressWorldKey"),
+            "inFlight": False, "pending": True, "count": 0,
+            "first": None, "last": None, "consensus": False})
+        QMetaObject.invokeMethod(face, "_flushProgressPaint")
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertFalse(state["inFlight"],
+                         "onPainted synchronously initiated its replacement paint")
+        self.assertTrue(state["pending"],
+                        "the retry was consumed before the next event turn")
 
     _PARITY_ORIENTATIONS = {
         # The prefix boundary sits at motion 9 (bed position 110 or
@@ -6575,7 +6871,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # The refresh: the new prefix AT the demand arrives while the
         # old one is visible.
         prefix, url = self._prefix_for(payload, face, 160, "dense-handover")
-        layer.set_prefix(prefix, url, 160, "key-2")
+        layer.set_prefix(prefix, url, 160, "fixture-key")
         self._printer.setSplit(160)
         deadline = time.monotonic() + 3.0
         frames = 0
@@ -6609,25 +6905,138 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(120)
         self._wait_red(window, face, want=True)
+        previous_split = 120
         for target in (160, 240):
             prefix, url = self._prefix_for(payload, face, target, "dense-multi")
-            layer.set_prefix(prefix, url, target, "key-%d" % target)
+            layer.set_prefix(prefix, url, target, "fixture-key")
             self._printer.setSplit(target)
             deadline = time.monotonic() + 3.0
-            interior = 20.0 + (target - 40) * 0.6
+            interior = 20.0 + (target - 5) * 0.6
             while time.monotonic() < deadline:
                 grab = window.grabWindow()
                 # The PREVIOUS committed history (well inside the old
                 # boundary) must stand on every frame.
                 self.assertTrue(self._red_in_band(grab, face, window, plot,
-                                                  20.0 + (target - 80) * 0.6,
+                                                  20.0 + (previous_split - 20) * 0.6,
                                                   125.0),
                                 "a frame lost the committed history at %d" % target)
-                if self._red_in_band(grab, face, window, plot,
-                                     interior, 125.0):
+                if face.property("_vectorSplitShown") == target and self._red_in_band(
+                        grab, face, window, plot, interior, 125.0):
                     break
                 self._pump_ms(20)
             self._pump_ms(60)
+            self.assertEqual(face.property("_vectorSplitShown"), target,
+                             "the refresh never delivered the requested interval")
+            previous_split = target
+
+        self.assertEqual([message for message in _APPLICATION["messages"][self._message_start:]
+                          if "Binding loop" in message], [],
+                         "composition ownership formed a QML binding cycle")
+
+    def test_reverse_checkpoint_handover_never_presents_less_than_the_requested_split(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face, prefix_split=200)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(220)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 220 and time.monotonic() < deadline:
+            self._pump_ms(20)
+        self.assertEqual(face.property("_vectorSplitShown"), 220)
+        prefix, url = self._prefix_for(payload, face, 150, "reverse-checkpoint")
+        layer.set_prefix(prefix, url, 150, "fixture-key")
+        self._printer.setSplit(160)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            image = window.grabWindow()
+            self.assertTrue(self._red_in_band(image, face, window, plot,
+                                              20 + 155 * 0.6, 125),
+                            "a checkpoint presented below the requested progress")
+            if face.property("_vectorSplitShown") == 160:
+                break
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 160)
+
+    def test_pending_native_prefix_holds_the_frame_without_a_full_history_qml_walk(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        layer = self._native_layer(payload, face, prefix_split=100)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(120)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 120 and time.monotonic() < deadline:
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 120)
+        layer.set_prefix_pending(True)
+        self._printer.setSplit(160)
+        self._pump_ms(100)
+        self.assertEqual(face.property("_vectorSplitShown"), 120,
+                         "the standing frame was withdrawn while native work was pending")
+        self.assertEqual(face.property("_lastSplit"), 120,
+                         "QML walked history while a native prefix was on its way")
+        layer.set_prefix_pending(False)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 160 and time.monotonic() < deadline:
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 160,
+                         "worker completion never woke the coalesced painter")
+
+    def test_zero_to_forward_with_a_delayed_prefix_never_flickers_or_overshoots(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(0)
+        self._pump_ms(100)
+        prefix, url = self._prefix_for(payload, face, 100, "zero-forward")
+        url = self._slow_raster(url, "zero-forward", factor=6)
+        layer.set_prefix(prefix, url, 100, "fixture-key")
+        self._printer.setSplit(160)
+        seen = False
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            image = window.grabWindow()
+            complete = self._red_in_band(image, face, window, plot, 20 + 155 * 0.6, 125)
+            if seen:
+                self.assertTrue(complete, "a complete frame lost history during the prefix handover")
+            seen = seen or complete
+            self.assertFalse(self._red_in_band(image, face, window, plot, 20 + 200 * 0.6, 125),
+                             "a forward scrub overshot the requested split")
+            self._pump_ms(10)
+        self.assertTrue(seen, "the requested frame never arrived")
+
+    def test_the_standing_grid_survives_zero_and_forward_preparation(self):
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(20)
+        baseline = window.grabWindow()
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        samples = []
+        for y in range(5, 100, 2):
+            for x in range(5, 100, 2):
+                px, py = int(origin.x()) + x, int(origin.y()) + y
+                colour = baseline.pixelColor(px, py)
+                if 50 < colour.red() < 200 and abs(colour.red() - colour.green()) < 3:
+                    samples.append((px, py, baseline.pixel(px, py)))
+        self.assertGreater(len(samples), 5, "the baseline never drew a grid")
+        for split in (0, 1, 3, 0, 5):
+            self._printer.setSplit(split)
+            face.setProperty("_deliveredComposition", None)
+            for _ in range(3):
+                image = window.grabWindow()
+                self.assertTrue(all(image.pixel(x, y) == pixel for x, y, pixel in samples),
+                                "the preparation cover hid the standing grid")
+                self._pump_ms(10)
 
     def test_a_backward_scrub_to_zero_clears_all_printed_geometry(self):
         # The 0% state owns NOTHING printed: the prefix hides, the
@@ -7078,6 +7487,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertGreater(
             self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
             0, "the settled prefix never drew its history")
+        # Delivery notifications with no intervening paint do not
+        # replace pixels. They must preserve the standing receipt.
+        for _ in range(100):
+            transaction = face.property("_canvasTransaction").toVariant()
+            standing = face.property("_deliveredComposition").toVariant()
+            if transaction["count"] == 0 and standing["from"] == 10:
+                break
+            self._pump_ms(20)
+            window.grabWindow()
+        self.assertEqual(face.property("_canvasTransaction").toVariant()["count"], 0)
+        receipt = face.property("_deliveredComposition").toVariant()
+        QMetaObject.invokeMethod(face, "_deliverProgressPaint")
+        QMetaObject.invokeMethod(face, "_deliverProgressPaint")
+        self.assertEqual(face.property("_deliveredComposition").toVariant(), receipt)
         # The boundary advance: the replacement lands while the
         # canvas still covers [10, 18). Every frame of the handover
         # must keep the interior ink — the standing composition is
@@ -7102,20 +7525,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
             # happened to commit before the grab (this container's
             # cadence often sampled the good frame and passed).
             #
-            # ONE state is exempt: a committed texture over a delivery
-            # whose painted coverage is still zero. That is where the
-            # record's own rule stands down by design — it must not
-            # stack its pixels over a bitmap the canvas is already
-            # showing (the additive-AA doubling the stroke census
-            # forbids). On a host whose scene texture trails its painted
-            # signal that exempt beat can paint the interior bare: the
-            # known limitation (changelogged, not fixed — the fix needs
-            # the scene's committed frame, not a flag). Every beat
-            # without that state must be owned and inked, which is what
-            # the two asserts below hold.
-            tolerated = bool(face.property("_textureReady")) \
+            # A delivered full-history Canvas is a complete owner too;
+            # it must exclude the prefix, but never the pixel assertion.
+            canvas_owner = bool(face.property("_textureReady")) \
                 and face.property("_vectorCoversShown") == 0
-            if not tolerated:
+            if not canvas_owner:
                 record_owner, live_owner = self._prefix_stack_owners(face)
                 self.assertTrue(
                     record_owner or live_owner,
@@ -7131,10 +7545,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         face.property("_prefixWasShown"),
                         face.property("_prefixStatusReady"),
                         face.property("_retainedPrefixSource")))
-                self.assertGreater(
-                    self._stroke_ink(grab, face, window, census_plot,
-                                     75.0, 125.0),
-                    0, "a frame lost the printed history mid-transition")
+            self.assertGreater(
+                self._stroke_ink(grab, face, window, census_plot,
+                                 75.0, 125.0),
+                0, "a frame lost the printed history mid-transition")
             if face.property("_vectorCoversFrom") == 15 \
                     and self._stroke_ink(grab, face, window, census_plot,
                                          115.0, 125.0) > 0:
@@ -8253,6 +8667,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
             "the raster's texture landed before the camera move: the hold "
             "is no longer the picture's owner")
         face.setProperty("viewPanX", pan)
+        # The production view feed invalidates the old raster key.
+        layer.set_expected_key("panned-fixture")
         # The split's own paint request is still pending — nothing has
         # rendered since it was made — so ONE render is the camera
         # move's first paint, and the read follows it with no event
@@ -8261,6 +8677,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # too, so a wait passes on the settle's repaint whether or not
         # the camera move's own paint kept the old view's ink.
         window.grabWindow()
+        if face.property("_accumViewKey") == painted:
+            # An older actual upload can still own the transaction's
+            # delivery slot. Its bitmap is masked, never presented as
+            # the new view, while the coalesced current paint waits.
+            cover = self.find(face, "moonrakerPlatePreparingCover")
+            self.assertTrue(cover.property("visible"),
+                            "the obsolete view's bitmap remained visible")
+            self._wait_until(window, lambda _image: face.property("_accumViewKey") != painted)
         self.assertNotEqual(
             face.property("_accumViewKey"), painted,
             "the camera move's own paint kept the previous view's ink: "

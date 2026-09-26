@@ -525,6 +525,117 @@ class NativeRasterTransportTests(unittest.TestCase):
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class NativeLayerFallbackTests(unittest.TestCase):
+    def test_prefix_worker_wait_has_a_notify_and_view_changes_retire_it(self):
+        layer = PlateLayer({"motions": 1000})
+        notices = []
+        layer.rasterReady.connect(lambda: notices.append(True))
+        layer.set_prefix_pending(True)
+        self.assertTrue(layer.prefixPending)
+        layer.set_prefix_pending(True)
+        self.assertEqual(len(notices), 1)
+        layer.set_prefix_pending(False)
+        self.assertFalse(layer.prefixPending)
+        layer.set_prefix_pending(True)
+        layer.set_expected_key("new view")
+        self.assertFalse(layer.prefixPending)
+
+    def test_rewind_archive_selects_only_an_earlier_same_view_file_and_retires(self):
+        layer = PlateLayer({"motions": 1000})
+        layer.set_expected_key("view")
+        layer._rewind_files = {p: "file:///p-%d.png" % p for p in range(50, 1000, 50)}
+        self.assertEqual(layer.prefix_file_seed("view", 749), ("file:///p-700.png", 700))
+        self.assertEqual(layer.prefix_file_seed("view", 49), ("", 0))
+        self.assertEqual(layer.prefix_file_seed("other", 749), ("", 0))
+        self.assertEqual(len(layer.prefix_references()), 19)
+        self.assertEqual(layer.memory_bytes(), 0)
+        cancelled = threading.Event()
+        layer._rewind_cancel = cancelled
+        layer._rewind_ticket = ("work",)
+        layer.set_expected_key("other")
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(layer.prefix_references(), [])
+        self.assertIsNone(layer._rewind_ticket)
+
+    def test_background_budget_yields_and_can_cancel_during_its_wait(self):
+        from unittest.mock import Mock, patch
+        from plugins.PlateQt import _CheckpointBudget
+        cancel = Mock()
+        cancel.is_set.return_value = False
+        with patch("plugins.PlateQt.time.monotonic", side_effect=[0, 0.001, 0.009, 0.02]):
+            budget = _CheckpointBudget(cancel)
+            self.assertFalse(budget.is_set())
+            cancel.wait.assert_not_called()
+            self.assertFalse(budget.is_set())
+            cancel.wait.assert_called_once_with(0.008)
+        cancel.is_set.return_value = True
+        self.assertTrue(budget.is_set())
+
+    def test_backward_checkpoint_reuses_only_an_earlier_matching_view(self):
+        from PyQt6.QtGui import QImage
+        from plugins.PlateQt import PlateLayer
+        layer = PlateLayer({"motions": 1000})
+        layer.set_expected_key("view")
+        images = []
+        for boundary in (100, 300, 500):
+            image = QImage(16, 16, QImage.Format.Format_ARGB32)
+            image.fill(boundary)
+            images.append(image)
+            layer.set_prefix(image, "file:///checkpoint-%d.png" % boundary, boundary, "view")
+        self.assertTrue(layer.restore_prefix("view", 350))
+        self.assertEqual(layer.prefixSplit, 300)
+        self.assertEqual(layer.prefixData, "file:///checkpoint-300.png")
+        self.assertIs(layer._prefix, images[1])
+        self.assertFalse(layer.restore_prefix("other-view", 200))
+        layer.set_expected_key("other-view")
+        self.assertEqual(layer.prefix_seed("view", 600), (None, 0))
+        self.assertEqual(layer.prefix_references(), [])
+
+    def test_a_backward_cached_seed_has_the_same_pixels_as_a_fresh_target(self):
+        from plugins.PlateQt import PlateLayer
+        payload = {"classes": {"WALL-OUTER": [
+            [[10.0, 100.0, 0.0], [30.0, 100.0, 1.0]],
+            [[50.0, 100.0, 3.0], [70.0, 100.0, 4.0]],
+            [[90.0, 100.0, 6.0], [110.0, 100.0, 7.0]]]},
+            "travels": [], "motions": 8}
+        plot, view = _plot(), _view()
+        layer = PlateLayer(payload)
+        layer.set_expected_key("view")
+        for boundary in (2, 5, 8):
+            layer.set_prefix(render_layer_prefix(payload, plot, view, boundary),
+                             "file:///checkpoint-%d.png" % boundary, boundary, "view")
+        self.assertTrue(layer.restore_prefix("view", 6))
+        seed, boundary = layer.prefix_seed("view", 6)
+        self.assertEqual(boundary, 5)
+        reused = render_layer_prefix(payload, plot, view, 6, previous=seed,
+                                     previous_split=boundary)
+        self.assertEqual(reused, render_layer_prefix(payload, plot, view, 6))
+
+    def test_checkpoint_count_and_pixel_memory_are_bounded(self):
+        from PyQt6.QtGui import QImage
+        from plugins.PlateQt import PlateLayer
+        layer = PlateLayer({"motions": 1000})
+        layer.set_expected_key("view")
+        for boundary in range(1, 7):
+            image = QImage(1024, 1024, QImage.Format.Format_ARGB32)
+            image.fill(boundary)
+            layer.set_prefix(image, "file:///checkpoint-%d.png" % boundary, boundary, "view")
+        self.assertEqual(len(layer.prefix_references()), 4)
+        self.assertLessEqual(layer.memory_bytes(), 16 * 1024 * 1024)
+        self.assertEqual(layer.prefix_seed("view", 2), (None, 0))
+        image = QImage(2100, 2100, QImage.Format.Format_ARGB32)
+        layer.set_prefix(image, "file:///large.png", 7, "view")
+        self.assertEqual(layer.prefix_references(), [])
+        self.assertEqual(layer.memory_bytes(), image.sizeInBytes())
+
+    def test_same_count_payloads_have_distinct_immutable_incarnations(self):
+        payload = _payload()
+        first, second = PlateLayer(payload), PlateLayer(payload)
+        self.assertNotEqual(first.sceneIdentity, second.sceneIdentity)
+        identity = first.sceneIdentity
+        first.set_expected_key("new-view")
+        self.assertEqual(first.sceneIdentity, identity)
+        self.assertIs(first.fallbackVector, payload)
+
     def test_an_unrendered_wrapper_hands_out_null_stand_ins(self):
         # The typed properties are read by the face BEFORE a raster
         # lands: a QImage-typed one must never hand QML None (the live

@@ -13,7 +13,7 @@ from copy import deepcopy
 from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from UM.Logger import Logger
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QImage
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
 
@@ -49,10 +49,11 @@ def _british_spelling() -> bool:
 
 from .MonitorCamera import MonitorCamera
 from .PlateQt import (
-    PlateLayer, RasterBridge, _RasterJob, _PLATE_TRAVEL_VISUAL_RATIO,
+    PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _PLATE_TRAVEL_VISUAL_RATIO,
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer,
 )
+from .PlateSceneIdentity import NavigationSceneKey, navigation_hard_key, navigation_zoom
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -150,7 +151,7 @@ _NAV_ZOOM_SETTLE_S = 0.12
 # The navigation key's shape: the builder below is the ONE length and
 # the derived keys read slots by position, so the count is named here
 # rather than repeated as a bare number.
-_NAV_KEY_FIELDS = 16
+_NAV_KEY_FIELDS = len(NavigationSceneKey._fields)
 # The attached prefix checkpoint cadence: the native prefix advances
 # at most once per window, snapshotting the latest split — the QML
 # tail accumulates [P, split) cheaply between checkpoints.
@@ -530,7 +531,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
                                   "plateNavigationData", "plateNavigationSplit",
-                                  "plateNavigationBacking")),
+                                  "plateNavigationBacking", "plateSceneEpoch")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -743,6 +744,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # off the screen. Cleared when the gesture ends, so nothing
         # accumulates.
         self._follower_gesture_raster = ""
+        # Presentation has its own lifetime: a wrapper can supersede an
+        # asset while a face still loads or retains it. Each face publishes
+        # an atomic set of file references under a unique owner token.
+        self._plate_asset_owners = {}
+        self._plate_asset_serial = 0
         self._picker_popover_open = False
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
@@ -1428,7 +1434,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # memo churn costs nothing while nothing renders (the live
         # request). While gated the keys carry the last published
         # objects; opening or expanding resumes the live values.
-        if self._follower_popover_open and not self._follower_interacting:
+        if self._follower_popover_open:
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
                                                      popover["layers"], popover.get("anchor"),
                                                      popover.get("method"), popover.get("split"),
@@ -1484,6 +1490,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # carried tail paints at the same factor so the two
             # present pixel-equal through one display transform.
             values["plateNavigationBacking"] = surface.nav.get("backing", 4.0)
+            values["plateSceneEpoch"] = "%d:%d" % (surface.job_epoch, surface.anchor_epoch)
             self._schedule_navigation(surface)
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
@@ -1496,6 +1503,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateNavigationData"] = self._values.get("plateNavigationData", "")
             values["plateNavigationSplit"] = self._values.get("plateNavigationSplit")
             values["plateNavigationBacking"] = self._values.get("plateNavigationBacking", 4.0)
+            values["plateSceneEpoch"] = self._values.get("plateSceneEpoch", "")
         # The mini's own view: the live payload, always (the live
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
@@ -1797,6 +1805,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateNavigationData = value_property(str, "plateNavigationData", plateProgressChanged, "")
     plateNavigationSplit = value_property("QVariant", "plateNavigationSplit", plateProgressChanged, None)
     plateNavigationBacking = value_property("QVariant", "plateNavigationBacking", plateProgressChanged, 4.0)
+    plateSceneEpoch = value_property(str, "plateSceneEpoch", plateProgressChanged, "")
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
@@ -2901,16 +2910,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(bool)
     def setFollowerInteracting(self, interacting):
-        """The face's camera-gesture state: while a pan is live the
-        picture freezes — the per-poll publications (the layers'
-        rasters, the navigation raster) hold their last values, and
-        the RELEASE is the resume trigger (the live request: the
-        pan presents one fixed picture, then catches up)."""
+        """Defer only 4x navigation bakes; NEVER freeze live plate state.
+
+        The face presents its latched entry raster while native exact
+        checkpoints and split telemetry continue publishing behind it.
+        The signal needs no full _publish: it changes no public state.
+        On settle, schedule the latest warm demand once.
+        """
         interacting = bool(interacting)
         if interacting == self._follower_interacting:
             return
         self._follower_interacting = interacting
-        self._publish()
+        if not interacting and self._follower_popover_open:
+            self._schedule_navigation(self._plate_surfaces["popover"])
 
     @pyqtSlot(str)
     def setFollowerGestureRaster(self, url):
@@ -2925,6 +2937,38 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if url == self._follower_gesture_raster:
             return
         self._follower_gesture_raster = url
+
+    @pyqtSlot(result=int)
+    def acquirePlateAssetOwner(self):
+        self._plate_asset_serial += 1
+        owner = self._plate_asset_serial
+        self._plate_asset_owners[owner] = frozenset()
+        return owner
+
+    @pyqtSlot(int, "QVariantList")
+    def setPlateAssetReferences(self, owner, urls):
+        """Replace one face's references without walking the cache or
+        publishing model state in a QML callback. Unknown/released tokens
+        cannot resurrect an owner. Only this model's local assets count.
+        """
+        if owner not in self._plate_asset_owners:
+            return
+        directory = self._raster_file_key(self._raster_cache_dir)
+        files = set()
+        for url in urls:
+            parsed = QUrl(str(url))
+            if not parsed.isLocalFile():
+                continue
+            path = self._raster_file_key(parsed.toLocalFile())
+            if os.path.dirname(path) == directory:
+                files.add(path)
+        self._plate_asset_owners[owner] = frozenset(files)
+
+    @pyqtSlot(int)
+    def releasePlateAssetOwner(self, owner):
+        self._plate_asset_owners.pop(owner, None)
+        # Retirement remains bounded; the next normal prune can collect
+        # released assets. Destruction never publishes into a dying face.
 
     @pyqtSlot(bool)
     def setPickerPopoverOpen(self, popover_open):
@@ -3278,6 +3322,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not isinstance(anchor, int):
             anchor = 0
         if surface.anchor != anchor:
+            self._clear_surface_checkpoints(surface)
             surface.anchor = anchor
             surface.anchor_epoch += 1
         current = self._qt_layer(surface, layers.get("current"), anchor)
@@ -3309,6 +3354,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # persistent-failure latch.
         surface.job_failures = 0
         self._cancel_obsolete_job(surface)
+        if current is not None and split is not None and split > 0:
+            current.restore_prefix(current._expected_key, split)
         self._schedule_surface(surface)
         # The interaction raster follows the CONTENT state (the
         # window, the split, the toggles) — its warm background
@@ -3418,6 +3465,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                            "generation": generation, "state": "submitted",
                            "cancel": cancel, "epoch": epoch, "serial": serial,
                            "kind": kind, "split": prefix_split}
+            if kind == "prefix":
+                wrapped.set_prefix_pending(True)
             ticket = (surface.name, layer, token, generation, key, kind,
                       prefix_split, epoch, serial)
             payload = wrapped._payload
@@ -3430,9 +3479,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # seed the copy — a zoom or pan between the commit and
             # this render would stroke the new view over old-scale
             # pixels (the out-of-scale ghost).
-            previous_image = getattr(wrapped, "_prefix", None)
-            previous_boundary = wrapped.prefixSplit
-            if getattr(wrapped, "_prefix_key", None) != key:
+            previous_image, previous_boundary = wrapped.prefix_seed(key, prefix_split if kind == "prefix" else 0)
+            previous_file, file_boundary = wrapped.prefix_file_seed(key, prefix_split if kind == "prefix" else 0)
+            if previous_file and file_boundary > previous_boundary:
+                previous_image, previous_boundary = None, file_boundary
+            else:
+                previous_file = ""
+            if previous_image is None and not previous_file:
+                previous_image = getattr(wrapped, "_prefix", None)
+                previous_boundary = wrapped.prefixSplit
+            if not previous_file and getattr(wrapped, "_prefix_key", None) != key:
                 previous_image = None
                 previous_boundary = 0
 
@@ -3443,6 +3499,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                       directory=self._raster_cache_dir,
                       bridge=self._raster_bridge,
                       previous_image=previous_image,
+                      previous_file=previous_file,
                       previous_boundary=previous_boundary):
                 # Every job ends in exactly ONE terminal emit: the
                 # success payload, a cancelled marker, or a failure
@@ -3461,6 +3518,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     stem = "r-%s-e%d-%d-g%d-s%d" % (
                         surface.name, epoch, layer, generation, serial)
                     if kind == "prefix":
+                        if previous_file:
+                            previous_image = QImage(QUrl(previous_file).toLocalFile())
                         image = render_layer_prefix(
                             payload, plot, view, prefix_split, cancel=cancel,
                             previous=previous_image,
@@ -3484,6 +3543,66 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     emit(("failed", str(exc)))
             QThreadPool.globalInstance().start(_RasterJob(build))
             return
+        self._schedule_rewind_checkpoints(surface)
+
+    def _schedule_rewind_checkpoints(self, surface):
+        if surface.name != "popover" or surface.desired is None:
+            return
+        layer = surface.desired["current"]
+        wrapped = surface.layers.get(layer)
+        if wrapped is None or wrapped.motions < 20 or wrapped._rewind_ticket is not None:
+            return
+        surface.render_serial += 1
+        ticket = (surface.name, layer, 0, surface.generation, surface.render_key(),
+                  "checkpoints", None, surface.job_epoch, surface.render_serial)
+        cancel = threading.Event()
+        wrapped._rewind_ticket, wrapped._rewind_cancel = ticket, cancel
+        payload, plot, view = wrapped._payload, dict(surface.plot), dict(surface.view)
+        motions = wrapped.motions
+        directory, bridge = self._raster_cache_dir, self._raster_bridge
+        boundaries = sorted({int(motions * i / 20) for i in range(1, 20)})
+        stems = {p: "rewind-%s-e%d-s%d-p%d" % (surface.name, ticket[7], ticket[8], p)
+                 for p in boundaries}
+        wrapped._rewind_pending = [QUrl.fromLocalFile(os.path.join(directory, stem + ".png")).toString()
+                                  for stem in stems.values()]
+
+        def build():
+            assets = []
+            budget = _CheckpointBudget(cancel)
+            try:
+                # Independent prefixes preserve stroke joins and class ordering.
+                for boundary in boundaries:
+                    if cancel.is_set():
+                        break
+                    image = render_layer_prefix(payload, plot, view, boundary, cancel=budget)
+                    if cancel.is_set():
+                        break
+                    url = png_file(image, directory, stems[boundary])
+                    if not url:
+                        break
+                    assets.append((boundary, url))
+            except Exception as exc:
+                logging.getLogger("MoonrakerPrintFollower").warning(
+                    "rewind checkpoint worker failed: %s", exc)
+            finally:
+                if cancel.is_set():
+                    for _boundary, url in assets:
+                        try:
+                            os.unlink(QUrl(url).toLocalFile())
+                        except OSError:
+                            pass
+                    assets = []
+                _bridge_emit(bridge, "done", ("checkpoints", assets), ticket)
+        QTimer.singleShot(150, lambda: None if cancel.is_set() else
+                          QThreadPool.globalInstance().start(_RasterJob(build), -1))
+
+    def _clear_surface_checkpoints(self, surface):
+        files = []
+        for wrapped in surface.layers.values():
+            files.extend(wrapped._rewind_files.values())
+            wrapped.clear_prefix_checkpoints()
+        for url in files:
+            self._unlink_asset_files(("prefix", None, url, 0))
 
     def _navigation_backing(self, surface):
         """The interaction raster's backing: 400% of the 100%-fit
@@ -3531,66 +3650,36 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                       desired["ghosts"].get("next")):
             wrapped = surface.layers.get(layer) if layer is not None else None
             window.append(id(wrapped._payload) if wrapped is not None else None)
-        return (surface.name, surface.job_epoch, tuple(window),
-                desired.get("split"),
-                bool(getattr(self, "followerShowPrevious", True)),
-                bool(getattr(self, "followerShowNext", True)),
-                bool(getattr(self, "followerShowBase", True)),
-                bool(getattr(self, "followerShowTravels", False)),
-                round(float(surface.view.get("lineScale") or 0.7), 6),
-                int(surface.view.get("width") or 0),
-                int(surface.view.get("height") or 0),
-                round(float(self.bedMeshMachineWidth or 0.0), 6),
-                round(float(self.bedMeshMachineDepth or 0.0), 6),
-                tuple(sorted((k, round(float(v), 6))
-                             for k, v in (surface.plot or {}).items())),
-                # The DPR rides the key: the render view's stroke floor
-                # presents min(2/dpr, 1) logical px, so a window moving
-                # to another screen changes the baked pixels — and
-                # appending keeps _nav_key_hard's split neutralisation
-                # on index 3 intact.
-                round(min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))), 6),
-                # The ZOOM APPENDS (the live ruling, and the coalescing
-                # rule reads it by position): the grid is baked at the
-                # width that presents as the canvas's 1 px AT THIS
-                # ZOOM, so a zoom change re-bakes the single flat
-                # raster. The pan stays a presentation transform and
-                # never appears here.
-                round(float(surface.view.get("scale") or 1.0), 6))
+        return NavigationSceneKey(
+            surface=surface.name,
+            job_epoch=surface.job_epoch,
+            payload_ids=tuple(window),
+            split=desired.get("split"),
+            show_previous=bool(getattr(self, "followerShowPrevious", True)),
+            show_next=bool(getattr(self, "followerShowNext", True)),
+            show_base=bool(getattr(self, "followerShowBase", True)),
+            show_travels=bool(getattr(self, "followerShowTravels", False)),
+            line_scale=round(float(surface.view.get("lineScale") or 0.7), 6),
+            width=int(surface.view.get("width") or 0),
+            height=int(surface.view.get("height") or 0),
+            bed_width=round(float(self.bedMeshMachineWidth or 0.0), 6),
+            bed_depth=round(float(self.bedMeshMachineDepth or 0.0), 6),
+            plot=tuple(sorted((k, round(float(v), 6))
+                              for k, v in (surface.plot or {}).items())),
+            # Device ratio changes stroke width; a zoom changes the
+            # adaptive grid width. Both genuinely invalidate the bake.
+            dpr=round(min(2.0, max(1.0, float(
+                surface.view.get("dpr") or 1.0))), 6),
+            zoom=round(float(surface.view.get("scale") or 1.0), 6))
+
 
     @staticmethod
     def _nav_key_hard(key):
-        """The navigation key with the volatile split neutralised:
-        everything that genuinely changes the scene (the window's
-        payloads, the print epoch, the toggles, the style, the
-        dimensions, the zoom, the plot) rides here. The split itself
-        drops — but its None-ness rides on: a raster baked with NO
-        split painted the WHOLE layer as printed, and treating that
-        as compatible with a partial demand stood the complete
-        object as the warm scene for the layer's whole life (the
-        live report: the pan showed the print far ahead of itself).
-        Numeric-vs-numeric drift stays compatible; a None split is a
-        different scene."""
-        if key is None:
-            return None
-        if len(key) <= 3:
-            # A key without a split slot (a synthetic test ticket):
-            # there is no volatile split to neutralise — the whole
-            # key IS the hard key.
-            return key
-        return key[:3] + (key[3] is None,) + key[4:]
+        return navigation_hard_key(key)
 
     @staticmethod
     def _nav_key_zoom(key):
-        """The key's trailing ZOOM slot — the one field that names a
-        presentation level rather than a scene. A key that is not the
-        full shape (a synthetic test ticket) reads as the WHOLE key,
-        so two of them compare equal only when they already are equal
-        and the zoom's coalescing rule can never fire for a demand
-        that moved anything else."""
-        if key is None or len(key) != _NAV_KEY_FIELDS:
-            return key
-        return key[-1]
+        return navigation_zoom(key)
 
     def _nav_arm_wake(self, surface):
         """Arm the attached throttle's expiry wake: when the start-
@@ -3635,6 +3724,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the camera path, and only for the popover — the mini does
         not carry this feature. A ready URL is what the face can
         switch to INSTANTLY on the first camera input."""
+        # Presentation holds the entry image; the exact scene still
+        # receives every poll. Do not burn 4x composites mid-gesture.
+        if self._follower_interacting:
+            return
         if surface.name != "popover" or surface.nav["job"] is not None \
                 or surface.plot is None:
             return
@@ -3794,10 +3887,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The interaction raster's commit: the epoch and the
         content key gate the double buffer — a superseded or stale
         generation's file dies on arrival, the ready URL is promoted
-        atomically, and the retired buffer unlinks."""
+        atomically, and presentation references govern retirement."""
         name, _layer, _token, _gen, key, _kind, _split, epoch, serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
+            self._unlink_asset_files(images)
             return
         job = surface.nav["job"]
         if images and isinstance(images, tuple) and images[0] in ("failed", "cancelled"):
@@ -3866,7 +3960,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
                 surface.nav["wake_settle"] = False
                 self._nav_arm_wake(surface)
-        old = surface.nav["url"]
         surface.nav["url"] = url
         surface.nav["key"] = key
         # The composite this promotion came from becomes the next
@@ -3877,22 +3970,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         surface.nav["image"] = images[1]
         surface.nav["image_key"] = key
         surface.nav["image_split"] = _split
-        if old and old != url and not self._gesture_holds_nav(old):
-            try:
-                os.unlink(QUrl(old).toLocalFile())
-            except OSError:
-                pass
         self._publish()
+        # Presentation may still own the superseded URL. All published
+        # assets retire through the same bounded, reference-aware sweep.
+        self._prune_raster_cache()
 
-    @staticmethod
-    def _unlink_asset_files(images):
+    def _unlink_asset_files(self, images):
         """A discarded job's files are dead on arrival — remove
         them now, never wait for the generic pruning."""
         if not isinstance(images, tuple) or not images:
             return
-        if images[0] == "full":
+        referenced = self._referenced_raster_files()
+        if images[0] == "checkpoints":
+            for boundary, url in images[1]:
+                self._unlink_asset_files(("prefix", None, url, boundary))
+        elif images[0] == "full":
             for url in images[2], images[4], images[6]:
                 if not url or not url.startswith("file://"):
+                    continue
+                if self._raster_file_key(QUrl(url).toLocalFile()) in referenced:
                     continue
                 try:
                     os.unlink(QUrl(url).toLocalFile())
@@ -3900,14 +3996,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     pass
         elif images[0] == "prefix":
             url = images[2]
-            if url and url.startswith("file://"):
+            if url and url.startswith("file://") and self._raster_file_key(QUrl(url).toLocalFile()) not in referenced:
                 try:
                     os.unlink(QUrl(url).toLocalFile())
                 except OSError:
                     pass
         elif images[0] == "nav":
             url = images[2]
-            if url and url.startswith("file://"):
+            if url and url.startswith("file://") and self._raster_file_key(QUrl(url).toLocalFile()) not in referenced:
                 try:
                     os.unlink(QUrl(url).toLocalFile())
                 except OSError:
@@ -3972,19 +4068,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         picture."""
         return os.path.normcase(os.path.normpath(path))
 
-    def _gesture_holds_nav(self, url):
-        """Whether a live gesture still presents this navigation file.
-
-        The prune honours the reference set, but a supersede unlinks
-        directly and would take the gesture's own picture off the
-        screen. The file is not leaked: the hold clears when the
-        gesture ends and the next prune collects it."""
-        held = self._follower_gesture_raster
-        if not held or not url:
-            return False
-        return self._raster_file_key(QUrl(held).toLocalFile()) == \
-            self._raster_file_key(QUrl(url).toLocalFile())
-
     def _referenced_raster_files(self):
         """The asset files the live wrappers still display, plus the
         retained navigation raster: the prune must never unlink a URL
@@ -3992,6 +4075,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         navigation asset (the url cleared) drops out of the set and
         the next prune collects it."""
         referenced = set()
+        for files in self._plate_asset_owners.values():
+            referenced.update(files)
         # The live gesture's latch, before anything else: it is the
         # one file whose removal is visible immediately.
         if self._follower_gesture_raster:
@@ -4001,10 +4086,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             nav_url = surface.nav.get("url") if surface.nav else None
             if nav_url:
                 referenced.add(self._raster_file_key(QUrl(nav_url).toLocalFile()))
-            retained = getattr(surface, "retained_prefix", "")
-            if retained:
-                referenced.add(self._raster_file_key(QUrl(retained).toLocalFile()))
             for wrapped in surface.layers.values():
+                for url in wrapped.prefix_references():
+                    if url:
+                        referenced.add(self._raster_file_key(QUrl(url).toLocalFile()))
                 for url in (wrapped.rasterData, wrapped.baseData,
                             wrapped.travelData, wrapped.prefixData):
                     if url:
@@ -4081,6 +4166,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._index_service is None:
             return
         for surface in self._plate_surfaces.values():
+            self._clear_surface_checkpoints(surface)
             self._unpin_surface(surface)
 
     def _retire_surface(self, surface):
@@ -4089,6 +4175,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         desired state goes, and the next publish rebuilds it from
         the payload. The hot rasters stay cached — only the
         no-longer-needed work stops."""
+        self._clear_surface_checkpoints(surface)
         if surface.job is not None:
             surface.job["cancel"].set()
             surface.stats["superseded"] += 1
@@ -4206,14 +4293,29 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         name, layer, token, generation, key, kind, prefix_split, epoch, serial = ticket
         surface = self._plate_surfaces.get(name)
         if surface is None:
+            self._unlink_asset_files(images)
             return
         if kind == "nav":
             # The navigation raster's own commit: the exact scene's
             # job slot and counters never see these tickets.
             self._nav_committed(images, ticket)
             return
+        if kind == "checkpoints":
+            wrapped = surface.layers.get(layer)
+            if wrapped is None or wrapped._rewind_ticket != ticket \
+                    or key != wrapped._expected_key or surface.desired is None \
+                    or layer != surface.desired["current"]:
+                self._unlink_asset_files(images)
+                return
+            wrapped._rewind_files = dict(images[1])
+            wrapped._rewind_pending = []
+            wrapped._rewind_cancel = None
+            self._prune_raster_cache()
+            return
         exact_job = self._raster_job_matches(
             surface.job, layer, token, generation, epoch, serial)
+        if exact_job and kind == "prefix" and layer in surface.layers:
+            surface.layers[layer].set_prefix_pending(False)
         # The terminal kinds arrive without rendered assets: a
         # cancelled job stops where it was told, a failed one
         # reports the exception.
@@ -4293,12 +4395,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # the demand snapshots the split that is live THEN.
             if self._follower_attached:
                 wrapped._prefix_checkpoint_at = time.monotonic() + _PREFIX_CHECKPOINT_S
-            # The face's atomic handover retains the PREVIOUS prefix's
-            # pixels until the new composition is jointly present — the
-            # prune must protect that file too (one URL, replaced each
-            # commit, cleared on the surface's retirement).
-            if wrapped.prefixData:
-                surface.retained_prefix = wrapped.prefixData
             if surface.tokens.get(layer) == token:
                 surface.tokens.pop(layer, None)
             surface.stats["committed"] += 1
@@ -4370,6 +4466,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The retained wrappers' rasters read invalid at the new key
         #  but STAY cached — only the
         # visible window re-rasters.
+        self._clear_surface_checkpoints(surface)
         for wrapped in surface.layers.values():
             wrapped.set_expected_key(key)
         self._trace("T12 context committed", {"surface": surface.name,
@@ -4485,6 +4582,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._plate_job_epoch += 1
             for surface in self._plate_surfaces.values():
                 surface.job_epoch = self._plate_job_epoch
+                self._clear_surface_checkpoints(surface)
                 if surface.job is not None:
                     surface.job["cancel"].set()
                 self._unpin_surface(surface)
@@ -4498,10 +4596,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # nothing else freed its slot — the new print must be
                 # able to schedule its own warm raster immediately.
                 self._retire_navigation(surface)
-                # The face's retained previous prefix belongs to the
-                # old print as well: drop the prune protection so the
-                # file can be collected.
-                surface.retained_prefix = ""
         if job == self._follower_job:
             return
         self._follower_job = job

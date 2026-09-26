@@ -47,7 +47,7 @@ help:
 all: build lint run_tests verify_captures package snapshot_package
 
 build: gates
-	./tools/refresh_screenshots.sh --copy-only
+	./tools/refresh_screenshots.sh
 
 gates:
 	./tools/docker_gates.sh
@@ -60,9 +60,7 @@ lint:
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
-	    && wget -qO /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-	    && tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint \
-	    && /tmp/actionlint .github/workflows/*.yml \
+	    && sh tools/check_workflows.sh \
 	    && gitleaks detect --no-git --no-banner --redact"
 
 run_tests:

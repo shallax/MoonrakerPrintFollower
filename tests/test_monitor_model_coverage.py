@@ -1393,10 +1393,44 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.model.setChartOpen(True)
         self.model.setFollowerInteracting(True)
         self.model.setPickerPopoverOpen(True)
-        self.assertEqual(len(self.publishes), 3, "a real gate change did not publish")
+        self.assertEqual(len(self.publishes), 2,
+                         "gesture state alone triggered a full model publish")
         self.assertTrue(self.model._chart_open)
         self.assertTrue(self.model._follower_interacting)
         self.assertTrue(self.model._picker_popover_open)
+
+    def test_live_exact_publications_continue_while_the_warm_image_is_latched(self):
+        self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
+        self.model._follower_attached = True
+        self.model.setFollowerInteracting(True)
+        from dataclasses import replace
+        initial = {"layers": {"current": None, "prev": None, "next": None},
+                   "anchor": 2, "split": 12, "motionTotal": 100}
+        self.print_state = replace(self.print_state, plate_progress=initial)
+        with patch.object(self.model, "_qt_window", return_value={}) as window:
+            self.model._publish()
+            self.assertTrue(window.called, "the warm gesture starved exact-scene work")
+        self.assertEqual(self.value("plateSplit"), 12)
+        self.print_state = replace(self.print_state, plate_progress={**initial, "split": 18})
+        with patch.object(self.model, "_qt_window", return_value={}) as window:
+            self.model._publish()
+            self.assertTrue(window.called)
+        self.assertEqual(self.value("plateSplit"), 18,
+                         "the presentation latch froze real printer progress")
+
+    def test_warm_composite_demand_resumes_only_at_settle(self):
+        self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
+        surface = self.model._plate_surfaces["popover"]
+        surface.plot = {"sx": 1.0}
+        self.model.setFollowerInteracting(True)
+        with patch.object(self.model, "_navigation_key") as key:
+            self.model._schedule_navigation(surface)
+            key.assert_not_called()
+        with patch.object(self.model, "_schedule_navigation") as bake:
+            self.model.setFollowerInteracting(False)
+            bake.assert_called_once_with(surface)
 
     def test_the_stream_switch_suspends_and_resumes_the_pane(self):
         self.model = self.build()
@@ -1508,6 +1542,101 @@ class SurfaceDemandSlotTests(MonitorModelCase):
             payload if payload is not None else {"motions": motions, "classes": {}})
         surface.layers[layer] = wrapped
         return wrapped
+
+    def test_five_percent_archive_is_background_only_bounded_and_current_layer_owned(self):
+        import threading
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QImage
+        surface = self.surface()
+        self.qt.events(50)
+        layer = self.wrapper(surface, 6, motions=1000)
+        key = surface.render_key()
+        layer.set_expected_key(key)
+        image = QImage(2, 2, QImage.Format.Format_RGB32)
+        layer.set_raster(image, key, "file:///unused.png")
+        surface.anchor = 6
+        surface.desired = {"current": 6, "ghosts": {}, "split": None}
+        module = self.qt.load("MoonrakerMonitorModel")
+        render, threads = module.render_layer_prefix, []
+        def counted(*args, **kwargs):
+            threads.append(threading.get_ident())
+            return render(*args, **kwargs)
+        with patch.object(module, "render_layer_prefix", counted), patch.object(self.model, "_publish") as publish:
+            self.model._schedule_surface(surface)
+            self.assertIsNone(surface.job)
+            self.assertEqual(threads, [], "layer entry ran checkpoint geometry synchronously")
+            ticket = layer._rewind_ticket
+            self.model._schedule_surface(surface)
+            self.assertEqual(layer._rewind_ticket, ticket)
+            deadline = time.monotonic() + 5
+            while not layer._rewind_files and time.monotonic() < deadline:
+                self.qt.events(20)
+            publish.assert_not_called()
+        self.assertEqual(set(layer._rewind_files), set(range(50, 1000, 50)))
+        self.assertEqual(len(threads), 19)
+        self.assertNotIn(threading.get_ident(), threads)
+        paths = [QUrl(url).toLocalFile() for url in layer._rewind_files.values()]
+        self.assertTrue(all(os.path.isfile(path) for path in paths))
+        self.assertEqual(layer.memory_bytes(), image.sizeInBytes())
+        with patch.object(self.model, "_schedule_surface"), patch.object(self.model, "_schedule_navigation"):
+            self.model._qt_window(surface, {"current": {"motions": 1000, "classes": {}}}, 7)
+        self.assertEqual(layer._rewind_files, {})
+        self.assertTrue(all(not os.path.exists(path) for path in paths))
+
+    def test_late_checkpoint_completion_cannot_repopulate_a_retired_layer(self):
+        surface = self.surface()
+        layer = self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {}, "split": None}
+        ticket = ("popover", 6, 0, 0, surface.render_key(), "checkpoints", None, 0, 42)
+        layer._rewind_ticket = ticket
+        path = pathlib.Path(self.model._raster_cache_dir) / "late-checkpoint.png"
+        path.write_bytes(b"retired")
+        layer.clear_prefix_checkpoints()
+        self.model._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
+        self.assertFalse(path.exists())
+        self.assertEqual(layer._rewind_files, {})
+
+    def test_exact_scene_identity_changes_only_with_print_and_layer(self):
+        # The QML Canvas must not treat an A-B-A seek or a new print
+        # with the same layer/motion count as the old texture's world.
+        # A split-only poll must NOT invalidate its incremental tail.
+        from dataclasses import replace
+        model = self.model_now()
+        payload = {"motions": 20, "classes": {},
+                   "travels": [], "travelStarts": [], "travelEnds": []}
+        layers = {"current": payload, "prev": None, "next": None}
+        model.setFollowerPopoverOpen(True)
+        model._follower_attached = True
+        self.print_state = replace(self.print_state, job_key=("job-a",),
+                                   plate_progress={"layers": layers,
+                                                   "anchor": 0, "split": 3,
+                                                   "motionTotal": 20})
+        with patch.object(model, "_schedule_surface"), patch.object(
+                model, "_schedule_navigation"):
+            model._publish()
+            first = self.value("plateSceneEpoch")
+            self.assertTrue(first)
+            self.print_state = replace(
+                self.print_state,
+                plate_progress={"layers": layers, "anchor": 0,
+                                "split": 7, "motionTotal": 20})
+            model._publish()
+            self.assertEqual(self.value("plateSceneEpoch"), first,
+                             "live nozzle progress invalidated the whole scene")
+
+            self.print_state = replace(
+                self.print_state,
+                plate_progress={"layers": layers, "anchor": 1,
+                                "split": 3, "motionTotal": 20})
+            model._publish()
+            second = self.value("plateSceneEpoch")
+            self.assertNotEqual(first, second,
+                                "a new layer inherited the old Canvas picture")
+
+            self.print_state = replace(self.print_state, job_key=("job-b",))
+            model._publish()
+            self.assertNotEqual(self.value("plateSceneEpoch"), second,
+                                "a new print reused the last print's layer bitmap")
 
     def test_the_navigation_key_shape_is_what_its_derived_keys_assume(self):
         # The derived keys read the built key by POSITION: _nav_key_hard
@@ -1804,6 +1933,74 @@ class SurfaceDemandSlotTests(MonitorModelCase):
     def cancelled_event():
         import threading
         return threading.Event()
+
+    def test_presentation_references_survive_arbitrary_prefix_supersedes(self):
+        self.model = self.build()
+        directory = pathlib.Path(self.model._raster_cache_dir)
+        held = directory / "standing-prefix.png"
+        full = directory / "held-full.png"
+        held.write_bytes(b"prefix")
+        full.write_bytes(b"full")
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(held)),
+                                                    self.local_url(str(full))])
+        # More replacements than the retirement budget: the old standing
+        # prefix/full composition remains owned by the face, independently
+        # of every wrapper's current URL and the newest-N grace period.
+        for index in range(70):
+            (directory / ("replacement-%d.png" % index)).write_bytes(b"new")
+        self.model._prune_raster_cache(keep=0)
+        self.assertEqual(set(directory.iterdir()), {held, full})
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(full))])
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(held.exists())
+        self.assertTrue(full.exists())
+        self.model.releasePlateAssetOwner(owner)
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(full.exists())
+
+    def test_asset_owners_release_independently_and_cannot_be_resurrected(self):
+        self.model = self.build()
+        path = pathlib.Path(self.model._raster_cache_dir) / "shared.png"
+        path.write_bytes(b"shared")
+        url = self.local_url(str(path))
+        first = self.model.acquirePlateAssetOwner()
+        second = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(first, [url, url])
+        self.model.setPlateAssetReferences(second, [url])
+        self.model.releasePlateAssetOwner(first)
+        self.model.setPlateAssetReferences(first, [url])
+        self.model._prune_raster_cache(keep=0)
+        self.assertTrue(path.exists())
+        self.assertNotIn(first, self.model._plate_asset_owners)
+        self.model.releasePlateAssetOwner(second)
+        self.model.releasePlateAssetOwner(second)
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(path.exists())
+        self.assertGreater(self.model.acquirePlateAssetOwner(), second)
+
+    def test_asset_snapshots_ignore_foreign_and_non_file_urls(self):
+        self.model = self.build()
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, ["", "data:image/png;base64,AA==",
+            "https://example.invalid/prefix.png", self.local_url("/tmp/foreign.png")])
+        self.assertEqual(self.model._plate_asset_owners[owner], frozenset())
+
+    def test_discard_cleanup_respects_presentation_and_collects_vanished_jobs(self):
+        self.model = self.build()
+        directory = pathlib.Path(self.model._raster_cache_dir)
+        held = directory / "held.png"
+        abandoned = directory / "abandoned.png"
+        held.write_bytes(b"held")
+        abandoned.write_bytes(b"abandoned")
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(held))])
+        self.model._unlink_asset_files(("prefix", None, self.local_url(str(held)), 10))
+        self.assertTrue(held.exists())
+        self.model._raster_committed(
+            ("prefix", None, self.local_url(str(abandoned)), 10),
+            ("vanished", 7, 5, 3, ("k",), "prefix", 10, 2, 9))
+        self.assertFalse(abandoned.exists())
 
     def test_a_commit_for_a_vanished_surface_and_layer_is_accounted(self):
         surface = self.surface("mini")

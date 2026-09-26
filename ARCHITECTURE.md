@@ -68,6 +68,7 @@ private follower state to either integration.
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
+| `PlateSplitTracker.py` | Pure live-plate boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
@@ -85,6 +86,7 @@ private follower state to either integration.
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `PlateSceneIdentity.py` | Immutable, named navigation scene keys and split-compatible identity projections used to reject obsolete raster work | Qt, rendering, scheduling |
 | `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
@@ -247,6 +249,11 @@ pins the pattern.
 The coordinator observes a print through `RemoteJobService`, then resolves its
 physical layer through the one `LayerResolver`. Monitor reads `print_state`; it
 does not run another resolver or advance Preview's extrusion state.
+
+An observed pause preserves the last resolved layer. Parser lookahead and the
+parked nozzle cannot reset its progress identity. After RESUME, an off-model
+nozzle still holds that layer until its queued return reaches a resolvable
+printing height. Resetting the resolver clears this print-local hold.
 
 Resolution prefers exact G-code current-layer mapping, then reported layer numbering,
 then indexed file position. Configured Z fallback requires extrusion advancement,
@@ -648,3 +655,136 @@ check real QML rendering, native nozzle/bed-mesh integration, Cura file-writer
 compatibility, multi-printer interaction and large-file responsiveness. The architecture
 removes the known shared-object migration debt; it cannot guarantee that future Cura
 or Moonraker API changes will never require deliberate boundary changes.
+
+### Live plate camera gestures
+
+The 4x warm raster is an entry-latched presentation buffer. Camera interaction
+may defer new warm composites, but NEVER suppresses live split, layer, exact
+native-checkpoint or render-result publications. After movement settles,
+resume only the latest navigation demand. An exact scene rebuild is allowed
+behind the warm picture throughout the gesture; the presentation controller
+alone decides when a complete frame can replace it.
+
+### Exact scene incarnation
+
+The Monitor publishes a stable print/layer incarnation token alongside the
+volatile printed-motion split. It changes when the print or surface layer
+changes, not on every nozzle poll; consumers must distinguish the static
+scene from within-layer progress. A raster or Canvas completion for a
+previous incarnation must never claim ownership of the current scene.
+
+### Exact-scene compositor
+
+Canonical screenshot captures pin the amd64 container architecture as well
+as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
+native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
+entry point. Native test gates may use the host architecture; `make build`
+regenerates canonical captures afterward rather than copying those test images.
+Byte comparison and independent light/dark determinism checks remain strict.
+
+`PlateExactComposition.js` is the single Qt-free owner of the asynchronous
+Canvas delivery transaction, the attached/detached split acceptance rule and
+the exact-picture readiness policy. The QML face now adapts this policy to
+actual Canvas/Image objects. Printed ink is selected by one composition
+decision, with retained prefix/full assets represented by immutable records
+rather than visibility history or timed holds. The pixel-affecting world identity contains the print/layer
+scene epoch and view. Native incremental prefixes and the 4x warm image remain
+unchanged. Implicit Qt paints can be accepted only with consistent same-world
+receipts; stale/mixed generations are rejected.
+
+Delivered coverage is one immutable composition receipt; its QML coverage,
+split, epoch and texture-readiness projections are read-only. Private paint
+accumulators cannot certify presentation. A delivery notification without a
+new bitmap preserves the standing receipt while any retry remains coalesced.
+The receipt identifies the prefix URL whose interval the tail relies on,
+as well as its boundary. Coalesced paints with different prefix assets are
+ambiguous even when the boundary and split match. A partial printed picture
+has one interval owner: a full-history Canvas, or a Ready prefix plus a
+delivered tail for that same asset and boundary. A previously visible prefix
+cannot overlap a full-history Canvas. A complete Canvas fallback can release
+the warm-to-exact barrier while an optional prefix is still decoding.
+
+### Presentation asset lifetimes
+
+Every `PlateProgressFace` acquires an owner token from its model and replaces
+its set of asset references atomically as Image sources and retained/held
+sources change. The set includes assets loading behind the visible picture,
+the retained prefix, the held full raster and the gesture's entry image.
+Model switches and face destruction release the owner; released tokens cannot
+be reused or resurrected. Independent faces may hold the same file.
+
+Cache pruning protects the union of wrapper references, current navigation
+assets and presentation references. Published navigation assets use this same
+bounded retirement path instead of immediate unlinking on supersede. Released
+files become eligible for the next normal prune; at most 64 unreferenced files
+remain as retirement grace. Snapshot updates perform no directory scans,
+image decoding or model publication in QML callbacks. Obsolete worker results
+are removed on arrival, including completions for vanished surfaces, while
+files still referenced by a presentation owner survive discard cleanup.
+
+The presentation controller selects one printed composition: a complete native
+class/travel pair, a delivered full-history Canvas, or a Ready immutable prefix
+and its matching delivered Canvas tail. Prefix arrival alone cannot change
+interval ownership. The previous full picture remains eligible during partial
+entry until a complete replacement exists. No frame timer authorizes coverage.
+Required base and ghost components have their own delivery transaction and join
+the warm-to-exact barrier. Failed PNG decoding or publication invokes a complete
+vector producer; ordinary full native scenes do not convert their geometry to
+QVariant. The exact scene stays renderable beneath the opaque warm picture so
+Qt can deliver its Canvas textures throughout camera gestures.
+An obsolete Canvas upload remains accounted for across a world change. The
+preparing composition covers its buffer while the current paint is queued;
+the old bitmap cannot remain visible merely because its upload has not yet
+delivered. This cover leaves Canvas active, avoiding a readiness cycle caused
+by hiding the producer itself.
+
+The split tracker separates search stalls from corrective physical evidence.
+Only consecutive below-floor physical matches permit backward correction;
+parser progress and missed matches cannot supply that evidence. At adjacent
+layer entry, repeated XY geometry is withheld until distinct physical Z agrees
+with the new layer. Equal-height geometry or missing height metadata remains
+ambiguous and follows ordinary matching rather than claiming height evidence.
+
+Real-engine pixel tests cover interval replacement, full/partial transitions,
+failed assets, camera handover and scene changes. Dense native and publication
+benchmarks retain the incremental rendering and 4x warm backing requirements.
+Cross-platform CI and performance inside a real Windows Cura session remain
+separate validation requirements; offscreen rendering does not certify them.
+
+Backward seeks can restore the nearest earlier native prefix checkpoint from
+the same immutable wrapper and render key, then extend only its remaining
+interval. Each wrapper keeps at most four checkpoints and 16 MiB of cached
+pixels; these bytes participate in the existing surface memory accounting.
+View changes clear the checkpoints, scene changes replace the wrapper, and
+checkpoint URLs join the asset reference set. A later checkpoint never seeds
+a backward target. Once the normal current/ghost renders are hot, a lower
+priority background worker writes independent prefixes at 5% intervals to PNG
+files. This archive belongs only to the popover's current layer and is cleared
+on layer, view, print and surface retirement. Checkpoints do not delay the
+layer's normal render or publish QML updates as they are generated. Only one
+checkpoint image is built at a time; the archive holds URLs rather than decoded
+pixels. Reverse workers decode the nearest earlier file and extend at most 5%
+of the layer, retaining the existing four-image/16 MiB decoded cache limit.
+An unfinished archive or failed PNG falls back to ordinary native rendering.
+Generation starts after a short idle delay, uses the pool's lower queue priority
+and yields between geometry chunks. The worker's planned filenames are pinned
+until completion so ordinary cache sweeps cannot delete an unfinished archive.
+
+During split changes the last complete composition remains presented until its
+replacement delivers, including backward scrubs. Intermediate prefix anchors
+never present alone below the requested split. Static scene changes still
+invalidate incompatible geometry. The standing grid rises above the preparation
+cover while that geometry retires, keeping the grid visible through zero and
+partial transitions. Implicit Canvas paints coalesce while an actual upload is
+outstanding; a rejected delivery forces a fresh bitmap rather than a no-op retry.
+While a native prefix worker or its Image decode is pending, QML keeps the
+standing composition and coalesces progress instead of walking full history as
+a temporary fallback. Completion wakes the painter; failed transport still
+uses the complete vector recovery path.
+
+Pause observations preserve the accepted split without collecting backward
+correction evidence from the macro's parked head. Resuming keeps that floor
+until geometry matches at or beyond it; parked telemetry after RESUME cannot
+erase the layer's already printed history. Pause/resume parser-offset
+rewinds keep the print identity; filename/size changes, an inactive boundary,
+or a reset print duration still establish a new print.

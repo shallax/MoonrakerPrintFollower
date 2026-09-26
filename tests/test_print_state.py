@@ -65,6 +65,25 @@ class PrintStateTests(unittest.TestCase):
         self.assertEqual(observe(2.8, 4).index, 1)
         self.assertEqual(observe(0.6, 5).index, 2)
 
+    def test_pause_and_queued_resume_lifts_preserve_the_physical_layer_identity(self):
+        resolver = LayerResolver()
+        config = PrinterConfig()
+        heights = (0.2, 0.4, 0.6, 0.8)
+        def observe(state, claim, z):
+            return resolver.resolve(
+                {"print_stats": {"state": state, "info": {"current_layer": claim}}},
+                config, heights=heights, nozzle=(30.0, 40.0, z))
+        accepted = observe("printing", 2, 0.4)
+        self.assertEqual(accepted.index, 1)
+        for _ in range(4):
+            self.assertEqual(observe("paused", 3, 2.8), accepted)
+        for _ in range(3):
+            self.assertEqual(observe("printing", 3, 2.8), accepted)
+        self.assertEqual(observe("printing", 3, 0.4).index, 1)
+        self.assertEqual(observe("printing", 3, 0.6).index, 2)
+        resolver.reset()
+        self.assertEqual(observe("paused", 4, 0.8).index, 3)
+
     def test_metadata_extrapolation_never_jumps_more_than_one_layer(self):
         config = PrinterConfig()
         resolver = LayerResolver()

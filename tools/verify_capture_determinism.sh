@@ -20,6 +20,8 @@
 # container entry for the same reason run_tests.sh does: four parallel
 # docker_dev.sh calls race on the image build.
 set -eu
+DOCKER_DEFAULT_PLATFORM=linux/amd64
+export DOCKER_DEFAULT_PLATFORM
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 # Overridable so parallel determinism runs (the CI-load stress) can
@@ -54,12 +56,7 @@ capture_leg() {
     QML_DISK_CACHE_PATH="$tmp/\$leg/.qmlcache"
     export CAPTURE_THEME CAPTURE_THEME_TREE QML_DISK_CACHE_PATH
     mkdir -p "$tmp/\$leg"
-    python3 tools/capture_monitor.py "$tmp/\$leg"
-    python3 tools/capture_preview.py "$tmp/\$leg"
-    python3 tools/capture_settings.py "$tmp/\$leg"
-    python3 tools/capture_upload.py "$tmp/\$leg"
-    python3 tools/capture_whatsnew.py "$tmp/\$leg"
-    python3 tools/capture_filemanager.py "$tmp/\$leg"
+    sh tools/run_captures.sh "$tmp/\$leg"
 }
 capture_leg run1 cura-light >"$tmp/run1.log" 2>&1 & p1=\$!
 capture_leg run2 cura-light >"$tmp/run2.log" 2>&1 & p2=\$!

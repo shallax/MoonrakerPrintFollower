@@ -1053,6 +1053,19 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertEqual(
             self.service.plate_progress(0, offsets[19], (12.0, 0.0, 0.2))["split"], 13)
 
+    def test_a_pause_park_on_old_geometry_cannot_erase_the_boundary(self):
+        offsets = self._bind()
+        self.assertEqual(self.service.plate_progress(0, offsets[19], (12.0, 0.0, 0.2))["split"], 13)
+        for _ in range(8):
+            self.assertEqual(self.service.plate_progress(
+                0, offsets[19], (1.0, 0.0, 0.2), paused=True)["split"], 13)
+        # Resume can first report the macro's parked head before the
+        # restored physical position lands. Those are not print moves.
+        for _ in range(5):
+            self.assertEqual(self.service.plate_progress(
+                0, offsets[19], (1.0, 0.0, 0.2))["split"], 13)
+        self.assertEqual(self.service.plate_progress(0, offsets[19], (13.0, 0.0, 0.2))["split"], 14)
+
     def test_an_anchor_off_the_index_reads_unavailable(self):
         # No layer is no boundary: the face ghosts rather than colouring
         # to another layer's count, whatever the telemetry says.
@@ -1106,6 +1119,38 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self._bind()
         self.assertEqual(
             self.service.plate_progress(0, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
+
+    def test_parser_layer_advance_waits_for_physical_height_in_both_geometry_paths(self):
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                self.service._split_tracker.reset()
+                self._bind(layers=3)
+                index = self.service._view._index
+                index.layer_start_positions = [(0.0, 0.0, 0.0),
+                                               (0.0, 0.0, 0.2),
+                                               (0.0, 0.0, 0.4)]
+                index.motion_z = [array("f", [0.2] * 20),
+                                  array("f", [0.4] * 20),
+                                  array("f", [0.6] * 20)]
+                positions = [int(offsets[-1]) for offsets in index.motion_offsets]
+                if compact:
+                    index.layer_motion_counts = [20] * 3
+                    index.motion_offsets = [array("Q") for _ in range(3)]
+                    index.motion_z = [array("f") for _ in range(3)]
+                self.assertGreater(self.service.plate_progress(
+                    0, positions[0], (5.0, 0.0, 0.2))["split"], 0)
+                for _ in range(5):
+                    self.assertEqual(self.service.plate_progress(
+                        1, positions[1], (5.0, 0.0, 0.2))["split"], 0,
+                        "repeated XY on the previous height seeded the new layer")
+                self.assertGreater(self.service.plate_progress(
+                    1, positions[1], (5.0, 0.0, 0.4))["split"], 0)
+
+    def test_float_noise_cannot_choose_a_future_repeated_pass(self):
+        best = gcode_index.better_candidate(1e-12, 5, float("inf"), None, 4)
+        self.assertEqual(gcode_index.better_candidate(0.0, 500, *best, 4)[1], 5)
+        reverse = gcode_index.better_candidate(0.0, 500, float("inf"), None, 4)
+        self.assertEqual(gcode_index.better_candidate(1e-12, 5, *reverse, 4)[1], 5)
 
     @staticmethod
     def _row_payload(motions, y=0.0, x0=0.0):
@@ -1172,11 +1217,11 @@ class PlateSplitRefinementTests(unittest.TestCase):
         # below-floor match. The displayed boundary holds the wrong pass
         # until the expansion reaches the head, then steps back onto it.
         splits = [self.service.plate_progress(0, 90, (50.5 + poll, 0.0, 0.2))["split"]
-                  for poll in range(3)]
+                  for poll in range(5)]
         self.assertEqual(splits[0], 950, "the fill moved before the evidence landed")
-        self.assertLess(splits[-1], 53, "the fill stayed stranded on the later pass")
+        self.assertLess(splits[-1], 55, "three physical matches never corrected the floor")
         self.assertGreater(splits[-1], 49, "the fill lost the head's own stroke")
-        self.assertEqual(self.service._split_floor, splits[-1])
+        self.assertEqual(self.service._split_tracker.floor, splits[-1])
         # ...and tracks the nozzle from there, on the pass it is on.
         self.assertEqual(
             self.service.plate_progress(0, 90, (60.0, 0.0, 0.2))["split"], 60)
@@ -1245,11 +1290,11 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self._bind_payload()
         self.assertEqual(self.service.plate_progress(0, 50, (15.0, 0.0, 0.2))["split"], 15)
         for _poll in range(2):
-            self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
-            self.assertEqual(self.service._split_floor, 15,
+            self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 15)
+            self.assertEqual(self.service._split_tracker.floor, 15,
                              "the floor stepped back before the third below-floor verdict")
         self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
-        self.assertEqual(self.service._split_floor, 6, "the overshoot lock never released")
+        self.assertEqual(self.service._split_tracker.floor, 6, "the overshoot lock never released")
         # Resumed: the truth is the floor now, and the fill follows the
         # nozzle forward from it again.
         self.assertEqual(self.service.plate_progress(0, 50, (12.0, 0.0, 0.2))["split"], 12)
@@ -1260,10 +1305,10 @@ class PlateSplitRefinementTests(unittest.TestCase):
         # repeated geometry cannot win the match and overshoot the fill.
         self._bind_payload(motions=6000)
         self.assertEqual(self.service.plate_progress(0, 50, (1000.0, 0.0, 0.2))["split"], 1000)
-        self.assertEqual(self.service._split_advance_max, 512,
+        self.assertEqual(self.service._split_tracker.advance_max, 512,
                          "the floor-less first poll measured an advance")
         self.assertEqual(self.service.plate_progress(0, 50, (2900.0, 0.0, 0.2))["split"], 2900)
-        self.assertEqual(self.service._split_advance_max, 1900,
+        self.assertEqual(self.service._split_tracker.advance_max, 1900,
                          "the observed advance never widened the next window")
 
     def test_a_layer_without_a_motion_count_reads_unavailable(self):
@@ -1355,7 +1400,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
             self.assertGreaterEqual(
                 split, truth - 1, "the fill lost the head's own stroke")
             self.assertLessEqual(
-                self.service._split_floor, truth, "the floor locked ahead of the head")
+                self.service._split_tracker.floor, truth, "the floor locked ahead of the head")
 
     def test_the_fill_never_walks_back_across_a_repeated_pass(self):
         # The nozzle finishes pass 0 and starts pass 1 on the same
@@ -1409,7 +1454,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
             split = self._poll(truth, lead=40)
             self.assertLessEqual(split, truth + 1, "the payload search painted ahead")
             self.assertGreaterEqual(split, truth - 1, "the payload search lost the head")
-        floor = self.service._split_floor
+        floor = self.service._split_tracker.floor
         # The hydration lands: the arrays are what the split rides from
         # here, and the floor is the continuity between the two halves.
         index.motion_offsets[0] = hydrated
@@ -1469,7 +1514,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
                 self.assertEqual(split, stranded,
                                  "the floor stepped back before the third sample")
         self.assertEqual(split, 14, "the fill stayed stranded on the later pass")
-        self.assertEqual(self.service._split_floor, 14)
+        self.assertEqual(self.service._split_tracker.floor, 14)
         # The head keeps printing: the fill follows it from the truth,
         # unhaunted by the pass the stale sample claimed.
         self.assertEqual(self._poll(8.0, lead=1200, live=(50.0, 2.8, 0.2)), 16)

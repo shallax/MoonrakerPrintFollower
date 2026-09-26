@@ -249,7 +249,7 @@ if QT_AVAILABLE:
         def set_manual_split(self, motions):
             self.manual_split = motions
 
-        def plate_progress(self, anchor, file_position=None, live_position=None):
+        def plate_progress(self, anchor, file_position=None, live_position=None, paused=False):
             # The service-side prep's shape; the coordinator tests
             # pin the wiring, not the payload.
             self.plate_anchors.append(anchor)
@@ -1246,19 +1246,20 @@ class CoordinatorCoverageTests(unittest.TestCase):
         calls = []
         real = parts.index.plate_progress
 
-        def reentrant(anchor, file_position=None, live_position=None):
-            calls.append((anchor, file_position, live_position))
+        def reentrant(anchor, file_position=None, live_position=None, paused=False):
+            calls.append((anchor, file_position, live_position, paused))
             if len(calls) == 1:
                 parts.client.statusReceived.emit(late)
-            return real(anchor, file_position, live_position)
+            return real(anchor, file_position, live_position, paused=paused)
 
         parts.index.plate_progress = reentrant
         parts.coordinator.refresh()
         # Two passes: the one in flight, then the one the late frame
         # started. Each is anchored, positioned and refined from ONE
-        # frame — never layer 4 with the late frame's 90000.
-        self.assertEqual(calls, [(4, 4500, (10.0, 10.0, 1.2)),
-                                 (59, 90000, (140.0, 140.0, 9.0))])
+        # frame, including its pause bit. The late pause preserves the
+        # accepted layer despite its parser's lookahead claim of 59.
+        self.assertEqual(calls, [(4, 4500, (10.0, 10.0, 1.2), False),
+                                 (4, 90000, (140.0, 140.0, 9.0), True)])
         # And the refresh that was in flight lands on its OWN frame's
         # observation rather than the late one's, so the snapshot's layer
         # and its byte offset describe the same instant.
@@ -1896,8 +1897,8 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertIsNone(coordinator._next_pause._last_index)
         self._printing(parts)
         self.assertEqual(coordinator._next_pause._last_index, 4)
-        parts.client.statusReceived.emit(_status("paused", print_stats={
-            "state": "paused", "filename": "cube.gcode", "print_duration": 130.0,
+        parts.client.statusReceived.emit(_status("printing", print_stats={
+            "state": "printing", "filename": "cube.gcode", "print_duration": 130.0,
             "info": {"current_layer": 0, "total_layer": 100}}))
         self.assertIsNone(coordinator.snapshot.layer.index)
         self.assertEqual(coordinator._next_pause._last_index, 4)

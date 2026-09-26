@@ -92,6 +92,12 @@ run_once() {
     # one thing a leg we cannot re-run locally is read for.
     grep -B2 -A40 "FAIL:\|ERROR:" "$log" || true
     grep -E "^(Ran|FAILED)" "$log" || true
+    # Native crashes have no unittest failure block. Keep their final test
+    # and faulthandler output visible, and preserve the complete log.
+    tail -n 80 "$log"
+    if [ -n "${HARNESS_SHOT_DIR:-}" ]; then
+        cp "$log" "$HARNESS_SHOT_DIR/suite-failure.log"
+    fi
     return 1
 }
 
@@ -110,7 +116,7 @@ run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -m unittest discover -s $tests_dir -p
+    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -X faulthandler -m unittest discover -v -s $tests_dir -p
 }
 
 run_files_container() {

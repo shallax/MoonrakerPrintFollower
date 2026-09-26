@@ -378,7 +378,7 @@ class PrintCoordinator(QObject):
                 # visible).
                 lookup_start = time.monotonic()
                 plate_progress_payload = self._index.plate_progress(
-                    physical.index, position, live_position)
+                    physical.index, position, live_position, paused=status_stats.get("state") == "paused")
                 if self._manual_serving_active():
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)
