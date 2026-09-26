@@ -159,7 +159,15 @@ class LayerResolver:
         if z is None:
             return None
         tolerance = self._number(config.z_tolerance) or 0.0
-        if heights:
+        # TWO entries are the minimum that can answer: with one there is
+        # no heights[n + 1] to form a step, so the walk below can only
+        # ever return 0 or None. It read a nozzle at z=5.35 as "a lift
+        # above the model" and answered None for a print on layer 103,
+        # leaving the parser's read-ahead claim as the only signal (the
+        # live report: the layer jumped at a transition, with Cura's
+        # scene unloaded so its height table held a single entry).
+        # Falling through reaches the metadata's own step below.
+        if len(heights) > 1:
             # The heights are the sliced layer starts in order; walking down
             # from the top costs the layers still AHEAD of the nozzle rather
             # than every layer already printed.

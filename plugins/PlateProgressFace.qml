@@ -241,6 +241,19 @@ Item {
                 if (!zoomAnimator.running && root._progressDirty) {
                     progressCanvas.requestPaint();
                 }
+                // The barrier is pending and the bitmap CANNOT satisfy
+                // it: the prefix stopped owning the interval (a zoom
+                // re-keys it, and the model marks it invalid) while the
+                // canvas still starts at that old prefix's boundary
+                // from the paint taken before the invalidation. The
+                // whole-interval branch needs the vector to own from
+                // zero, so ask for the paint that recomputes it — the
+                // prefix image's own arrival was otherwise the only
+                // thing that would, which is the stickiness that
+                // resolves by itself after a while.
+                if (!zoomAnimator.running && !_prefixUsable() && root._vectorCoversFrom > 0) {
+                    progressCanvas.requestPaint();
+                }
                 // The camera has settled, so the hold no longer needs
                 // the model to stand still: release the publication
                 // freeze HERE, while the warm raster still fronts the
@@ -504,6 +517,7 @@ Item {
                 root.printerModel.setFollowerGestureRaster(root._gestureNavSource);
             }
             root._interactionActive = true;
+            root._holdTicks = 0;
             // The barrier's own re-check for the whole gesture: a
             // wheel-only interaction has no release to drive it, and
             // the demand's paint defers while the hold stands.
@@ -519,6 +533,54 @@ Item {
             // live request). The toolhead dot stays exempt.
             if (root.printerModel != null) {
                 root.printerModel.setFollowerInteracting(true);
+            }
+        }
+    }
+
+    function _holdTerms() {
+        // Which term of the barrier is STILL false. The predicate is
+        // one AND of many, so "it stuck" is unanswerable without
+        // naming the term that held it — the zoom's own re-bake makes
+        // this the shape the live report keeps landing on.
+        var layers = root.progress != null ? root.progress.layers : null;
+        var current = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return "split=" + split
+            + " motions=" + (current != null ? _motionsOf(current) : -1)
+            + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1)
+            + " prefixValid=" + (current != null ? current.prefixValid : "?")
+            + " full=" + _fullRaster()
+            + " modelReady=" + _prefixModelReady()
+            + " prefixReady=" + root._prefixStatusReady
+            + " prefixFailed=" + root._prefixStatusFailed
+            + " partialReady=" + _partialPrefixReady()
+            + " texReady=" + root._textureReady
+            + " shown=" + root._vectorCoversShown
+            + " from=" + root._vectorCoversFrom
+            + " lastSplit=" + root._lastSplit
+            + " shownKey=" + root._prefixShownViewKey
+            + " viewKey=" + _viewKey()
+            + " raster=" + progressRasterImage.status
+            + " travels=" + progressTravelImage.status
+            + " base=" + pendingBaseImage.status
+            + " showHold=" + root._prefixShowHold
+            + " zoomRun=" + zoomAnimator.running
+            + " settleRun=" + root.settleTimer.running;
+    }
+
+    // The live stickiness: an interaction held past a beat is wrong,
+    // and the only useful question is which term held it. Reported
+    // once a second and ONLY while it is actually held, so a normal
+    // gesture logs nothing.
+    property int _holdTicks: 0
+    Timer {
+        interval: 500
+        repeat: true
+        running: root._interactionActive
+        onTriggered: {
+            root._holdTicks += 1;
+            if (root._holdTicks >= 3 && root._holdTicks % 2 === 1) {
+                console.log("MPF-HOLD " + _holdTerms());
             }
         }
     }
@@ -2762,6 +2824,7 @@ Item {
     function endInteraction() {
         zoomAnimator.stop();
         root._interactionActive = false;
+        root._holdTicks = 0;
         // Every exit — the pan release, the zoom snap, the scrub —
         // resumes the model's publications, and releases the file
         // hold so the cache can collect it.
