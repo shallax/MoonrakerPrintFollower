@@ -667,3 +667,14 @@ volatile printed-motion split. It changes when the print or surface layer
 changes, not on every nozzle poll; consumers must distinguish the static
 scene from within-layer progress. A raster or Canvas completion for a
 previous incarnation must never claim ownership of the current scene.
+
+### Exact-scene compositor
+
+`PlateExactComposition.js` is the single Qt-free owner of the asynchronous
+Canvas delivery transaction, the attached/detached split acceptance rule and
+the exact-picture readiness policy. The QML face now adapts this policy to
+actual Canvas/Image objects; six independently writable transport flags have
+been eliminated. The pixel-affecting world identity contains the print/layer
+scene epoch and view. Native incremental prefixes and the 4x warm image remain
+unchanged. Implicit Qt paints can be accepted only with consistent same-world
+receipts; stale/mixed generations are rejected.

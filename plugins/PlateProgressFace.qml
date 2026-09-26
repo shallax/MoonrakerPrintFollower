@@ -3,6 +3,7 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "theme"
+import "PlateExactComposition.js" as ExactComposition
 
 // The plate map's progress face (4.6.0): the OctoApp-style
 // previous/current/next layer view. The current layer draws as a
@@ -589,47 +590,26 @@ Item {
     }
 
     function _exactReady() {
-        // The exact-scene commit barrier: EVERY required component
-        // of the current scene state must be complete and
-        // presentation-ready — the full raster (or the partial
-        // prefix over its delivered canvas), the grey base, the
-        // travels' canvas, the ghosts — each with its scene-graph
-        // Image actually Ready. One missing piece keeps the
-        // interaction raster as the front buffer.
         var layers = root.progress != null ? root.progress.layers : null;
-        if (!root.available() || layers == null || layers.current == null) {
-            return false;
-        }
-        var current = layers.current;
-        var split = root.progress.split;
-        if (_fullRaster()) {
-            if (_imageHolds(progressRasterImage)) {
-                return false;
-            }
-            if (root.showTravels && _travelsOf(current) && _imageHolds(progressTravelImage)) {
-                return false;
-            }
-        } else if (split != null && split > 0 && split < _motionsOf(current)) {
-            // The partial scene: the printed history owned coherently
-            // — the Ready prefix over a compatible canvas, or the
-            // delivered vector owning the whole interval.
-            if (_prefixUsable() && !_partialPrefixReady()) {
-                return false;
-            }
-            if (!_prefixUsable() && !(root._splitGate() && root._vectorCoversShown === 0)) {
-                return false;
-            }
-            if (_partialBase() && _baseOf(current) && _imageHolds(pendingBaseImage)) {
-                return false;
-            }
-        }
-        if (root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev")) && _imageHolds(prevGhostImage)) {
-            return false;
-        }
-        if (root.showNext && _ghost("next") != null && _rasterOf(_ghost("next")) && _imageHolds(nextGhostImage)) {
-            return false;
-        }
-        return true;
+        var current = layers != null ? layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return ExactComposition.exactReady({
+            available: root.available(), hasCurrent: current != null,
+            full: _fullRaster(),
+            partial: current != null && split != null
+                && split > 0 && split < _motionsOf(current),
+            fullPending: _imageHolds(progressRasterImage),
+            travelsShown: current != null && root.showTravels && _travelsOf(current),
+            travelsPending: _imageHolds(progressTravelImage),
+            prefixUsable: _prefixUsable(), prefixReady: _partialPrefixReady(),
+            fullCanvasReady: root._splitGate() && root._vectorCoversShown === 0,
+            baseShown: current != null && _partialBase() && _baseOf(current),
+            basePending: _imageHolds(pendingBaseImage),
+            previousPending: root.showPrevious && _ghost("prev") != null
+                && _rasterOf(_ghost("prev")) && _imageHolds(prevGhostImage),
+            nextPending: root.showNext && _ghost("next") != null
+                && _rasterOf(_ghost("next")) && _imageHolds(nextGhostImage)
+        });
     }
 
     function _fullPictureStanding() {
@@ -735,78 +715,29 @@ Item {
     }
 
     function _splitGate() {
-        // The delivery's split gate: the delivered canvas must be
-        // the CURRENT demand's picture. A detached scrub demands the
-        // EXACT split (the review's rapid-scrub policy — an
-        // intermediate split must not present once the demand moved
-        // on). The attached live follow advances monotonically: a
-        // canvas delivered for the previous poll IS the standing
-        // picture — its tail extends with the next paint — and the
-        // boundary match below is what keeps it a real composition.
-        // The retained frame read the exact split gate, so every
-        // poll's advance hid the LIVE prefix and stood the previous
-        // checkpoint's stale picture (the lag-behind-the-toolhead
-        // report). A backward move falls back to the exact gate.
         var split = root.progress != null ? root.progress.split : null;
-        if (!root._textureReady || root._vectorWorldShown !== root._progressWorldEpoch) {
-            return false;
-        }
-        if (root.attached && split != null && root._vectorSplitShown >= 0) {
-            return split >= root._vectorSplitShown;
-        }
-        return root._vectorSplitShown === split;
+        return ExactComposition.splitGate(root._textureReady,
+            root._vectorWorldShown, root._progressWorldEpoch,
+            root._vectorSplitShown, split, root.attached);
     }
 
     function _compositionReady() {
-        // The canvas-side half of the joint readiness, WITHOUT the
-        // live image's status: the retained frame's visibility reads
-        // this, never _partialPrefixReady — reading the live status
-        // there closes a binding cycle through the live image's own
-        // handlers (the engine's live loop warning disabled the
-        // visible binding and froze the face on the attach publish).
-        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        // Retained image visibility must not read live Image.status.
+        var layer = root.progress != null && root.progress.layers != null
+            ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return layer != null && split != null && root._textureReady && root._splitGate() && (root._vectorCoversShown === 0 || root._vectorCoversShown === layer.prefixSplit);
+        return ExactComposition.compositionReady(layer, split,
+            root._textureReady, root._splitGate(), root._vectorCoversShown);
     }
 
     function _partialPrefixReady() {
-        // The compositor's side: the prefix may claim the printed
-        // history only once its scene-graph Image has actually
-        // uploaded the exact source — a model-side valid URL whose
-        // image is still loading (or failed) owns nothing. A prefix
-        // that has never been shown may appear only over a canvas
-        // bitmap whose PAINTED delivery is confirmed compatible:
-        // the full history, the tail from the prefix's own split,
-        // or a vector with no geometry at all (there the canvas
-        // never paints). Once shown, the prefix keeps its
-        // ownership: the paints below it extend or re-derive from
-        // its boundary, never leave a gap.
-        if (!_prefixModelReady() || !root._prefixStatusReady) {
-            return false;
-        }
-        var layer = root.progress.layers.current;
-        // EVERY vector-backed path rides the delivered record: the
-        // painted coverage, the one-beat texture-sync, and the
-        // split gate together — a canvas painted for an earlier
-        // split is the standing OLD composition, never the current
-        // demand's picture (the review's rapid-scrub policy — an
-        // intermediate split must not present once the demand moved
-        // on). No escape branch admits an older delivery: the
-        // shown, the fresh-entry and the compatible-canvas cases
-        // are all this one gate.
-        // The FIRST show never stands over the canvas's full bitmap:
-        // a covers-0 delivery would double-render the whole history
-        // until the trim repaint lands. It waits for the delivered
-        // tail matching the prefix's own boundary — the trim paints
-        // first, the prefix swaps in over it. A re-show (the scrub
-        // through 100% and back) keeps the covers-0 acceptance: the
-        // standing picture is the complete one, and the trim follows
-        // in place — but only for THIS demand's own delivery. A full
-        // bitmap painted at an older split is missing every motion
-        // the demand has passed since, and the attached follow's
-        // monotonic gate would admit it.
-        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversShown === 0 && root._prefixWasShown && root._vectorSplitShown === root.progress.split) || root._vectorCoversShown === layer.prefixSplit);
-        return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
+        var layer = root.progress != null && root.progress.layers != null
+            ? root.progress.layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null,
+            root._prefixStatusReady, root._splitGate(),
+            root._vectorCoversShown, root._vectorSplitShown, split,
+            root._prefixWasShown, _vectorInkless(), root._vectorCoversFrom);
     }
 
     function _prefixFrom() {
@@ -1139,12 +1070,9 @@ Item {
     // Only one exact Canvas paint is in flight. Later progress polls
     // coalesce into a single latest demand, and delivery is accepted
     // only for the current static scene incarnation.
-    property bool _progressPaintInFlight: false
-    property bool _progressPaintQueued: false
-    property int _paintEventsSinceDelivery: 0
-    property var _paintPrepared: null
-    property var _paintFirst: null
-    property bool _paintConsistent: false
+    // Authoritative state for the whole threaded Canvas delivery.
+    // No separate mutable paint queue, counter or coverage receipt.
+    property var _canvasTransaction: ExactComposition.empty(0, "")
     property string _progressWorldKey: ""
     property string _progressLayerKey: ""
     property int _progressWorldEpoch: 0
@@ -1251,6 +1179,8 @@ Item {
         root._progressLayerKey = layerKey;
         root._progressWorldKey = key;
         root._progressWorldEpoch += 1;
+        root._canvasTransaction = ExactComposition.newWorld(
+            root._canvasTransaction, root._progressWorldEpoch, key);
         root._textureReady = false;
         root._vectorCoversShown = -2;
         root._vectorSplitShown = -1;
@@ -1266,58 +1196,34 @@ Item {
     }
 
     function _requestProgressPaint() {
-        if (root._progressPaintInFlight) {
-            root._progressPaintQueued = true;
-            return;
-        }
-        root._progressPaintInFlight = true;
-        root._progressPaintQueued = false;
-        progressCanvas.requestPaint();
+        var next = ExactComposition.request(root._canvasTransaction);
+        root._canvasTransaction = next.state;
+        if (next.start) progressCanvas.requestPaint();
     }
 
     function _deliverProgressPaint() {
-        var receipt = root._paintPrepared;
-        // Qt may call onPaint more than once before a single painted()
-        // signal, e.g. after a window resize. Multiple paints are SAFE
-        // only when ALL receipts describe the very same visible scene,
-        // coverage, and split. Reject mixed generations or boundaries.
-        var count = root._paintEventsSinceDelivery;
-        var unambiguous = count === 1 || (count > 1 && root._paintConsistent && root._paintFirst != null);
-        var matches = unambiguous && receipt != null && receipt.epoch === root._progressWorldEpoch && receipt.world === _worldKeyOf() && receipt.valid;
-        root._paintPrepared = null;
-        root._paintFirst = null;
-        root._paintConsistent = false;
-        root._paintEventsSinceDelivery = 0;
-        root._progressPaintInFlight = false;
-        if (matches) {
-            root._vectorCoversShown = receipt.from;
-            root._vectorSplitShown = receipt.split;
-            root._vectorWorldShown = receipt.epoch;
+        var result = ExactComposition.delivered(root._canvasTransaction,
+            root._progressWorldEpoch, _worldKeyOf());
+        root._canvasTransaction = result.state;
+        if (result.accepted) {
+            root._vectorCoversShown = result.receipt.from;
+            root._vectorSplitShown = result.receipt.split;
+            root._vectorWorldShown = result.receipt.epoch;
             root._textureReady = true;
         } else {
             root._textureReady = false;
-            root._progressPaintQueued = true;
         }
-        return matches;
+        return result.accepted;
     }
 
     function _flushProgressPaint() {
-        // painted() is a render-thread completion callback, not a
-        // licence to spin another paint synchronously in the same
-        // delivery turn. Qt may issue extra paints on window changes:
-        // an ambiguous receipt retries once on the NEXT event turn.
-        if (root._progressPaintQueued && !root._progressPaintInFlight) {
+        if (ExactComposition.needsPaint(root._canvasTransaction))
             Qt.callLater(root._wakeProgressPaint);
-        }
     }
 
     function _wakeProgressPaint() {
-        // A later progress poll may already have started the newest
-        // paint. Check again so this deferred wake never manufactures
-        // an extra texture upload for an already serviced demand.
-        if (root._progressPaintQueued && !root._progressPaintInFlight) {
+        if (ExactComposition.needsPaint(root._canvasTransaction))
             root._requestProgressPaint();
-        }
     }
 
     function _progressKeyOf() {
@@ -2027,7 +1933,6 @@ Item {
             onPaint: {
                 var paintEpoch = root._progressWorldEpoch;
                 var paintWorld = _worldKeyOf();
-                root._paintEventsSinceDelivery += 1;
                 try {
                     var ctx = getContext("2d");
                     // The full state's HOLD: the model says the raster owns
@@ -2317,15 +2222,15 @@ Item {
                         from: root._vectorCoversFrom,
                         split: root._lastSplit
                     };
-                    if (root._paintEventsSinceDelivery === 1) {
-                        root._paintFirst = nextReceipt;
-                        root._paintConsistent = nextReceipt.valid;
-                    } else {
-                        var first = root._paintFirst;
-                        root._paintConsistent = root._paintConsistent && first != null && nextReceipt.valid && first.epoch === nextReceipt.epoch && first.world === nextReceipt.world && first.from === nextReceipt.from && first.split === nextReceipt.split;
-                    }
-                    root._paintPrepared = nextReceipt;
+                    root._canvasTransaction = ExactComposition.painted(
+                        root._canvasTransaction, nextReceipt);
                 }
+            }
+        }
+    }
+
+    Canvas {
+        id: carryCanvas                }
             }
         }
     }
