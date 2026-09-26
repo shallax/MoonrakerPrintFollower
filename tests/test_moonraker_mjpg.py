@@ -777,7 +777,12 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # parsed-but-not-displayed is the backlog, and the Qt-thread
         # share says whether the plugin or the source owns it.
         self._start()
-        frames = [_jpeg(40, 30, shade=50 + index) for index in range(4)]
+        # The workload is SIZED to the metric's own resolution. The
+        # published shares are display-rounded (1 and 2 decimals), so
+        # four 40x30 frames decoded faster than the rounding and the
+        # shares read 0.0 on a fast runner — the live failure was
+        # exactly that at one decimal. Real frames decode measurably.
+        frames = [_jpeg(640, 480, shade=50 + index) for index in range(4)]
         self._reply().deliver(b"".join(_multipart(item) for item in frames))
         self.assertTrue(
             self._drain_until(lambda: self.item._recent_parsed_count == 4),
@@ -789,7 +794,14 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.assertLessEqual(self.item._recent_interval_s, 1.5)
         self.assertGreater(self.item._recent_decode_ms, 0)
         self.assertGreater(self.item._recent_decode_ms_per_frame, 0)
-        self.assertGreater(self.item._recent_drain_ms_per_frame, 0)
+        # The Qt-thread share is deliberately tiny — the decode runs OFF
+        # this thread (4.6.0) — so it is near the two-decimal rounding
+        # floor whatever the frame size, and a strict positive here
+        # asserts the runner's speed rather than the code. The claim the
+        # metric exists to support is the RATIO: the worker owns the
+        # decode, the Qt thread pays only the handover.
+        self.assertLess(self.item._recent_drain_ms_per_frame,
+                        self.item._recent_decode_ms_per_frame)
 
     def test_the_oldest_buffered_frame_reports_its_age(self):
         # A frame that parsed but never rendered is invisible to both
