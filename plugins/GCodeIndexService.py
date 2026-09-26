@@ -761,7 +761,7 @@ class GCodeIndexService(QObject):
             return min(1.0, len(self._full_cache) / total)
         return min(1.0, len(self._prepared_coverage) / total)
 
-    def plate_split(self, anchor, file_position=None, live_position=None):
+    def plate_split(self, anchor, file_position=None, live_position=None, paused=False):
         """The follower's VOLATILE half: the printed/unprinted boundary
         — the only per-poll cost.
 
@@ -806,6 +806,8 @@ class GCodeIndexService(QObject):
             tracker = self._split_tracker
             advanced = tracker.begin(self._view.job_key, anchor)
             floor = tracker.floor
+            if paused and floor is not None:
+                return tracker.accept(coarse, None, None, live_position is not None, paused=True)
             refined = None
             raw = None
             if live_position is not None:
@@ -833,7 +835,8 @@ class GCodeIndexService(QObject):
                         tracker.observe_payload_advance(refined)
             return tracker.accept(
                 coarse, refined, raw, live_position is not None,
-                advanced=advanced)
+                advanced=advanced, entry_confirmed=index.layer_entry_confirmed(
+                    anchor, raw, live_position) if tracker.awaiting_layer_entry else True)
 
     @staticmethod
     def _refine_over_payload(payload, coarse, live_position, floor=None,
@@ -1178,12 +1181,12 @@ class GCodeIndexService(QObject):
                              if entry[0] not in self._visited]
         return stop
 
-    def plate_progress(self, anchor, file_position=None, live_position=None):
+    def plate_progress(self, anchor, file_position=None, live_position=None, paused=False):
         """The composed payload (the tests and the one-shot consumers):
         the memoised layers plus the volatile split. The motion total is
         the progress slider's range — the layer's own edge count."""
         layers = self.plate_layers(anchor) if self._view is not None else {}
-        split = self.plate_split(anchor, file_position, live_position)
+        split = self.plate_split(anchor, file_position, live_position, paused=paused)
         method = "motion index" if split is not None else "unavailable"
         motion_total = 0
         if self._view is not None:

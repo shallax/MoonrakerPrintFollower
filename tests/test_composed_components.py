@@ -2411,7 +2411,8 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertEqual(surface.nav["url"], nav_url,
                          "the camera regenerated the navigation raster")
         # A CONTENT change (the split): the background update
-        # promotes a new URL and the old file unlinks.
+        # promotes a new URL. The old file enters bounded retirement;
+        # presentation can still hold it independently of the wrapper.
         model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
         self._pump_rasters(model, "popover")
@@ -2421,6 +2422,7 @@ class NativeRenderSchedulerTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertNotEqual(surface.nav["url"], nav_url,
                             "the split change never updated the navigation raster")
+        model._prune_raster_cache(keep=0)
         self.assertFalse(os.path.exists(QUrl(nav_url).toLocalFile()),
                          "the retired navigation buffer kept its file")
         # The legend checkboxes and the line width are the scene's
@@ -3355,6 +3357,29 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.assertTrue(os.path.exists(QUrl(first).toLocalFile()),
                         "the earlier prefix's file vanished")
         self.assertTrue(os.path.exists(QUrl(wrapped.prefixData).toLocalFile()))
+
+    def test_a_backward_seek_restores_a_checkpoint_without_another_native_job(self):
+        model = self.monitor()
+        self._feed(model, "popover", width=400, height=300)
+        model.setFollowerLayerAnchor(5)
+        surface = model._plate_surfaces["popover"]
+        payload = self._payload(400)
+        urls = {}
+        for split in (50, 160):
+            model._qt_window(surface, {"prev": None, "current": payload,
+                                       "next": None}, 5, "motion index", split)
+            self._pump_rasters(model, "popover")
+            urls[split] = surface.layers[5].prefixData
+        committed = surface.stats["committed"]
+        model._qt_window(surface, {"prev": None, "current": payload,
+                                   "next": None}, 5, "motion index", 80)
+        wrapped = surface.layers[5]
+        self.assertEqual(wrapped.prefixSplit, 50)
+        self.assertEqual(wrapped.prefixData, urls[50])
+        self.assertTrue(wrapped.prefixValid)
+        self._pump_rasters(model, "popover")
+        self.assertEqual(surface.stats["committed"], committed,
+                         "a cached backward seek submitted another exact raster")
 
     def test_a_view_change_invalidates_the_prefix(self):
         model = self.monitor()
@@ -4309,7 +4334,6 @@ class RendererOnlySeekBenchmarks(NativeRenderSchedulerTests):
 
 
 if __name__ == "__main__": unittest.main()
-
 
 
 

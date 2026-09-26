@@ -5172,7 +5172,7 @@ Item {
             # The follower face's travel raster: it hands over with the
             # class raster (a peer's commit) — decoration inside the
             # face's own slot, never a layout shift.
-            "visible: _travelsShown()",
+            'visible: _travelsShown() || (_presentationDecision().kind === "heldFull" && root._heldFullTravelSource !== "")',
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
@@ -5194,14 +5194,10 @@ Item {
             "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && _rasterOf(_ghost(\"prev\"))",
             "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",
             "visible: _partialBase() && _baseOf(root.progress.layers.current)",
-            "visible: _partialPrefixReady()",
-            # The invalidation hold (and the shown prefix's standing
-            # through repaints and stale deliveries): the old picture
-            # stays until the replacement's is committed — the atomic
-            # ownership swap. The continuation lines ride the same
-            # pin (the regex reads the visible line's first clause).
-            "visible: _partialPrefixReady() || root._prefixHold",
-            "visible: (_partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) || _prefixHoldsFull()) && !root._retainedStanding",
+            # Exact ink ownership is one pure compositor decision.
+            'visible: root._presentation.prefix === "current"',
+            'visible: root._presentation.kind === "preparing" && !root._presentation.ready',
+            'visible: root._presentation.prefix === "retained"',
             "visible: root._interactionActive",
             # The full raster's standing: the full state OR the
             # 100% -> partial entry's transaction — the predicate
@@ -5214,16 +5210,6 @@ Item {
             # never unloads the scene in hand (an interaction driven
             # without an entry falls back to the live eligible URL).
             "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
-            # The retained previous prefix (the atomic handover): the
-            # last uploaded prefix's pixels stand while the live
-            # replacement loads — never torn down early. Its visibility
-            # reads the live image's OWN readiness, so the swap that
-            # blanks that image and the record's stand are one
-            # evaluation (never a beat apart). The vector gate reads
-            # the DELIVERED coverage: the committed record runs a
-            # frame ahead of the scene, and a record admitted on it
-            # stacks its ink over the not-yet-trimmed bitmap.
-            "visible: root._retainedPrefixSource !== \"\" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

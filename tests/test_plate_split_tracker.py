@@ -24,6 +24,8 @@ class PlateSplitTrackerTests(unittest.TestCase):
         for _ in range(2):
             self.assertEqual(self.tracker.accept(100, None, None, True), 80)
         self.assertEqual(self.tracker.stall_polls, 2)
+        for _ in range(2):
+            self.assertEqual(self.tracker.accept(100, 80, 6, True), 80)
         self.assertEqual(self.tracker.accept(100, 80, 6, True), 6)
 
     def test_coarse_only_progress_is_monotonic_without_fake_evidence(self):
@@ -60,6 +62,19 @@ class PlateSplitTrackerTests(unittest.TestCase):
         self.assertEqual(self.tracker.floor, 50)
         self.assertEqual(self.tracker.accept(60, 51, 51, True), 51)
         self.assertEqual(self.tracker.stall_polls, 0)
+
+    def test_unclamped_payload_matches_obey_the_same_monotonic_policy(self):
+        self.tracker.accept(100, 80, 80, True)
+        for _ in range(2):
+            self.assertEqual(self.tracker.accept(100, 6, 6, True), 80)
+        self.assertEqual(self.tracker.accept(100, 6, 6, True), 6)
+
+    def test_missing_geometry_interrupts_correction_evidence(self):
+        self.tracker.accept(100, 80, 80, True)
+        self.tracker.accept(100, 6, 6, True)
+        self.tracker.accept(100, None, None, True)
+        self.assertEqual(self.tracker.below_floor_polls, 0)
+        self.assertEqual(self.tracker.accept(100, 6, 6, True), 80)
 
 
 if __name__ == "__main__":

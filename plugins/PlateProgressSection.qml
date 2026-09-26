@@ -53,12 +53,12 @@ ColumnLayout {
                             // The SURFACE is explicit (the review's
                             // finding 1): this face is the mini.
                             root.printerModel.setFollowerPlot("mini", plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
-                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY);
+                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio);
                         }
                     }
                     function onViewSettled() {
                         if (root.printerModel != null) {
-                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY);
+                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio);
                         }
                     }
                 }

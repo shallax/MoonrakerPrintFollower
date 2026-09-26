@@ -411,6 +411,22 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    "MoonrakerMonitorModel.acquirePlateAssetOwner": {
+        "reason": "internal face lifetime protocol, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: asset_owners_release_independently_and_cannot_be_resurrected",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+    "MoonrakerMonitorModel.setPlateAssetReferences": {
+        "reason": "internal atomic asset snapshot, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: presentation_references_survive_arbitrary_prefix_supersedes",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+    "MoonrakerMonitorModel.releasePlateAssetOwner": {
+        "reason": "internal face destruction protocol, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: asset_owners_release_independently_and_cannot_be_resurrected",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+
     # The T0-T9 cold-camera timing chain:
     # the QML-invoked first-frame slot and the trace-gate key are
     # instrumentation, never scenario verbs.
@@ -899,6 +915,18 @@ EXCLUSIONS = {
     # identity address points for the real-engine ownership read, which
     # proves no beat of a boundary advance leaves the interior to the
     # canvas's bitmap alone. No scenario presses an Image.
+    "moonrakerPlateProgressCanvas": {
+        "reason": "internal texture producer addressed only by real-engine delivery tests",
+        "evidence": "tests/test_qml_real_engine.py: repeated_forward_refreshes_keep_every_frame_complete",
+        "date": "2026-09-26",
+        "recheck": "the harness directly addresses the Canvas",
+    },
+    "moonrakerPlatePreparingCover": {
+        "reason": "internal compositor presentation cover, not an interactive surface",
+        "evidence": "test_qml_real_engine: obsolete-world upload stays masked until current-view paint delivery",
+        "date": "2026-09-26",
+        "recheck": "exact compositor presentation or Canvas delivery changes",
+    },
     "moonrakerPlatePrefixImage": {
         "reason": "the live replacement in the prefix handover: addressed by the ownership read, never pressed",
         "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",

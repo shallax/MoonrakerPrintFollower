@@ -51,6 +51,15 @@ class RemoteJobServiceTests(unittest.TestCase):
         self._observe(position=50)
         self.assertTrue(self._observe(position=10).new_job)
 
+    def test_pause_and_resume_offset_rewinds_keep_the_print_identity(self):
+        original = self._observe(position=70, duration=10).key
+        for state, position in (("paused", 65), ("paused", 60), ("printing", 55)):
+            transition = self._observe(state=state, position=position, duration=10)
+            self.assertFalse(transition.new_job)
+            self.assertEqual(transition.key, original)
+        self._observe(state="paused", position=60, duration=12)
+        self.assertTrue(self._observe(state="printing", position=10, duration=0.1).new_job)
+
     def test_a_duration_regression_is_a_new_job(self):
         self._observe(duration=10.0)
         self.assertTrue(self._observe(duration=1.0).new_job)

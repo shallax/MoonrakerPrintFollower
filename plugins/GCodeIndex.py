@@ -238,9 +238,15 @@ def better_candidate(distance_sq, motion, best_distance_sq, best_motion, floor):
 
     Returns the surviving (distance_sq, motion) pair.
     """
-    if best_motion is None or distance_sq < best_distance_sq:
+    if best_motion is None:
         return distance_sq, motion
-    if distance_sq > best_distance_sq * _CANDIDATE_TIE:
+    # Symmetric ties: a float-noise improvement is no more evidence of a
+    # later pass than a float-noise worsening. The absolute term covers
+    # single-precision coordinate error near an exact zero-distance match.
+    tolerance = max(1e-8, min(distance_sq, best_distance_sq) * (_CANDIDATE_TIE - 1.0))
+    if distance_sq < best_distance_sq - tolerance:
+        return distance_sq, motion
+    if distance_sq > best_distance_sq + tolerance:
         return best_distance_sq, best_motion
     new_ok = floor is None or motion >= floor
     old_ok = floor is None or best_motion >= floor
@@ -603,6 +609,33 @@ class LayerMotionIndex:
         if minimum_split is not None:
             split = max(split, int(minimum_split))
         return max(0, min(n, split)), method
+
+    def layer_entry_confirmed(self, layer, candidate, live_position):
+        """Whether physical Z distinguishes this match from the previous layer.
+
+        XY can repeat exactly on successive layers while the parser has
+        already entered the next one. Use the matched motion's height when
+        hydrated; a compact index retains the next layer's modal start,
+        which is this layer's ending height. Equal-height/nonplanar or
+        missing metadata cannot settle that ambiguity and defer to ordinary
+        geometric matching rather than inventing physical evidence.
+        """
+        if layer <= 0 or candidate is None or live_position is None:
+            return True
+        try:
+            previous_z = float(self.layer_start_positions[layer][2])
+            heights = self.motion_z[layer] if layer < len(self.motion_z) else ()
+            if len(heights):
+                target_z = float(heights[min(len(heights) - 1, max(0, candidate - 1))])
+            else:
+                target_z = float(self.layer_start_positions[layer + 1][2])
+            live_z = float(live_position[2])
+        except (IndexError, TypeError, ValueError):
+            return True
+        step = abs(target_z - previous_z)
+        if step < 1e-4:
+            return True
+        return abs(live_z - target_z) <= max(1e-4, step * 0.2)
 
 
 def _parse_axes(code: bytes) -> Dict[str, float]:

@@ -50,6 +50,14 @@ class NavigationSceneKeyTests(unittest.TestCase):
         self.assertIsNone(navigation_hard_key(None))
         self.assertIsNone(navigation_zoom(None))
 
+    def test_legacy_tuple_keys_preserve_the_named_compatibility_rules(self):
+        legacy = tuple(scene(split=20, zoom=1.5))
+        advanced = tuple(scene(split=60, zoom=1.5))
+        self.assertEqual(navigation_hard_key(legacy), navigation_hard_key(advanced))
+        self.assertEqual(navigation_hard_key(legacy), navigation_hard_key(scene(split=20, zoom=1.5)))
+        self.assertNotEqual(navigation_hard_key(legacy), navigation_hard_key(tuple(scene(split=None, zoom=1.5))))
+        self.assertEqual(navigation_zoom(legacy), 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -61,6 +61,21 @@ class ExactCompositionPolicyTests(unittest.TestCase):
         self.assertEqual(actual, {"equivalent": True, "mixed": False,
                                   "delivered": 10})
 
+    def test_scene_change_retargets_a_request_that_has_not_painted(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var t=request(empty(1,'A')).state;
+            var next=newWorld(t,2,'B');
+            return {waiting:next.inFlight,start:request(next).start};
+        })()"""), {"waiting": False, "start": True})
+
+    def test_no_op_paint_cannot_retire_an_actual_upload(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var t=request(empty(1,'A')).state;
+            var noOp=unchanged(t);
+            t=painted(t,{epoch:1,world:'A',valid:true,from:0,split:18});
+            return {noOpWaiting:noOp.inFlight,uploadWaiting:unchanged(t).inFlight};
+        })()"""), {"noOpWaiting": False, "uploadWaiting": True})
+
     def test_attached_monotonic_only_in_same_world(self):
         self.assertEqual(self.evaluate("""[
             splitGate(true,1,1,18,20,true),
@@ -71,11 +86,11 @@ class ExactCompositionPolicyTests(unittest.TestCase):
 
     def test_first_show_never_doubles_a_full_vector_bitmap(self):
         self.assertEqual(self.evaluate("""(function () {
-            var layer = {prefixSplit:10};
-            return [prefixReady(layer,true,true,0,18,18,false,false,0),
-                    prefixReady(layer,true,true,10,18,18,false,false,10),
-                    prefixReady(layer,true,true,0,18,18,true,false,0)];
-        })()"""), [False, True, True])
+            var layer = {prefixSplit:10,prefixData:"prefix-A"};
+            return [prefixReady(layer,true,true,0,18,18,false,false,0,"prefix-A"),
+                    prefixReady(layer,true,true,10,18,18,false,false,10,"prefix-A"),
+                    prefixReady(layer,true,true,0,18,18,true,false,0,"prefix-A")];
+        })()"""), [False, True, False])
 
     def test_exact_scene_waits_only_for_required_components(self):
         self.assertEqual(self.evaluate("""(function () {
@@ -91,6 +106,127 @@ class ExactCompositionPolicyTests(unittest.TestCase):
             var missing = exactReady(s);
             return [ready,ghost,missing];
         })()"""), [True, False, False])
+
+    def test_interval_ownership_requires_the_actual_prefix_asset(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var layer={prefixSplit:10,prefixData:'new-prefix'};
+            return [
+                partialComposition(layer,18,true,true,0,true,'old-prefix'),
+                partialComposition(layer,18,true,true,10,true,'old-prefix'),
+                partialComposition(layer,18,true,true,10,true,'new-prefix'),
+                partialComposition(layer,18,true,true,10,false,'new-prefix'),
+                partialComposition(layer,18,true,false,10,true,'new-prefix')
+            ];
+        })()"""), [
+            {"ready": True, "vector": True, "prefix": False},
+            {"ready": False, "vector": False, "prefix": False},
+            {"ready": True, "vector": False, "prefix": True},
+            {"ready": False, "vector": False, "prefix": False},
+            {"ready": False, "vector": False, "prefix": False},
+        ])
+
+    def test_same_boundary_different_prefix_assets_are_not_consensus(self):
+        self.assertFalse(self.evaluate("""(function () {
+            var t=request(empty(1,'A')).state;
+            t=painted(t,{epoch:1,world:'A',valid:true,from:10,split:18,
+                         prefixSource:'old-prefix'});
+            t=painted(t,{epoch:1,world:'A',valid:true,from:10,split:18,
+                         prefixSource:'new-prefix'});
+            return delivered(t,1,'A').accepted;
+        })()"""))
+
+    def test_full_canvas_releases_exact_readiness_during_prefix_decode(self):
+        self.assertTrue(self.evaluate("""exactReady({
+            available:true,hasCurrent:true,partial:true,full:false,
+            prefixUsable:true,prefixReady:false,fullCanvasReady:true,
+            baseShown:false,previousPending:false,nextPending:false
+        })"""))
+
+    def test_presentation_keeps_one_interval_owner_through_asset_replacement(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var p={full:false,fullReady:false,epoch:2,world:'scene',splitOk:true,split:18,
+                   inkless:false,heldFull:true,
+                   receipt:{valid:true,epoch:2,world:'scene',from:10,split:18,
+                            prefixSource:'old'},
+                   currentPrefix:{ready:false,source:'new',from:15},
+                   retainedPrefix:{ready:true,source:'old',from:10}};
+            var waiting=presentation(p);
+            p.currentPrefix.ready=true;
+            var imageFirst=presentation(p);
+            p.receipt.prefixSource='new';p.receipt.from=15;
+            var joint=presentation(p);
+            p.receipt.from=0;
+            var fallback=presentation(p);
+            p.full=true;p.fullReady=false;
+            var fullLoading=presentation(p);
+            p.fullReady=true;
+            var full=presentation(p);
+            return [waiting,imageFirst,joint,fallback,fullLoading,full];
+        })()"""), [
+            {"kind": "prefix", "prefix": "retained", "ready": True},
+            {"kind": "prefix", "prefix": "retained", "ready": True},
+            {"kind": "prefix", "prefix": "current", "ready": True},
+            {"kind": "canvas", "prefix": "", "ready": True},
+            {"kind": "canvas", "prefix": "", "ready": True},
+            {"kind": "full", "prefix": "", "ready": True},
+        ])
+
+    def test_an_old_world_receipt_cannot_expose_any_prefix(self):
+        self.assertEqual(self.evaluate("""presentation({
+            full:false,fullReady:false,epoch:2,world:'B',splitOk:true,
+            inkless:false,heldFull:false,
+            receipt:{valid:true,epoch:1,world:'A',from:10,split:18,prefixSource:'old'},
+            currentPrefix:{ready:true,source:'old',from:10},
+            retainedPrefix:{ready:true,source:'old',from:10}
+        })"""), {"kind": "preparing", "prefix": "", "ready": False})
+
+    def test_partial_canvas_cannot_release_a_full_demand(self):
+        self.assertEqual(self.evaluate("""presentation({
+            full:true,fullReady:false,epoch:2,world:'scene',split:21,
+            splitOk:true,inkless:false,heldFull:false,
+            receipt:{valid:true,epoch:2,world:'scene',from:0,split:18},
+            currentPrefix:{ready:false},retainedPrefix:{ready:false}
+        })"""), {"kind": "canvas", "prefix": "", "ready": False})
+
+    def test_full_requires_a_ready_pair_or_a_complete_fallback(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var p={available:true,hasCurrent:true,full:true,
+                   fullImagesReady:false,fullCanvasReady:false};
+            var missing=exactReady(p);
+            p.fullCanvasReady=true;
+            var fallback=exactReady(p);
+            p.fullCanvasReady=false;p.fullImagesReady=true;
+            return [missing,fallback,exactReady(p)];
+        })()"""), [False, True, True])
+
+    def test_an_empty_demand_waits_for_the_presentation_to_retire_old_pixels(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var p={available:true,hasCurrent:true,full:false,partial:false,
+                   presentationReady:false};
+            var pending=exactReady(p);
+            p.presentationReady=true;
+            return [pending,exactReady(p)];
+        })()"""), [False, True])
+
+    def test_tail_plan_preserves_deltas_and_rebuilds_only_changed_inputs(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var s={dirty:false,split:18,paints:2,source:'geometry',view:'view',
+                   from:10,prefixSource:'prefix'};
+            var d={split:20,source:'geometry',view:'view',cadence:200,
+                   prefix:{from:10,source:'prefix'}};
+            var delta=tailPlan(s,d);
+            d.split=15;
+            var reverse=tailPlan(s,d);
+            d.split=20;d.prefix={from:15,source:'next'};
+            var boundary=tailPlan(s,d);
+            d.prefix={from:0,source:''};
+            return [delta,reverse,boundary,tailPlan(s,d)];
+        })()"""), [
+            {"reset": False, "from": 18, "coverage": 10},
+            {"reset": True, "from": 10, "coverage": 10},
+            {"reset": True, "from": 15, "coverage": 15},
+            {"reset": True, "from": -1, "coverage": 0},
+        ])
 
 
 if __name__ == "__main__":

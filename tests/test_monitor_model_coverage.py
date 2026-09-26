@@ -1865,6 +1865,74 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         import threading
         return threading.Event()
 
+    def test_presentation_references_survive_arbitrary_prefix_supersedes(self):
+        self.model = self.build()
+        directory = pathlib.Path(self.model._raster_cache_dir)
+        held = directory / "standing-prefix.png"
+        full = directory / "held-full.png"
+        held.write_bytes(b"prefix")
+        full.write_bytes(b"full")
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(held)),
+                                                    self.local_url(str(full))])
+        # More replacements than the retirement budget: the old standing
+        # prefix/full composition remains owned by the face, independently
+        # of every wrapper's current URL and the newest-N grace period.
+        for index in range(70):
+            (directory / ("replacement-%d.png" % index)).write_bytes(b"new")
+        self.model._prune_raster_cache(keep=0)
+        self.assertEqual(set(directory.iterdir()), {held, full})
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(full))])
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(held.exists())
+        self.assertTrue(full.exists())
+        self.model.releasePlateAssetOwner(owner)
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(full.exists())
+
+    def test_asset_owners_release_independently_and_cannot_be_resurrected(self):
+        self.model = self.build()
+        path = pathlib.Path(self.model._raster_cache_dir) / "shared.png"
+        path.write_bytes(b"shared")
+        url = self.local_url(str(path))
+        first = self.model.acquirePlateAssetOwner()
+        second = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(first, [url, url])
+        self.model.setPlateAssetReferences(second, [url])
+        self.model.releasePlateAssetOwner(first)
+        self.model.setPlateAssetReferences(first, [url])
+        self.model._prune_raster_cache(keep=0)
+        self.assertTrue(path.exists())
+        self.assertNotIn(first, self.model._plate_asset_owners)
+        self.model.releasePlateAssetOwner(second)
+        self.model.releasePlateAssetOwner(second)
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(path.exists())
+        self.assertGreater(self.model.acquirePlateAssetOwner(), second)
+
+    def test_asset_snapshots_ignore_foreign_and_non_file_urls(self):
+        self.model = self.build()
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, ["", "data:image/png;base64,AA==",
+            "https://example.invalid/prefix.png", self.local_url("/tmp/foreign.png")])
+        self.assertEqual(self.model._plate_asset_owners[owner], frozenset())
+
+    def test_discard_cleanup_respects_presentation_and_collects_vanished_jobs(self):
+        self.model = self.build()
+        directory = pathlib.Path(self.model._raster_cache_dir)
+        held = directory / "held.png"
+        abandoned = directory / "abandoned.png"
+        held.write_bytes(b"held")
+        abandoned.write_bytes(b"abandoned")
+        owner = self.model.acquirePlateAssetOwner()
+        self.model.setPlateAssetReferences(owner, [self.local_url(str(held))])
+        self.model._unlink_asset_files(("prefix", None, self.local_url(str(held)), 10))
+        self.assertTrue(held.exists())
+        self.model._raster_committed(
+            ("prefix", None, self.local_url(str(abandoned)), 10),
+            ("vanished", 7, 5, 3, ("k",), "prefix", 10, 2, 9))
+        self.assertFalse(abandoned.exists())
+
     def test_a_commit_for_a_vanished_surface_and_layer_is_accounted(self):
         surface = self.surface("mini")
         self.wrapper(surface, 7)

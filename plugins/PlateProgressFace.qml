@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
+import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "theme"
@@ -19,6 +20,7 @@ Item {
     property var progress: null   // the model's plateProgress payload
     property var dot: null
     property bool compact: false
+    property real devicePixelRatio: Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio))
     // Attached: the face follows the LIVE layer — the dot moves with
     // the print's position and the printed fill grows. Detached: the
     // anchor is frozen on one layer by the user (the pop-over's
@@ -106,14 +108,18 @@ Item {
     // the live prefix's visible reads this one-way value instead of
     // the retained ITEM's visible, whose mutual read the engine
     // flagged as a binding loop (the live warning).
-    property bool _retainedStanding: false
+    readonly property bool _retainedStanding: root._presentation.prefix === "retained"
     // The full raster's status, mirrored for the canvas: that paint
     // runs on the canvas' render thread, where a live read of this
     // item's status lands whenever it lands (the handover's yield
     // fired on some runs and not others). Written by the signal that
     // owns the transition, read like any other property.
-    property bool _rasterStatusReady: false
-    property bool _rasterStatusFailed: false
+    property var _classTexture: ({
+            source: "",
+            status: Image.Null
+        })
+    readonly property bool _rasterStatusReady: _classTexture.status === Image.Ready && _classTexture.source === progressRasterImage.source.toString()
+    readonly property bool _rasterStatusFailed: _classTexture.status === Image.Error && _classTexture.source === progressRasterImage.source.toString()
     // The travels raster's status, mirrored for the SAME beat: the
     // travels are the second half of the full state's picture and
     // their texture decodes on its own clock, so the class raster's
@@ -122,18 +128,31 @@ Item {
     // must not present before the picture's own bake does (its
     // texture can land first, which stood the new travels over the
     // canvas' held picture — the reported shift).
-    property bool _travelsStatusReady: false
-    property bool _travelsStatusFailed: false
+    property var _travelTexture: ({
+            source: "",
+            status: Image.Null
+        })
+    readonly property bool _travelsStatusReady: _travelTexture.status === Image.Ready && _travelTexture.source === progressTravelImage.source.toString()
+    readonly property bool _travelsStatusFailed: _travelTexture.status === Image.Error && _travelTexture.source === progressTravelImage.source.toString()
     // The prefix Image's Ready status as a one-way mirror: the
     // visible binding reads THIS (written by the image's own status
     // handler), never the status directly — reading the live status
     // there closed a binding cycle through the same image's source
     // and handlers (the engine's recurring live loop warning).
-    property bool _prefixStatusReady: false
+    property var _retainedTexture: ({
+            source: "",
+            status: Image.Null
+        })
+    property var _prefixTexture: ({
+            source: "",
+            status: Image.Null
+        })
+    readonly property bool _retainedStatusReady: _retainedTexture.status === Image.Ready && _retainedTexture.source === root._retainedPrefixSource
+    readonly property bool _prefixStatusReady: _prefixTexture.status === Image.Ready && _prefixTexture.source === progressPrefixImage.source.toString()
     // ...and its FAILED status, mirrored for the same reason the
     // travels' is: a load that errors will never reach Ready, so a
     // barrier waiting on it could never pass.
-    property bool _prefixStatusFailed: false
+    readonly property bool _prefixStatusFailed: _prefixTexture.status === Image.Error && _prefixTexture.source === progressPrefixImage.source.toString()
     // The zoom the carried tail last painted at: a mid-gesture
     // settle repaints it only on a real scale change.
     property real _carryZoom: 1.0
@@ -150,9 +169,40 @@ Item {
     // (a print switch moves it), and a seek that lands on the same
     // motions and the same split arithmetic must never re-stand this
     // layer's pixels over that one.
-    property string _retainedPrefixSource: ""
-    property int _retainedPrefixSplit: -1
-    property int _retainedPrefixAnchor: -2
+    property var _standingPrefix: null
+    readonly property string _retainedPrefixSource: _standingPrefix != null ? _standingPrefix.source : ""
+    readonly property int _retainedPrefixSplit: _standingPrefix != null ? _standingPrefix.from : -1
+    readonly property int _retainedPrefixAnchor: _standingPrefix != null ? _standingPrefix.anchor : -2
+    // A face owns every file it can still load or present, including the
+    // retained/held picture while a replacement is prepared behind it.
+    // The owner belongs to a model instance, not to a layer or a gesture.
+    property var _assetModel: null
+    property int _assetOwner: 0
+    readonly property var _assetReferences: [navigationImage.source.toString(), prevGhostImage.source.toString(), nextGhostImage.source.toString(), progressRasterImage.source.toString(), progressTravelImage.source.toString(), pendingBaseImage.source.toString(), progressPrefixImage.source.toString(), retainedPrefixImage.source.toString(), root._heldFullSource, root._heldFullTravelSource, root._retainedPrefixSource, root._gestureNavSource, root._paintedPrefixSource, root._deliveredComposition != null ? root._deliveredComposition.prefixSource : ""]
+
+    function _syncAssetReferences() {
+        if (root._assetModel != null && root._assetOwner > 0)
+            root._assetModel.setPlateAssetReferences(root._assetOwner, root._assetReferences);
+    }
+
+    function _releaseAssetOwner() {
+        if (root._assetModel != null && root._assetOwner > 0)
+            root._assetModel.releasePlateAssetOwner(root._assetOwner);
+        root._assetOwner = 0;
+        root._assetModel = null;
+    }
+
+    function _adoptAssetOwner() {
+        _releaseAssetOwner();
+        if (root.printerModel != null && root.printerModel.acquirePlateAssetOwner !== undefined) {
+            root._assetModel = root.printerModel;
+            root._assetOwner = root._assetModel.acquirePlateAssetOwner();
+            _syncAssetReferences();
+        }
+    }
+
+    on_AssetReferencesChanged: _syncAssetReferences()
+    onPrinterModelChanged: _adoptAssetOwner()
     // The raster paints run on the threaded canvases' worker
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
@@ -177,7 +227,8 @@ Item {
             panX: root.viewPanX,
             panY: root.viewPanY,
             lineScale: root.lineScale,
-            compact: root.compact
+            compact: root.compact,
+            dpr: root.devicePixelRatio
         };
     }
     property real _dragX: 0.0
@@ -380,6 +431,11 @@ Item {
         return root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current);
     }
 
+    function _fullTravelsRequired() {
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        return root.showTravels && _fullDemand() && layer != null && (layer.travelWidth > 0 || (layer.travels !== undefined && layer.travels.length > 0));
+    }
+
     function _travelsPending() {
         // Shown, and their texture is not here yet. An Error releases
         // the handover: a travel raster that will never decode must
@@ -395,7 +451,8 @@ Item {
         // (opacity and clear) and the travels Image presents on it,
         // so the two halves swap in one beat and no frame shows one
         // half of a bake over the other's held picture.
-        return _fullRaster() && root._rasterStatusReady && !_travelsPending();
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        return _fullRaster() && root._rasterStatusReady && root._classTexture.source === layer.rasterData && (!_fullTravelsRequired() || (_travelsOf(layer) && root._travelsStatusReady && root._travelTexture.source === layer.travelData));
     }
 
     function _ghost(role) {
@@ -413,6 +470,11 @@ Item {
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
         return split != null && layer != null && split >= layer.motions && _rasterOf(layer);
+    }
+
+    function _fullDemand() {
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        return root.available() && layer != null && _motionsOf(layer) > 0 && root.progress.split != null && root.progress.split >= _motionsOf(layer);
     }
 
     function _prefixModelReady() {
@@ -538,7 +600,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return "split=" + split + " motions=" + (current != null ? _motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " showHold=" + root._prefixShowHold + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
+        return "split=" + split + " motions=" + (current != null ? _motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
     }
 
     // The live stickiness: an interaction held past a beat is wrong,
@@ -567,71 +629,102 @@ Item {
         }
     }
 
-    function _imageHolds(image) {
-        // Whether an image the barrier waits on is still a reason to
-        // hold. A load that has FAILED is not: the barrier could
-        // never pass, and the hold freezes the very model
-        // publications the scene needs to reassemble — the wedge
-        // that would not hand back after a camera change. This is
-        // the travels' failed-mirror escape, granted to every
-        // component of the exact scene.
-        return image.status !== Image.Ready && image.status !== Image.Error;
-    }
-
-    function _prefixUsable() {
-        // Whether the prefix is still a component the barrier may
-        // wait on: the model rendered it AND its image has not
-        // failed. A failed load leaves the whole interval to the
-        // vector path — the rule _prefixFrom already states — so the
-        // barrier must stop waiting on it. With the model side alone
-        // the condition was unsatisfiable: the prefix never reaches
-        // Ready, so the hold never released.
-        return _prefixModelReady() && !root._prefixStatusFailed;
-    }
-
     function _exactReady() {
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
         return ExactComposition.exactReady({
-            available: root.available(), hasCurrent: current != null,
-            full: _fullRaster(),
-            partial: current != null && split != null
-                && split > 0 && split < _motionsOf(current),
-            fullPending: _imageHolds(progressRasterImage),
-            travelsShown: current != null && root.showTravels && _travelsOf(current),
-            travelsPending: _imageHolds(progressTravelImage),
-            prefixUsable: _prefixUsable(), prefixReady: _partialPrefixReady(),
-            fullCanvasReady: root._splitGate() && root._vectorCoversShown === 0,
-            baseShown: current != null && _partialBase() && _baseOf(current),
-            basePending: _imageHolds(pendingBaseImage),
-            previousPending: root.showPrevious && _ghost("prev") != null
-                && _rasterOf(_ghost("prev")) && _imageHolds(prevGhostImage),
-            nextPending: root.showNext && _ghost("next") != null
-                && _rasterOf(_ghost("next")) && _imageHolds(nextGhostImage)
+            available: root.available(),
+            hasCurrent: current != null,
+            presentationReady: root._presentation.ready,
+            full: _fullDemand(),
+            fullImagesReady: _exactFullStanding(),
+            partial: current != null && split != null && split > 0 && split < _motionsOf(current),
+            prefixReady: root._presentation.kind === "prefix" && root._presentation.ready,
+            fullCanvasReady: root._splitGate() && root._vectorCoversShown === 0 && (!_fullDemand() || root._vectorSplitShown >= _motionsOf(current)),
+            baseShown: current != null && _partialBase(),
+            basePending: !((_baseOf(current) && pendingBaseImage.status === Image.Ready && pendingBaseImage.source.toString() === current.baseData) || (_pendingDraws() && _backgroundReady())),
+            previousPending: root.showPrevious && !_ghostReady("prev"),
+            nextPending: root.showNext && !_ghostReady("next")
         });
     }
 
     function _fullPictureStanding() {
-        // The full picture stands while the full state holds, and —
-        // through the 100% -> partial entry — until the replacement
-        // partial composition is presentation-ready. The hold rides
-        // THIS predicate, never a visible-changed handler: the
-        // binding cannot hide the picture before the hold exists
-        // (the hide-then-arm order left one blank beat at the
-        // entry). The handover is the transaction the contract
-        // names: FULL A visible -> partial B presentation-ready ->
-        // atomically expose B — never A hidden with nothing ready.
-        if (root.progress == null || root.progress.layers == null || root.progress.layers.current == null) {
-            return false;
+        // Source eligibility must use the decision for this demand now.
+        // A derived binding can still hold the previous decision during
+        // the same publish; clearing then restoring the URL restarts PNG
+        // decoding and leaves one blank frame at full -> partial entry.
+        return _fullRaster() || _presentationDecision().kind === "heldFull";
+    }
+
+    function _prefixCandidate() {
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        return {
+            ready: layer != null && layer.prefixValid === true && root._prefixStatusReady && root._prefixTexture.source === layer.prefixData,
+            from: layer != null && layer.prefixSplit !== undefined ? layer.prefixSplit : -1,
+            source: layer != null && layer.prefixData !== undefined ? layer.prefixData : ""
+        };
+    }
+
+    function _retainedCandidate() {
+        return {
+            ready: root._standingPrefix != null && root._standingPrefix.world === _worldKeyOf() && root._retainedPrefixSource !== "" && root._retainedStatusReady,
+            from: root._retainedPrefixSplit,
+            source: root._retainedPrefixSource
+        };
+    }
+
+    function _presentationDecision() {
+        if (!root.available() || root.progress.layers == null || root.progress.layers.current == null)
+            return {
+                kind: "preparing",
+                prefix: "",
+                ready: false
+            };
+        return ExactComposition.presentation({
+            full: _fullDemand(),
+            fullReady: _exactFullStanding(),
+            receipt: root._deliveredComposition,
+            epoch: root._progressWorldEpoch,
+            world: _worldKeyOf(),
+            splitOk: root._splitGate(),
+            // The delivered empty bitmap certifies no Canvas ink.
+            // Reading recovery geometry here would feed Image status
+            // back into that same Image's source binding.
+            inkless: root._deliveredComposition != null && root._deliveredComposition.from === -1,
+            split: root.progress != null ? root.progress.split : null,
+            showTravels: root.showTravels,
+            currentPrefix: _prefixCandidate(),
+            retainedPrefix: _retainedCandidate(),
+            heldFull: root._fullRasterSeen && root._standingFull.world === _worldKeyOf() && root.progress != null && root._fullSeenAnchor === root.progress.anchor && root._heldFullSource !== "" && _leavingFull()
+        });
+    }
+    readonly property var _presentation: _presentationDecision()
+    on_PresentationChanged: Qt.callLater(root._capturePresentedAssets)
+
+    function _capturePresentedAssets() {
+        var decision = _presentationDecision();
+        if (decision.kind === "full" && (root._standingFull == null || root._standingFull.world !== _worldKeyOf() || root._standingFull.source !== root.progress.layers.current.rasterData || root._standingFull.travels !== (_travelsShown() ? root.progress.layers.current.travelData : ""))) {
+            var layer = root.progress.layers.current;
+            root._standingFull = {
+                source: layer.rasterData,
+                travels: _travelsShown() ? layer.travelData : "",
+                anchor: root.progress.anchor,
+                world: _worldKeyOf()
+            };
+        } else if (decision.kind !== "full" && decision.ready) {
+            root._standingFull = null;
         }
-        if (_fullRaster()) {
-            return true;
+        if (decision.prefix === "current" && decision.ready && (root._standingPrefix == null || root._standingPrefix.world !== _worldKeyOf() || root._standingPrefix.source !== _prefixCandidate().source || root._standingPrefix.from !== _prefixCandidate().from)) {
+            var prefix = _prefixCandidate();
+            root._standingPrefix = {
+                source: prefix.source,
+                from: prefix.from,
+                anchor: root.progress.anchor,
+                world: _worldKeyOf(),
+                view: _viewKey()
+            };
         }
-        if (root._fullRasterSeen && root._fullSeenAnchor === root.progress.anchor && _leavingFull() && !_fullReleaseReady()) {
-            return true;
-        }
-        return false;
     }
 
     function _retainedPrefixApplies() {
@@ -644,7 +737,7 @@ Item {
         // must still be the served one.
         var progress = root.progress;
         var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions && progress.anchor === root._retainedPrefixAnchor;
+        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions && progress.anchor === root._retainedPrefixAnchor && root._standingPrefix != null && root._standingPrefix.world === _worldKeyOf();
     }
 
     function _retireRetained() {
@@ -653,40 +746,7 @@ Item {
         // layer at all), the view transform they baked. Anything that
         // leaves the record armed lets a later split-only match draw
         // another layer's history.
-        root._retainedPrefixSource = "";
-        root._retainedPrefixSplit = -1;
-        root._retainedPrefixAnchor = -2;
-    }
-
-    function _prefixHoldsFull() {
-        // The full state's entry, the mirror of the leaving-full
-        // hold: the raster owns the picture but its texture is still
-        // decoding, and no other producer holds the printed head at a
-        // full layer — the prefix' pixels stand until the raster's
-        // mirror says they may go. Both mirrors are handler-written:
-        // reading an image's live status inside its own source binding
-        // is the loop the engine warns about. A new layer's world never holds here (its
-        // reset cleared the shown record).
-        var layers = root.progress != null ? root.progress.layers : null;
-        var layer = layers != null ? layers.current : null;
-        return _fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._prefixWasShown && root._prefixStatusReady && _viewKey() === root._prefixShownViewKey && layer != null && layer.prefixValid === true;
-    }
-
-    function _prefixApplies() {
-        // The split arithmetic still names the prefix as the history
-        // owner — PURE structural terms, no transient inputs (the
-        // model's validity and the Image's status flicker through a
-        // re-publish; a hide fired on a flicker drops the standing
-        // composition's memory). The boundary is INCLUSIVE: a fresh
-        // prefix renders AT the requested split, and hiding it until
-        // the split passed it left the printed history ownerless for
-        // every scrub that landed exactly on the boundary (the
-        // disappearance). A full layer, a split at 0 (nothing has
-        // printed — the prefix owns nothing, ever) or a split below
-        // the boundary hides it legitimately.
-        var progress = root.progress;
-        var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && progress.split > 0 && layer != null && layer.prefixSplit !== undefined && layer.prefixSplit >= 0 && progress.split >= layer.prefixSplit && progress.split < _motionsOf(layer);
+        root._standingPrefix = null;
     }
 
     function _leavingFull() {
@@ -697,39 +757,15 @@ Item {
         return progress != null && progress.split != null && layer != null && progress.split > 0 && progress.split < _motionsOf(layer);
     }
 
-    function _fullReleaseReady() {
-        // The replacement composition is presentation-ready: the
-        // Ready prefix over a delivered compatible canvas, or the
-        // delivered vector owning the whole interval — both behind
-        // the one-beat show hold (the scene consumes a painted
-        // texture in the sync AFTER the painted signal, so the full
-        // picture must stand through that beat; nothing to paint
-        // needs no beat).
-        if (!_prefixModelReady()) {
-            return root._splitGate() && root._vectorCoversShown === 0 && !root._prefixShowHold;
-        }
-        if (root._vectorCoversFrom === -1 && _vectorInkless()) {
-            return true;
-        }
-        return _partialPrefixReady() && !root._prefixShowHold;
-    }
-
     function _splitGate() {
         var split = root.progress != null ? root.progress.split : null;
         return ExactComposition.splitGate(root._textureReady, root._vectorWorldShown, root._progressWorldEpoch, root._vectorSplitShown, split, root.attached);
     }
 
-    function _compositionReady() {
-        // Retained image visibility must not read live Image.status.
-        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
-        var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.compositionReady(layer, split, root._textureReady, root._splitGate(), root._vectorCoversShown);
-    }
-
     function _partialPrefixReady() {
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null, root._prefixStatusReady, root._splitGate(), root._vectorCoversShown, root._vectorSplitShown, split, root._prefixWasShown, _vectorInkless(), root._vectorCoversFrom);
+        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null, root._prefixStatusReady, root._splitGate(), root._vectorCoversShown, root._vectorSplitShown, split, false, _vectorInkless(), root._vectorCoversFrom, root._deliveredComposition != null ? root._deliveredComposition.prefixSource : "");
     }
 
     function _prefixFrom() {
@@ -738,13 +774,8 @@ Item {
         // must be Ready: a prefix the scene does not contain yet
         // (loading, failed, or replaced) leaves the whole interval
         // to the vector path.
-        var layers = root.progress != null ? root.progress.layers : null;
-        var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        if (layer == null || split == null || layer.prefixValid !== true || layer.prefixSplit === undefined || layer.prefixSplit < 0 || layer.prefixSplit > split || progressPrefixImage.status !== Image.Ready) {
-            return -1;
-        }
-        return layer.prefixSplit;
+        return ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split).from;
     }
 
     function _paintPending(ctx) {
@@ -756,11 +787,15 @@ Item {
         if (!root.available() || mapping._plot == null) {
             return;
         }
+        for (var role of ["prev", "next"]) {
+            if (_ghostFallbackNeeded(role))
+                _drawLayer(ctx, _fallbackVector(_ghost(role)), 0.30, -1, false, -1);
+        }
         var layer = root.progress.layers.current;
-        if (!_partialBase() || layer == null || _baseOf(layer)) {
+        if (!_partialBase() || layer == null || (_baseOf(layer) && pendingBaseImage.status !== Image.Error)) {
             return;
         }
-        var current = _scrubVector();
+        var current = _baseVector();
         if (current == null) {
             return;
         }
@@ -774,12 +809,44 @@ Item {
         // base, so the fallback draws nothing — yet the split advances
         // every poll, and each request cleared and re-uploaded the
         // whole canvas texture for no pixels.
-        if (!root.available() || mapping._plot == null || !_partialBase()) {
+        if (!root.available() || mapping._plot == null) {
             return false;
         }
+        if (_ghostFallbackNeeded("prev") || _ghostFallbackNeeded("next"))
+            return true;
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
-        return layer != null && !_baseOf(layer) && _scrubVector() != null;
+        return _partialBase() && layer != null && (!_baseOf(layer) || pendingBaseImage.status === Image.Error) && _baseVector() != null;
+    }
+
+    function _baseVector() {
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        if (layer != null && (pendingBaseImage.status === Image.Error || (layer.baseWidth > 0 && layer.baseData === "")))
+            return _fallbackVector(layer);
+        return _scrubVector();
+    }
+
+    function _fallbackVector(layer) {
+        return layer == null ? null : (layer.classes !== undefined ? layer : layer.fallbackVector);
+    }
+
+    function _ghostFallbackNeeded(role) {
+        var layer = _ghost(role);
+        var shown = role === "prev" ? root.showPrevious : root.showNext;
+        var image = role === "prev" ? prevGhostImage : nextGhostImage;
+        return shown && layer != null && ((image != null && image.status === Image.Error) || (layer.rasterWidth !== undefined && layer.rasterWidth > 0 && layer.rasterData === "") || (layer.classes !== undefined && !_rasterOf(layer)));
+    }
+
+    function _backgroundReady() {
+        return root._backgroundReceipt != null && root._backgroundReceipt.world === _pendingKeyOf();
+    }
+
+    function _ghostReady(role) {
+        var layer = _ghost(role);
+        if (layer == null || _motionsOf(layer) === 0)
+            return true;
+        var image = role === "prev" ? prevGhostImage : nextGhostImage;
+        return (_rasterOf(layer) && image.status === Image.Ready && image.source.toString() === layer.rasterData) || (_ghostFallbackNeeded(role) && _backgroundReady());
     }
 
     // Whether the canvas holds — or is owed — a picture. A skip is
@@ -789,12 +856,20 @@ Item {
     // The fallback's own arrival word, the pending canvas' `_paints`:
     // written by a paint that ran, never by a skipped request.
     property int _pendingPaints: 0
+    property var _backgroundTransaction: ExactComposition.empty(0, "")
+    property var _backgroundReceipt: null
+    readonly property string _backgroundDemandKey: _pendingKeyOf()
+    on_BackgroundDemandKeyChanged: {
+        root._pendingKey = root._backgroundDemandKey;
+        _requestPendingPaint();
+    }
 
     function _requestPendingPaint() {
         var draws = _pendingDraws();
         if (draws || root._pendingStanding) {
-            root._pendingStanding = draws;
-            pendingCanvas.requestPaint();
+            var key = _pendingKeyOf();
+            root._backgroundTransaction = ExactComposition.enqueue(ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, key));
+            Qt.callLater(root._wakeBackgroundPaint);
             return;
         }
         // Nothing to draw and nothing standing: the picture-word is
@@ -803,6 +878,21 @@ Item {
         // gates on (_lastPendingKey) stays honest for a canvas that was
         // never painted at all.
         root._lastPendingKey = root._pendingKey;
+        root._backgroundReceipt = {
+            world: _pendingKeyOf(),
+            valid: true,
+            ink: false
+        };
+    }
+
+    function _wakeBackgroundPaint() {
+        root._backgroundTransaction = ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, _pendingKeyOf());
+        if (!pendingCanvas.available || !ExactComposition.needsPaint(root._backgroundTransaction))
+            return;
+        var next = ExactComposition.request(root._backgroundTransaction);
+        root._backgroundTransaction = next.state;
+        if (next.start)
+            pendingCanvas.requestPaint();
     }
 
     function _partialBase() {
@@ -834,6 +924,12 @@ Item {
         var layers = root.progress.layers;
         if (layers != null && layers.current != null && layers.current.classes !== undefined) {
             return layers.current;
+        }
+        if (layers != null && layers.current != null && layers.current.hasFallbackVector === true) {
+            var layer = layers.current;
+            var partial = root.progress.split != null && root.progress.split > 0 && root.progress.split < layer.motions;
+            if (root._rasterStatusFailed || root._travelsStatusFailed || (layer.rasterWidth > 0 && layer.rasterData === "") || (root.showTravels && layer.travelWidth > 0 && layer.travelData === "") || (partial && (root.showTravels || !_prefixModelReady() || root.progress.split > layer.prefixSplit)))
+                return layer.fallbackVector;
         }
         return null;
     }
@@ -1002,12 +1098,13 @@ Item {
     property int _paintsSinceReset: 0
     property bool _progressDirty: false
     // The prefix/vector ownership handoff: the canvas bitmap's own
-    // coverage (the motion index below which it does NOT draw — 0
-    // means the full history), and the one-frame hold that keeps
-    // the old prefix on screen until the canvas has repainted the
-    // interval the prefix used to own (the swap must be atomic:
-    // never a frame with neither renderer owning the history).
+    // coverage (the motion index below which it does not draw; zero
+    // means full history). Presentation uses the delivered receipt,
+    // keeping this painter state separate from visible ownership.
     property int _vectorCoversFrom: -1
+    // Immutable asset whose interval the accumulated tail relies on.
+    // Captured by the painter, never inferred from a newer model URL.
+    property string _paintedPrefixSource: ""
     // The view the accumulated bitmap was rastered at. The delta path
     // strokes only the motions past the last split, so ink that was
     // rastered at another zoom, pan or line width stays where the old
@@ -1026,39 +1123,21 @@ Item {
     // prefix admitted on the committed record stacks its ink over
     // the not-yet-trimmed bitmap for one frame (the additive-AA
     // doubling at the body columns).
-    property int _vectorCoversShown: -2
-    property bool _prefixHold: false
-    property bool _prefixWasShown: false
-    // The view the standing prefix' pixels were shown at: they are a
-    // bake of ONE view, so a camera move must not hold them (the
-    // out-of-scale ghost is exactly this record read across views).
-    property string _prefixShownViewKey: ""
-    // The 100% -> partial entry's transaction: the full raster's
-    // picture stands until the replacement partial composition is
-    // presentation-ready. The seen flag records that the full state
-    // stood (the hold rides the standing predicate itself — never a
-    // visible-changed arm, which arrived one hide too late), and the
-    // anchor tag keeps the record honest across layer switches.
-    property bool _fullRasterSeen: false
-    property int _fullSeenAnchor: -2
-    // The transaction's standing picture: the full raster's last URL
-    // survives the entry (a partial payload's rasterData is empty —
-    // the hold must keep the PIXELS, not just the visibility flag).
-    property string _heldFullSource: ""
-    // A paint begun while the entry's hold stood arms the handover
-    // beat at its delivery — the release always waits one beat after
-    // the LAST delivery (the scene consumes a painted texture in the
-    // sync after the painted signal).
-    property bool _entryPaintArmedHold: false
-    // The prefix's one-beat show lag after a canvas delivery: the
-    // scene consumes the painted texture one frame later (the
-    // review's hybrid frame).
-    property bool _prefixShowHold: false
+    property var _deliveredComposition: null
+    readonly property int _vectorCoversShown: _deliveredComposition != null ? _deliveredComposition.from : -2
+    readonly property bool _prefixHold: root._presentation.prefix === "retained"
+    readonly property bool _prefixWasShown: root._presentation.kind === "prefix"
+    readonly property string _prefixShownViewKey: _standingPrefix != null ? _standingPrefix.view : ""
+    property var _standingFull: null
+    readonly property bool _fullRasterSeen: _standingFull != null
+    readonly property int _fullSeenAnchor: _standingFull != null ? _standingFull.anchor : -2
+    readonly property string _heldFullSource: _standingFull != null ? _standingFull.source : ""
+    readonly property string _heldFullTravelSource: _standingFull != null ? _standingFull.travels : ""
     // The threaded canvas's scene texture trails its paint by one
     // frame: a paint's coverage record alone must never admit the
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
-    property bool _textureReady: false
+    readonly property bool _textureReady: _deliveredComposition != null
     // Only one exact Canvas paint is in flight. Later progress polls
     // coalesce into a single latest demand, and delivery is accepted
     // only for the current static scene incarnation.
@@ -1068,41 +1147,8 @@ Item {
     property string _progressWorldKey: ""
     property string _progressLayerKey: ""
     property int _progressWorldEpoch: 0
-    property int _vectorSplitShown: -1
-    property int _vectorWorldShown: -1
-    // The hold's expiry waits one frame past the painted delivery:
-    // the threaded canvas's scene texture commits in the sync AFTER
-    // the painted signal, and a hide in the same sync would leave
-    // one frame with neither owner.
-    property bool _beatPending: false
-    Timer {
-        id: holdExpiryTimer
-        interval: 16
-        onTriggered: {
-            // Only a beat an arming actually scheduled may clear the
-            // standing flags — a stale armed trigger (a choreography
-            // that ended by another path) firing mid-steady-state
-            // would wipe the shown record and drop the composition's
-            // memory (the scrub flake: the next paint lost the
-            // prefix's ownership and the frame showed the tail
-            // alone).
-            if (!root._beatPending) {
-                return;
-            }
-            root._beatPending = false;
-            root._prefixHold = false;
-            root._prefixShowHold = false;
-            // The shown record follows the VISIBLE state: clear it
-            // only when the beat actually left the prefix hidden. A
-            // standing prefix (the entry's handover keeps it visible
-            // through the readiness gate) must keep its memory — the
-            // scrub flake: the beat wiped the record while the
-            // prefix stood, and the next paint lost the ownership.
-            if (!progressPrefixImage.visible) {
-                root._prefixWasShown = false;
-            }
-        }
-    }
+    readonly property int _vectorSplitShown: _deliveredComposition != null ? _deliveredComposition.split : -1
+    readonly property int _vectorWorldShown: _deliveredComposition != null ? _deliveredComposition.epoch : -1
     // The scrub vector's SOURCE identity: a same-anchor payload swap
     // (an empty fixture replaced by the real layer) must reset the
     // accumulated bitmap — the delta path assumes ink it never drew.
@@ -1136,7 +1182,9 @@ Item {
     property string _progressKey: ""
 
     function _viewKey() {
-        return [root.viewScale, root.viewPanX, root.viewPanY, root.lineScale, root.compact ? 1 : 0, width, height, root.toolpathWidthPx()].join("|");
+        var plot = mapping._plot;
+        var bed = plot != null ? plot.bed : null;
+        return [root.viewScale, root.viewPanX, root.viewPanY, root.lineScale, root.compact ? 1 : 0, width, height, root.devicePixelRatio, root.toolpathWidthPx(), bed != null ? [bed.offsetX, bed.offsetY, bed.bedXMin, bed.bedYMax, plot.sx, plot.sy].join(":") : ""].join("|");
     }
 
     function _motionsOf(layer) {
@@ -1151,18 +1199,19 @@ Item {
         // every other input unchanged . The
         // SPLIT rides the key too: the base exists only for the
         // partial states — a 0% or 100% move must clear it.
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _baseOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showBase ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        return [_worldKeyOf(), _partialBase() ? 1 : 0, layers != null && _baseOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.baseWidth : 0, pendingBaseImage != null && pendingBaseImage.status === Image.Error ? 1 : 0, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, _ghostFallbackNeeded("prev") ? 1 : 0, _ghostFallbackNeeded("next") ? 1 : 0, _ghost("prev") != null ? _ghost("prev").sceneIdentity : "", _ghost("next") != null ? _ghost("next").sceneIdentity : ""].join("|");
     }
 
     function _worldKeyOf() {
         var p = root.progress;
         var layer = p != null && p.layers != null ? p.layers.current : null;
-        return [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, _motionsOf(layer), _viewKey(), root.showTravels ? 1 : 0, root.available() ? 1 : 0].join("|");
+        return [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, layer != null && layer.sceneIdentity !== undefined ? layer.sceneIdentity : "", _motionsOf(layer), _viewKey(), root.showTravels ? 1 : 0, root.available() ? 1 : 0].join("|");
     }
 
     function _adoptProgressWorld() {
         var p = root.progress;
-        var layerKey = [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1].join("|");
+        var layer = p != null && p.layers != null ? p.layers.current : null;
+        var layerKey = [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, layer != null && layer.sceneIdentity !== undefined ? layer.sceneIdentity : ""].join("|");
         var key = _worldKeyOf();
         if (key === root._progressWorldKey) {
             return false;
@@ -1172,37 +1221,56 @@ Item {
         root._progressWorldKey = key;
         root._progressWorldEpoch += 1;
         root._canvasTransaction = ExactComposition.newWorld(root._canvasTransaction, root._progressWorldEpoch, key);
-        root._textureReady = false;
-        root._vectorCoversShown = -2;
-        root._vectorSplitShown = -1;
-        root._vectorWorldShown = -1;
+        root._deliveredComposition = null;
         root._progressDirty = true;
         if (layerChanged) {
             _retireRetained();
-            root._prefixWasShown = false;
-            root._fullRasterSeen = false;
-            root._heldFullSource = "";
+            root._standingFull = null;
         }
         return true;
     }
 
     function _requestProgressPaint() {
-        var next = ExactComposition.request(root._canvasTransaction);
-        root._canvasTransaction = next.state;
-        if (next.start)
-            progressCanvas.requestPaint();
+        if (_progressPaintSatisfied())
+            return;
+        root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
+        _flushProgressPaint();
+    }
+
+    function _progressPaintSatisfied() {
+        var receipt = root._deliveredComposition;
+        var split = root.progress != null ? root.progress.split : null;
+        if (receipt == null || receipt.epoch !== root._progressWorldEpoch || receipt.world !== _worldKeyOf() || receipt.split !== split || receipt.paintKey !== _progressKeyOf())
+            return false;
+        var from = _prefixFrom();
+        if (from > 0) {
+            var chosen = ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split);
+            return receipt.from === from && receipt.prefixSource === chosen.source;
+        }
+        return receipt.from === 0 || (_vectorInkless() && receipt.from === -1);
     }
 
     function _deliverProgressPaint() {
+        // Qt can notify delivery again without a new onPaint. That
+        // notification cannot revoke the receipt for the standing
+        // bitmap. Retrying an unfulfilled request still coalesces
+        // through the transaction's pending bit.
+        var hadPaint = root._canvasTransaction.count > 0;
         var result = ExactComposition.delivered(root._canvasTransaction, root._progressWorldEpoch, _worldKeyOf());
         root._canvasTransaction = result.state;
-        if (result.accepted) {
-            root._vectorCoversShown = result.receipt.from;
-            root._vectorSplitShown = result.receipt.split;
-            root._vectorWorldShown = result.receipt.epoch;
-            root._textureReady = true;
-        } else {
-            root._textureReady = false;
+        if (hadPaint)
+            root._deliveredComposition = result.accepted ? result.receipt : null;
+        if (result.accepted && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
+            // Capture the delivered asset before the next model publish
+            // can replace its URL. A deferred binding evaluation is too
+            // late to acquire the standing picture's file and pixels.
+            root._standingPrefix = {
+                source: result.receipt.prefixSource,
+                from: result.receipt.from,
+                anchor: root.progress.anchor,
+                world: result.receipt.world,
+                view: _viewKey()
+            };
         }
         return result.accepted;
     }
@@ -1213,8 +1281,16 @@ Item {
     }
 
     function _wakeProgressPaint() {
-        if (ExactComposition.needsPaint(root._canvasTransaction))
-            root._requestProgressPaint();
+        if (!ExactComposition.needsPaint(root._canvasTransaction) || !progressCanvas.available)
+            return;
+        if (_progressPaintSatisfied()) {
+            root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
+            return;
+        }
+        var next = ExactComposition.request(root._canvasTransaction);
+        root._canvasTransaction = next.state;
+        if (next.start)
+            progressCanvas.requestPaint();
     }
 
     function _progressKeyOf() {
@@ -1223,29 +1299,7 @@ Item {
         // The raster, travel and PREFIX arrivals ride the key too:
         // the prefix's landing must reset the stack so the canvas
         // redraws only the tail beyond it.
-        return [(progress != null && progress.sceneEpoch !== undefined ? progress.sceneEpoch : ""), (progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
-    }
-
-    function _holdPrefixThroughRepaint() {
-        // The prefix's model-side validity flips with the publish,
-        // but the canvas repaints a frame later: hold the old
-        // picture on screen until the vector has repainted the
-        // interval — the swap is atomic, never a frame with
-        // neither renderer owning the printed history. The repaint
-        // must be FORCED here: the invalidation's publish can land
-        // without a key change (the settle already consumed it),
-        // and an unrequested paint would never clear the hold. The
-        // hold is structurally PARTIAL-only: at a full layer (or at
-        // 0%) no prefix owns the history, and a hold armed there
-        // could never release — a cached bake then stood forever
-        // over the valid full raster (the stale-zoom report).
-        if (!_prefixModelReady() && root._prefixWasShown && _leavingFull()) {
-            holdExpiryTimer.stop();
-            root._prefixHold = true;
-            if (!root._interactionActive) {
-                _requestProgressPaint();
-            }
-        }
+        return [(progress != null && progress.sceneEpoch !== undefined ? progress.sceneEpoch : ""), (progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.rasterWidth : 0, layers != null && layers.current != null ? layers.current.rasterData : "", layers != null && layers.current != null ? layers.current.prefixData : "", layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
@@ -1273,7 +1327,6 @@ Item {
             // the old layer's picture (the reported jump straight to
             // the new prefix's boundary).
             _requestProgressPaint();
-            _holdPrefixThroughRepaint();
         }
         // A mid-gesture ZOOM re-bakes the carried tail at the new
         // scale (the pan never repaints — the translation carries
@@ -1290,8 +1343,6 @@ Item {
             _requestProgressPaint();
             root._lastSplit = -1;
             root._anchor = -1;
-            root._prefixHold = false;
-            root._prefixWasShown = false;
             _retireRetained();
             return;
         }
@@ -1310,7 +1361,6 @@ Item {
             // stand over the new layer while ITS assets load (the
             // A-to-B seek; a print switch rides the same branch).
             _retireRetained();
-            root._prefixWasShown = false;
             _resetStack();
             return;
         }
@@ -1324,72 +1374,12 @@ Item {
             root._pendingKey = pendingKey;
             _requestPendingPaint();
         }
-        // The progress repaint follows its OWN key: an unchanged split/anchor/payload — a
-        // raster or ghost arrival, a quiet poll — never wakes the
-        // painter, whose partial path walks dense geometry. While a
-        // gesture is live the repaint DEFERS (the key still records
-        // the demand): the pan presents one fixed picture — new
-        // lines mid-pan read as jank — and the exit's next poll
-        // paints the accumulated advance in one catch-up.
+        // Exact preparation stays live behind the gesture's pinned warm
+        // picture. Quiet polls skip the painter; changed demands coalesce.
         var progressKey = _progressKeyOf();
         if (progressKey !== root._progressKey) {
-            if (root._interactionActive) {
-                // The deferral must leave the DEMAND behind, never the
-                // record of it. Consuming the key here told the
-                // settle's own key check the advance had already been
-                // met, and every path that lands a deferred repaint
-                // gates on the dirty flag this branch never set — so a
-                // wheel zoom, which outlives a poll, deferred its
-                // catch-up for good: the canvas stopped painting, its
-                // delivered-coverage record froze where the gesture
-                // began, and the barrier waited on a coverage no
-                // paint would ever deliver.
-                root._progressDirty = true;
-            } else {
-                root._progressKey = progressKey;
-                _requestProgressPaint();
-            }
-        }
-        // The prefix's model-side validity may flip WITHOUT a key
-        // change (the context invalidation's publish: the view key
-        // was already consumed by the settle's reset): hold the old
-        // picture until the canvas's repaint owns the interval.
-        _holdPrefixThroughRepaint();
-        // The prefix's shown record derives from the publish cycle,
-        // never the image's own visible edge — a handler write
-        // feeding its own visible binding looped the engine's
-        // detector (the live warning). The set waits for the
-        // composition's own predicates, the clear waits for a
-        // terminal state (the retained no longer applies AND the
-        // model publishes no prefix for this anchor).
-        if (root._prefixWasShown) {
-            // The full state's clear is terminal only once the
-            // replacement's texture is HERE: until then the prefix is
-            // still the printed head's owner (the gate), and clearing
-            // the record here would drop the head before the raster
-            // could take it.
-            if (!root._prefixApplies() && !root._prefixHold && !_prefixModelReady() && !_prefixHoldsFull()) {
-                root._prefixWasShown = false;
-            }
-        } else if (_partialPrefixReady() || (root._prefixHold && _leavingFull())) {
-            root._prefixWasShown = true;
-            root._prefixShownViewKey = _viewKey();
-            // The set edge must carry the record with it. The shown
-            // flag is what keeps the canvas's old tail standing
-            // through a handover, so the interior below the boundary
-            // is owned by the RETAINED pixels — and the Image's own
-            // handlers are the only other place the record is frozen,
-            // so a set edge observed here (both of them already past,
-            // the readiness only now true) would leave the flag
-            // standing over an empty record: the replacement's source
-            // change blanks the live Image and the interior has no
-            // owner for the frames until the delivery. The condition
-            // is the freeze's own joint readiness, never a wider one.
-            if (_partialPrefixReady() && root.progress.layers.current.prefixData !== "") {
-                root._retainedPrefixSource = root.progress.layers.current.prefixData;
-                root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
-                root._retainedPrefixAnchor = root.progress.anchor;
-            }
+            root._progressKey = progressKey;
+            _requestProgressPaint();
         }
         // The interaction's exit rides the exact scene's OWN commits
         // (a pan-only gesture never runs the zoom animator): the
@@ -1449,11 +1439,16 @@ Item {
             // the old layer's picture (the reported jump straight to
             // the new prefix's boundary).
             _requestProgressPaint();
-            _holdPrefixThroughRepaint();
         }
     }
     onLineScaleChanged: {
         _publishView();
+        _retireRetainedView();
+        root.settleTimer.restart();
+    }
+    onDevicePixelRatioChanged: {
+        _publishView();
+        _retireRetainedView();
         root.settleTimer.restart();
     }
     onViewScaleChanged: {
@@ -1489,7 +1484,13 @@ Item {
         _resetStack();
         _retireRetainedView();
     }
-    Component.onCompleted: _publishView()
+    Component.onCompleted: {
+        _publishView();
+        _adoptProgressWorld();
+        if (root._assetOwner === 0)
+            _adoptAssetOwner();
+    }
+    Component.onDestruction: _releaseAssetOwner()
 
     // The mapping replots on ITS resize; every raster holds the old
     // transform's coordinates and repaints from scratch (the live
@@ -1534,52 +1535,15 @@ Item {
         viewPanY: root.viewPanY
     }
 
-    // The interaction scene (the pan/zoom navigation raster): one
-    // flattened warm full-bed composite at a fixed 4x backing,
-    // presented at the DISPLAY transform — the sole heavy-scene
-    // representation during any camera gesture. The source binds at
-    // all times (the texture uploads while idle; the first gesture
-    // flips the visibility, never the source), and the 4x content
-    // displayed at width/height = face x displayScale is exactly
-    // the displayScale/4 presentation of the specification.
-    Image {
-        id: navigationImage
-        // Every plate raster is file-backed (a PNG the model published
-        // or a data PNG's URL), so a source install is a DECODE. An
-        // inline decode holds the Qt thread for the whole raster --
-        // ~66 ms for the 4x navigation image -- which the live report
-        // reads as the camera stalling whenever a raster lands. The
-        // bake is unchanged and the worker's cost is unchanged: the
-        // decode moves off the Qt thread and the presentation is the
-        // same pixels, one thread later.
-        asynchronous: true
-        x: root.displayPanX
-        y: root.displayPanY
-        width: root.width * root.displayScale
-        height: root.height * root.displayScale
-        // The interaction source: the gesture LATCHES the raster it
-        // entered with (the model retires the published URL the
-        // moment the demand moves — a mid-gesture retirement must
-        // never unload the scene the gesture presents); idle binds
-        // the live eligible URL so the texture preloads. An
-        // interaction activated without an entry (the presentation
-        // fixtures drive the flag directly) falls back to the live
-        // eligible URL.
-        visible: root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
-        source: root._interactionActive ? (root._gestureNavSource !== "" ? root._gestureNavSource : navigationData()) : navigationData()
-        smooth: true
-    }
-
     // The EXACT scene: everything below — the raster stack and the
     // vector canvases — belongs to one presentation unit. During a
-    // camera interaction the unit fades out WHOLE (opacity, never
-    // visibility: the hidden canvases must keep painting so the
-    // exact generation can complete behind the interaction raster),
-    // and returns only once the commit barrier passes.
+    // camera interaction an opaque warm scene covers this unit while
+    // its canvases continue painting. The warm scene withdraws only
+    // after every required exact component has delivered.
     Item {
         id: exactScene
         anchors.fill: parent
-        opacity: root._interactionActive ? 0.0 : 1.0
+        opacity: 1.0
 
         // The raster stack, bottom to top (the live order — ghosts,
         // base, prefix, tail, travels): the ghost layers, the grey
@@ -1598,9 +1562,8 @@ Item {
         // pictures are pixel-for-pixel the same scene.
         // The ghost layers: the worker's rasters at ghost opacity —
         // role-free assets, the opacity applied at composition.
-        // Until a ghost's raster lands it draws nothing —
-        // the context layer appears a beat after the seek, never blocks
-        // it.
+        // Ghosts decode behind the warm picture. A failed transport has
+        // a vector producer, and required ghosts join the exit barrier.
         Image {
             id: prevGhostImage
             anchors.fill: parent
@@ -1623,6 +1586,47 @@ Item {
         // The raster-only full state: the whole
         // layer and its travels blit from the native data URLs; the
         // progress canvas below clears itself while these show.
+        Canvas {
+            id: pendingCanvas
+            onAvailableChanged: Qt.callLater(root._wakeBackgroundPaint)
+            anchors.fill: parent
+            renderTarget: Canvas.Image
+            renderStrategy: Canvas.Threaded
+            onPaint: {
+                var key = _pendingKeyOf();
+                var epoch = root._progressWorldEpoch;
+                var ink = _pendingDraws();
+                var ctx = getContext("2d");
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                _paintPending(ctx);
+                // Landed last, and on every path: the picture the next
+                // frame composites belongs to the key read here, cleared
+                // base included. The count is the arrival's own word —
+                // a request that skipped the paint never reaches here.
+                root._pendingPaints += 1;
+                root._lastPendingKey = root._pendingKey;
+                root._backgroundTransaction = ExactComposition.painted(root._backgroundTransaction, {
+                    epoch: epoch,
+                    world: key,
+                    valid: _pendingKeyOf() === key,
+                    from: 0,
+                    split: null,
+                    prefixSource: "",
+                    ink: ink
+                });
+            }
+            onPainted: {
+                var result = ExactComposition.delivered(root._backgroundTransaction, root._progressWorldEpoch, _pendingKeyOf());
+                root._backgroundTransaction = result.state;
+                root._backgroundReceipt = result.accepted ? result.receipt : null;
+                if (result.accepted)
+                    root._pendingStanding = result.receipt.ink;
+                if (ExactComposition.needsPaint(root._backgroundTransaction))
+                    Qt.callLater(root._wakeBackgroundPaint);
+            }
+        }
+
         Image {
             id: progressRasterImage
             anchors.fill: parent
@@ -1635,32 +1639,31 @@ Item {
             // presentation).
             smooth: false
             visible: _fullPictureStanding()
+            opacity: _fullRaster() ? (_exactFullStanding() ? 1 : 0) : 1
             // The entry's hold keeps the PICTURE: while the full state
             // stands the source is the fresh raster; through the
             // handover it is the captured URL (the partial payload's
             // rasterData is empty — re-binding it would clear the
             // standing pixels, a blank the visibility flag cannot
             // hide).
-            source: _fullPictureStanding() ? (_fullRaster() ? root.progress.layers.current.rasterData : root._heldFullSource) : ""
+            source: _fullRaster() ? root.progress.layers.current.rasterData : root._heldFullSource
             // The texture's arrival is what withdraws the canvas below
             // (its yield reads the mirror) and what ends the two
             // holds' ink.
-            onStatusChanged: {
-                root._rasterStatusReady = status === Image.Ready;
-                root._rasterStatusFailed = status === Image.Error;
+            onSourceChanged: {
+                root._classTexture = {
+                    source: source.toString(),
+                    status: status
+                };
                 _requestProgressPaint();
             }
-            onVisibleChanged: {
-                // The entry's hold needs no handler: the standing
-                // predicate owns the transaction (a hide-fired arm
-                // would arrive one beat after the picture was already
-                // gone). The seen record and the held source re-arm
-                // on a genuine full show.
-                if (visible) {
-                    root._fullRasterSeen = root._fullRaster();
-                    root._fullSeenAnchor = root.progress != null ? root.progress.anchor : -2;
-                    root._heldFullSource = root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.rasterData : "";
-                }
+            onStatusChanged: {
+                root._classTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                Qt.callLater(root._capturePresentedAssets);
+                _requestProgressPaint();
             }
         }
         Image {
@@ -1676,12 +1679,23 @@ Item {
             // hidden — the source binding must stay alive so the
             // decode starts here and the canvas can hand over in the
             // beat the texture arrives.
-            opacity: _exactFullStanding() ? 0.8 : 0.0
-            visible: _travelsShown()
-            source: visible ? root.progress.layers.current.travelData : ""
+            opacity: _exactFullStanding() || _presentationDecision().kind === "heldFull" ? 0.8 : 0.0
+            visible: _travelsShown() || (_presentationDecision().kind === "heldFull" && root._heldFullTravelSource !== "")
+            source: _travelsShown() ? root.progress.layers.current.travelData : root._heldFullTravelSource
+            onSourceChanged: {
+                root._travelTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                _requestProgressPaint();
+            }
             onStatusChanged: {
-                root._travelsStatusReady = status === Image.Ready;
-                root._travelsStatusFailed = status === Image.Error;
+                root._travelTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                Qt.callLater(root._capturePresentedAssets);
+                _requestProgressPaint();
             }
         }
 
@@ -1698,35 +1712,14 @@ Item {
             source: visible ? root.progress.layers.current.baseData : ""
         }
 
-        Canvas {
-            id: pendingCanvas
-            anchors.fill: parent
-            renderTarget: Canvas.Image
-            renderStrategy: Canvas.Threaded
-            onPaint: {
-                var ctx = getContext("2d");
-                ctx.reset();
-                ctx.clearRect(0, 0, width, height);
-                _paintPending(ctx);
-                // Landed last, and on every path: the picture the next
-                // frame composites belongs to the key read here, cleared
-                // base included. The count is the arrival's own word —
-                // a request that skipped the paint never reaches here.
-                root._pendingPaints += 1;
-                root._lastPendingKey = root._pendingKey;
-            }
-        }
-
         // The printed PREFIX (the measured verdict: the partial states'
         // QML walk costs ~900 ms at 500k motions): the worker paints
         // the motions below the split and the canvas below draws only
         // the live delta's tail. Declared ABOVE the progress canvas and
         // BELOW the grey base (the live stack order: ghosts, base,
         // prefix, tail) — the base must never wash over printed
-        // geometry. Hidden while stale (a backward move renders a fresh
-        // prefix first), while its image has not uploaded, and — for
-        // one frame — held on screen while the canvas repaints the
-        // interval the prefix just relinquished.
+        // geometry. The pure decision admits only the prefix named
+        // by the delivered Canvas receipt.
         Image {
             id: progressPrefixImage
             objectName: "moonrakerPlatePrefixImage"
@@ -1754,60 +1747,22 @@ Item {
             // its source: the source is written by this image's own
             // status/paint handlers, and reading it here looped the
             // binding (the live QML warning).
-            visible: (_partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) || _prefixHoldsFull()) && !root._retainedStanding
-            source: (_prefixModelReady() || (root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies()) || _prefixHoldsFull()) && root.progress != null && root.progress.layers != null && root.progress.layers.current != null ? root.progress.layers.current.prefixData : ""
-            onVisibleChanged: {
-                // Track what was actually on screen. A hide caused by
-                // the model's invalidation (prefixValid flipped false —
-                // the render-key mismatch) arms the HOLD right here: the
-                // picture stays up until the canvas's full bitmap is
-                // delivered and committed (the expiry timer's beat after
-                // the painted signal). Hides from the split arithmetic
-                // (a full layer, a backward move) are legitimate — the
-                // canvas owns the interval by then.
-                if (visible) {
-                    // The settled single-owner trim: a canvas that
-                    // painted the FULL history before this prefix
-                    // showed must repaint to the tail alone — its
-                    // full bitmap stacked under the prefix doubles
-                    // the prefix region's ink (the parity seam: 42
-                    // vs 21 at lineScale 0.7). The repaint is FORCED
-                    // here: the show can land after the key's paint
-                    // already consumed itself.
-                    _requestProgressPaint();
-                } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false && _leavingFull()) {
-                    // The invalidation hold keeps the standing picture
-                    // while the canvas repaints the full interval. The
-                    // hold is structurally partial-only: at 0% nothing
-                    // has printed (the 0% picture IS the empty history)
-                    // and at a full layer the hold could never release
-                    // (the stale-zoom report's standing bake).
-                    holdExpiryTimer.stop();
-                    root._prefixHold = true;
-                    _requestProgressPaint();
-                } else if (!root._prefixApplies()) {
-                    // The hide is terminal (a full layer, a sub-prefix
-                    // split, a layer change): the hold ends. The shown
-                    // record clears in the publish cycle, never here.
-                    root._prefixHold = false;
-                }
+            visible: root._presentation.prefix === "current"
+            source: root.available() && root.progress.layers.current != null && root.progress.layers.current.prefixValid === true ? root.progress.layers.current.prefixData : ""
+            onSourceChanged: {
+                root._prefixTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                _requestProgressPaint();
             }
             onStatusChanged: {
-                root._prefixStatusReady = status === Image.Ready;
-                root._prefixStatusFailed = status === Image.Error;
+                root._prefixTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                Qt.callLater(root._capturePresentedAssets);
                 _requestProgressPaint();
-                if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root._partialPrefixReady()) {
-                    // The handover freeze: the pixels that JUST
-                    // uploaded become the retained previous — but
-                    // only once the composition is JOINTLY ready.
-                    // A freeze during a transition (the canvas still
-                    // covers the old boundary) would overwrite the
-                    // standing picture with the hybrid half, so the
-                    // freeze waits; the delivery re-freezes below.
-                    root._retainedPrefixSource = source;
-                    root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
-                    root._retainedPrefixAnchor = root.progress.anchor;
-                }
             }
         }
 
@@ -1824,27 +1779,31 @@ Item {
             objectName: "moonrakerPlateRetainedPrefixImage"
             anchors.fill: parent
             asynchronous: true
-            // The interior below the boundary is owned by the live
-            // prefix's PIXELS, not by its composition bookkeeping: the
-            // moment its Image has none (a source swap mid-load, a
-            // refresh at the same boundary) the record must stand in
-            // the SAME evaluation, so the readiness is read from the
-            // live image's own status — a one-way mirror, never a
-            // handler-fed flag that lands a beat late. A delivered
-            // FULL bitmap still owns everything itself: the record
-            // must not stack its pixels over it (the additive-AA
-            // doubling). That stand-down is also the interior's one
-            // bare frame on a host whose scene texture trails its own
-            // painted coverage — accepted, and pinned by the gap
-            // census.
-            visible: root._retainedPrefixSource !== "" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)
+            // The compositor admits this immutable asset only when the
+            // delivered tail names the same source and boundary.
+            visible: root._presentation.prefix === "retained"
             source: root._retainedPrefixSource
+            onSourceChanged: {
+                root._retainedTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                _requestProgressPaint();
+            }
+            onStatusChanged: {
+                root._retainedTexture = {
+                    source: source.toString(),
+                    status: status
+                };
+                _requestProgressPaint();
+            }
             smooth: false
-            onVisibleChanged: root._retainedStanding = visible
         }
 
         Canvas {
             id: progressCanvas
+            objectName: "moonrakerPlateProgressCanvas"
+            onAvailableChanged: root._flushProgressPaint()
             anchors.fill: parent
             renderTarget: Canvas.Image
             renderStrategy: Canvas.Threaded
@@ -1875,55 +1834,20 @@ Item {
                     root._flushProgressPaint();
                     return;
                 }
-                if (root._entryPaintArmedHold) {
-                    // The entry's delivery: the handover beat starts
-                    // here — the full picture stands until one frame
-                    // past this painted signal (the atomic previous
-                    // -> next swap, zero blank frames).
-                    root._entryPaintArmedHold = false;
-                    root._beatPending = true;
-                    holdExpiryTimer.restart();
-                }
-                if (root._prefixHold && root._vectorCoversShown === 0) {
-                    root._beatPending = true;
-                    holdExpiryTimer.restart();
-                }
-                // The transaction's freeze at the DELIVERY: a Ready
-                // that landed mid-transition (the canvas still held
-                // the old boundary) skipped its freeze above — the
-                // joint readiness that arrived with THIS bitmap is
-                // the moment the standing composition became the
-                // live prefix's, so the retained moves on.
-                if (root._partialPrefixReady() && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixData !== "") {
-                    root._retainedPrefixSource = root.progress.layers.current.prefixData;
-                    root._retainedPrefixSplit = root.progress.layers.current.prefixSplit;
-                    root._retainedPrefixAnchor = root.progress.anchor;
-                }
-                // The FIRST show's trim: a delivery whose paint beat
-                // the prefix's upload leaves the FULL bitmap under a
-                // now-Ready prefix — the readiness gate refuses that
-                // overlap, and the prefix's own show cannot request
-                // the trim (its visible binding reads the predicate
-                // the trim feeds). Request it here, one paint after
-                // the delivery that completed the picture.
-                if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
-                    _requestProgressPaint();
-                }
-                // The shown record's set edge, the publish cycle's own
-                // other half: the delivery that readied the prefix's
-                // composition IS the show, and a settled seek publishes
-                // no further state to notice it. The clear stays in the
-                // publish cycle; the predicate guarantees the canvas no
-                // longer owns the interval below the boundary.
-                if (_partialPrefixReady()) {
-                    root._prefixWasShown = true;
-                    root._prefixShownViewKey = _viewKey();
-                }
                 root._flushProgressPaint();
             }
             onPaint: {
+                // An unchanged bitmap may produce no painted() signal.
+                // Its standing receipt is already proof; do not strand a
+                // queue slot waiting for a texture upload Qt can omit.
+                if (root._progressPaintSatisfied()) {
+                    root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
+                    return;
+                }
                 var paintEpoch = root._progressWorldEpoch;
                 var paintWorld = _worldKeyOf();
+                var paintKey = _progressKeyOf();
+                var bitmapChanged = false;
                 try {
                     var ctx = getContext("2d");
                     // The full state's HOLD: the model says the raster owns
@@ -1938,36 +1862,13 @@ Item {
                     if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
                         return;
                     }
-                    // The settled single-owner trim is a REFINEMENT of an
-                    // already presentation-complete picture (the full
-                    // bitmap under the prefix, or the settled tail beside
-                    // it — both invisible overlap): its repaint must not
-                    // withdraw the standing readiness — the seek's ready
-                    // commit waits for no trim, and a withdrawn flag hides
-                    // the prefix, whose re-show requests yet another
-                    // repaint (the settle's endless paint loop).
-                    var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && _prefixFrom() > 0 && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === _prefixFrom());
-                    // The committed texture is now one paint behind — the
-                    // painted signal re-arms the confirmation when the
-                    // bitmap is delivered.
-                    if (!trimOnly) {
-                        root._textureReady = false;
-                    }
-                    // A paint begun while the 100% -> partial hold stands
-                    // arms the handover beat for its delivery (the
-                    // release must wait one beat after the LAST delivery,
-                    // and the show hold's own arming rides this flag —
-                    // once the handover is over the predicate is false
-                    // and later polls never re-arm it).
-                    root._entryPaintArmedHold = _fullPictureStanding() && _leavingFull();
-                    if (root._entryPaintArmedHold) {
-                        root._prefixShowHold = true;
-                        holdExpiryTimer.stop();
-                    }
+                    // The previous delivery remains the standing bitmap until
+                    // this paint is uploaded. The compositor owns its assets.
                     if (!root.available() || mapping._plot == null) {
                         // The unavailable surface clears its own ink — the
                         // old raster must never read through the loading text
                         // (the live report).
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = -1;
@@ -1977,6 +1878,7 @@ Item {
                     }
                     var layer = root.progress.layers.current;
                     if (layer == null) {
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = -1;
@@ -2004,6 +1906,7 @@ Item {
                     // own onStatusChanged repaints this canvas the moment
                     // it does.
                     if (_exactFullStanding()) {
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = split;
@@ -2023,6 +1926,7 @@ Item {
                         }
                         // No vector and no full raster yet (a cold full seek,
                         // a 0% state): nothing to accumulate.
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = -1;
@@ -2034,6 +1938,7 @@ Item {
                         // No boundary to draw at — a print without a
                         // position. The layer is its whole base and any
                         // accumulated fill goes with the split.
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = -1;
@@ -2054,105 +1959,36 @@ Item {
                     var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
                     root._vectorSourceMotions = vectorMotions;
                     root._vectorSourceClasses = vectorClasses;
-                    var prefixFrom = _prefixFrom();
-                    if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions && Math.max(root._lastSplit, root._retainedPrefixSplit) >= split) {
-                        // The stale prefix is being REPLACED (a fresh URL is
-                        // in flight): hold the complete old composition —
-                        // the held prefix plus this bitmap's old tail — until
-                        // the replacement's Image lands and re-triggers the
-                        // paint (the atomic previous -> next handoff — the
-                        // review's reverse-scrub hybrid frame). A repaint
-                        // here would clear the old tail and expose the stale
-                        // prefix alone. The skip precedes the reset below.
-                        root._progressDirty = true;
-                        return;
-                    }
-                    var resetPainted = false;
-                    // The anti-drift re-raster: the accumulated delta bitmap
-                    // fully redraws on its own cadence so it cannot drift.
-                    // With a prefix owning the history the cadence stretches
-                    // wide — every prefix refresh re-establishes the picture
-                    // (the 3% incremental refreshes), and a full re-raster
-                    // mid-drag is the live hitch the forward scrub showed
-                    // (a ~200 ms UI-thread walk every 20 paints on a dense
-                    // layer).
-                    // The anti-drift re-raster: the accumulated delta bitmap
-                    // fully redraws on its own cadence so it cannot drift.
-                    // With a prefix owning the history the cadence stretches
-                    // wide — every prefix refresh re-establishes the picture
-                    // (the 3% incremental refreshes), and a full re-raster
-                    // mid-drag is the live hitch the forward scrub showed
-                    // on a dense layer.
-                    var resetCadence = (root._prefixWasShown || _prefixModelReady()) ? 200 : 20;
-                    // A view change is a re-bake, never a delta: the
-                    // accumulated bitmap holds the old transform's ink, and
-                    // stroking the new transform's delta over it leaves the
-                    // same stroke at two rows. Read here — after the early
-                    // returns that clear the bitmap whole — so a paint that
-                    // skipped the reset still sees the change next time.
-                    var viewRebaked = _viewKey() !== root._accumViewKey;
+                    var chosenPrefix = ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split);
+                    var prefixFrom = chosenPrefix.from;
+                    var plan = ExactComposition.tailPlan({
+                        dirty: root._progressDirty,
+                        split: root._lastSplit,
+                        paints: root._paintsSinceReset,
+                        source: vectorSourceChanged ? "changed" : "same",
+                        view: root._accumViewKey,
+                        from: root._vectorCoversFrom,
+                        prefixSource: root._paintedPrefixSource
+                    }, {
+                        split: split,
+                        source: "same",
+                        view: _viewKey(),
+                        prefix: chosenPrefix,
+                        cadence: prefixFrom > 0 ? 200 : 20
+                    });
                     root._accumViewKey = _viewKey();
-                    if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged || viewRebaked) {
+                    var resetPainted = plan.reset;
+                    if (resetPainted) {
+                        bitmapChanged = true;
                         ctx.reset();
                         ctx.clearRect(0, 0, width, height);
                         root._lastSplit = -1;
-                        root._progressDirty = false;
                         root._paintsSinceReset = 0;
-                        resetPainted = true;
+                        root._progressDirty = false;
                     }
-                    // The printed portion, coloured in per feature class from
-                    // the last painted split up to the live one (the H3
-                    // floor). The partial scrub keeps the vector delta path;
-                    // a native prefix below shortens the walk to its tail.
-                    var coversBefore = root._vectorCoversFrom;
-                    if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
-                        // The prefix no longer owns the history (loading,
-                        // stale, or invalidated) but the canvas does not hold
-                        // the full picture (nothing painted yet, or only a
-                        // tail): repaint the FULL interval — a partial bitmap
-                        // under a vanished prefix is the live scrub's missing
-                        // history.
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._progressDirty = false;
-                        resetPainted = true;
-                    } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
-                        // The prefix is Ready over the canvas's FULL bitmap (a
-                        // re-show after a scrub through 100% or another layer):
-                        // trim to the prefix's own boundary — the commit lag's
-                        // stale texture is the full bitmap, complete either
-                        // way, and every scrub path settles to the SAME
-                        // composition.
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._progressDirty = false;
-                        resetPainted = true;
-                    } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom !== 0 && root._vectorCoversFrom !== prefixFrom) {
-                        // The boundary-advance transition: the canvas holds
-                        // the OLD tail under the NEW prefix's boundary (the
-                        // readiness gate rejects the hybrid, and the
-                        // Loading-phase full repaint is timing-dependent).
-                        // Repaint the tail from the new boundary — the
-                        // retained picture stands until this delivery
-                        // completes the joint swap.
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._progressDirty = false;
-                        resetPainted = true;
-                    }
-                    // A prefix that has never shown leaves the WHOLE interval
-                    // to the canvas — its first paint must cover from the
-                    // layer's start, not merely from the prefix's boundary.
-                    // The trim above (only ever over a full bitmap) paints
-                    // from the boundary instead.
-                    var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
                     var fresh = resetPainted || root._lastSplit < 0;
+                    var from = plan.from;
+                    bitmapChanged = bitmapChanged || fresh || split !== root._lastSplit;
                     _drawLayer(ctx, current, 1.0, split, false, from);
                     // The bitmap's coverage below this paint's start: a full
                     // paint covers from the layer's start, a tail paint
@@ -2161,23 +1997,8 @@ Item {
                     // geometry records nothing: an empty bitmap must never
                     // read as a full one (the prefix would trust a hole).
                     if (fresh) {
-                        root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
-                    }
-                    // The freeze rides the paint, not only the delivery: a
-                    // bitmap starting exactly at the prefix's boundary is
-                    // the composition formed, and the pixels it was built
-                    // against must be held from HERE. A boundary advance
-                    // published while this paint is in flight would
-                    // otherwise replace the live image's source with a
-                    // still-loading one under an EMPTY record — and the
-                    // interior below the boundary belongs to that record
-                    // the moment the live image blinks. The delivery's own
-                    // freeze (the joint readiness) still covers the paints
-                    // that land before the prefix's upload.
-                    if (from > 0 && from === prefixFrom && layer.prefixData !== undefined && layer.prefixData !== "" && (root._retainedPrefixSource !== layer.prefixData || root._retainedPrefixSplit !== layer.prefixSplit || root._retainedPrefixAnchor !== root.progress.anchor)) {
-                        root._retainedPrefixSource = layer.prefixData;
-                        root._retainedPrefixSplit = layer.prefixSplit;
-                        root._retainedPrefixAnchor = root.progress.anchor;
+                        root._vectorCoversFrom = plan.coverage;
+                        root._paintedPrefixSource = root._vectorCoversFrom > 0 ? chosenPrefix.source : "";
                     }
                     // The travels: the lines only. CURRENT layer only, and
                     // only where the toolhead has already passed (the live
@@ -2199,6 +2020,7 @@ Item {
                         root._travelsSourceMotions = sourceMotions;
                         root._travelsSourceReady = sourceReady;
                         var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
+                        bitmapChanged = bitmapChanged || resetPainted || travelsChanged || split !== root._lastSplit;
                         _drawTravels(ctx, current.travels, split, travelFrom);
                     }
                     root._lastSplit = split;
@@ -2211,41 +2033,103 @@ Item {
                         world: paintWorld,
                         valid: _worldKeyOf() === paintWorld,
                         from: root._vectorCoversFrom,
-                        split: root._lastSplit
+                        split: root._lastSplit,
+                        paintKey: paintKey,
+                        prefixSource: root._vectorCoversFrom > 0 ? root._paintedPrefixSource : ""
                     };
-                    root._canvasTransaction = ExactComposition.painted(root._canvasTransaction, nextReceipt);
+                    root._canvasTransaction = bitmapChanged ? ExactComposition.painted(root._canvasTransaction, nextReceipt) : ExactComposition.unchanged(root._canvasTransaction);
                 }
             }
         }
     }
 
-    Canvas {
-        id: carryCanvas
-        // The carried tail (the gesture's frozen picture): the
-        // printed lines since the warm raster's split, re-painted
-        // at its backing and presented through the DISPLAY
-        // transform exactly like navigationImage — the pan rides
-        // the item's translation, never a repaint. Hidden while
-        // idle: only the entry and a mid-gesture zoom re-bake
-        // request it, and a hidden canvas discards the buffer.
-        //
-        // A TOP-LEFT origin, because the raster the tail completes is
-        // grown by a size change from a fixed corner: at 4x backing
-        // the default centre origin swings this item's content by
-        // size * (1 - displayScale / backing), further than the face
-        // is wide, so a zoomed gesture carried no tail at all.
+    // An obsolete Canvas buffer must stay renderable to deliver its
+    // outstanding upload, but cannot present ink for a different world.
+    // The compositor's preparing decision masks that buffer until a
+    // complete owner exists. Camera gestures front this with the warm
+    // picture, so exact preparation never interrupts their presentation.
+    Rectangle {
+        objectName: "moonrakerPlatePreparingCover"
+        anchors.fill: parent
+        color: UM.Theme.getColor("main_background")
+        visible: root._presentation.kind === "preparing" && !root._presentation.ready
+    }
+
+    // Exact preparation remains a live scene-graph participant. A warm
+    // picture covers it as one opaque presentation unit; hiding its parent
+    // at opacity zero can suppress Canvas paints and their delivery signals.
+    Item {
+        id: warmScene
+        anchors.fill: parent
         visible: root._interactionActive
-        width: visible ? root.width * root._navBacking() : 0
-        height: visible ? root.height * root._navBacking() : 0
-        x: visible ? root.displayPanX : 0
-        y: visible ? root.displayPanY : 0
-        scale: visible ? root.displayScale / root._navBacking() : 1.0
-        transformOrigin: Item.TopLeft
-        renderTarget: Canvas.Image
-        renderStrategy: Canvas.Threaded
-        onPaint: {
-            var ctx = getContext("2d");
-            root._paintCarry(ctx);
+        Rectangle {
+            anchors.fill: parent
+            color: UM.Theme.getColor("main_background")
+        }
+        // The interaction scene (the pan/zoom navigation raster): one
+        // flattened warm full-bed composite at a fixed 4x backing,
+        // presented at the DISPLAY transform — the sole heavy-scene
+        // representation during any camera gesture. The source binds at
+        // all times (the texture uploads while idle; the first gesture
+        // flips the visibility, never the source), and the 4x content
+        // displayed at width/height = face x displayScale is exactly
+        // the displayScale/4 presentation of the specification.
+        Image {
+            id: navigationImage
+            // Every plate raster is file-backed (a PNG the model published
+            // or a data PNG's URL), so a source install is a DECODE. An
+            // inline decode holds the Qt thread for the whole raster --
+            // ~66 ms for the 4x navigation image -- which the live report
+            // reads as the camera stalling whenever a raster lands. The
+            // bake is unchanged and the worker's cost is unchanged: the
+            // decode moves off the Qt thread and the presentation is the
+            // same pixels, one thread later.
+            asynchronous: true
+            x: root.displayPanX
+            y: root.displayPanY
+            width: root.width * root.displayScale
+            height: root.height * root.displayScale
+            // The interaction source: the gesture LATCHES the raster it
+            // entered with (the model retires the published URL the
+            // moment the demand moves — a mid-gesture retirement must
+            // never unload the scene the gesture presents); idle binds
+            // the live eligible URL so the texture preloads. An
+            // interaction activated without an entry (the presentation
+            // fixtures drive the flag directly) falls back to the live
+            // eligible URL.
+            visible: root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
+            source: root._interactionActive ? (root._gestureNavSource !== "" ? root._gestureNavSource : navigationData()) : navigationData()
+            smooth: true
+        }
+
+        Canvas {
+            id: carryCanvas
+            // The carried tail (the gesture's frozen picture): the
+            // printed lines since the warm raster's split, re-painted
+            // at its backing and presented through the DISPLAY
+            // transform exactly like navigationImage — the pan rides
+            // the item's translation, never a repaint. Hidden while
+            // idle: only the entry and a mid-gesture zoom re-bake
+            // request it, and a hidden canvas discards the buffer.
+            //
+            // A TOP-LEFT origin, because the raster the tail completes is
+            // grown by a size change from a fixed corner: at 4x backing
+            // the default centre origin swings this item's content by
+            // size * (1 - displayScale / backing), further than the face
+            // is wide, so a zoomed gesture carried no tail at all.
+            visible: root._interactionActive
+            width: visible ? root.width * root._navBacking() : 0
+            height: visible ? root.height * root._navBacking() : 0
+            x: visible ? root.displayPanX : 0
+            y: visible ? root.displayPanY : 0
+            scale: visible ? root.displayScale / root._navBacking() : 1.0
+            transformOrigin: Item.TopLeft
+            renderTarget: Canvas.Image
+            renderStrategy: Canvas.Threaded
+            onPaint: {
+                var ctx = getContext("2d");
+                root._paintCarry(ctx);
+            }
         }
     }
     // The painter's ONE rule, shared by the strokes and the glyphs: the
@@ -2799,6 +2683,7 @@ Item {
     function endInteraction() {
         zoomAnimator.stop();
         root._interactionActive = false;
+        root._gestureNavSource = "";
         root._holdTicks = 0;
         // Every exit — the pan release, the zoom snap, the scrub —
         // resumes the model's publications, and releases the file
@@ -2818,7 +2703,13 @@ Item {
         if (root._retainedPrefixSource !== "") {
             _retireRetained();
         }
-        root._heldFullSource = "";
+        root._standingFull = null;
+        // A pending paint must read the new world even when a caller
+        // renders before the camera's debounce expires. Coalescing is
+        // deferred, but identity invalidation is synchronous.
+        _adoptProgressWorld();
+        if (!root._interactionActive)
+            _wakeProgressPaint();
     }
 
     // The unavailable state (the live ruling): the shared download

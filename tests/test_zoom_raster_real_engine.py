@@ -113,6 +113,8 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         # every resize and needs the bed dimensions at that moment.
         cls.face.setProperty("printerModel", cls._printer)
         cls.window = cls._window_for(cls.face)
+        # Pixel census uses a logical 1x reference on every host.
+        cls.face.setProperty("devicePixelRatio", 1.0)
         cls.face.setProperty("dot", None)
         cls.face.setProperty("showBase", False)
         cls.face.setProperty("showPrevious", False)
@@ -794,7 +796,7 @@ class ZoomInkMassTests(_parent.RealEngineTestCase):
              for motion in range(21)]]
 
     @staticmethod
-    def _payload(classes, travels=(), motions=2):
+    def _payload(classes, travels=(), motions=21):
         # The scrub payload's own shape (top-level classes/travels),
         # the format setScrub and _native_layer both consume.
         return {

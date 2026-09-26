@@ -120,6 +120,8 @@ class LayerResolver:
         self.reset()
 
     def reset(self):
+        self._last_resolved = None
+        self._paused_layer = None
         self._extrusion = None
         self._z_layer = None
         self._z_below = 0
@@ -203,6 +205,21 @@ class LayerResolver:
         move = move if isinstance(move, Mapping) else {}
         info = info if isinstance(info, Mapping) else {}
         metadata = metadata or {}
+        if stats.get("state") == "paused" and self._last_resolved is not None and self._last_resolved.index is not None:
+            # Parser lookahead and a pause lift cannot change the layer
+            # whose split the progress tracker has already accepted.
+            self._paused_layer = self._last_resolved
+            return self._paused_layer
+        if self._paused_layer is not None:
+            held = self._paused_layer
+            z = self._number(nozzle[2]) if nozzle and len(nozzle) >= 3 else None
+            if z is not None and held.height is not None and z > held.height + max(config.z_tolerance, held.thickness or 0.0) \
+                    and self._nozzle_layer(nozzle, heights, metadata, config) is None:
+                # RESUME can be reported before the queued return move
+                # reaches the model. Keep the paused identity until the
+                # live nozzle is back on a resolvable printing layer.
+                return held
+            self._paused_layer = None
         total = self._number(info.get("total_layer"), int)
         if index is not None and index.ranges:
             total = len(index.ranges)
@@ -473,4 +490,6 @@ class LayerResolver:
                         thickness = delta
             if thickness is None:
                 thickness = first if layer == 0 and first is not None else step
-        return PhysicalLayer(layer, total, height, source, thickness)
+        result = PhysicalLayer(layer, total, height, source, thickness)
+        self._last_resolved = result
+        return result
