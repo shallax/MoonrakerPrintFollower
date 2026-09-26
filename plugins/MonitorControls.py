@@ -3,22 +3,56 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import shlex
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
 )
-from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_z_offset
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
+
+# The in-flight latch's hard ceiling: a gesture's pending state expires
+# on its own after a few multiples of the status lag (the review's
+# rule: never a permanent wedge, and never against the rescue direction).
+# The plate that settles a gesture releases its latch sooner; this is the
+# backstop for a status that never arrives.
+PENDING_CEILING_SECONDS = 10.0
+
+
+def _exclude_status(snapshot):
+    """The volatile plate fields live on the CORE lane (the 4.6.0 move);
+    the aux copy covers the lane's first landing alone.
+
+    A core report that is PRESENT but names no objects is authoritative
+    too: it says this print has none, and falling back to the lane the
+    copy was meant to cover would act on the previous print's plate —
+    the stale copy still lists the objects the name-level gate then
+    accepts."""
+    core = snapshot.core.get("exclude_object") if snapshot.core else None
+    if isinstance(core, Mapping):
+        return core
+    aux = snapshot.auxiliary.get("exclude_object") if snapshot.auxiliary else None
+    return aux if isinstance(aux, Mapping) else {}
+
+
+def _escape_exclude_name(name):
+    """The shared dispatch escaper — exclude AND restore use exactly
+    this (the review's rule: one escaper, never two)."""
+    return str(name).replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
 
 
 class MonitorControls(QObject):
     changed = pyqtSignal()
 
-    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None):
+    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None, *, job_identity=None):
         super().__init__(parent)
         self._data, self._commands, self._tuning = data, commands, tuning
         self._mesh, self._config = bed_mesh, config
+        # The print identity an object gesture binds to (the model's
+        # print state); None when the host has none to offer.
+        self._job_identity_source = job_identity
+        self._job_identity = None
         self._remembered_colors = {}
         # The brightness slider holds the USER'S GAIN, unlinked from
         # the channel peak (the ruling): a channel nudge
@@ -35,6 +69,7 @@ class MonitorControls(QObject):
         self._config_identity = None
         self._values = {}
         self._values_copy = None
+        self._pending = {}
         self._macros, self._presets = [], []
         data.changed.connect(self.observe)
         data.invalidated.connect(self.reset)
@@ -59,6 +94,11 @@ class MonitorControls(QObject):
         self._remembered_channels.clear()
         self._macro_cache.clear()
         self._config_identity = None
+        # A pending exclusion is a claim about a gesture on THIS session
+        # and THIS plate: a printer switch (the invalidated signal) makes
+        # it meaningless, and it must not refuse the same gesture on the
+        # printer that replaces it.
+        self._pending.clear()
         self.observe()
 
     @staticmethod
@@ -79,6 +119,8 @@ class MonitorControls(QObject):
 
     def observe(self):
         snapshot = self._data.snapshot
+        self._observe_job_boundary()
+        self._release_settled_latches(snapshot)
         aux = snapshot.auxiliary
         configfile = aux.get("configfile") or {}
         config = configfile.get("config") or {}
@@ -147,7 +189,11 @@ class MonitorControls(QObject):
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
             "temperaturePresetItems": [{"index": i, "name": item["name"], "active": self.preset_active(item, aux)} for i, item in enumerate(self._presets)],
-            "canApplyTemperaturePreset": setup and bool(self._presets),
+            # The presets do NOT ride the setup row: a firmware restart
+            # is unsafe in either print state, a heater target is not,
+            # so this one action takes its own policy row (a pause is
+            # exactly when a temperature change is wanted).
+            "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
             "speedFactorPercent": self._display("speed-factor", int(round(number(move.get("speed_factor")) * 100))),
             "flowFactorPercent": self._display("flow-factor", int(round(number(move.get("extrude_factor")) * 100))),
             "zOffset": number(origin[2]) if len(origin) > 2 else 0,
@@ -226,7 +272,10 @@ class MonitorControls(QObject):
         self._commands.request("Host restart", "machine/reboot", {}, rule=can_restart)
 
     def apply_preset(self, index):
-        if not self._commands.setup_allowed or not 0 <= index < len(self._presets): return
+        # The dispatch gate is the SAME row the button reads, never
+        # setup_allowed: that one refuses a paused print, so a live
+        # button would have had its click dropped here in silence.
+        if not self._allowed(can_apply_temperature_preset) or not 0 <= index < len(self._presets): return
         # The rule rides the queued entry too (the phase-6 security
         # re-review, D1): the four one-shots below were the only
         # dispatch sites without one.
@@ -241,7 +290,7 @@ class MonitorControls(QObject):
             command = f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}" if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}"
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
-        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_restart)
+        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_apply_temperature_preset)
 
     def heaters_off(self):
         """Cooldown: set every heater appearing in the profiles to 0 target.
@@ -250,7 +299,7 @@ class MonitorControls(QObject):
         auxiliary objects include temperature *sensors*, which take no
         target and must not receive a heater command.
         """
-        if not self._commands.setup_allowed: return
+        if not self._allowed(can_apply_temperature_preset): return
         commands, seen = [], set()
         for item in self._presets:
             for name, attributes in (item.get("preset") or {}).get("values", {}).items():
@@ -262,7 +311,7 @@ class MonitorControls(QObject):
                 command = (f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}"
                            if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}")
                 commands.append(command + " TARGET=0")
-        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_restart)
+        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_apply_temperature_preset)
 
     def factor(self, kind, percent, preview=False):
         percent = max(10 if kind == "speed" else 50, int(percent))
@@ -372,9 +421,13 @@ class MonitorControls(QObject):
             self._commands.send("Power " + name, "machine/device_power/device", {"device": name, "action": "on" if on else "off"})
 
     def exclude(self, name):
-        status = self._data.snapshot.auxiliary.get("exclude_object") or {}
-        names = {item.get("name") for item in status.get("objects", ())}
-        if name not in names or name in status.get("excluded_objects", ()):
+        name = str(name or "")
+        # A no-op must still receipt (the no-confirm ruling: the
+        # receipt IS the confirmation — silence re-triggers the
+        # gesture, and a toggle applied twice is the inverse).
+        refusal = self._object_refusal("exclude", name, _exclude_status(self._data.snapshot))
+        if refusal:
+            self._commands.report_status(f"Exclude refused: {refusal}")
             return
         observation = getattr(self._data, "observation", None)
         verdict = can_exclude(observation) if observation is not None \
@@ -385,6 +438,132 @@ class MonitorControls(QObject):
             # exact class this release exists to end.
             self._commands.report_status(f"Exclude refused: {verdict.reason or 'no longer allowed'}")
             return
-        safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
-        self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"', rule=can_exclude)
+        key = ("exclude", name)
+        if not self._arm(key):
+            return
+        started = self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{_escape_exclude_name(name)}"',
+                                        rule=self._object_rule("exclude", name, self._job_token()))
+        if not started:
+            # The lane never sent it (a dead transport, a full queue):
+            # nothing is in flight, so the latch must not refuse the
+            # retry for the rest of its ceiling.
+            self._pending.pop(key, None)
+
+    def restore(self, name):
+        name = str(name or "")
+        if not name:
+            self._commands.report_status("Restore refused: no object named")
+            return
+        refusal = self._object_refusal("restore", name, _exclude_status(self._data.snapshot))
+        if refusal:
+            self._commands.report_status(f"Restore refused: {refusal}")
+            return
+        observation = getattr(self._data, "observation", None)
+        verdict = can_restore(observation) if observation is not None \
+            else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Restore refused: {verdict.reason or 'no longer allowed'}")
+            return
+        key = ("restore", name)
+        if not self._arm(key):
+            return
+        # The name rides INSIDE the RESET line, proven non-empty above;
+        # there is deliberately no no-name branch — a bare RESET=1
+        # clears every exclusion on the plate (the review's blocker).
+        started = self._commands.script("Restore " + name, f'EXCLUDE_OBJECT RESET=1 NAME="{_escape_exclude_name(name)}"',
+                                        rule=self._object_rule("restore", name, self._job_token()))
+        if not started:
+            self._pending.pop(key, None)
+
+    @staticmethod
+    def _object_refusal(direction, name, status):
+        """Why this object gesture cannot land against the OBSERVED
+        plate, '' when it can. One derivation behind three readers —
+        the click gate, a queued entry's dispatch revalidation and the
+        latch release — so no two of them can disagree about a name."""
+        names = {item.get("name") for item in status.get("objects") or () if isinstance(item, Mapping)}
+        excluded = set(status.get("excluded_objects") or ())
+        if direction == "exclude":
+            if name in excluded: return f"'{name}' is already excluded"
+            return "" if name in names else f"'{name}' is not on the plate"
+        return "" if name in excluded else f"'{name}' is not excluded"
+
+    def _object_rule(self, direction, name, token):
+        """The dispatch-time rule for one object gesture: the mid-print
+        permission row re-run (the lane's queued-entry revalidation)
+        PLUS the name-level predicate, which the click-time gate could
+        only check before the entry queued — the plate moves while the
+        lane is busy — PLUS the job identity the click bound to (token).
+
+        The identity is re-read HERE, against the print running at the
+        dispatch: a filename cannot carry it (the same file restarted
+        is a different print whose objects are the same names), so a
+        queued gesture may only land on the print that received the
+        click. A denial kills the entry, so its latch dies with it: a
+        dead gesture must not hold the retry, nor the other direction,
+        for the rest of the ceiling."""
+        row = can_exclude if direction == "exclude" else can_restore
+        def rule(observation):
+            verdict = row(observation)
+            if verdict.mode == "allowed":
+                if self._job_token() != token:
+                    verdict = Verdict("disabled", "the print changed since the click")
+                else:
+                    refusal = self._object_refusal(direction, name, _exclude_status(self._data.snapshot))
+                    if not refusal: return verdict
+                    verdict = Verdict("disabled", refusal)
+            self._pending.pop((direction, name), None)
+            return verdict
+        return rule
+
+    def _job_token(self):
+        """The print identity behind a gesture: the job key's
+        (filename, size, serial) triple, whose serial is what tells a
+        restarted same-name print from the one before it."""
+        source = self._job_identity_source
+        return source() if source is not None else None
+
+    def _observe_job_boundary(self):
+        """A pending latch claims a gesture on ONE print: at the next
+        print the claim is void, or the new print's own identical
+        gesture reads as already in flight for the rest of the
+        ceiling."""
+        token = self._job_token()
+        if token == self._job_identity: return
+        self._job_identity = token
+        self._pending.clear()
+
+    def _release_settled_latches(self, snapshot):
+        """A latch claims a gesture is still in flight; the plate that
+        settles it — the exclusion landed, the restore landed, the name
+        left the plate — releases it. The ten-second ceiling is the
+        backstop for a status that never came, never the release."""
+        status = _exclude_status(snapshot)
+        if not status: return
+        for key in [key for key in self._pending if self._object_refusal(key[0], key[1], status)]:
+            self._pending.pop(key, None)
+
+    def exclude_current(self):
+        """The Exclude current button's dispatch: the readout's current
+        object by NAME — never CURRENT=1, which Klipper re-resolves at
+        execution (the review's blocker). No current object: a refusal
+        naming the empty target, never a guess."""
+        status = _exclude_status(self._data.snapshot)
+        current = status.get("current_object")
+        if not current:
+            self._commands.report_status("Exclude refused: no object is printing right now")
+            return
+        self.exclude(str(current))
+
+    def _arm(self, key):
+        """The in-flight latch: one gesture per (name, direction), a
+        hard ceiling, and never across directions — the rescue path is
+        never wedged by the exclude path."""
+        now = time.monotonic()
+        if self._pending.get(key, 0.0) > now:
+            direction, name = key
+            self._commands.report_status(f"{direction.capitalize()} already in flight: {name}")
+            return False
+        self._pending[key] = now + PENDING_CEILING_SECONDS
+        return True
 

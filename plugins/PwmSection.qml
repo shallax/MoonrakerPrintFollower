@@ -15,6 +15,7 @@ ColumnLayout {
     property bool freezeRepeaters: false
     property var frozenItems: []
     property var interactionSink: null
+    property var focusSink: null
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -27,6 +28,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.pwmOutputItems.length > 0 && root.printerModel.sectionExpandedMap["pwm"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -69,6 +71,10 @@ ColumnLayout {
                     onInteractingChanged: {
                         if (root.interactionSink != null)
                             root.interactionSink(interacting, modelData.object, "pwm");
+                    }
+                    onFocusLostByDestruction: {
+                        if (root.focusSink != null)
+                            root.focusSink(object, kind);
                     }
                 }
             }

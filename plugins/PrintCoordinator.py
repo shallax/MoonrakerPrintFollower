@@ -9,7 +9,8 @@ from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
-from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, preview_eta_text, result
+from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
+from .MoonrakerProtocol import live_position_in_gcode_space
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -47,11 +48,28 @@ class PrintCoordinator(QObject):
         # next-pause pipeline (the anchor, the merged rows, the target).
         self._loads = LoadStateTracker(files=files, index=index, cura=cura)
         self._next_pause = NextPausePipeline(preview=preview, pauses=pauses, index=index)
+        # The plate projection's memo: the definition rides on every
+        # core poll, and only the job boundary, a late DEFINE or
+        # changed geometry may invalidate it.
+        self._plate_memo = PlateProjectionMemo()
         self._snapshot = PrintSnapshot()
         self._status = {}
+        # The frame the current snapshot was built from: _publish composes
+        # its text from this pair, never from the newest frame.
+        self._frame = {}
         self._detail = "Not connected"
         self._gate_logged = None
+        self._phase_logged = None
         self._preview_block = None
+        # The replace prompt's pending action: the load the card's
+        # dialog is asking about, held while the prompt is up (None
+        # when no prompt is up, or after it has been answered).
+        self._replace_action = None
+        # The pause-at-layer block last published (see _pause_values):
+        # the Monitor's popover reads it back through pause_block. The
+        # Preview card and the popover therefore share ONE derivation
+        # and can never disagree about what is scheduled.
+        self._pause_block = {}
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -73,6 +91,18 @@ class PrintCoordinator(QObject):
         self._header_total_path = ""
         self._layer_trace_at = 0.0
         self._user_detached = False
+        # The follower face's MANUAL anchor: an index while the face is
+        # detached from the live layer, None while it follows the print.
+        self._plate_anchor = None
+        # The within-layer scrub, tied to the detach: a motion count
+        # while the face is detached and the user has scrubbed, None to
+        # draw the frozen layer as its whole base.
+        self._plate_split = None
+        # The follower popover's open state (the explicit demand gate):
+        # closed, the manual anchor stays as lightweight state but the
+        # frozen ±1 presentation window is never served per poll —
+        # nothing shows it (the reviewer's C).
+        self._popover_open = False
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -85,6 +115,7 @@ class PrintCoordinator(QObject):
         # stays terse on purpose.
         files.failed.connect(lambda message: Logger.log("w", "Remote file service: %s", message))
         index.changed.connect(self._index_changed)
+        index.progress_changed.connect(self._index_progress)
         index.failed.connect(lambda message: Logger.log("w", "G-code index service: %s", message))
         cura.changed.connect(self.refresh)
         cura.positionChanged.connect(self._position_changed)
@@ -101,6 +132,8 @@ class PrintCoordinator(QObject):
         # event would republish it.
         presentation.controlsChanged.connect(self._publish)
         presentation.loadRequested.connect(self.confirm_load)
+        presentation.replaceConfirmed.connect(self._replace_confirmed)
+        presentation.replaceCancelled.connect(self._replace_cancelled)
         presentation.attachmentRequested.connect(self.toggle_attachment)
         # The card's hourglass click is the monitor's improveEta —
         # the same download_and_index path, the same idempotence.
@@ -160,6 +193,17 @@ class PrintCoordinator(QObject):
         if self._closed or self._processing: return
         self._processing = True
         try:
+            # ONE telemetry frame for the whole refresh: the layer, the file
+            # position, the live position, the payload and the published
+            # values must all be the same print at the same instant.
+            # observe() is called re-entrantly from the client's signal and
+            # only its REFRESH is guarded, so a frame landing mid-flight
+            # would otherwise swap self._status under the reads below and
+            # mix two instants — a new layer with the old position — into
+            # one snapshot. The observation is pinned with it: it is an
+            # immutable value object, one per observed frame.
+            status = self._status if isinstance(self._status, dict) else {}
+            observation = self._jobs.observation
             # The request flags age out against the snapshot's own
             # print state — a standby printer never sends the frame
             # that would settle them (the stuck "Resolving…" report).
@@ -197,7 +241,7 @@ class PrintCoordinator(QObject):
                 # for real when the toolpath goes away.
                 if self._preview.state.attached:
                     self._preview.attach(False)
-            filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+            filename = str((status.get("print_stats") or {}).get("filename") or "")
             job = self._files.job_key
             # The view is the index's evidence for the CURRENT print —
             # both the view's key and the files service's job can be
@@ -206,6 +250,8 @@ class PrintCoordinator(QObject):
             # any preview load, because the two stale keys agreed with
             # each other). Compare against the print's own filename.
             view = index_view_for_print(self._index.view, filename)
+            plate_view = self._plate_source_view(view, status)
+            plate_available = plate_view is not None
             # The downloaded file's OWN header is the authoritative
             # filament total; Moonraker's parse of it (the metadata
             # below) is the fallback. One bounded head read per
@@ -221,21 +267,58 @@ class PrintCoordinator(QObject):
             # the slicer estimate without any gcode download. The
             # fallback serves ONLY the payload whose identity matches
             # the current job — never the previous print's values.
-            status_stats = (self._status.get("print_stats") or {}) if isinstance(self._status, dict) else {}
+            status_stats = status.get("print_stats") or {}
             metadata = self._files.metadata or self._mr_metadata_for(str(status_stats.get("filename") or ""), job)
-            physical = self._layers.resolve(self._status, config, view, metadata, self._cura.heights)
+            # The toolhead's PHYSICAL position, in the G-code's own
+            # coordinates, computed ONCE from this frame: the layer resolver
+            # corroborates the parser's layer claim against the nozzle's own
+            # Z with it, and the plate split refines the dispatcher's
+            # position with it, exactly as the Preview's follower does (the
+            # same helper, the same space). Both now read the same frame, so
+            # a layer can never be paired with a position from an earlier
+            # one. Absent telemetry is None, and neither consumer then
+            # treats a parser-side value as physical.
+            live_position = live_position_in_gcode_space(
+                status.get("motion_report") or {}, status.get("gcode_move") or {})
+            physical = self._layers.resolve(status, config, view, metadata, self._cura.heights,
+                                            live_position)
             self._next_pause.track(physical.index)
             try:
                 estimate = float(metadata.get("estimated_time") or 0)
             except (TypeError, ValueError):
                 estimate = 0
+            # The file position is resolved ONCE, ahead of BOTH of its
+            # consumers — the layer fraction here and the plate split
+            # below. The plate's path runs with no identity-checked
+            # view at all (the monitor-only index), so a position bound
+            # inside the layer branch left that read unbound. Missing
+            # or non-numeric is None, which each consumer skips: a real
+            # 0 is a position, never an absence.
+            sdcard = status.get("virtual_sdcard")
+            try:
+                position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
+            except (TypeError, ValueError):
+                position = None
+            # The attach diagnosis: which upstream telemetry the split
+            # actually has — the live report's split=None with a valid
+            # anchor must separate an absent virtual_sdcard from an
+            # absent physical position.
+            if position is None:
+                Logger.log("w", "plate position: virtualSdcard=%r "
+                               "statusKeys=%s",
+                           list(sdcard.keys()) if isinstance(sdcard, Mapping) else None,
+                           sorted(status.keys()))
+            # The job boundary's refusal: while the printer still
+            # reports the byte offset the finished print left standing,
+            # this frame is that print's — its offset opened the
+            # refinement onto the parked nozzle's old place and painted
+            # the restarted print's first layer with the old fraction.
+            if position is not None and not self._jobs.position_attributed(position):
+                position = 0
+                live_position = None
             layer_progress = None
             if view is not None and physical.index is not None and 0 <= physical.index < len(view.ranges):
                 start, end = view.ranges[physical.index]
-                try:
-                    position = int((self._status.get("virtual_sdcard") or {}).get("file_position") or 0)
-                except (TypeError, ValueError):
-                    position = None
                 if start is not None and end is not None and end > start and position is not None:
                     layer_progress = max(0.0, min(1.0, (position - start) / (end - start)))
             # The monitor-only download's terminal conditions (panel P1-1).
@@ -257,7 +340,74 @@ class PrintCoordinator(QObject):
             items = self._next_pause.rebuild(physical.index)
             (next_pause_layer, next_pause_eta,
              next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
-            self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
+            # The follower face's prepared polylines: built HERE from
+            # the index (the worker-side prep rule), not in the model.
+            # Its slider range and preparation-band metadata read the
+            # SAME accepted view the rest of the plate reads.
+            layer_count = len(plate_view.ranges) if plate_view is not None else 0
+            # The face's anchor: the live layer while the follower
+            # follows the print, the manual one while the user has
+            # detached it. An anchor outside this file is not refused:
+            # the service keeps it and withholds it only from the
+            # index's retention bound, so its payload comes back
+            # carrying no current layer (a frozen anchor outlives a
+            # print and the next one may be shorter).
+            plate_progress_payload = None
+            manual_payload = None
+            plate_visited = frozenset()
+            plate_lookup_ms = None
+            if plate_available and physical.index is not None:
+                # The payload is built INSIDE the service — the raw
+                # index's arrays never cross its boundary (the
+                # architecture contract), so the coordinator asks the
+                # service, never the view. The plate is the PRINT's, so
+                # it needs the resolved physical layer: there is no
+                # anchor without one (the monitor-only index whose
+                # layer never resolved), and the plate APIs are never
+                # asked for a None one. A frozen layer carries NO
+                # file position: the split is a live print's boundary,
+                # and on another layer it would be another print's
+                # fill.
+                # TWO payloads (the live request): the live one serves
+                # the mini and the attached popover — the mini NEVER
+                # detaches with the popover — and the frozen one the
+                # detached popover alone. Attached-ness is the test,
+                # never anchor equality — a detach that froze the
+                # CURRENT layer still read as following while the print
+                # stayed on it (the live report: detaching did nothing
+                # visible).
+                lookup_start = time.monotonic()
+                plate_progress_payload = self._index.plate_progress(
+                    physical.index, position, live_position)
+                if self._manual_serving_active():
+                    manual_payload = self._index.plate_progress(
+                        self._plate_anchor, None, live_position)
+                # This is ONLY the coordinator-side service lookup.
+                # Prepared-file I/O, decode, raw hydration and preparation
+                # happen asynchronously inside GCodeIndexService and are
+                # intentionally not mislabeled as part of this number.
+                plate_lookup_ms = (time.monotonic() - lookup_start) * 1000.0
+                # The per-layer printed objects: the executed motions'
+                # polygon visits, read back from the layer's start.
+                # The rows go through the SAME normalisation the map
+                # uses — the raw polygon may arrive flat or paired,
+                # and the point-in-polygon test needs pairs (the
+                # green-printed report: the raw rows never matched).
+                exclude_status = status.get("exclude_object") or {}
+                # Memoised per job: a poll that only moved the position
+                # or advanced the clock re-delivers the same definition,
+                # and re-walking every ring here runs O(vertices) of
+                # Python per object on this thread, every poll.
+                exclude_rows = self._plate_memo.value(exclude_status, job)["objects"]
+                visited = getattr(self._index, "plate_visited", None)
+                if visited is not None and plate_progress_payload.get("split") is not None:
+                    plate_visited = visited(physical.index,
+                                            plate_progress_payload["split"], exclude_rows)
+            # The frame is stored WITH the snapshot it produced: _publish()
+            # and the signal-driven publishes compose their text from this
+            # pair, so the pair can never be two different polls.
+            self._frame = status
+            self._snapshot = PrintSnapshot(job, observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
                 download_fraction=self._files.download_fraction,
@@ -268,20 +418,27 @@ class PrintCoordinator(QObject):
                 next_pause_fraction=next_pause_fraction,
                 next_pause_baked=next_pause_baked,
                 load_active=load_active,
-                filament_total=filament_total if filament_total and filament_total > 0 else None)
+                filament_total=filament_total if filament_total and filament_total > 0 else None,
+                plate_progress=plate_progress_payload,
+                plate_manual_progress=manual_payload,
+                plate_lookup_ms=plate_lookup_ms,
+                plate_layer_count=layer_count,
+                plate_pass_fraction=self._index.plate_pass_fraction()
+                if plate_view is not None else None,
+                plate_visited=plate_visited)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)
             if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:
                 self._layer_trace_at = time.monotonic()
-                info = (self._status.get("print_stats") or {}).get("info") or {}
-                gpos = (self._status.get("gcode_move") or {}).get("gcode_position") or ()
+                info = (status.get("print_stats") or {}).get("info") or {}
+                gpos = (status.get("gcode_move") or {}).get("gcode_position") or ()
                 mr_meta = self._mr_metadata_for(filename, job)
                 Logger.log("i",
                     "layer trace: raw_current=%s total=%s state=%s z=%s e=%s progress=%s one_based=%s z_fallback=%s mr_meta=%s mr_meta_keys=%s files_meta=%s heights_n=%s deltas=%s ascent=%.3f z_layer=%s -> layer=%s source=%s",
                     info.get("current_layer"), info.get("total_layer"),
-                    (self._status.get("print_stats") or {}).get("state"),
+                    (status.get("print_stats") or {}).get("state"),
                     gpos[2] if len(gpos) >= 3 else None, gpos[3] if len(gpos) >= 4 else None,
-                    (self._status.get("virtual_sdcard") or {}).get("progress"),
+                    (status.get("virtual_sdcard") or {}).get("progress"),
                     config.moonraker_layer_is_one_based, config.z_fallback,
                     bool(mr_meta), sorted(mr_meta) if mr_meta else [],
                     bool(self._files.metadata),
@@ -291,7 +448,7 @@ class PrintCoordinator(QObject):
             # The coordinator owns the mesh observation; the Monitor reads the
             # presenter's snapshot but never writes it. The presenter's
             # fingerprint guard makes the per-poll update cheap.
-            self._bed_mesh.update(parse_bed_mesh(self._status.get("bed_mesh")))
+            self._bed_mesh.update(parse_bed_mesh(status.get("bed_mesh")))
             self._cura.watch(config.enabled)
             if self._snapshot.active:
                 # The metadata and index serve the Preview, which needs the
@@ -317,14 +474,29 @@ class PrintCoordinator(QObject):
                 current = self._snapshot.layer.index
                 if isinstance(current, int):
                     self._index.set_followed_layer(current)
-                self._detail, hydration = self._preview.observe(self._snapshot, self._status, config, view)
+                self._detail, hydration = self._preview.observe(self._snapshot, status, config, view)
                 for layer in hydration: self._index.request_hydration(layer)
+                # The plate's own demand: the follower hydrates the
+                # window even when the preview is detached (the
+                # monitor-only index — the live ruling). The service
+                # dedupes and clamps; this never grows a queue.
+                if plate_available and self._index.phase != "indexing" \
+                        and isinstance(current, int):
+                    for layer in (current - 1, current, current + 1):
+                        if layer >= 0:
+                            self._index.request_hydration(layer)
+                    # The detached face's own demand, re-asked every
+                    # poll: the live window's advance is what evicts a
+                    # frozen layer's geometry, so the request has to
+                    # stand every time the print crosses a layer.
+                    if self._plate_anchor is not None:
+                        self._index.set_manual_anchor(self._plate_anchor)
             else:
                 self._preview.invalidate_view()
             self._preview.update_eta(self._snapshot, view)
             self._snapshot = replace(self._snapshot,
                 layer_eta=self._preview.remaining_end(view, self._snapshot.estimated_time))
-            self._publish()
+            self._publish(status)
         finally:
             self._processing = False
 
@@ -459,6 +631,7 @@ class PrintCoordinator(QObject):
             self._header_total_mm = None
             self._header_total_path = ""
             self._status = {}
+            self._frame = {}
             self._preview_block = None
             self._jobs.reset()
             self._layers.reset()
@@ -510,10 +683,55 @@ class PrintCoordinator(QObject):
         if was_attached and self._cura.has_toolpath:
             self._preview.attach(True)
 
+    def _plate_source_view(self, view, status):
+        """The index view the follower's plate may read. The follower
+        must NOT depend on the preview's toolpath (the live ruling) —
+        the monitor-only index (Improve ETA) builds without a preview
+        load, and its job key is the unresolved identity the strict
+        gate refuses, while the monitor download only ever names the
+        ACTIVE print, so an unresolved key is accepted for the plate.
+
+        One derivation, shared by the full refresh and the pass's
+        progress tick: the bar and the payload can never end up reading
+        different files' indexes. The caller hands over the frame it is
+        working from — the gate names a FILE, so reading it from a
+        different frame than the resolution it guards would accept a
+        view for the print the frame is not about."""
+        if view is not None: return view
+        index_view = self._index.view
+        if index_view is None: return None
+        if not index_view.job_key: return index_view
+        filename = str((status.get("print_stats") or {}).get("filename") or "")
+        return index_view if index_view.job_key[0] == filename else None
+
     def _index_changed(self):
         # A newly installed index resets path anchors, not print-local attachment.
         if self._index.phase == "indexing": self._preview.reset_tracking()
         self.refresh()
+
+    def _index_progress(self):
+        """The background pass's tick. The full refresh is what this
+        signal exists to avoid — it rebuilds the plate payload and
+        walks the printed objects, and the pass ticks at batch rate.
+        Only the progress readouts move here; the poll rebuilds the
+        rest, as it always did. The load term rides along because the
+        Monitor's improve-Eta hourglass ends on a rebuilt snapshot
+        whose load term is False: a tick that carried the last
+        refresh's stale copy would end an hourglass whose load is
+        still running."""
+        if self._closed or self._processing: return
+        status = self._status if isinstance(self._status, dict) else {}
+        filename = str((status.get("print_stats") or {}).get("filename") or "")
+        view = index_view_for_print(self._index.view, filename)
+        indexing = self._index.phase == "indexing"
+        self._snapshot = replace(
+            self._snapshot,
+            load_active=self._loads.active,
+            indexing=indexing,
+            index_fraction=self._index.progress if indexing else None,
+            plate_pass_fraction=(self._index.plate_pass_fraction()
+                                 if self._plate_source_view(view, status) is not None else None))
+        self._publish()
 
     def _position_changed(self):
         if self._binding.config.enabled:
@@ -549,7 +767,44 @@ class PrintCoordinator(QObject):
         self._publish()
 
     def confirm_load(self):
-        self._cura.confirm_replace(self.request_load)
+        # The prompt is Cura's own dialog, drawn in the card: the plugin
+        # never opens a QWidget modal. The box-shaped one was a native
+        # alert on macOS whose nested event loop could be left running
+        # under a hidden dialog, so the side doing the clicking saw a
+        # correct answer while the plugin never returned from
+        # question() and the load never ran - a dozen steps failed
+        # downstream of a step that reported success.
+        #
+        # The coordinator owns the question's state (replacePromptVisible)
+        # and the pending action, so the dialog cannot disagree with the
+        # model about whether it is up, and a scenario can read both in
+        # the tree.
+        self._cura.switch_to_preview()
+        self._replace_action = self.request_load
+        self._presentation.publish({"replacePromptVisible": True})
+
+    def _replace_confirmed(self):
+        action, self._replace_action = self._replace_action, None
+        # Logged on both answers: the pair with request_load's own line
+        # is what tells an answered prompt that ran nothing from one
+        # that was never answered.
+        Logger.log("i", "Moonraker replace confirm: answered yes")
+        self._presentation.publish({"replacePromptVisible": False})
+        if action is None:
+            return
+        # Deferred one turn: the click's own scene change must not be
+        # processed inside it (the load re-reads Cura's state). The
+        # deferral is also the race shutdown wins — a plugin closed
+        # while the answer was in flight must not start a load.
+        def run():
+            if not self._closed:
+                action()
+        QTimer.singleShot(0, run)
+
+    def _replace_cancelled(self):
+        Logger.log("i", "Moonraker replace confirm: answered no")
+        self._replace_action = None
+        self._presentation.publish({"replacePromptVisible": False})
 
     def download_for_monitor(self):
         """Download and index the active print WITHOUT loading it into
@@ -571,10 +826,56 @@ class PrintCoordinator(QObject):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
+        # Paired with the prompt's answer log: an accepted replace that
+        # never reaches here is a dropped action, not a refused one.
+        Logger.log("i", "Moonraker current print load requested")
         self._loads.request_load()
         self._message("Resolving current print…")
         self._client.force_refresh()
         QTimer.singleShot(2600, self.refresh)
+
+    def set_plate_anchor(self, anchor):
+        """The follower face's anchor (the pop-over's layer slider): an
+        index freezes the face on that layer, None rejoins the live
+        print. The live-follow state machine is untouched — the
+        retention window still tracks the print (the service carries the
+        frozen window beside it), so detaching never costs the live
+        layer its hydration, and the next live poll keeps resolving the
+        print's own layer."""
+        self._plate_anchor = anchor if isinstance(anchor, int) and not isinstance(anchor, bool) \
+            and anchor >= 0 else None
+        self._index.set_manual_anchor(self._plate_anchor)
+        self.refresh()
+
+    def _manual_serving_active(self) -> bool:
+        """The frozen window's serving gate: an anchor exists AND the
+        follower popover is open. Closed, the anchor and the split
+        stay as lightweight state but the frozen ±1 presentation is
+        never served per poll — nothing shows it (the reviewer's C)."""
+        return self._plate_anchor is not None and self._popover_open
+
+    def set_popover_open(self, popover_open):
+        """The follower popover's explicit demand gate: closed, the
+        manual payload stops being served per poll (the anchor and
+        the split stay as lightweight state); reopened, the next
+        poll's refresh resumes it — no immediate refresh here, a
+        recompute would throw away the standing snapshot the
+        published payloads already agree with."""
+        popover_open = bool(popover_open)
+        if popover_open == self._popover_open:
+            return
+        self._popover_open = popover_open
+
+    def set_plate_split(self, motions):
+        """The follower face's within-layer scrub (the pop-over's
+        progress slider): a motion count the frozen layer draws up to,
+        None for the whole base, -1 for the FULL layer (a seek lands
+        at 100% — the live request). Only a detach carries it — the
+        live split is the print's own."""
+        self._plate_split = motions if isinstance(motions, int) and not isinstance(motions, bool) \
+            and motions >= -1 else None
+        self._index.set_manual_split(self._plate_split)
+        self.refresh()
 
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
@@ -606,9 +907,26 @@ class PrintCoordinator(QObject):
     def remove_pause(self, human_layer):
         self._pauses.remove(int(human_layer) - 1)
 
-    def _publish(self):
-        if self._closed: return
-        config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
+    def clear_pauses(self):
+        # The popover's clear-all, the card's own intent (they share
+        # the one schedule).
+        self._pauses.clear()
+
+    @property
+    def pause_block(self):
+        """The pause-at-layer block last published, as the Preview
+        card received it. The Monitor's popover reads it back through
+        the model — the SAME derivation, never a second one — and
+        re-reads only the candidate, which belongs to its own layer
+        slider rather than to Cura's Preview selection."""
+        return self._pause_block
+
+    def _pause_values(self, snapshot):
+        """The pause-at-layer block: one derivation per publish, read
+        by the Preview card (through the presentation) and by the
+        Monitor's popover (through the model). The candidate here is
+        CURA'S selected layer, which is what the Preview card shows;
+        the popover's own candidate is re-derived at its model."""
         selected, current, total = self._cura.selected_layer, snapshot.layer.index, snapshot.layer.total
         if total is None and self._cura.max_layer is not None: total = self._cura.max_layer + 1
         scheduled = selected is not None and selected in self._pauses.layers
@@ -621,6 +939,26 @@ class PrintCoordinator(QObject):
         unavailable = ("a pause is baked into the gcode at this layer" if baked_block
                        else pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected))
         items = self._next_pause.rows(current)
+        block = {
+            "pauseAtLayerActive": snapshot.active,
+            "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
+            "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
+            "pauseAtLayerSummary": pause_summary(items),
+            "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
+            # The card shows the pause list without a toolpath when
+            # baked rows exist (the improve-Eta path: the index alone
+            # must reveal them) — the flag separates that case from a
+            # stale manual schedule. Its pair: the clear-all control
+            # hides while only baked rows are listed (the ruling).
+            "pauseAtLayerHasBaked": any(item["state"] == "baked" for item in items),
+            "pauseAtLayerHasClearable": bool(self._pauses.layers),
+        }
+        self._pause_block = block
+        return block
+
+    def _publish(self, status=None):
+        if self._closed: return
+        config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
         compact = status_text(
             detail=self._detail,
             load_requested=self._loads.load_requested,
@@ -643,6 +981,16 @@ class PrintCoordinator(QObject):
             self._gate_logged = gate
             Logger.log("i", "Moonraker preview card gates: configured=%s loadBusy=%s hasToolpath=%s previewStage=%s",
                        gate[0], gate[1], gate[2], gate[3])
+        # The phase transitions, same change-gated shape: the camera's
+        # own summary is a timestamp with no idea which phase it fell
+        # in, and "slower while indexing" is only readable when the two
+        # lines can be put side by side.
+        phase = (self._files.phase, self._index.phase, self._cura.loading,
+                 self._snapshot.load_active)
+        if phase != self._phase_logged:
+            self._phase_logged = phase
+            Logger.log("i", "Moonraker preview card phases: files=%s index=%s curaLoading=%s loadActive=%s",
+                       phase[0], phase[1], phase[2], phase[3])
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
             # The preview's load feedback: busy until the load reaches a
@@ -675,17 +1023,7 @@ class PrintCoordinator(QObject):
             "sceneHasObjects": self._cura.scene_has_objects,
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
-            "pauseAtLayerActive": snapshot.active, "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
-            "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
-            "pauseAtLayerSummary": pause_summary(items),
-            "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
-            # The card shows the pause list without a toolpath when
-            # baked rows exist (the improve-Eta path: the index alone
-            # must reveal them) — the flag separates that case from a
-            # stale manual schedule. Its pair: the clear-all control
-            # hides while only baked rows are listed (the ruling).
-            "pauseAtLayerHasBaked": any(item["state"] == "baked" for item in items),
-            "pauseAtLayerHasClearable": bool(self._pauses.layers),
+            **self._pause_values(snapshot),
             # The status bar's printer-side readouts (the ruling):
             # the live layer and Z height, never the preview's
             # selection. The row hides whole while the resolver has
@@ -717,8 +1055,12 @@ class PrintCoordinator(QObject):
                 time.monotonic() - self._preview_block[1] > self.PREVIEW_BLOCK_STALE_S,
             # The strip's middle-slot ETA: the print remaining/finish
             # (the Monitor's own pair, composed) — the selected-layer
-            # line stays in its slot untouched.
-            "previewEtaText": preview_eta_text(self._status or {}, self._snapshot),
+            # line stays in its slot untouched. The frame is the one the
+            # snapshot was built from (the refresh hands its own over):
+            # the state, the duration and the progress that compose this
+            # text describe the same instant as the estimate beside them.
+            "previewEtaText": preview_eta_text(
+                status if status is not None else (self._frame or {}), self._snapshot),
         })
 
     def close(self):

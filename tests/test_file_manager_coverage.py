@@ -1079,7 +1079,7 @@ class ThumbnailTests(ServiceCase):
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
 
     def test_a_large_fetch_publishes_its_own_url_and_file(self):
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-thumb-test-"), "large.png")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-thumb-test-"), "large.png")
         self.addCleanup(shutil.rmtree, os.path.dirname(path), True)
         self.seed_thumb()
         self.service._thumb_finished("a.gcode", ThumbReply(body=self.PNG),
@@ -1150,7 +1150,7 @@ class ThumbnailTests(ServiceCase):
 
 class UploadTests(ServiceCase):
     def upload_source(self, name="bench.gcode", body="G1 X0\n"):
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-upload-"), name)
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-upload-"), name)
         with open(path, "w") as handle:
             handle.write(body)
         self.addCleanup(shutil.rmtree, os.path.dirname(path), True)

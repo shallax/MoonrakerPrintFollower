@@ -33,7 +33,13 @@ class RemoteFileIdentity:
 # authoritative paused bit must arrive with the state word, not one
 # aux interval later — the refusal words and the visible state would
 # otherwise disagree on every pause transition.
-CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume")
+# exclude_object joins it (4.6.0): the volatile plate fields
+# (current_object, excluded_objects) turn over every ~9-10 s, and on
+# the aux lane's default 2.5 s+ cadence the plate would highlight
+# roughly one object in six. The aux lane keeps the object too — the
+# per-job polygons ride it (websocket: the all-fields subscription;
+# HTTP: the aux poll), so the name is intentionally on both lanes.
+CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume", "exclude_object")
 
 
 def _secure_scheme(scheme: str) -> bool:

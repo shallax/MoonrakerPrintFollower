@@ -27,7 +27,7 @@ RUNTIME_COMPONENTS = (
     "PrinterBinding.py", "CuraIntegration.py", "PreviewFollower.py",
     "PreviewPresentation.py", "PrintCoordinator.py", "RemoteFileService.py",
     "GCodeIndexService.py", "PauseController.py", "BedMeshPresenter.py",
-    "PluginPersistence.py",
+    "PluginPersistence.py", "CacheNamespaces.py",
 )
 
 
@@ -125,6 +125,15 @@ class SourceContractTests(unittest.TestCase):
                     self.assertNotIn(node.name, {"__getattr__", "__setattr__"}, path.name)
                 if isinstance(node, ast.ImportFrom) and node.level:
                     self.assertNotIn(node.module, RETIRED, path.name)
+                # Cura loads each plugin's files as top-level modules —
+                # an absolute `plugins.X` import (resolvable only when
+                # the dev repo root sits on sys.path) breaks the real
+                # boot with "could not load plugin". Cross-module
+                # imports must stay relative.
+                if isinstance(node, ast.ImportFrom) and node.level == 0:
+                    self.assertFalse(str(node.module or "").startswith("plugins"),
+                                     f"{path.name}: absolute plugins import "
+                                     f"({node.module})")
 
     def test_components_import_only_their_declared_dependencies(self):
         allowed = {
@@ -144,11 +153,14 @@ class SourceContractTests(unittest.TestCase):
             "FileManagerPolicy": set(),
             "SectionLayoutPolicy": set(),
             "FollowController": set(),
-            "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
-                "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
+            "FollowerRuntime": {"BedMeshPresenter", "CacheNamespaces", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
+                "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreparedStore", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
-            "GCodeIndex": {"MoonrakerProtocol"},
-            "GCodeIndexService": {"GCodeIndex"},
+            "ArcGeometry": set(),
+            "GCodeIndex": {"ArcGeometry", "CachePolicy", "MoonrakerProtocol"},
+            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting", "PreparedStore"},
+            "CacheNamespaces": {"GCodeIndex", "PreparedStore"},
+            "CachePolicy": set(),
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
             "MonitorCommands": {"MonitorPermissions"},
@@ -158,11 +170,12 @@ class SourceContractTests(unittest.TestCase):
             "MonitorPermissions": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"CameraTiming", "MoonrakerProtocol", "MoonrakerSession"},
-            "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerMonitorModel", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"CameraTiming", "ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
+            "MoonrakerFollowerMachineAction": {"CacheNamespaces", "FollowController", "MoonrakerMonitorModel", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
+            "MoonrakerMonitorModel": {"CameraTiming", "ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PlateQt", "PreviewFormatting", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "PersistenceMigration": {"PrinterConfig"},
             "MigrationNotice": set(),
             "PluginPersistence": {"PrinterConfig", "StateStore"},
+            "PlateProgress": {"ArcGeometry", "GCodeIndex"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
             "UiStateStore": set(),
@@ -183,16 +196,18 @@ class SourceContractTests(unittest.TestCase):
             "SocketFraming": set(),
             "NextPausePipeline": {"PreviewFormatting"},
             "PauseController": {"PauseScheduleService"},
+            "PlateQt": set(),
             "PauseScheduleService": set(),
             "PreviewFollower": {"CuraAdapter", "FollowController", "MoonrakerProtocol"},
             "PreviewFormatting": set(),
             "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
             "PreviewPresentation": set(),
             "PreviewSmoothing": set(),
-            "PrintCoordinator": {"CuraAdapter", "LoadStateTracker", "MonitorFormatting", "NextPausePipeline", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
+            "PrintCoordinator": {"CuraAdapter", "LoadStateTracker", "MonitorFormatting", "MoonrakerProtocol", "NextPausePipeline", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
             "PrintIdentity": set(),
             "PrinterBinding": {"CameraTiming", "CuraAdapter", "PersistenceMigration", "PrinterConfig"},
             "PrinterConfig": set(),
+            "PreparedStore": {"CachePolicy"},
             "PrintState": {"RemoteJobService"},
             "RemoteFileService": {"DownloadStream", "MoonrakerProtocol"},
             "RemoteJobService": set(),
@@ -213,7 +228,14 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(set(allowed), discovered)
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text(encoding="utf-8")
-            imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
+            # `from . import X` names its modules in the aliases, not in
+            # node.module (which is None there): reading only node.module
+            # silently imported None into the set.
+            imported = set()
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.ImportFrom) and node.level:
+                    imported |= ({alias.name for alias in node.names} if node.module is None
+                                 else {node.module})
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
                 self.assertNotIn("_follower", source, module)
@@ -369,8 +391,11 @@ class SourceContractTests(unittest.TestCase):
             "QObject": "QtCore",
             "QPointF": "QtCore",
             "QRect": "QtCore",
+            "QRectF": "QtCore",
             "QSettings": "QtCore",
             "QThread": "QtCore",
+            "QRunnable": "QtCore",
+            "QThreadPool": "QtCore",
             "QTimer": "QtCore",
             "QUrl": "QtCore",
             "QVariant": "QtCore",
@@ -385,6 +410,9 @@ class SourceContractTests(unittest.TestCase):
             "QOpenGLContext": "QtGui",
             "QPixmap": "QtGui",
             "QPainter": "QtGui",
+            "QPainterPath": "QtGui",
+            "QPen": "QtGui",
+            "QPolygonF": "QtGui",
             "QColorConstants": "QtGui",
             "QHostAddress": "QtNetwork",
             "QNetworkAccessManager": "QtNetwork",
@@ -396,6 +424,8 @@ class SourceContractTests(unittest.TestCase):
             "QQuickPaintedItem": "QtQuick",
             "QQuickWindow": "QtQuick",
             "QMessageBox": "QtWidgets",
+            "QFileDialog": "QtWidgets",
+            "QStandardPaths": "QtCore",
             "QAbstractAnimation": "QtCore",
             "QEasingCurve": "QtCore",
             "QPropertyAnimation": "QtCore",

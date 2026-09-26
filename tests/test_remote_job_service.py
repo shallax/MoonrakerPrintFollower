@@ -61,6 +61,47 @@ class RemoteJobServiceTests(unittest.TestCase):
         self.assertFalse(transition.new_job)
         self.assertEqual(self.service.serial, 1)
 
+    def test_the_position_carried_across_a_job_boundary_is_not_credited(self):
+        # Klipper holds the stopped print's byte offset until the new
+        # file is read, so the restarted print's first polls report a
+        # position the finished print already held — crediting it
+        # painted the new first layer with the old print's fraction.
+        self._observe(position=700)
+        self._observe(state="cancelled", position=700, duration=2.0)
+        transition = self._observe(duration=0.1, position=700)
+        self.assertTrue(transition.new_job)
+        self.assertFalse(self.service.position_attributed(700),
+                         "the finished print's offset was credited to the new job")
+        self.assertTrue(self.service.position_attributed(0),
+                        "the new print's own offset was refused")
+        self._observe(position=0)
+        self.assertTrue(self.service.position_attributed(700),
+                        "the spent boundary re-armed on a later coincidence")
+
+    def test_a_first_job_credits_its_own_position_immediately(self):
+        # Nothing was carried across: an attach to a print already
+        # running must credit the position it finds, or the follower
+        # would read zero and never catch up.
+        self._observe(position=700)
+        self.assertTrue(self.service.position_attributed(700))
+        self._observe(position=900)
+        self.assertTrue(self.service.position_attributed(900))
+
+    def test_a_new_job_by_regression_credits_its_own_position(self):
+        # A restart detected by the position going backwards reports a
+        # value of its own, never the carried one.
+        self._observe(position=700)
+        self.assertTrue(self._observe(position=10).new_job)
+        self.assertTrue(self.service.position_attributed(10))
+
+    def test_reset_clears_the_carried_position(self):
+        self._observe(position=700)
+        self._observe(state="cancelled", position=700)
+        self._observe(position=700)
+        self.assertFalse(self.service.position_attributed(700))
+        self.service.reset()
+        self.assertTrue(self.service.position_attributed(700))
+
     def test_unparseable_values_coerce_to_defaults(self):
         self._observe(size="big", position="mid", duration="slow")
         observation = self.service.observation

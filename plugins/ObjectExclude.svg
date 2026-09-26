@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- ObjectExclude: the Objects family's mesh cube with the
+       exclude cross — closed filled paths, theme-tinted like the
+       house set (UM.ColorImage injects the theme colour). The cross
+       reads as the knockout against the tinted body. -->
+  <path d="M12 2.2l8.4 4.7v9.2L12 21.8l-8.4-4.7V6.9L12 2.2z"/>
+  <path d="M9.4 8.3l1.2 1.2 3.8 3.8 1.2 1.2-1.2 1.2-1.2-1.2-3.8-3.8-1.2-1.2 1.2-1.2z"/>
+  <path d="M14.6 8.3l-1.2 1.2-3.8 3.8-1.2 1.2 1.2 1.2 1.2-1.2 3.8-3.8 1.2-1.2-1.2-1.2z"/>
+</svg>

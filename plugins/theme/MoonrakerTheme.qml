@@ -17,6 +17,10 @@ QtObject {
     // The neon orange: the probed-mesh bounds outline and clamped
     // crosshair, and the next scheduled pause's fill.
     readonly property color neonOrange: "#FF5A00"
+    // The job bar's background-optimisation band: a quiet teal
+    // distinct from the progress fills, so the pass reads as its own
+    // sweep and never as print progress.
+    readonly property color jobOptimisation: "#2ba6a6"
     // The warning amber: not-homed states and detected-filament
     // highlights.
     readonly property color warningOrange: "#fb8c00"
@@ -69,4 +73,26 @@ QtObject {
 
     // ── the filament section ────────────────────────────────────
     readonly property color filamentDetected: "#43a047"
+
+    // ── the plate map (4.6.0) ────────────────────────────────────
+    // The current object's stroke: a NEW measured token — every
+    // existing green fails the 3:1 floor on the light ground
+    // (measured: 3.45 light / 4.78 dark).
+    readonly property color plateCurrent: "#2f9e44"
+    // The toolhead dot: the mesh's neon orange — distinct from the
+    // "included" stroke ink and from every state colour (the live
+    // request).
+    readonly property color plateDot: MoonrakerTheme.neonOrange
+    // The follower's feature-class table: the chart palette's own
+    // both-theme measured tokens, one fixed mapping — travel and
+    // unlabelled motions stay the honest unknown grey.
+    readonly property color plateClassWallOuter: "#d32f2f"
+    readonly property color plateClassWallInner: "#388e3c"
+    readonly property color plateClassSkin: "#e65100"
+    readonly property color plateClassFill: "#1976d2"
+    readonly property color plateClassSupport: "#00838f"
+    readonly property color plateClassSkirt: "#00897b"
+    // The travel ink (the live ruling): purple — the grey family
+    // belongs to the grid and the pending base now.
+    readonly property color plateTravel: "#b085e8"
 }

@@ -239,7 +239,7 @@ class RecordingTarget:
 
 class DownloadTargetTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mpf-download-")
+        self.tmp = tempfile.mkdtemp(prefix="mpfxtest-download-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def test_a_target_that_never_opened_closes_without_a_handle(self):
@@ -285,7 +285,7 @@ class DownloadOperationTests(unittest.TestCase):
     latching and the retirement rules."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mpf-operation-")
+        self.tmp = tempfile.mkdtemp(prefix="mpfxtest-operation-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.operations = []
         self.addCleanup(self.retire)
@@ -766,23 +766,76 @@ if QT_AVAILABLE:
             self.loads.append(lease)
 
     class DownloadHandle:
-        def __init__(self, done=False):
-            self.cancelled = 0
-            self.done = done
+        """The one-shot handle's contract: one terminal, cancellable
+        with the caller's reason, and a dead handle delivers none."""
 
-        def cancel(self):
+        def __init__(self, done=False, on_ready=None):
+            self.cancelled = 0
+            self.reasons = []
+            self.done = done
+            self._on_ready = on_ready
+
+        def cancel(self, reason="The download was cancelled"):
             self.cancelled += 1
+            self.reasons.append(reason)
+            if self._on_ready is not None and not self.done:
+                self.done = True
+                self._on_ready(None, reason)
+
+        def finish(self, path=None, error=None):
+            """The stream's own terminal, as the real lane delivers it."""
+            if self.done:
+                return
+            self.done = True
+            if self._on_ready is not None:
+                self._on_ready(path, error)
+
+    class GatedSource:
+        """The copy's source handle, gated at its first read (RC-04):
+        `released_by_loop` is True only when the app's own event loop
+        ran the release — a timeout means the copy held the owner
+        thread for the whole wait, which is the defect."""
+
+        GATE_TIMEOUT = 5.0
+
+        def __init__(self, handle, entered, release):
+            self._handle = handle
+            self._entered = entered
+            self._release = release
+            self._gated = False
+            self.released_by_loop = False
+
+        def read(self, size=-1):
+            data = self._handle.read(size)
+            if not self._gated:
+                self._gated = True
+                self._entered.set()
+                self.released_by_loop = bool(self._release.wait(self.GATE_TIMEOUT))
+            return data
+
+        def close(self):
+            self._handle.close()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.close()
 
     class FilesDouble:
         def __init__(self):
             self.calls = []
             self.handles = []
+            self.fraction = None
 
         def download_once(self, relpath, *, on_ready):
-            handle = DownloadHandle()
+            handle = DownloadHandle(on_ready=on_ready)
             self.calls.append((relpath, on_ready))
             self.handles.append(handle)
             return handle
+
+        def download_fraction(self):
+            return self.fraction
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -802,6 +855,59 @@ class FileDownloadTests(unittest.TestCase):
         download = self.download_type(self.files, self.cura, **kwargs)
         self.addCleanup(download.close)
         return download
+
+    def request_save(self, download, target, relpath="prints/part.gcode"):
+        """Drive a save request with the picker answered — the real
+        dialog cannot open offscreen."""
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            return download.request_save(relpath)
+
+    def streamed_file(self, payload="G1 X0\n", name="part.gcode"):
+        """The streamed source in its temp directory, as the one-shot
+        lane hands it to the terminal."""
+        directory = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-temp-"), "one-shot")
+        os.makedirs(directory)
+        path = os.path.join(directory, name)
+        pathlib.Path(path).write_text(payload, encoding="utf-8")
+        return path
+
+    def save_target(self, name="saved.gcode", payload=None):
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), name)
+        if payload is not None:
+            pathlib.Path(target).write_text(payload, encoding="utf-8")
+        return target
+
+    def publish(self, download, timeout=5.0):
+        """Drive the owner thread's loop until the save publication
+        lands: the finished stream is copied to the staging sibling on
+        a worker, and the terminal comes back through a queued signal,
+        so a test that called the stream's `finish` must pump."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.qt.events()
+            if download._save is None:
+                return True
+            time.sleep(0.005)
+        return download._save is None
+
+    def gated_copy(self, source, entered, release):
+        """Hold the copy open at its first source read: every opener in
+        the process (the chunk loop's own, or a copy helper's) is gated
+        on that one path, so the publication is inspectable while it
+        runs. The returned namespace carries the live gate."""
+        real_open = open
+        gate = SimpleNamespace(source=None)
+
+        def gated_open(path, mode="r", *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if str(path) == source and "r" in mode and "b" in mode:
+                gate.source = GatedSource(handle, entered, release)
+                return gate.source
+            return handle
+
+        return patch("builtins.open", gated_open), gate
 
     def test_a_synchronously_failed_download_does_not_accumulate(self):
         # The hardening pass: a constructor failure delivers its
@@ -831,7 +937,7 @@ class FileDownloadTests(unittest.TestCase):
         on_ready = self.files.calls[0][1]
         self.assertEqual(len(download._active), 1)
 
-        root = tempfile.mkdtemp(prefix="mpf-lease-")
+        root = tempfile.mkdtemp(prefix="mpfxtest-lease-")
         directory = os.path.join(root, "one-shot")
         os.makedirs(directory)
         path = os.path.join(directory, "part.gcode")
@@ -866,7 +972,7 @@ class FileDownloadTests(unittest.TestCase):
         download.failed.connect(failures.append)
         download.request("part.gcode")
         on_ready = self.files.calls[0][1]
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-stale-"), "part.gcode")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-stale-"), "part.gcode")
         pathlib.Path(path).write_text("G1 X0\n", encoding="utf-8")
 
         identity[0] = "B"
@@ -892,6 +998,561 @@ class FileDownloadTests(unittest.TestCase):
         download.close()
         self.assertEqual([handle.cancelled for handle in self.files.handles], [1, 1])
         self.assertEqual(download._active, set())
+
+    def test_request_save_writes_the_picked_path_and_never_loads(self):
+        # The live ruling: the file-manager Download is STRICTLY a file
+        # transfer — the stream lands at the picked path and nothing
+        # else observes it (no Cura load, no index, no state).
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            failures = []
+            download = self.download()
+            download.failed.connect(failures.append)
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        self.assertEqual(self.files.calls[0][0], "prints/part.gcode")
+        on_ready = self.files.calls[0][1]
+        root = tempfile.mkdtemp(prefix="mpfxtest-temp-")
+        directory = os.path.join(root, "one-shot")
+        os.makedirs(directory)
+        path = os.path.join(directory, "part.gcode")
+        pathlib.Path(path).write_text("G1 X0\n", encoding="utf-8")
+        on_ready(path, None)
+        self.assertTrue(self.publish(download))
+        self.assertEqual(failures, [])
+        self.assertEqual(download._active, set())
+        self.assertEqual(self.cura.loads, [])  # the save flow NEVER loads
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "G1 X0\n")
+        self.assertFalse(os.path.exists(directory))  # the temp root is cleaned
+
+    def test_request_save_cancel_starts_nothing(self):
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = ("", "")
+            download = self.download()
+            self.assertFalse(download.request_save("part.gcode"))
+        self.assertEqual(self.files.calls, [])
+        self.assertEqual(download._active, set())
+
+    def test_request_save_opens_the_picker_in_downloads_or_home(self):
+        # The picker's default lands in the OS Downloads directory
+        # (or home when none is exposed), carrying the file's name.
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.download().request_save("prints/part.gcode")
+            initial = dialog.getSaveFileName.call_args[0][2]
+        self.assertTrue(initial.endswith("part.gcode"), initial)
+        self.assertTrue(os.path.dirname(initial), "the picker opened without a directory")
+
+    def test_request_save_falls_back_to_home_without_downloads(self):
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            with patch.object(module.QStandardPaths, "writableLocation",
+                              side_effect=lambda location: (
+                                  "" if location == module.QStandardPaths.StandardLocation.DownloadLocation
+                                  else "/home/user")):
+                self.download().request_save("part.gcode")
+            initial = dialog.getSaveFileName.call_args[0][2]
+        self.assertTrue(initial.startswith("/home/user"), initial)
+
+    def test_request_save_failure_surfaces_without_a_file(self):
+        target = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode")
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            failures = []
+            download = self.download()
+            download.failed.connect(failures.append)
+            download.request_save("part.gcode")
+        on_ready = self.files.calls[0][1]
+        on_ready(None, "boom")
+        self.assertEqual(failures, ["boom"])
+        self.assertFalse(os.path.exists(target))
+
+    def test_progress_reports_the_streams_fraction_and_name(self):
+        # The progress window's payload: the one-shot operation's
+        # fraction as a percent and the picked file's name; None when
+        # nothing streams (the popup's gate).
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (
+                os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode"), "")
+            download = self.download()
+            self.assertIsNone(download.progress())
+            download.request_save("prints/part.gcode")
+        self.files.handles[0]._op = SimpleNamespace(received=42, size=100)
+        self.assertEqual(download.progress(),
+                         {"name": "part.gcode", "percent": 42, "received": 42,
+                          "total": 100, "indeterminate": False})
+
+    def test_an_unknown_total_keeps_the_window_open_and_indeterminate(self):
+        # The reviewer's B: a response without Content-Length used to
+        # empty the payload, which closed the popup and took the user's
+        # Cancel with it. The window now stays open — the name alone
+        # gates it — with the bytes received in place of a fraction and
+        # the indeterminate flag saying why.
+        download = self.download()
+        self.assertTrue(self.request_save(download, self.save_target()))
+        self.files.handles[0]._op = SimpleNamespace(received=512, size=0)
+        self.assertEqual(download.progress(),
+                         {"name": "part.gcode", "received": 512,
+                          "percent": 0, "total": 0, "indeterminate": True})
+
+    def test_the_total_arriving_mid_stream_turns_the_payload_determinate(self):
+        download = self.download()
+        self.assertTrue(self.request_save(download, self.save_target()))
+        handle = self.files.handles[0]
+        handle._op = SimpleNamespace(received=512, size=0)
+        self.assertTrue(download.progress()["indeterminate"])
+        handle._op.size = 2048  # the headers named a total after streaming started
+        self.assertEqual(download.progress(),
+                         {"name": "part.gcode", "received": 512,
+                          "percent": 25, "total": 2048, "indeterminate": False})
+
+    def test_progress_ignores_a_load_stream_and_an_idle_lane(self):
+        # The payload describes the SAVE stream alone: a load in flight
+        # must not lend its bytes or its progress to the save window.
+        download = self.download()
+        self.assertIsNone(download.progress())
+        download.request("part.gcode")
+        self.files.handles[0]._op = SimpleNamespace(received=50, size=100)
+        self.assertIsNone(download.progress())
+        # A save whose operation has not been built yet reads as
+        # nothing streaming rather than as a broken payload.
+        self.assertTrue(self.request_save(download, self.save_target()))
+        self.assertIsNone(download.progress())
+
+    def test_a_user_cancel_is_its_own_terminal(self):
+        # The reviewer's A: pressing Cancel is not a connection change.
+        # Every in-flight stream retires with the user-cancel message
+        # and the destination is never written.
+        target = self.save_target()
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        self.files.handles[0]._op = SimpleNamespace(received=50, size=100)
+        download.cancel()
+
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertEqual(self.files.handles[0].reasons, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual(download._active, set())
+
+    def test_a_load_stream_survives_the_save_windows_cancel(self):
+        # RC-05: the popup describes the SAVE transfer alone, so its
+        # Cancel retires that transfer alone. A load opened alongside
+        # was never cancelled by any UI the user touched, and killing
+        # it silently was the defect. Shutdown and the session door
+        # still retire everything (the two tests below).
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        download.request("load-me.gcode")
+        self.assertTrue(self.request_save(download, self.save_target(), "save-me.gcode"))
+        download.cancel()
+
+        self.assertEqual([handle.cancelled for handle in self.files.handles], [0, 1])
+        self.assertEqual([handle.reasons for handle in self.files.handles],
+                         [[], ["The download was cancelled"]])
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+        # The load is still streaming: only the save retired.
+        self.assertEqual(len(download._active), 1)
+
+        # The shutdown door still retires everything, load included.
+        download.close()
+        self.assertEqual([handle.cancelled for handle in self.files.handles], [1, 1])
+        self.assertEqual(download._active, set())
+
+    def test_a_shutdown_cancel_retires_quietly(self):
+        # Shutdown (the runtime closes this before the files service)
+        # retires the same way but reports nothing — no note line is
+        # left to read it.
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, self.save_target()))
+        download.close()
+
+        self.assertEqual(failures, [])
+        self.assertEqual(self.files.handles[0].cancelled, 1)
+        self.assertIsNone(download.progress())
+
+    def test_a_second_save_request_is_refused_while_one_streams(self):
+        # The reviewer's C: one save transfer at a time, refused
+        # outright rather than letting one name describe two streams —
+        # and refused BEFORE the picker opens.
+        module = self.qt.load("FileDownload")
+        target = self.save_target()
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("one.gcode"))
+            self.assertFalse(download.request_save("two.gcode"))
+            self.assertEqual(dialog.getSaveFileName.call_count, 1)
+        self.assertEqual(failures, [download.BUSY_MESSAGE])
+        self.assertEqual([call[0] for call in self.files.calls], ["one.gcode"])
+
+        # The window keeps tracking the transfer that IS running.
+        self.files.handles[0]._op = SimpleNamespace(received=1, size=10)
+        self.assertEqual(download.progress()["name"], "one.gcode")
+
+        # The slot frees with the terminal, so the next request lands.
+        self.files.handles[0].finish(None, "The download failed")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (self.save_target("two.gcode"), "")
+            self.assertTrue(download.request_save("two.gcode"))
+        self.assertEqual([call[0] for call in self.files.calls], ["one.gcode", "two.gcode"])
+
+    def test_a_cancelled_picker_leaves_the_save_slot_free(self):
+        module = self.qt.load("FileDownload")
+        download = self.download()
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = ("", "")
+            self.assertFalse(download.request_save("part.gcode"))
+        self.assertEqual(self.files.calls, [])
+        # Nothing latched: the next request is honoured.
+        self.assertTrue(self.request_save(download, self.save_target(), "part.gcode"))
+        self.assertEqual([call[0] for call in self.files.calls], ["part.gcode"])
+
+    def test_a_load_in_flight_does_not_block_a_save(self):
+        # The single-transfer policy is the SAVE lane's: a load into
+        # Cura is a different flow with its own terminal.
+        download = self.download()
+        download.request("load-me.gcode")
+        self.assertTrue(self.request_save(download, self.save_target(), "save-me.gcode"))
+        self.assertEqual([call[0] for call in self.files.calls], ["load-me.gcode", "save-me.gcode"])
+
+    def test_a_save_landing_after_a_printer_switch_never_reaches_the_disk(self):
+        # The reviewer's A, session half: an invalidated printer keeps
+        # its connection-change explanation and the destination the
+        # user already had is left exactly as it was.
+        identity = ["A"]
+        generation = [1]
+        target = self.save_target(payload="OLD\n")
+        download = self.download(active_identity=lambda: (identity[0], "Printer A"),
+                                 session_generation=lambda: generation[0])
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+
+        identity[0] = "B"
+        generation[0] = 2
+        self.files.handles[0].finish(source, None)
+
+        self.assertEqual(failures, ["The printer connection changed; the download was discarded"])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+        self.assertIsNone(download.progress())
+
+    def test_a_save_replaces_the_file_the_picker_selected(self):
+        # The reviewer's D: an existing destination is replaced by the
+        # completed transfer, with no staging left beside it.
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        target = os.path.join(root, "saved.gcode")
+        pathlib.Path(target).write_text("OLD\n", encoding="utf-8")
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+        self.files.handles[0].finish(source, None)
+        self.assertTrue(self.publish(download))
+
+        self.assertEqual(failures, [])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "NEW\n")
+        self.assertEqual(sorted(os.listdir(root)), ["saved.gcode"])
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+
+    def test_the_save_copy_leaves_the_owner_thread_free(self):
+        # RC-04: the finished stream used to be copied to the staging
+        # sibling ON the owner thread, so a large save onto a slow
+        # volume froze Cura's repaints, its Cancel and its close. The
+        # copy now runs on a worker: the real chunk loop is held open
+        # at its first read, and only the app's own event loop can
+        # release it — a copy on the owner thread could never reach
+        # the loop at all.
+        target = self.save_target(payload="OLD\n")
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        payload_bytes = "NEW\n" * 4096
+        source = self.streamed_file(payload_bytes)
+        self.files.handles[0]._op = SimpleNamespace(received=len(payload_bytes), size=len(payload_bytes))
+        entered, release = threading.Event(), threading.Event()
+
+        timer = self.qt.QTimer()
+        timer.setInterval(0)
+        timer.timeout.connect(release.set)
+        self.addCleanup(timer.stop)
+        timer.start()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)  # the owner-thread terminal
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            payload = download.progress()
+            self.assertIsNotNone(payload, "the progress window vanished before the copy finished")
+            self.assertEqual(payload["percent"], 100)
+            # A hang guard, not a budget: the invariant is that the
+            # owner thread CAN reach its loop while the copy is held,
+            # and on a starved runner a 3 s budget is a machine-speed
+            # assertion instead (the loaded 2-CPU rig's "the copy held
+            # the owner thread: the event loop never ran"). The loop
+            # gets scheduled when the machine gets round to it.
+            deadline = time.monotonic() + 15.0
+            while not release.is_set() and time.monotonic() < deadline:
+                self.qt.events()
+                time.sleep(0.005)
+
+        self.assertTrue(gate.source is not None and gate.source.released_by_loop,
+                        "the copy held the owner thread: the event loop never ran")
+        self.assertTrue(self.publish(download), "the publication never completed")
+        self.assertEqual(failures, [])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), payload_bytes)
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+
+    def test_the_bar_holds_at_full_until_the_file_is_published(self):
+        # The payload across the publication edge: the stream is
+        # complete but the bytes are not at the destination yet, so the
+        # bar holds full and the window stays open (clearing the save
+        # latch first is what made it vanish mid-stall).
+        target = self.save_target()
+        download = self.download()
+        self.assertTrue(self.request_save(download, target))
+        handle = self.files.handles[0]
+        handle._op = SimpleNamespace(received=5, size=10)
+        self.assertEqual(download.progress()["percent"], 50)
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            handle._op = SimpleNamespace(received=10, size=10)
+            handle.finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            self.assertEqual(download.progress(),
+                             {"name": "part.gcode", "percent": 100, "received": 10,
+                              "total": 10, "indeterminate": False})
+            release.set()
+            self.assertTrue(self.publish(download))
+        self.assertIsNone(download.progress())
+
+    def test_a_cancel_while_publishing_abandons_the_copy(self):
+        # The Cancel stays reachable until publication: while the copy
+        # runs the window still describes the transfer, so pressing it
+        # retires the stream and leaves the destination the user
+        # already had exactly as it was — staging included.
+        target = self.save_target(payload="OLD\n")
+        directory = os.path.dirname(target)
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            download.cancel()
+            release.set()
+            deadline = time.monotonic() + 5.0
+            while not failures and time.monotonic() < deadline:
+                self.qt.events()
+                time.sleep(0.005)
+
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+
+    def test_a_switch_during_the_publication_copy_never_lands(self):
+        # The reviewer's catch: the identity gate ran when the stream
+        # finished, BEFORE the copy to the destination's volume — and that
+        # copy can run for minutes. A printer switch landing mid-copy still
+        # published the retired printer's file over the user's destination
+        # with no note. The gate has to be re-read at publication time,
+        # immediately before the swap, so the same connection-change
+        # outcome the other stale terminals use is what the user sees.
+        identity = ["A"]
+        generation = [1]
+        target = self.save_target(payload="OLD\n")
+        directory = os.path.dirname(target)
+        download = self.download(active_identity=lambda: (identity[0], "Printer A"),
+                                 session_generation=lambda: generation[0])
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+        entered, release = threading.Event(), threading.Event()
+
+        gate_patch, gate = self.gated_copy(source, entered, release)
+        with gate_patch:
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(entered.wait(2.0), "the copy never started")
+            # Mid-copy: the printer is switched away AND the session rolls.
+            identity[0] = "B"
+            generation[0] = 2
+            release.set()
+            self.assertTrue(self.publish(download))
+
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+        self.assertEqual(failures, ["The printer connection changed; the download was discarded"])
+        self.assertIsNone(download.progress())
+
+    def test_a_failed_save_keeps_the_file_the_user_already_had(self):
+        # A failed landing is reported, never half-written: the swap is
+        # one atomic replace of a fully-copied staging file.
+        target = self.save_target(payload="OLD\n")
+        module = self.qt.load("FileDownload")
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("NEW\n")
+
+        with patch.object(module, "_replace_saved_file", side_effect=OSError("the disk is full")):
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(self.publish(download))
+
+        self.assertEqual(failures, ["The download could not be saved: the disk is full"])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "OLD\n")
+        self.assertFalse(os.path.exists(os.path.dirname(source)))
+
+    def test_a_refused_swap_clears_its_staging_and_leaves_the_destination_alone(self):
+        # The replace helper on its own, with a refusal the platform
+        # raises for real (a directory where the file should go): the
+        # staging file never survives a failed swap.
+        module = self.qt.load("FileDownload")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        blocked = os.path.join(root, "saved.gcode")
+        os.makedirs(blocked)
+        source = self.streamed_file("NEW\n")
+
+        with self.assertRaises(OSError):
+            module._replace_saved_file(source, blocked)
+
+        self.assertEqual(os.listdir(root), ["saved.gcode"])
+        self.assertEqual(os.listdir(blocked), [])
+        self.assertTrue(os.path.exists(source))  # the caller still owns the source
+
+    def test_a_staging_collision_moves_to_the_next_name(self):
+        # A file already sitting on the first staging name belongs to
+        # whoever made it: the save steps over it, never through it.
+        module = self.qt.load("FileDownload")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        target = os.path.join(root, "saved.gcode")
+        blocker = os.path.join(root, ".saved.gcode.mpf-part-1")
+        pathlib.Path(blocker).write_text("SOMEONE ELSE\n", encoding="utf-8")
+        source = self.streamed_file("NEW\n")
+
+        module._replace_saved_file(source, target)
+
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "NEW\n")
+        self.assertEqual(pathlib.Path(blocker).read_text(encoding="utf-8"), "SOMEONE ELSE\n")
+        self.assertEqual(sorted(os.listdir(root)), [".saved.gcode.mpf-part-1", "saved.gcode"])
+
+    def test_an_unremovable_staging_does_not_mask_the_real_failure(self):
+        # A staging file the platform refuses to delete (a locked file
+        # on Windows) must not change what the caller is told: the
+        # storage error that caused the failure is the one that
+        # surfaces.
+        module = self.qt.load("FileDownload")
+        root = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        blocked = os.path.join(root, "saved.gcode")
+        os.makedirs(blocked)
+        source = self.streamed_file("NEW\n")
+
+        with self.assertRaises(OSError) as raised:
+            with patch.object(module.os, "remove", side_effect=OSError("in use")):
+                module._replace_saved_file(source, blocked)
+
+        self.assertNotIn("in use", str(raised.exception))
+
+    def test_every_save_terminal_retires_what_this_lane_owns(self):
+        # The cleanup split, across all four terminals. A terminal that
+        # CARRIES a path (a success, or a stale completion) hands this
+        # lane a temp directory and this lane retires it; a pathless
+        # terminal was retired by the one-shot's own abort before it
+        # arrived (the service's tests pin that side). Either way the
+        # destination only ever appears through a successful swap.
+        identity = ["A"]
+        generation = [1]
+        for label in ("success", "failure", "user cancel", "printer switch"):
+            with self.subTest(terminal=label):
+                download = self.download(active_identity=lambda: (identity[0], "Printer A"),
+                                         session_generation=lambda: generation[0])
+                target = self.save_target("{}.gcode".format(label.replace(" ", "-")))
+                self.assertTrue(self.request_save(download, target))
+                handle = self.files.handles[-1]
+                # A path-carrying terminal only: the pathless ones never
+                # reach this lane with a directory to clean.
+                source = self.streamed_file("G1 X0\n") if label in ("success", "printer switch") else None
+                directory = os.path.dirname(source) if source is not None else None
+
+                if label == "success":
+                    handle.finish(source, None)
+                    self.assertTrue(self.publish(download), label)
+                elif label == "failure":
+                    handle.finish(None, "The download failed")
+                elif label == "user cancel":
+                    download.cancel()
+                else:
+                    identity[0] = "B"
+                    handle.finish(source, None)
+
+                if directory is not None:
+                    self.assertFalse(os.path.exists(directory), label)
+                self.assertEqual(download._active, set(), label)
+                self.assertIsNone(download.progress(), label)
+                self.assertEqual(os.path.exists(target), label == "success", label)
+
+    def test_the_save_flow_never_loads_or_leases_a_file(self):
+        # The author's ruling: Save is a file transfer and nothing
+        # else — no Cura load, no lease, no index.
+        module = self.qt.load("FileDownload")
+        target = self.save_target()
+        download = self.download()
+        self.assertTrue(self.request_save(download, target))
+        source = self.streamed_file("G1 X0\n")
+
+        with patch.object(module, "FileLease") as lease:
+            self.files.handles[0].finish(source, None)
+            self.assertTrue(self.publish(download))
+
+        self.assertFalse(lease.called)
+        self.assertEqual(self.cura.loads, [])
+        self.assertEqual(pathlib.Path(target).read_text(encoding="utf-8"), "G1 X0\n")
+
+    def test_cancel_retires_every_in_flight_stream(self):
+        module = self.qt.load("FileDownload")
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (
+                os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "saved.gcode"), "")
+            download = self.download()
+            download.request_save("one.gcode")
+        self.files.fraction = 0.5
+        download.cancel()
+        self.assertEqual([handle.cancelled for handle in self.files.handles], [1])
+        self.assertEqual(download._active, set())
+        self.files.fraction = None  # the real service clears on the terminal
+        self.assertIsNone(download.progress())
 
 
 # --------------------------------------------------------------------------
@@ -949,11 +1610,33 @@ class FollowerRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime_instance._closed)
 
     def test_the_smoothing_trace_lands_under_the_cache_directory_when_opted_in(self):
+        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
         with patch.dict(os.environ, {"MOONRAKER_FOLLOWER_SMOOTHING_TRACE": "smoothing.csv"}):
             _, follower = self.build()
         trace_path = follower._runtime.motion._trace_path
         self.assertEqual(pathlib.Path(trace_path).name, "smoothing.csv")
-        self.assertEqual(pathlib.Path(trace_path).parent.name, "MoonrakerPrintFollower")
+        self.assertEqual(pathlib.Path(trace_path).parent.name, CACHE_DIRECTORY_NAME)
+
+    def test_the_cache_directory_name_never_matches_the_package_id(self):
+        # The 2026-09-22 collision: Uranium's package purge deletes
+        # every child directory of the storage root named after the
+        # replaced package. The cache directory must never match the
+        # package ID, and the purge's own walk must leave it alone
+        # (the legacy name dies wholesale — that is exactly the bug).
+        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
+        self.assertNotEqual(CACHE_DIRECTORY_NAME, "MoonrakerPrintFollower")
+        with tempfile.TemporaryDirectory() as root:
+            legacy = os.path.join(root, "MoonrakerPrintFollower")
+            os.makedirs(os.path.join(legacy, "cache-v2"), exist_ok=True)
+            safe = os.path.join(root, CACHE_DIRECTORY_NAME)
+            os.makedirs(os.path.join(safe, "cache-v2"), exist_ok=True)
+            # The purge's recipe: any child dir matching the package
+            # being replaced is removed wholesale.
+            for name in os.listdir(root):
+                if name == "MoonrakerPrintFollower":
+                    shutil.rmtree(os.path.join(root, name))
+            self.assertTrue(os.path.isdir(safe),
+                            "the package purge reached the renamed cache")
 
     def test_the_migration_clean_and_the_toast_run_from_initialization_finished(self):
         binding_module = self.qt.load("PrinterBinding")
@@ -981,7 +1664,7 @@ class FollowerRuntimeTests(unittest.TestCase):
 
     def test_the_injected_savefile_write_reports_a_host_that_refuses(self):
         root = self.qt.load("FollowerRuntime")
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-save-"), "settings.json")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-save-"), "settings.json")
         self.assertTrue(root._savefile_write(path, "{}\n"))
         self.assertEqual(pathlib.Path(path).read_text(encoding="utf-8"), "{}\n")
 
@@ -991,7 +1674,7 @@ class FollowerRuntimeTests(unittest.TestCase):
 
     def test_the_state_lock_degrades_to_no_lock_when_the_host_lacks_one(self):
         root = self.qt.load("FollowerRuntime")
-        root_directory = tempfile.mkdtemp(prefix="mpf-lock-")
+        root_directory = tempfile.mkdtemp(prefix="mpfxtest-lock-")
         self.assertIsNotNone(root._state_lock(root_directory))
 
         lock_module = sys.modules["UM.LockFile"]

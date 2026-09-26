@@ -17,6 +17,7 @@ SCENARIO_MAP = {
     "MoonrakerFollowerMachineAction.saveConfig": "i6",
     "MoonrakerFollowerMachineAction.testConnection": "i2",
     "MoonrakerFollowerMachineAction.validAuxInterval": "i3",
+    "MoonrakerFollowerMachineAction.validCacheMax": "i3",
     "MoonrakerFollowerMachineAction.validConsoleInterval": "i3",
     "MoonrakerFollowerMachineAction.validPollInterval": "i3",
     "MoonrakerFollowerMachineAction.validRetryInterval": "i3",
@@ -38,6 +39,7 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.emergencyHoldStarted": "s7",
     "MoonrakerMonitorModel.emergencyStopClick": "s7",
     "MoonrakerMonitorModel.excludeObject": "b11",
+    "MoonrakerMonitorModel.restoreObject": "b11",
     "MoonrakerMonitorModel.extrude": "g4",
     "MoonrakerMonitorModel.firmwareRestart": "g9b",
     "MoonrakerMonitorModel.heatersOff": "g9b",
@@ -69,6 +71,8 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.runQuadGantryLevel": "g2",
     "MoonrakerMonitorModel.saveConfig": "i6",
     "MoonrakerMonitorModel.selectWebcam": "e2",
+    "MoonrakerMonitorModel.setWebcamStreamEnabled": "e2",
+    "MoonrakerMJPGImage.clearFrame": "e2",
     "MoonrakerMonitorModel.sendConsoleCommand": "d1",
     "MoonrakerMonitorModel.setBedMeshPreviewVisible": "h6",
     "MoonrakerMonitorModel.setBedMeshThresholds": "h6c",
@@ -91,6 +95,42 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setSectionLayout": "x3",
     "MoonrakerMonitorModel.sectionLayoutFor": "x1",
     "MoonrakerMonitorModel.setShowProbePoints": "h6b",
+    "MoonrakerMonitorModel.setFollowerShowPrevious": "b11",
+    "MoonrakerMonitorModel.setFollowerShowNext": "b11",
+    "MoonrakerMonitorModel.setFollowerShowBase": "b11",
+    "MoonrakerMonitorModel.setFollowerShowTravels": "b11",
+    "MoonrakerMonitorModel.setFollowerLineScale": "b11",
+    # The follower's view and layer seeks (4.6.0): the attach/detach
+    # freeze and the layer slider's anchor.
+    "MoonrakerMonitorModel.setFollowerAttached": "b11",
+    "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
+    # The slider's raw tick (the debounce's start for the seek trace).
+    "MoonrakerMonitorModel.seekAnchorTicked": "b11",
+    # The progress slider's within-layer scrub (the 4.6.0 request).
+    "MoonrakerMonitorModel.setFollowerLayerProgress": "b11",
+    # The native renderer's inputs (4.6.0 round 3): the view and the
+    # bed plot the raster bakes in.
+    "MoonrakerMonitorModel.setFollowerView": "b11",
+    "MoonrakerMonitorModel.setFollowerPlot": "b11",
+    # The owner-thread raster commit (an internal handler, not a
+    # QML-driven surface — exercised through the follower scenarios).
+    "MoonrakerMonitorModel._raster_committed": "b11",
+    # The worker's start report (the scheduler's superseded-before-
+    # start accounting — exercised through the follower scenarios).
+    "MoonrakerMonitorModel._raster_started": "b11",
+    # The seek-trace stage log (a diagnostics instrument, gated on
+    # the seek_trace config — exercised by the trace scenarios).
+    "MoonrakerMonitorModel._trace": "b11",
+    # The plate popovers' open states (the closed-surface freeze).
+    "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
+    "MoonrakerMonitorModel.setFollowerInteracting": "b11",
+    "MoonrakerMonitorModel.setFollowerGestureBake": "b11",
+    # The gesture's navigation-file hold: the face names the raster it
+    # is presenting so a mid-gesture supersede cannot unlink it.
+    "MoonrakerMonitorModel.setFollowerGestureRaster": "b11",
+    # The face's barrier report (the warm raster's hold diagnostic).
+    "MoonrakerMonitorModel.followerHoldReport": "b11",
+    "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",
     "MoonrakerMonitorModel.setSpeedFactor": "c2",
@@ -110,6 +150,59 @@ SCENARIO_MAP = {
     "MoonrakerPrintFollower.toggleFollowingPause": "h3",
     # The interactive items by objectName.
     "moonrakerTemperatureDetail": "v6",
+    "moonrakerPlateCanvas": "b11",
+    "moonrakerPlateExcludeFace": "b11",
+    "moonrakerPlateProgressFace": "b11",
+    "moonrakerPlateToolheadDot": "b11",
+    # The follower's own controls (4.6.0): the toolhead jump, the
+    # layer seek with its attach button and readout, and the
+    # display-only within-layer bar.
+    "moonrakerFollowerJump": "b11",
+    "moonrakerFollowerLayerSlider": "b11",
+    "moonrakerFollowerLayerReadout": "b11",
+    "moonrakerFollowerAttach": "b11",
+    "moonrakerFollowerLayerProgress": "b11",
+    "moonrakerFollowerLayerProgressReadout": "b11",
+    "moonrakerFollowerPauseButton": "b11",
+    "followerShowPrevious": "b11",
+    # The webcam pane's FPS/zoom controls (4.6.0): the bar, its chip
+    # readouts, the gesture area and the badges — the camera scenario.
+    "cameraBar": "e2",
+    "cameraBarChip": "e2",
+    "cameraBarChipText": "e2",
+    "cameraFpsBar": "e2",
+    "cameraFpsMarker": "e2",
+    "cameraFpsReadout": "e2",
+    "cameraFpsScale": "e2",
+    "cameraFrame": "e2",
+    "cameraGestureArea": "e2",
+    "cameraLiveBadge": "e2",
+    "cameraZoomBar": "e2",
+    "cameraZoomMarker": "e2",
+    "cameraZoomReadout": "e2",
+    "cameraZoomScale": "e2",
+    "followerShowNext": "b11",
+    "followerShowBase": "b11",
+    "followerShowTravels": "b11",
+    "followerLineScale": "b11",
+    "followerTravelVisualRatio": "b11",
+    # The popover's pause-at-layer block (4.6.0): the card's own
+    # schedule, read from the popover's own layer — the nine published
+    # keys, the three intents its controls send, and the button itself.
+    # b11 opens the popover over the live print and reads the block
+    # back off the model.
+    "pauseAtLayerActive": "b11",
+    "pauseAtLayerCandidate": "b11",
+    "pauseAtLayerCanToggle": "b11",
+    "pauseAtLayerScheduled": "b11",
+    "pauseAtLayerSummary": "b11",
+    "pauseAtLayerItems": "b11",
+    "pauseAtLayerUnavailableText": "b11",
+    "pauseAtLayerHasBaked": "b11",
+    "pauseAtLayerHasClearable": "b11",
+    "MoonrakerMonitorModel.togglePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.removePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.clearPauseAtLayer": "b11",
     "sectionConfigurePopOver": "x1",
     "sectionConfigureRowTitle": "x1",
     "configureControlsSectionsButton": "x1",
@@ -174,6 +267,15 @@ SCENARIO_MAP = {
     "printConfirmStartButton": "f6",
     "deleteConfirmDeleteButton": "f3",
     "renameConfirmButton": "f7",
+    # The replace prompt (the card's own dialog): h2 asks, cancels and
+    # asks again, so all three surfaces ride that one scenario — the
+    # cancel surface has no other caller.
+    "moonrakerReplacePrompt": "h2",
+    "moonrakerReplaceCancelButton": "h2",
+    # Its PRESS lives in the preview leg: h2 answers by keyboard
+    # (Escape, then Return) so both keyboard answers are witnessed,
+    # and p1 presses the same button with the mouse.
+    "moonrakerReplaceConfirmButton": "p1",
     # The protocol endpoints: the simulator's contract test owns the
     # wire shapes; the scenarios drive them through the real UI.
     "status_endpoint": "b1", "websocket_endpoint": "a1",
@@ -197,6 +299,7 @@ PREFIX_RULES = [
     ("slot", "MoonrakerMonitorModel.setFile", "f1"),
     # The camera slots ride the camera-group scenario.
     ("slot", "MoonrakerMonitorModel.cameraRenderStalled", "e2"),
+    ("slot", "MoonrakerMonitorModel.setCameraFps", "e2"),
     # The published keys by family.
     ("key", "console", "d1"),
     ("key", "camera", "e2"),
@@ -204,6 +307,8 @@ PREFIX_RULES = [
     ("key", "fan", "c2"),
     ("key", "fileManager", "f1"),
     ("key", "fileUpload", "f2"),
+    ("key", "fileDownloadProgress", "f2"),
+    ("slot", "MoonrakerMonitorModel.fileDownloadCancel", "f2"),
     ("key", "filePrint", "f6"),
     ("key", "fileDelete", "f3"),
     ("key", "fileRename", "f5"),
@@ -231,6 +336,7 @@ PREFIX_RULES = [
     ("key", "canSaveConfig", "i6"),
     ("key", "webcamNames", "e2"),
     ("key", "activeWebcamIndex", "e2"),
+    ("key", "webcamStreamEnabled", "e2"),
     ("key", "speedFactorPercent", "c2"),
     ("key", "flowFactorPercent", "c2"),
     ("key", "ledItems", "c3"),
@@ -238,7 +344,23 @@ PREFIX_RULES = [
     ("key", "fanControlItems", "c2"),
     ("key", "fanItems", "c2"),
     ("key", "filamentSensorItems", "c4"),
-    ("key", "excludeObjectItems", "b11"),
+    ("key", "plateObjects", "b11"),
+    ("key", "plateDot", "b11"),
+    ("key", "plateLayers", "b11"),
+    ("key", "plateSplit", "b11"),
+    ("key", "plateProgressAnchor", "b11"),
+    ("key", "plateProgressAvailable", "b11"),
+    ("key", "plateProgressReason", "b11"),
+    ("key", "plateHasObjects", "b11"),
+    ("key", "plateLayerMotionCount", "b11"),
+    ("key", "plateLiveLayers", "b11"),
+    ("key", "plateLiveSplit", "b11"),
+    ("key", "plateLiveAnchor", "b11"),
+    ("key", "plateLiveAvailable", "b11"),
+    # The layer slider's range and the follower's follow state (4.6.0).
+    ("key", "plateLayerCount", "b11"),
+    ("key", "followerAttached", "b11"),
+    ("key", "followerLayerAnchor", "b11"),
     ("key", "zOffset", "g4"),
     ("key", "homedAxes", "b8"),
     ("key", "positionMode", "g3"),
@@ -263,6 +385,12 @@ PREFIX_RULES = [
     ("key", "nextPauseFraction", "h8"),
     ("key", "nextPauseLayer", "h8"),
     ("key", "nextPauseBaked", "h8"),
+    ("key", "platePassFraction", "h8"),
+    ("key", "plateScrubVector", "h8"),
+    ("key", "plateLiveScrubVector", "h8"),
+    ("key", "plateNavigationData", "h8"),
+    ("key", "plateNavigationSplit", "h8"),
+    ("key", "plateNavigationBacking", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),
@@ -282,7 +410,7 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
-    # The T0-T9 cold-camera timing chain (the reviewer's diagnostics):
+    # The T0-T9 cold-camera timing chain:
     # the QML-invoked first-frame slot and the trace-gate key are
     # instrumentation, never scenario verbs.
     "MoonrakerMonitorModel.cameraFirstFrameRendered": {
@@ -452,6 +580,16 @@ EXCLUSIONS = {
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
     },
+    # The follower popover's own pause list: the same seam as the
+    # card's model above — the b11 scenario reads the block off the
+    # live model and the rows through the list view, never the model
+    # object itself.
+    "moonrakerFollowerPauseListModel": {
+        "reason": "probe seam for the popover list's in-place sync; no scenario reads the model object itself",
+        "evidence": "b11 reads the published pause block off the model and the QML syncs it into this model in place",
+        "date": "2026-09-25",
+        "recheck": "a popover pause-row scenario that presses the row's ✕ lands",
+    },
     # The status column's two geometry address points (the status-width
     # fix): the flickable and the column it holds are measured, never
     # pressed — a scenario would only be reading their rects.
@@ -491,6 +629,15 @@ EXCLUSIONS = {
         "evidence": "capture_monitor.py samples the track's print fill through it on every make all",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the job section's stacked track directly",
+    },
+    # The background optimisation's sweep: a passive scanline on the
+    # same stacked track, asserted through the model value rather than
+    # rendered pixels (it vanishes at completion).
+    "optimisationBand": {
+        "reason": "the job section's optimisation scanline is styling, not a scenario surface",
+        "evidence": "test_composed_components.test_the_job_bar_band_tracks_the_prepared_share pins the value; the census pins the visibility",
+        "date": "2026-09-21",
+        "recheck": "a scenario asserts the optimisation band's rendered state",
     },
     # The drag GESTURE stays excluded: the synthetic drag cannot drive
     # a QML MouseArea grab under Xvfb (the console-resize precedent).
@@ -645,6 +792,12 @@ EXCLUSIONS = {
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
     },
+    "downloadProgressCancelButton": {
+        "reason": "the download popup's chrome — the scenario addresses the cancel verb directly (fileDownloadCancel), the button rides the same flow",
+        "evidence": "the model coverage presses the cancel verb; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-20",
+        "recheck": "the deferred popup round lands",
+    },
     "printTimePopup": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
@@ -740,5 +893,33 @@ EXCLUSIONS = {
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
+    },
+    # The prefix handover's two Images (the composition transaction):
+    # identity address points for the real-engine ownership read, which
+    # proves no beat of a boundary advance leaves the interior to the
+    # canvas's bitmap alone. No scenario presses an Image.
+    "moonrakerPlatePrefixImage": {
+        "reason": "the live replacement in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
+    "moonrakerPlateRetainedPrefixImage": {
+        "reason": "the retained record in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
+    # The zoom rail down the plate's edge: raised only by a wheel or a
+    # right-drag, and the harness's input set carries neither — the
+    # same limit moonrakerFollowerJump's absent-wait records. No
+    # scenario can reach it, so it carries an exclusion rather than a
+    # mapping. The name exists for the Qt suite, which addresses it to
+    # take it out of the miter stroke census's frame.
+    "moonrakerPlateZoomScope": {
+        "reason": "the plate's zoom rail: raised only by a wheel or a right-drag, neither of which the harness input set carries",
+        "evidence": "test_zoom_raster_real_engine.py's chrome exclusion in the miter stroke census",
+        "date": "2026-09-24",
+        "recheck": "the harness gains wheel or drag input over the plate face",
     },
 }

@@ -19,6 +19,7 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
+from .CacheNamespaces import CACHE_DIRECTORY_NAME
 from .FollowController import FollowMode
 from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
@@ -202,6 +203,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().trace_layer
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsSeekTrace(self) -> bool:
+        return self._config().seek_trace
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsMemoryDiagnosticsLog(self) -> bool:
         return self._config().memory_diagnostics_log
 
@@ -247,6 +252,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=settingsChanged)
     def settingsZTolerance(self) -> str:
         return f"{self._config().z_tolerance:.3f}"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsCacheMaxMb(self) -> str:
+        return str(self._config().cache_max_mb)
 
     # ------------------------------------------------------------------
     # Integrated Moonraker output settings
@@ -382,6 +391,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return 0.005 <= number <= 0.250
 
     @pyqtSlot(str, result=bool)
+    def validCacheMax(self, value: str) -> bool:
+        try:
+            size = int(str(value).strip())
+        except (TypeError, ValueError):
+            return False
+        return 16 <= size <= 4096
+
+    @pyqtSlot(str, result=bool)
     def validRetryInterval(self, value: str) -> bool:
         try:
             number = float(str(value).strip())
@@ -411,6 +428,9 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
                 tolerance = float(str(raw.get("z_tolerance", "")).strip())
                 retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
+                raw_cache = str(raw.get("cache_max_mb") or "").strip()
+                cache_max = int(raw_cache) if raw_cache \
+                    else getattr(self._config(), "cache_max_mb", 512)
             except ValueError as exc:
                 Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
                 return False
@@ -427,6 +447,9 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 return False
             if not (0.1 <= retry_interval <= 60.0):
                 Logger.log("w", "Moonraker settings save refused: retry interval out of range")
+                return False
+            if not (16 <= cache_max <= 4096):
+                Logger.log("w", "Moonraker settings save refused: cache size out of range")
                 return False
             if enabled and not self._url_is_usable(url):
                 Logger.log("w", "Moonraker settings save refused: the URL is not usable")
@@ -456,6 +479,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "poll_interval_ms": interval,
                 "aux_interval_ms": aux_interval,
                 "console_interval_ms": console_interval,
+                "cache_max_mb": cache_max,
                 "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),
@@ -465,6 +489,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "eta_learn": bool(raw.get("eta_learn", False)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
+                "seek_trace": bool(raw.get("seek_trace", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
                 "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
                 "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
@@ -593,20 +618,52 @@ class MoonrakerFollowerMachineAction(MachineAction):
             self._set_test_state(f"Invalid printer-object response: {exc}", busy=False)
 
     def _cache_root(self) -> str:
-        # Same composition as FollowerRuntime's cache directory: the
-        # persistent index cache and the diagnostics traces live under
-        # it. The session's downloaded FILE is a temp directory and
-        # disappears when Cura exits.
-        return os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
+        # Same composition as FollowerRuntime's cache directory (the
+        # shared constant): the persistent index cache and the
+        # diagnostics traces live under it. The session's downloaded
+        # FILE is a temp directory and disappears when Cura exits.
+        return os.path.join(Resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
 
     @pyqtSlot()
     def clearCache(self) -> None:
         """The Diagnostics tab's cache-clear: drop the persistent index
         cache so the next Improve-ETA re-downloads and re-indexes (a
-        request for a re-testable download flow)."""
+        request for a re-testable download flow). The sweep covers
+        EVERY generation the plugin ever used — the legacy
+        package-ID-named directory included — never only the current
+        cache-v2 subtree (the live ruling)."""
         try:
-            shutil.rmtree(self._cache_root(), ignore_errors=True)
-            self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
+            # The coordinated lifecycle (the review's cache-clear
+            # finding): the index service retires its active work
+            # and its writer FIRST — the invalidate cancels the
+            # worker, freezes the prepared writer and bumps the
+            # generation — so no worker holds a file the sweep is
+            # about to delete. Then the sweep removes EVERY
+            # generation the plugin ever used: the legacy
+            # package-ID-named directory AND the current renamed one
+            # (the live ruling — never only the cache-v2 subtree).
+            # A directory that refuses to go (Windows file locks
+            # from a retiring worker) is REPORTED, never silently
+            # ignored.
+            invalidate = getattr(self._follower, "invalidateIndex", None)
+            if invalidate is not None:
+                invalidate()
+            refused = []
+            for path in (os.path.join(Resources.getCacheStoragePath(),
+                                      "MoonrakerPrintFollower"),
+                         self._cache_root()):
+                try:
+                    shutil.rmtree(path)
+                except FileNotFoundError:
+                    pass  # an absent generation is a successful clear
+                except OSError:
+                    refused.append(path)
+            if refused:
+                self._cache_status = ("Cache partially cleared — some files could not "
+                                      "be removed. Restart Cura to also drop the "
+                                      "session's downloaded file.")
+            else:
+                self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
         except Exception as error:
             Logger.log("w", "Moonraker Print Follower: cache clear failed: %s", error)
             self._cache_status = "Could not clear the cache — see Cura's log."

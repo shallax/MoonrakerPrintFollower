@@ -1,0 +1,10 @@
+# Codecov: the plugin is what ships, so the plugin is what is measured.
+#
+# The coverage job already uploads a report written with
+# `--include="plugins/*"` (ci.yml, "Run the suite under coverage"), so
+# this does not change a number today — it is the guard that keeps
+# tests/ and tools/ out of the report if that upload ever broadens, and
+# it states the intent where a reader of the report will look for it.
+ignore:
+  - "tests"
+  - "tools"

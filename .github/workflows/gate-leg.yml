@@ -33,6 +33,18 @@ permissions:
   contents: read
   packages: write
 
+# Every python process in these jobs runs unbuffered. A step whose
+# output lands only when the process exits is unreadable while it runs —
+# and on a matrix of 51 legs that is most of the wait. Set as an
+# environment variable rather than -u at each call site so it reaches
+# the nested ones too (docker_dev.sh's container, the harness scripts).
+env:
+  PYTHONUNBUFFERED: "1"
+  # Python's UTF-8 mode: on the Windows runners the default stdio codec
+  # is cp1252, which cannot encode the tick and cross every verdict line
+  # carries. This is the declarative half; the runners also reconfigure
+  # their own streams so they hold wherever they are invoked.
+  PYTHONUTF8: "1"
 jobs:
   leg:
     runs-on: ${{ inputs.os }}
@@ -257,6 +269,16 @@ jobs:
             Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1
           }
           if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
+
+      # The verdict panel for this job's page. GitHub shows a job as a
+      # name and a dot; the leg's own log buries the outcome under a
+      # hundred progress lines, so the summary states it first and the
+      # detail under it. `always()` because a failed leg is exactly when
+      # this matters most.
+      - name: Summarise the unit
+        if: always()
+        shell: bash
+        run: python tools/gate_summary.py "$GALLERY" "${{ inputs.os }} ${{ inputs.unit }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the unit's gallery
         if: always()

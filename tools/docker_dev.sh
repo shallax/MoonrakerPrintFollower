@@ -30,23 +30,16 @@ if [ -f "$root/.git" ]; then
     # commondir file — git needs that path inside the container too.
     common_gitdir="$(git rev-parse --git-common-dir)"
 fi
-# Prefer BuildKit where the host has buildx (the modern builder);
-# fall back to the legacy builder elsewhere, dropping its deprecation
-# chatter — the build works fine either way, and a real failure still
-# surfaces either way.
-if docker buildx version >/dev/null 2>&1; then
-    docker buildx build --load -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
-        echo "docker buildx build failed" >&2
-        exit 1
-    }
-else
-    build_log="$(docker build -q -t moonraker-print-follower-dev . 2>&1 >/dev/null)" || {
-        printf '%s\n' "$build_log" >&2
-        exit 1
-    }
-    printf '%s\n' "$build_log" \
-        | grep -vE "legacy builder is deprecated|Install the buildx component|docs.docker.com/go/buildx" || true
-fi
+# The build goes through the retrying helper (the apt step fails on a
+# bad mirror often enough to be worth three attempts); the legacy
+# builder's deprecation chatter is dropped, since the build works fine
+# either way and a real failure still surfaces.
+build_log="$("$root/tools/build_image.sh" moonraker-print-follower-dev . 2>&1 >/dev/null)" || {
+    printf '%s\n' "$build_log" >&2
+    exit 1
+}
+printf '%s\n' "$build_log" \
+    | grep -vE "legacy builder is deprecated|Install the buildx component|docs.docker.com/go/buildx|retrying" || true
 # Warm-container reuse: a named container (make dev_up) survives between
 # commands, so repeated gates skip the create/teardown churn. The reuse
 # is image-aware — after a rebuild (a --pull'd base, a Dockerfile

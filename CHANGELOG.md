@@ -2,6 +2,133 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.6.0
+
+Version 4.6.0 is the plate release: the Monitor now draws your build
+plate — every object where the slicer defined it — so a failure
+mid-print points at a place on the plate instead of a name in a list.
+The print follower lands beside it, drawing the print's own layers on
+the same plate, and the prepared geometry gains a per-print home on
+disk.
+
+- **The plate map.** The object polygons Moonraker reports for the
+  printer's `exclude_object` status, drawn to scale on the bed:
+  included objects in the text colour, the object printing right now
+  in the theme's accent, excluded objects red, and the objects the
+  print has already visited green while the print's index is
+  available. An object whose definition carries no usable polygon
+  degrades to a centre point with a generous hit radius instead of
+  vanishing. The section sits in the Information pane as a glance
+  whose slot is always reserved — the plate arriving mid-print never
+  reflows the pane — and a click on it opens the picker pop-over.
+- **Triple-click excludes, and restores.** The gesture is the
+  confirmation: excluding an object asks no question, and the old
+  per-name action and its dialog are gone. The pop-over's permanent
+  line counts the clicks ("Click again to exclude (2 of 3)") and
+  names the direction while a command is in flight, and the outcome —
+  a refusal included — lands in the status line rather than silently.
+  A restore sends Klipper's own name-scoped reset
+  (`EXCLUDE_OBJECT RESET=1 NAME=…`), never a bare reset that would
+  clear the whole plate, and a second gesture on the same object
+  while one is in flight says so instead of doubling the command.
+- **The object list becomes the map.** The old list of names is
+  removed: the picker is the control surface, and hovering an object
+  reads its name and state ("part_A — current"). The hover readout,
+  the click counter and the gesture hint share one permanent line, so
+  the map never reflows under the pointer.
+- **The print follower.** A second Information-pane section draws
+  what the printer is actually doing: the previous and next layers
+  ghosted, the current layer's printed portion filling in at the poll
+  cadence, and the live toolhead on the plate. Feature colours come
+  from the motion index's own per-motion types — walls, skin, infill
+  and the rest, with a key under the map — and travel moves are one
+  switch, off by default.
+- **The follower is a tool, not a picture.** Zoom and pan the plate;
+  the Layer slider seeks any layer and the seek is itself the detach;
+  the Layer-progress slider plays the frozen layer through by hand;
+  the line thickness scales from 0.5× to 2×; **Jump to toolhead** and
+  **Keep toolhead centred** hold the live position at a zoom; and
+  Detach/Attach is explicit. The view re-rasters once the interaction
+  settles instead of on every tick.
+- **The follower can schedule a pause.** Slide the pop-over's Layer
+  slider to a layer and the button at the foot of the schedule offers
+  the END of that layer: one press schedules it, and the same button
+  becomes its removal. Beside it sits the schedule itself — every
+  pause with its own ETA ("in 31m · ≈14:32"), a row's ✕ cancelling
+  that one pause and **Clear** cancelling the rest of what you
+  scheduled, with the countdown following the print as it runs. A
+  pause the printer has already taken dims to "passed"; one whose
+  moment went by untaken stays listed as "pause not taken" rather
+  than vanishing, and a layer already printed or the print's final
+  layer has nothing to offer. The plugin fires the pauses you
+  schedule here, sending Klipper's `PAUSE` as the print crosses the
+  layer, so the follower must be watching the print for one to land.
+  A pause the gcode itself carries is listed too, marked "baked" and
+  read-only — that one belongs to the slicer and cannot be cancelled
+  from the list.
+- **The follower tracks the print's real position.** The live layer's
+  motion arrays now hydrate for every layer the follower serves — a
+  cache-served layer used to keep them empty forever, and the live
+  progress fell back to a byte-count estimate that drifted, stalled,
+  jumped and overshot. The stall-and-snap cycles are gone: the fill
+  tracks the toolhead on the real geometry.
+- **The follower follows on cadences, not per poll.** While attached,
+  the warm navigation raster bakes at most once every three seconds —
+  stamped when the bake starts, so a slow render can never starve the
+  schedule — and the printed prefix checkpoints every five seconds
+  while the QML paints the tail between them. Attaching no longer
+  re-renders the plate on every update.
+- **Panning freezes the picture, not the toolhead.** While a drag is
+  held, new lines stop painting and the view stays on the warm
+  raster; the toolhead dot keeps moving — the one exception.
+  Releasing the drag is the single resume trigger: the picture catches
+  up with the print and the raster updates return. The lines printed
+  since the raster's last bake ride the pan as a carried tail painted
+  at the raster's own resolution, so the pan starts on the first
+  movement with the complete current picture — no snap-back, no
+  dead-start — and two quick pans in a row can no longer wedge the
+  drags.
+- **The prepared geometry gets its own home.** Each printer's
+  prepared layers and G-code index share one folder per print under
+  that machine's own cache namespace: a print reopened from the
+  picker skips the whole preparation walk, a clean close checkpoints
+  the part-prepared work for the next session, and eviction drops
+  whole prints, least-recently-used first. The Diagnostics tab
+  carries the per-printer size limit (512 MiB by default, 16-4096)
+  beside the clear-cache button, which still clears every printer.
+- **The preparation pass shows its progress.** The Print-job bar
+  carries a teal sweep for the background optimisation's share,
+  and it vanishes when the pass completes.
+- **The background pass stops holding the interface.** The G-code
+  parse and the preparation workers hand the interpreter back on a
+  wall-clock gate instead of a line count, so a dense file no longer
+  starves the UI thread for the length of the pass — what a frozen
+  window measures is the time between hand-backs, and that no longer
+  grows with the layer. A layer the follower demands is written to the
+  prepared store by the worker that encoded it rather than by the
+  interface thread, and a running pass publishes its progress at the
+  rate the bar reads while the full refresh is kept for the phase, the
+  completion and the failures.
+- **The temperature chart's own clock.** The chart samples on a fixed
+  one-second cadence instead of following the auxiliary delivery
+  slider, whose fast settings used to cut the advertised 30-minute
+  window down to minutes. A slower delivery holds the last value as a
+  truthful step, the feed pauses while disconnected so a reconnect
+  re-arms the window, and the Temps readouts still follow the slider —
+  the chart can read fresher than the numbers above it.
+- **Fixes:** rapid X/Y jog taps can no longer overshoot their maxima
+  (the projections are per axis now), the settings dialog's sliders
+  grab the handle from either side and keep the keyboard while a save
+  applies, and zooming the follower no longer freezes its updates
+  after the zoom settles — a wheel-only gesture had no release to
+  resume the publications with.
+- **Known limitations:** on macOS, a layer-boundary advance can show
+  one bare frame in the plate interior — the frame where the retained
+  prefix's own rule stands down because the canvas's texture has
+  committed while its painted coverage is still zero. Documented and
+  pinned by the gap census, not fixed: a fix needs the scene's
+  committed frame, not a flag.
+
 ## 4.5.0
 
 Version 4.5.0 is the persistence release: the plugin's settings leave

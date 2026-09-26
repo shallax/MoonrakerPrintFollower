@@ -201,6 +201,31 @@ class TestingDocPinTests(unittest.TestCase):
                        "orchestrates the whole release gate"):
             self.assertNotIn(phrase, text, phrase)
 
+    def test_the_capture_gate_and_its_cost_are_documented(self):
+        # The macOS legs run without pictures. The document is where a
+        # reader learns an empty mac gallery is by design rather than a
+        # broken harness, and the cost is stated rather than implied —
+        # a caveat that quietly disappears is worse than none.
+        text = self._doc()
+        self.assertIn("macOS legs run without pictures", text)
+        self.assertIn("macOS has no visual-regression detection in CI", text)
+        self.assertIn("HARNESS_CAPTURE=on", text)
+        # The liveness verdict rides the leg rather than the platform, and
+        # what a miss MEANS there is documented beside the gate rather
+        # than folded into its cost: a judged stall where the leg reads
+        # its screen, a report-only diagnostic where it does not.
+        self.assertIn("The renderer-liveness verdict rides the leg, not the platform", text)
+        self.assertIn("report-only diagnostic", text)
+        self.assertIn("HEARTBEAT REPORT-ONLY", text)
+        self.assertIn("frames_outcome", text)
+        # The heartbeat itself: what it forces, and the limitation that
+        # keeps the software-rendered platform report-only.
+        self.assertIn("mpfLivenessHeartbeat", text)
+        self.assertIn("No macOS hardware validation is possible here", text)
+        # The still-span rule's own change, which is what clears the
+        # windows group-status red without retiring the check.
+        self.assertIn("A still span nobody drove is not judged", text)
+
 
 if __name__ == "__main__":
     unittest.main()

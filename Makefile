@@ -19,6 +19,12 @@ help:
 	@echo "                       pinned container (no tests, no captures)"
 	@echo "run_tests              the full test suite: stdlib on the host, then"
 	@echo "                       the real-Qt suite in the container"
+	@echo "test_files             a CHOSEN list of test files, one process per"
+	@echo "                       file, run in PARALLEL in the container — use"
+	@echo "                       this instead of one unittest with many files,"
+	@echo "                       which runs them serially (the Qt files also"
+	@echo "                       need their own process)"
+	@echo "                       (make test_files FILES=\"tests.test_monitor tests.test_index\")"
 	@echo "generate_screenshots   regenerate the canonical captures in the"
 	@echo "                       container and refresh the committed copies"
 	@echo "verify_captures        two capture runs in the pinned container must be"
@@ -54,10 +60,19 @@ lint:
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
+	    && wget -qO /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+	    && tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint \
+	    && /tmp/actionlint .github/workflows/*.yml \
 	    && gitleaks detect --no-git --no-banner --redact"
 
 run_tests:
 	./tools/run_tests.sh
+
+test_files:
+	@test -n "$(FILES)" || { \
+	    echo 'usage: make test_files FILES="tests.test_monitor tests.test_index"'; \
+	    exit 2; }
+	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) tools/run_some.sh $(FILES)"
 
 dev_install:
 	./tools/install_dev.sh

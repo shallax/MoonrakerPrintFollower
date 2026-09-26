@@ -69,6 +69,21 @@ def fake_status(state="printing"):
                 [-0.01, 0.02, 0.05, 0.08, 0.11],
             ],
         },
+        # The plate's seed (4.6.0): a constant three-object plate so
+        # the capture legs render the map deterministically — the same
+        # payload in both determinism legs (the engineering F15 rule).
+        "exclude_object": {
+            "objects": [
+                {"name": "BENCHY_STL", "center": [62.0, 62.0],
+                 "polygon": [[42.0, 42.0], [42.0, 82.0], [82.0, 82.0], [82.0, 42.0]]},
+                {"name": "BENCHY_STL_1", "center": [125.0, 125.0],
+                 "polygon": [[105.0, 105.0], [105.0, 145.0], [145.0, 145.0], [145.0, 105.0]]},
+                {"name": "BENCHY_STL_2", "center": [188.0, 62.0],
+                 "polygon": [[168.0, 42.0], [168.0, 82.0], [208.0, 82.0], [208.0, 42.0]]},
+            ],
+            "excluded_objects": ["BENCHY_STL_1"],
+            "current_object": "BENCHY_STL_2",
+        },
     }
 
 
@@ -189,6 +204,16 @@ def main():
                                                            "target": 45.0, "power": 0.2}
                 model._data._update(auxiliary=auxiliary)
                 model._data.auxiliaryChanged.emit()
+                # The chart's series feeds from the 1 s ticks — never
+                # from the data updates — so observe it HERE with the
+                # frozen clock, or the scenes' event pump would fill
+                # it with live-ticked samples stamped with the real
+                # wall minute (the 01/07 byte drift CI's compare
+                # catches: the axis clock text carried the capture's
+                # own minute, and the curve's extent carried the
+                # pump's duration).
+                model._history.observe(auxiliary, tick[0],
+                                       1700000000.0 + tick[0])
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")
         model.sendConsoleCommand("M104 S210")
@@ -206,6 +231,12 @@ def main():
             if entry["kind"] == "command":
                 entry["saved"] = False
         console.changed.emit()
+
+        # The seeded history is the chart's whole story: stop the tick
+        # before the scenes pump the event loop, or a live sample
+        # stamped with the real wall minute lands on top of the frozen
+        # series (the console's settle timer above froze the same way).
+        model._chart_timer.stop()
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
         # `or`, not a get() default: an empty CAPTURE_THEME is a value,
@@ -471,7 +502,13 @@ def main():
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
                    for y in range(5, int(chart.height()), 4)}
-        if len(colours) < 12:
+        # The mini is a SPARKLINE (2 grid lines, flat series, no
+        # labels): its correct signature is the background, the grid
+        # and at least ONE series colour — the old 12-colour floor
+        # dated from the full chart's gradient era and flagged the
+        # correctly-rendered mini as blank (the 2026-09-22 capture
+        # failure: 4 colours, two of them the drawn series).
+        if len(colours) < 3:
             raise RuntimeError("mini chart region looks blank (%d colours)" % len(colours))
         print("mini chart region colours:", len(colours))
         for _ in range(3):

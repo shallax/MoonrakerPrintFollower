@@ -13,6 +13,87 @@ with its regression, live-tested through the snapshot loop.
 Next: **4.1.0** — deep harness coverage, extended by the round-1
 critic and the architecture review (see the 4.1.0 section).
 
+## 4.6.0 — the next release (proposals)
+
+- **Codecov test analytics.** The CI already ships coverage; the test
+  RESULTS now follow: the Python legs write a JUnit report
+  (tools/unittest_junit.py) and upload it through
+  codecov/test-results-action@v1 (token `secrets.CODECOV_TOKEN`), so
+  per-test pass/fail history becomes visible in Codecov instead of
+  only in the job logs. Landed on the 4.6.0 branch.
+
+- **Exclude objects — the plate at a glance (Phase-0 walk, 2026-09-19/20).**
+  The exclude-object surface is rebuilt around one shared 2D plate
+  canvas with two faces, and the design pass starts from live-printer
+  evidence captured first (the direction's ordering held). Read-only
+  captures from a live 50-copy plate on the Voron established: the
+  slicer's EXCLUDE_OBJECT_DEFINE lines carry CENTER/POLYGON for every
+  object (49/49), the DEFINE block's order is spatial while the name
+  numbering counts 1–50 (name order is meaningless mid-print —
+  position is the only honest identity), the live Moonraker exposes
+  no exclude endpoint (the gcode-plus-status path the plugin already
+  uses is the only route), current_object is always set mid-print
+  with ~9–10 s turnover per object, and print_stats carries no layer
+  on this setup (the plugin's own index is the layer anchor). The
+  interactive exclude/undo exercise is deferred to a short
+  sacrificial print — the 30-hour live plate is never mutated.
+
+  The rulings (walked and accepted):
+
+  - The Objects section becomes a pure readout — names, the current
+    object highlighted, excluded objects flagged red, excluded past
+    the grace window flagged grey — and moves as a unit to the
+    Printer controls pane with the Exclude current button at its top
+    (it is not purely informational, so it does not stay in the
+    status pane). No per-row buttons, no click-and-hold machinery.
+  - Exclude current: a generic label (object names can be long),
+    direct action with no confirmation — the blast radius is bounded
+    to the current object, sent as EXCLUDE_OBJECT CURRENT=1.
+  - The plate map lives in the Information pane (mini widget plus
+    click-to-enlarge popover, the bed-mesh pattern): object outlines
+    from the DEFINE polygons, current highlighted, excluded red,
+    blocked grey, the live toolhead dot, and the complete current
+    layer drawn under the outlines (no progress split). The degraded
+    mode without polygon data is centre dots with a usable hit
+    radius. Triple-click toggles exclude/restore in both directions —
+    the gesture is the confirmation; no dialogs anywhere (the shipped
+    exclude dialog dies and its pins move with it). Single click
+    selects an object for its info readout. The popover carries the
+    gesture hint and a colour key (red excluded, theme foreground
+    included, green current, grey blocked), and the blocked state
+    explains itself in words. The contrast census runs when the
+    palette lands, in both themes.
+  - Restore carries a windowed grace: clean before the toolhead
+    reaches the object's region on the current layer; within N layers
+    of the first skip the object resumes with a small gap; beyond N
+    the restore is blocked with a reason. The grace is a
+    settings-pane knob (rarely tuned): 0 = immediate restrict,
+    N = windowed, never = unrestricted; the panel rules the default
+    (the 3-layer candidate).
+  - The progress face (the second popover, OctoApp-style): the
+    previous layer ghosted, the current layer as a grey base with the
+    printed portion coloured in at poll cadence, the next layer
+    ghosted — flat polylines, feature-type colours from a per-motion
+    type byte in the index hydration plus a MoonrakerTheme colour
+    table (Cura-like, both themes), travel lines faint or off
+    (panel), popover legend toggles for previous/next/base (the
+    chart-legend precedent, persisted per printer), alpha so the
+    stack reads through. Updates ride the poll cadence — not
+    frame-smooth. The index's [live−1, live+1] retention window
+    already covers the three layers; the type byte is the only index
+    extension.
+  - One shared plate-canvas component serves both faces; the
+    architecture persona adjudicates the boundary (base plus two
+    faces versus a mode flag). Snapshot 0 mocks both faces with
+    synthetic data before any wiring.
+  - No list reordering, ever — the stable readout plus the map's
+    polygons carry the identity; rows that move under the pointer are
+    the jog-reflow hazard class.
+
+  Open for the panel: the grace default, the map's palette and hint
+  copy, travel-line defaults, the popover layout, the shared-component
+  boundary, and the settings placement.
+
 ## Direction
 
 The 3.2.0 debt payoff made structural change cheap again. The next stretch has one
@@ -1850,15 +1931,26 @@ Also for 4.5.0: a way to stop/pause the live camera stream from
 the pane (the stream keeps consuming the remote while Monitor
 sits open; a pause control would stop the upstream fetch without
 losing the selection).
-The exclude-object list needs a design pass — bound its
-height with a scrollable area instead of expanding forever, highlight
-the active/current object in the layout, and keep excluded objects
-visible but flagged (red) with the exclude button hidden rather than
-removing the row. Rendering excluded objects differently in the
-Preview view is wanted but may not be possible. Any exclude action
-wants a guard against misclicks (a click-and-hold candidate). The
-exclude functionality itself is untested live and needs a pass before
-design work.
+The exclude-object list needs a design pass, per the
+2026-09-18 direction (direction, not spec — every item is a
+proposal for the pass to shape):
+
+- the section moves from Information into the **Printer controls**
+  pane;
+- excluded objects stay in the list, flagged **red** — never removed;
+- the current/active object highlights (green?) and possibly rises to
+  the top of the list;
+- consider a cycling "most recently printed" ordering, so the object
+  that just finished is easy to identify;
+- the exclude action is a click followed by a **click-and-hold**
+  confirmation (the misclick guard);
+- the list's height is bounded — about five objects visible, then
+  scrolling (arrows?) instead of expanding forever;
+- excluding by clicking an object in the Preview view is desired but
+  probably not possible — verify before promising it.
+
+The exclude functionality itself is untested live and needs a pass
+before design work.
 
 Testing posture (2026-09-18, the ruling): no self-hosted
 Windows runners — the Windows live-test pass stays manual
@@ -2116,6 +2208,13 @@ refactor finishes.
   head" — drop it. Klipper reports the ACTIVE nozzle, but on
   single-nozzle machines that changes nothing — the real multi-extruder
   feature is an active-tool label and per-tool path colouring.
+- Preview name tags (billboarded object names over the Preview
+  view), moved from 4.6.0's probe-gated stretch (the 2026-09-21
+  ruling): they ship ALONGSIDE the live toolhead marker — the two
+  overlays share the preview-camera projection (a 2D overlay
+  projecting object positions through the preview camera; the open
+  question is camera-matrix exposure), and one camera-matrix
+  answer serves both. Deferred with evidence if unreachable.
 - A floating jog pad in the Preview panel, so the head can be moved while
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)

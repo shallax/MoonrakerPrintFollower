@@ -17,24 +17,34 @@ surface, and every assertion reads state the module itself produced — a
 published value block, a sent script, a queue's contents. Nothing here
 patches the modules under test.
 
-Lines that stay uncovered, and why — three statements out of 938:
+Lines that stay uncovered, and why (the running total moved with the
+modules; the references below are against the current files):
 
 * ConsoleController:45 — the body of the module-level
   ``_trim_transcript`` helper. Nothing in plugins/ or tests/ calls it;
   it is unreachable without invoking an unused private helper.
-* ToolheadController:312-313 — the ``except ValueError`` guard around
+* ToolheadController:410-411 — the ``except ValueError`` guard around
   ``make_extrude_op`` in ``extrude()``. Both arguments reach it only
   from ``set_extrude_distance``/``set_extrude_speed``, which already
   enforce the policy's own bounds, and the direction is normalised to
   +/-1 first: no public call can hand it an out-of-range value. Its
-  sibling in ``jog()`` (196-197) IS reachable and is covered — the
+  sibling in ``jog()`` (252-253) IS reachable and is covered — the
   clamp can return a positive move under the minimum distance.
+* ToolheadController:430 — the tap-side branch of the queue
+  reconciliation in ``_push``. A tap that survived ``push_op`` is never
+  the tail the re-clamp acts on: ``jog()`` clamped it against this same
+  estimate and snapshot moments earlier, so the re-clamp returns it
+  unchanged. The branch keeps the accounting exact for the tap the
+  queue actually gained if that ever stops holding.
 
 Everything else in the three modules runs here, including the paths the
 existing suites leave to the full follower runtime.
 """
 from __future__ import annotations
 
+import copy
+import json
+import math
 import os
 import sys
 import tempfile
@@ -84,6 +94,50 @@ if QT_AVAILABLE:
         return SimpleNamespace(job_key=job_key, ranges=list(ranges or _ranges()),
                                pause_layers=set(pause_layers), current_layer_map={},
                                layer_at=lambda position: 1)
+
+    def _plate_ring(name, vertices=300, offset=0.0):
+        """One ring in Klipper's DEFINE shape: a flat coordinate run,
+        past the plate's vertex budget, so the projection both validates
+        every point and decimates the ring."""
+        polygon = []
+        for step in range(vertices):
+            angle = 2.0 * math.pi * step / vertices
+            polygon.append(round(20.0 + offset + 10.0 * math.cos(angle), 3))
+            polygon.append(round(20.0 + 10.0 * math.sin(angle), 3))
+        return {"name": name, "center": [20.0 + offset, 20.0], "polygon": polygon}
+
+    def _plate_geometry(count=80, vertices=300):
+        """A DEFINE payload of `count` rings — the shape every core poll
+        carries along with the moving file position."""
+        return {"objects": [_plate_ring(f"OBJ_{index}", vertices, float(index))
+                            for index in range(count)],
+                "excluded_objects": [], "current_object": None}
+
+    def _normalisation_spy():
+        """A counter over the plate projection's ring walk — the
+        per-vertex work the memo exists to remove. Returns the call
+        list and the patch that installs it."""
+        from plugins import MonitorFormatting
+        calls = []
+        real_finite_polygon = MonitorFormatting._finite_polygon
+
+        def counted_finite_polygon(value):
+            calls.append(value)
+            return real_finite_polygon(value)
+
+        return calls, patch.object(MonitorFormatting, "_finite_polygon",
+                                   counted_finite_polygon)
+
+    class _AlwaysWalk:
+        """The pre-fix call site: every poll re-normalises the payload."""
+
+        def __init__(self):
+            self.walks = 0
+
+        def value(self, exclude_object, job=None):
+            from plugins.MonitorFormatting import plate_values
+            self.walks += 1
+            return plate_values(exclude_object)
 
     class _Client(QObject):
         statusReceived = pyqtSignal(object)
@@ -153,6 +207,10 @@ if QT_AVAILABLE:
 
     class _Index(QObject):
         changed = pyqtSignal()
+        # The pass's throttled tick: the coordinator reads it without
+        # running the full refresh, so the fake carries it separately
+        # from `changed` — the same split the service makes.
+        progress_changed = pyqtSignal()
         failed = pyqtSignal(str)
 
         def __init__(self):
@@ -165,6 +223,13 @@ if QT_AVAILABLE:
             self.followed = []
             self.hydration = []
             self.tracking_resets = 0
+            self.plate_anchors = []
+            self.plate_positions = []
+            self.plate_lives = []
+            self.plate_visited_rows = []
+            self.plate_split = None
+            self.manual_anchor = None
+            self.manual_split = None
 
         def bind(self, job):
             self.bound = job
@@ -177,6 +242,31 @@ if QT_AVAILABLE:
 
         def request_hydration(self, layer):
             self.hydration.append(layer)
+
+        def set_manual_anchor(self, layer):
+            self.manual_anchor = layer
+
+        def set_manual_split(self, motions):
+            self.manual_split = motions
+
+        def plate_progress(self, anchor, file_position=None, live_position=None):
+            # The service-side prep's shape; the coordinator tests
+            # pin the wiring, not the payload.
+            self.plate_anchors.append(anchor)
+            self.plate_positions.append(file_position)
+            self.plate_lives.append(live_position)
+            return {"layers": {}, "split": self.plate_split,
+                    "method": "unavailable", "anchor": anchor}
+
+        def plate_visited(self, anchor, split, rows):
+            # The rows the coordinator hands the printed-object walk —
+            # the projection's own output, shared with whatever it was
+            # built from.
+            self.plate_visited_rows.append((anchor, split, rows))
+            return frozenset(row["name"] for row in rows if row.get("polygon"))
+
+        def plate_pass_fraction(self):
+            return None
 
         def reset_tracking(self):
             self.tracking_resets += 1
@@ -201,7 +291,7 @@ if QT_AVAILABLE:
             self.nudges = 0
             self.layer_view_nudges = 0
             self.watched = []
-            self.confirm_replace_callback = None
+            self.stages = []
             self.loads = []
             self.invalidated_reasons = []
 
@@ -214,8 +304,9 @@ if QT_AVAILABLE:
         def watch(self, enabled):
             self.watched.append(enabled)
 
-        def confirm_replace(self, callback):
-            self.confirm_replace_callback = callback
+        def switch_to_preview(self):
+            self.stages.append("PreviewStage")
+            return True
 
         def load(self, lease):
             self.loads.append(lease)
@@ -317,6 +408,8 @@ if QT_AVAILABLE:
         pauseAtLayerRequested = pyqtSignal(int)
         removePauseRequested = pyqtSignal(int)
         clearPausesRequested = pyqtSignal()
+        replaceConfirmed = pyqtSignal()
+        replaceCancelled = pyqtSignal()
 
         def __init__(self):
             super().__init__()
@@ -447,8 +540,22 @@ if QT_AVAILABLE:
 class CoordinatorCoverageTests(unittest.TestCase):
     def setUp(self):
         self._rt = runtime()
-        self._rt.__enter__()
+        self.fixture = self._rt.__enter__()
         self.addCleanup(self._rt.__exit__, None, None, None)
+
+    def _pump(self, seconds):
+        """Run the event loop for a bounded stretch (timer-driven paths)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.fixture.events(5)
+
+    def _accept(self, predicate, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.fixture.events(5)
+            if predicate():
+                return True
+        return predicate()
 
     def _make(self, config=None, configured=True):
         coordinator_class = _coordinator_class()
@@ -474,7 +581,8 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.files.changed.emit()
         self.assertGreater(len(parts.presentation.published), before)
         parts.presentation.loadRequested.emit()
-        self.assertIsNotNone(parts.cura.confirm_replace_callback)
+        self.assertIn({"replacePromptVisible": True}, parts.presentation.published)
+        parts.presentation.replaceConfirmed.emit()
         parts.cura.has_toolpath = True
         parts.presentation.attachmentRequested.emit()
         self.assertEqual(parts.preview.attach_calls, [True])
@@ -760,6 +868,443 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertEqual(parts.preview.invalidations, before + 1)
         self.assertEqual(parts.index.followed, [])
 
+    def test_the_plate_payload_uses_the_fresh_physical_layer(self):
+        # The green-printed fix's second half: plate_progress and
+        # plate_visited read the FRESH physical layer, never the
+        # previous snapshot's — the old code kept the passed set on
+        # the outgoing layer across a transition.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        status = _status()
+        status["print_stats"]["info"]["current_layer"] = 5
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        status["print_stats"]["info"]["current_layer"] = 6
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_anchors, [4, 4, 5, 5],
+                         "the plate payload anchored on the previous snapshot's layer")
+
+    def test_a_detach_frozen_on_the_live_layer_carries_no_file_position(self):
+        # The live report: detaching froze the CURRENT layer, and the
+        # anchor-equality test kept feeding the payload the live file
+        # position — the split never stopped, so the detach read as
+        # dead. Attached-ness is the test: a frozen anchor is frozen
+        # even while the print is still on that layer.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        # The serving gate (the reviewer's C): the frozen payload
+        # serves while the popover is open.
+        parts.coordinator.set_popover_open(True)
+        parts.coordinator.set_plate_anchor(4)  # == the live layer
+        parts.coordinator.refresh()
+        # TWO payloads per refresh while detached and the popover is
+        # open: the live one for the mini, the frozen one for the
+        # popover (the live request). The detach's own refresh plus
+        # the explicit one: four calls.
+        self.assertEqual(parts.index.plate_anchors, [4, 4, 4, 4])
+        self.assertIsNone(parts.index.plate_positions[-1],
+                          "the frozen layer was still handed the live position")
+        self.assertEqual(parts.index.manual_anchor, 4)
+        # The scrub rides the same seam.
+        parts.coordinator.set_plate_split(37)
+        self.assertEqual(parts.index.manual_split, 37)
+        # Re-attaching restores the live position flow (one payload).
+        parts.coordinator.set_plate_anchor(None)
+        parts.coordinator.refresh()
+        self.assertIsNone(parts.index.manual_anchor)
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
+
+    def test_the_plate_payload_shares_the_resolved_file_position(self):
+        # A view with a valid position: the ONE resolved value feeds
+        # both consumers — the layer fraction measures it (4500 of the
+        # 4000..5000 range) and the plate split is handed the same
+        # offset.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        snapshot = parts.coordinator.snapshot
+        self.assertTrue(snapshot.index_ready)
+        self.assertEqual(snapshot.layer_progress, 0.5)
+        self.assertEqual(parts.index.plate_anchors, [4])
+        self.assertEqual(parts.index.plate_positions, [4500])
+
+    def test_a_monitor_only_index_builds_the_plate_payload_without_a_view(self):
+        # The Improve-ETA download leaves the index's job key UNRESOLVED
+        # (it names the active print, never a loaded file), so the
+        # identity gate refuses the view — no view, hence no layer
+        # fraction, but the plate still anchors on the resolved
+        # physical layer and reads the live position.
+        parts = self._printing(self._make())
+        parts.index.view = _view(job_key=())
+        parts.coordinator.refresh()
+        snapshot = parts.coordinator.snapshot
+        self.assertFalse(snapshot.index_ready)
+        self.assertIsNone(snapshot.layer_progress)
+        self.assertEqual(parts.index.plate_anchors, [4])
+        self.assertEqual(parts.index.plate_positions, [4500])
+        self.assertIsNotNone(snapshot.plate_progress)
+        self.assertEqual(snapshot.plate_progress["anchor"], 4)
+        self.assertEqual(snapshot.plate_layer_count, len(parts.index.view.ranges),
+                         "monitor-only plate rendered with a zero layer-slider range")
+
+    def test_an_unresolved_physical_layer_builds_no_plate_payload(self):
+        # The print's own layer never resolved while the index exists:
+        # there is no anchor, so the plate APIs are never asked — and
+        # the position's presence on the status is not one.
+        parts = self._make()
+        view = _view()
+        view.layer_at = lambda position: None  # the file position maps to no layer
+        parts.index.view = view
+        status = _status()
+        status["print_stats"]["info"] = {}
+        parts.client.statusReceived.emit(status)
+        snapshot = parts.coordinator.snapshot
+        self.assertIsNone(snapshot.layer.index)
+        self.assertIsNone(snapshot.plate_progress)
+        self.assertEqual(parts.index.plate_anchors, [])
+        self.assertEqual(parts.index.plate_positions, [])
+
+    def _plate_status(self, geometry, *, position=4500.0, duration=120.0,
+                      filename="cube.gcode", reparse=False):
+        """One core poll's payload as the session boundary delivers it:
+        the DEFINITION rides along with the moving file position and
+        the advancing clock, and the status is a fresh deep copy (what
+        SessionSnapshot.copy_status hands the coordinator), so object
+        identity never survives a poll. `reparse` goes further and
+        rebuilds the payload as a new JSON parse would — new containers
+        AND new float objects."""
+        payload = json.loads(json.dumps(geometry)) if reparse else copy.deepcopy(geometry)
+        status = _status("printing", filename=filename,
+                         virtual_sdcard={"file_position": position, "file_size": 100000,
+                                         "progress": 0.05},
+                         exclude_object=payload)
+        status["print_stats"]["print_duration"] = duration
+        return status
+
+    def _plate_poll(self, parts, geometry, **kwargs):
+        """The payload delivered through the client's own signal, so the
+        whole observe-then-refresh path runs."""
+        parts.client.statusReceived.emit(self._plate_status(geometry, **kwargs))
+
+    def _plate_parts(self, split=500):
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.index.plate_split = split
+        return parts
+
+    def test_an_unchanged_plate_definition_is_not_re_walked_by_a_position_poll(self):
+        # The coordinator's plate projection is per-vertex Python work
+        # (coordinate validation plus ring decimation) and it ran on
+        # EVERY core poll — 80 objects x 300 vertices is ~14 ms a poll,
+        # 128 x 1,000 ~80 ms, against a 750 ms cadence. The definition
+        # did not change between those polls; only the position and the
+        # clock did, and neither is the projection's input.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(80, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self.assertEqual(cold, 80, "the cold poll did not walk every ring")
+            for position in (4600.0, 4700.0, 4800.0):
+                self._plate_poll(parts, geometry, position=position, duration=300.0)
+            # Even a re-parsed payload (fresh containers and fresh
+            # floats) is the same definition: the judgement reads
+            # values, never identity.
+            self._plate_poll(parts, geometry, position=4900.0, duration=300.0,
+                             reparse=True)
+        self.assertEqual(len(calls), cold,
+                         "an unchanged definition was walked again by a later poll")
+        self.assertEqual(len(parts.index.plate_visited_rows), 5,
+                         "a poll served no plate walk at all")
+        self.assertEqual(parts.index.plate_visited_rows[-1][1], 500)
+        self.assertEqual(len(parts.index.plate_visited_rows[-1][2]), 80,
+                         "the walk was handed a shorter row set than the plate holds")
+
+    def test_a_late_define_arrival_is_walked_and_served(self):
+        # EXCLUDE_OBJECT_DEFINE runs mid-print on some machines, so a
+        # name the projection has never seen can arrive on any poll: a
+        # changed definition re-walks the whole payload (the natural
+        # sort and the cap are the projection's, not one row's), and
+        # the rows the printed-object walk is handed must carry the new
+        # object — a projection kept past its definition would leave it
+        # unpainted for the rest of the print.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(3, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold)
+            geometry["objects"].append(_plate_ring("LATE_OBJECT", 300, 40.0))
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold + 4,
+                             "a late DEFINE did not re-walk the definition")
+        names = {row["name"] for row in parts.index.plate_visited_rows[-1][2]}
+        self.assertIn("LATE_OBJECT", names)
+        self.assertEqual(len(names), 4)
+
+    def test_a_changed_ring_is_walked_and_served_fresh(self):
+        # The same names with a moved silhouette (a re-define, a
+        # re-slice): the walk must judge the NEW coordinates, never the
+        # memo's old projection.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(2, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry)
+            cold = len(calls)
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold)
+            geometry["objects"][0]["polygon"][0] += 5.0
+            self._plate_poll(parts, geometry)
+            self.assertEqual(len(calls), cold + 2,
+                             "a changed ring did not re-walk the definition")
+        rows = {row["name"]: row for row in parts.index.plate_visited_rows[-1][2]}
+        self.assertEqual(rows["OBJ_0"]["polygon"][0], [35.0, 20.0])
+
+    def test_a_same_file_restart_drops_the_previous_definition(self):
+        # A restart of the SAME file re-defines the same objects, so
+        # the geometry alone cannot separate the two runs: the job
+        # key's own serial is the signal (a file position that went
+        # backwards), and the memo drops the finished print's rows with
+        # it rather than carrying them — and their memory — into the
+        # next run.
+        parts = self._plate_parts()
+        geometry = _plate_geometry(4, 300)
+        calls, spy = _normalisation_spy()
+        with spy:
+            self._plate_poll(parts, geometry, position=4500.0)
+            cold = len(calls)
+            self._plate_poll(parts, geometry, position=4600.0)
+            self.assertEqual(len(calls), cold)
+            self._plate_poll(parts, geometry, position=120.0)
+            self.assertEqual(len(calls), cold + 4,
+                             "the restarted job reused the previous definition")
+
+    def _refresh_cost(self, geometry, *, passthrough=False, polls=4):
+        """The coordinator's own refresh path, timed in milliseconds:
+        the cold refresh (the one walk the memo cannot remove) and the
+        steady-state refreshes after it. The payloads are built outside
+        the clock — the status copy is the session boundary's cost, not
+        the refresh's, and it would otherwise dominate both numbers
+        equally."""
+        parts = self._plate_parts()
+        real_memo = getattr(parts.coordinator, "_plate_memo", None)
+        if passthrough:
+            parts.coordinator._plate_memo = _AlwaysWalk()
+        payloads = [self._plate_status(geometry, position=4500.0 + step * 100.0,
+                                       duration=120.0 + step)
+                    for step in range(polls + 1)]
+        started = time.perf_counter()
+        parts.client.statusReceived.emit(payloads[0])
+        cold = (time.perf_counter() - started) * 1000.0
+        started = time.perf_counter()
+        for payload in payloads[1:]:
+            parts.client.statusReceived.emit(payload)
+        steady = (time.perf_counter() - started) * 1000.0 / polls
+        if passthrough:
+            parts.coordinator._plate_memo = real_memo
+        return cold, steady
+
+    def test_the_memoised_refresh_costs_a_fraction_of_the_re_walk(self):
+        # The same refresh path both ways: with the pre-fix call site (a
+        # stand-in that normalises every poll) and with the memo. The
+        # structural assertion lives in the ring-walk spy above; this
+        # one pins the ORDER of the win, with a margin wide enough that
+        # no plausible machine inverts it. The pre-fix cost is the
+        # review's own: ~14 ms a poll at this geometry against a 750 ms
+        # cadence, paid on the owner thread.
+        geometry = _plate_geometry(80, 300)
+        raw_cold, raw_steady = self._refresh_cost(geometry, passthrough=True)
+        memo_cold, memo_steady = self._refresh_cost(geometry)
+        print("plate projection per refresh (80 x 300): "
+              "re-walk cold %.2f ms steady %.2f ms; "
+              "memoised cold %.2f ms steady %.2f ms"
+              % (raw_cold, raw_steady, memo_cold, memo_steady))
+        self.assertLess(memo_steady, raw_steady * 0.25,
+                        "the memoised refresh cost %.2f ms against the re-walk's %.2f ms"
+                        % (memo_steady, raw_steady))
+        # The cold path is the same walk plus one definition snapshot —
+        # its equality is pinned STRUCTURALLY by the ring-walk spy
+        # above, not by a wall-clock ratio (the cold margin flipped
+        # under gate load; a stopwatch on the first call proves
+        # nothing the spy has not already proven).
+
+    def test_a_missing_or_invalid_file_position_resolves_to_none(self):
+        # Missing, null and non-numeric fields all resolve to None —
+        # never to byte 0, which would read as real progress at the
+        # head of the layer — and neither consumer acts on it.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        for sdcard in ({}, {"file_position": None}, {"file_position": "many"},
+                       {"file_position": [1]}):
+            with self.subTest(sdcard=sdcard):
+                parts.client.statusReceived.emit(
+                    _status("printing", virtual_sdcard=sdcard))
+                self.assertIsNone(parts.coordinator.snapshot.layer_progress)
+                self.assertEqual(parts.index.plate_anchors[-1], 4)
+                self.assertIsNone(parts.index.plate_positions[-1])
+
+    def test_the_plate_split_reads_the_toolheads_own_position(self):
+        # The painted boundary follows the NOZZLE, so the head's own
+        # position must reach the service beside the dispatcher's — read
+        # from the same status the Preview's follower reads it from, in
+        # the G-code's own coordinate space.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_lives[-1], (10.0, 10.0, 1.2))
+
+    def test_the_live_position_survives_a_pause(self):
+        # A pause is where the refinement matters most: the dispatcher
+        # sits where it stopped, the pause macro parks the head away
+        # from the path. The status keeps flowing, so the position keeps
+        # flowing with it and the service can hold its boundary.
+        parts = self._make()
+        parts.index.view = _view()
+        status = _status("paused")
+        status["motion_report"]["live_position"] = [140.0, 140.0, 10.0, 0.0]
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_lives[-1], (140.0, 140.0, 10.0))
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
+
+    def test_a_missing_motion_report_hands_no_live_position(self):
+        # No telemetry is None, never a fabricated origin: the service
+        # then keeps the coarse boundary, exactly as it always did.
+        parts = self._printing(self._make(), motion_report={})
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        self.assertIsNone(parts.index.plate_lives[-1])
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
+
+    def test_the_plate_anchor_waits_for_the_nozzle_at_a_layer_change(self):
+        # The live transition, end to end: the printer reports the layer it
+        # has just READ (the parser runs ahead of the move queue, and
+        # SET_PRINT_STATS_INFO executes as it is read), the byte offset
+        # past the marker, and its own commanded Z — while the nozzle is
+        # still physically finishing the PREVIOUS layer. Anchoring the
+        # plate to the claimed layer refines the new layer's boundary
+        # against the nozzle's place on the old one: a fraction of a layer
+        # with nothing printed, held by the service's monotonic floor. The
+        # anchor follows the nozzle's own Z instead.
+        parts = self._printing(self._make())
+        parts.cura.heights = [0.2, 0.4]
+        parts.index.view = _view(ranges=((0, 1000), (1000, 2000)))
+        transition = _status(
+            "printing",
+            virtual_sdcard={"file_position": 1000, "file_size": 100000, "progress": 0.5},
+            # The parser's own gcode position is already on layer 1's
+            # plane (0.4); only motion_report cannot lead.
+            gcode_move={"gcode_position": [9.0, 0.0, 0.4, 12.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [9.0, 0.0, 0.2, 0.0]})
+        transition["print_stats"]["info"] = {"current_layer": 2, "total_layer": 6}
+        parts.client.statusReceived.emit(transition)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 0)
+        self.assertEqual(parts.index.plate_anchors[-1], 0)
+        self.assertEqual(parts.index.plate_lives[-1], (9.0, 0.0, 0.2))
+        # The nozzle rises to the new layer's plane: the same claim now
+        # anchors, with no extra poll and nothing latched per layer.
+        arrived = _status(
+            "printing",
+            virtual_sdcard={"file_position": 1100, "file_size": 100000, "progress": 0.55},
+            gcode_move={"gcode_position": [1.0, 0.0, 0.4, 13.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [1.0, 0.0, 0.4, 0.0]})
+        arrived["print_stats"]["info"] = {"current_layer": 2, "total_layer": 6}
+        parts.client.statusReceived.emit(arrived)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 1)
+        self.assertEqual(parts.index.plate_anchors[-1], 1)
+
+    def test_a_frame_arriving_mid_refresh_cannot_split_the_snapshot(self):
+        # A frame really can land while refresh() is mid-flight: observe()
+        # is called re-entrantly from the client's signal, and the pass it
+        # then starts is not the guarded one (it clears the flag its own
+        # nested call set, not the outer refresh's). The emit below
+        # therefore arrives between the plate's call and the snapshot it
+        # belongs to, and the pass it starts runs to completion inside the
+        # one in flight. Before the fix every read after that point — the
+        # observation, the mesh, the Preview's frame, the published text —
+        # came from the NEW frame while the anchor, the file position and
+        # the nozzle place came from the old one: one snapshot of two
+        # instants, whose layer and position were never true together, and
+        # a published ETA describing a frame the snapshot did not come
+        # from. Each pass now resolves from the frame it started on.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        late = _status("paused", filename="cube.gcode", print_duration=200.0,
+                       virtual_sdcard={"file_position": 90000, "file_size": 100000,
+                                       "progress": 0.9},
+                       gcode_move={"gcode_position": [140.0, 140.0, 9.0, 500.0],
+                                   "absolute_coordinates": True},
+                       motion_report={"live_position": [140.0, 140.0, 9.0, 0.0]})
+        late["print_stats"]["info"] = {"current_layer": 60, "total_layer": 100}
+        calls = []
+        real = parts.index.plate_progress
+
+        def reentrant(anchor, file_position=None, live_position=None):
+            calls.append((anchor, file_position, live_position))
+            if len(calls) == 1:
+                parts.client.statusReceived.emit(late)
+            return real(anchor, file_position, live_position)
+
+        parts.index.plate_progress = reentrant
+        parts.coordinator.refresh()
+        # Two passes: the one in flight, then the one the late frame
+        # started. Each is anchored, positioned and refined from ONE
+        # frame — never layer 4 with the late frame's 90000.
+        self.assertEqual(calls, [(4, 4500, (10.0, 10.0, 1.2)),
+                                 (59, 90000, (140.0, 140.0, 9.0))])
+        # And the refresh that was in flight lands on its OWN frame's
+        # observation rather than the late one's, so the snapshot's layer
+        # and its byte offset describe the same instant.
+        snapshot = parts.coordinator.snapshot
+        self.assertEqual(snapshot.layer.index, 4)
+        self.assertEqual(snapshot.observation.file_position, 4500)
+        self.assertEqual(snapshot.observation.state, "printing")
+        self.assertNotEqual(parts.presentation.published[-1]["previewEtaText"], "Paused",
+                            "the published text describes the frame the snapshot came from")
+
+    def test_no_plate_path_raises_across_the_position_variants(self):
+        # Every combination the unbound-position defect could reach,
+        # replayed on one coordinator: each poll completes and
+        # publishes. The view-absent variant raised UnboundLocalError
+        # before the position was resolved ahead of both consumers.
+        parts = self._make()
+
+        def layerless_status():
+            status = _status()
+            status["print_stats"]["info"] = {}
+            return status
+
+        def unmapped_view():
+            view = _view()
+            view.layer_at = lambda position: None
+            return view
+
+        variants = (
+            ("view and position", _view(), _status()),
+            ("monitor-only index", _view(job_key=()), _status()),
+            ("no physical layer", unmapped_view(), layerless_status()),
+            ("missing position", _view(), _status("printing", virtual_sdcard={})),
+            ("null position", _view(),
+             _status("printing", virtual_sdcard={"file_position": None})),
+            ("non-numeric position", _view(),
+             _status("printing", virtual_sdcard={"file_position": "many"})),
+            ("no index at all", None, _status()),
+        )
+        for label, view, status in variants:
+            with self.subTest(label):
+                parts.index.view = view
+                parts.client.statusReceived.emit(status)
+                parts.coordinator.refresh()
+                self.assertIsNotNone(parts.coordinator.snapshot)
+                self.assertTrue(parts.presentation.published)
+
     def test_a_connected_client_publishes_the_followed_layer_and_hydration(self):
         parts = self._printing(self._make())
         parts.client.connected = True
@@ -918,12 +1463,56 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(coordinator._detail, "Could not load current print: no disk space")
 
-    def test_confirm_load_delegates_to_cura_replace_prompt(self):
+    def test_confirm_load_switches_the_stage_and_asks_in_the_card(self):
         parts = self._make()
         parts.coordinator.confirm_load()
-        self.assertIsNotNone(parts.cura.confirm_replace_callback)
-        parts.cura.confirm_replace_callback()
-        self.assertTrue(parts.coordinator._loads.load_requested)
+        self.assertEqual(parts.cura.stages, ["PreviewStage"])
+        self.assertIn({"replacePromptVisible": True}, parts.presentation.published)
+        self.assertFalse(parts.coordinator._loads.load_requested,
+                         "the load waits for the user's answer")
+
+    def test_the_prompt_runs_the_load_the_user_agreed_to(self):
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertTrue(self._accept(lambda: parts.coordinator._loads.load_requested))
+
+    def test_the_prompt_is_dismissed_by_either_answer(self):
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceCancelled.emit()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertEqual(parts.presentation.published[-2:],
+                         [{"replacePromptVisible": False},
+                          {"replacePromptVisible": False}])
+        self.assertFalse(parts.coordinator._loads.load_requested,
+                         "Cancel is not an answer to load")
+        self.assertIsNone(parts.coordinator._replace_action,
+                          "the pending load is released, not left armed")
+
+    def test_an_answered_prompt_cannot_run_its_load_twice(self):
+        # The popup's buttons are live until the publish lands, and a
+        # double press used to be two loads.
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.presentation.replaceConfirmed.emit()
+        self.assertTrue(self._accept(lambda: parts.coordinator._loads.load_requested))
+        before = parts.client.forced
+        parts.presentation.replaceConfirmed.emit()
+        self._pump(0.05)
+        self.assertEqual(parts.client.forced, before,
+                         "the second press ran the load again")
+
+    def test_an_answered_prompt_does_not_load_into_a_closed_plugin(self):
+        # The load is deferred one turn, and shutdown wins that race:
+        # a plugin closed while the answer was in flight must not
+        # start a load it will not finish.
+        parts = self._make()
+        parts.coordinator.confirm_load()
+        parts.coordinator.close()
+        parts.presentation.replaceConfirmed.emit()
+        self._pump(0.1)
+        self.assertFalse(parts.coordinator._loads.load_requested)
 
     def test_the_preview_block_keeps_the_newest_stamp(self):
         parts = self._printing(self._make())
@@ -975,14 +1564,32 @@ class CoordinatorCoverageTests(unittest.TestCase):
         from plugins import PrintCoordinator as coordinator_module
         with patch.object(coordinator_module, "Logger") as logger:
             parts.coordinator._publish()
-            self.assertEqual(len(logger.log.call_args_list), 1)
+            messages = [str(call) for call in logger.log.call_args_list]
+            # Two diagnostics lines: the card's gates and the phases.
+            self.assertEqual(len(messages), 2)
+            self.assertTrue(any("preview card gates" in message
+                                for message in messages))
+            self.assertTrue(any("preview card phases" in message
+                                for message in messages))
             parts.coordinator._publish()
-        self.assertEqual(len(logger.log.call_args_list), 1)
+        self.assertEqual(len(logger.log.call_args_list), 2)
         with patch.object(coordinator_module, "Logger") as logger:
             parts.cura.has_toolpath = True
             parts.coordinator._publish()
         self.assertTrue(any("preview card gates" in str(call)
                             for call in logger.log.call_args_list))
+        # The phase line answers to a phase, not to a gate: the camera's
+        # own summary is a timestamp with no idea which phase it fell in.
+        with patch.object(coordinator_module, "Logger") as logger:
+            parts.index.phase = "indexing"
+            parts.coordinator._publish()
+        messages = [str(call) for call in logger.log.call_args_list]
+        self.assertTrue(any("preview card phases" in message
+                            for message in messages))
+        self.assertFalse(any("preview card gates" in message
+                             for message in messages))
+        args = logger.log.call_args_list[-1][0]
+        self.assertIn("index=indexing", args[1] % tuple(args[2:]))
 
     def test_close_silences_every_later_publication(self):
         parts = self._make()
@@ -1389,7 +1996,7 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertEqual(commands.sent, [])
 
     def test_a_z_nudge_into_the_floor_is_reported_once_per_burst(self):
-        controller, _, commands = self._make(live=(10.0, 10.0, 0.0, 0.0))
+        controller, data, commands = self._make(live=(10.0, 10.0, 0.0, 0.0))
         notes = []
         controller.rejectedNote.connect(notes.append)
         controller.jog("z", -1)
@@ -1398,10 +2005,16 @@ class ToolheadCoverageTests(unittest.TestCase):
         self.assertEqual(controller.values["jogStatus"],
                          "Z nudge rejected — the head would go below 0.00 Z")
         self.assertEqual(commands.sent, [])
-        # A successful Z move re-arms the note for the next burst.
+        # A successful Z move re-arms the note for the next burst — once
+        # the poll reports the moved level, so the head is measured where
+        # it really is.
+        controller.set_distance(5)
         controller.jog("z", 1)
         commands.complete()
-        controller.jog("z", -1)
+        data.set_state("paused", live=(10.0, 10.0, 5.0, 0.0))
+        self.assertAlmostEqual(controller._axis_estimate["z"], 5.0)
+        controller.jog("z", -1)  # lands exactly on the floor: allowed
+        controller.jog("z", -1)  # below it: the note fires again
         self.assertEqual(len(notes), 2)
 
     def test_a_configured_axis_floor_forbids_the_negative_side(self):
@@ -1441,31 +2054,106 @@ class ToolheadCoverageTests(unittest.TestCase):
         commands.busy = True
         controller.set_distance(5)
         controller.jog("z", 1)
-        self.assertAlmostEqual(controller._z_estimate, 15.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 15.0)
         controller.jog("z", 1)
-        self.assertAlmostEqual(controller._z_estimate, 20.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
         # While a Z move is queued the poll never re-syncs the estimate.
         data.set_state("paused", live=(0.0, 0.0, 10.0, 0.0))
-        self.assertAlmostEqual(controller._z_estimate, 20.0)
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
         commands.complete()
         commands.complete()
-        self.assertAlmostEqual(controller._z_estimate, 10.0)
+        # Both moves have left the queue, but the poll still reads the
+        # pre-command level: the head has not been reported at 20 yet, so
+        # the projection is unreconciled, not stale — dropping it here
+        # would re-arm the estimate for the next tap (the dispatch seam).
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
+        self.assertAlmostEqual(controller._axis_up_pending["z"], 10.0)
+        # The poll reporting the commanded level is the head arriving:
+        # adopt it and lift the owed reflection.
+        data.set_state("paused", live=(0.0, 0.0, 20.0, 0.0))
+        self.assertAlmostEqual(controller._axis_estimate["z"], 20.0)
+        self.assertAlmostEqual(controller._axis_up_pending["z"], 0.0)
+
+    def test_a_stale_poll_after_dispatch_keeps_the_upward_projection(self):
+        # Repeated +5 jogs from X=195 with the maximum at 200. Each send
+        # frees the lane while the poll still reads 195 — the level the
+        # move started from. Adopting it re-armed the projection, so one
+        # command left the plugin per tap and the burst walked the head
+        # past the maximum.
+        controller, data, commands = self._make(live=(195.0, 10.0, 10.0, 0.0),
+                                                maximum=(200, 200, 200))
+        controller.set_distance(5)
+        for _ in range(3):
+            controller.jog("x", 1)
+            commands.complete()  # the send frees the lane
+            data.set_state("paused", live=(195.0, 10.0, 10.0, 0.0),
+                           maximum=(200, 200, 200))  # the delayed poll
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+        self.assertAlmostEqual(controller._axis_estimate["x"], 200.0)
+
+    def test_the_upward_projection_holds_through_the_queue_drain(self):
+        # Two legal +5 taps from X=190 queue behind a held lane and cover
+        # the 200 maximum between them; the third is refused outright.
+        # The polls that land while the queue drains must not re-open the
+        # boundary, and a tap in the other direction still reads the
+        # projection rather than the stale poll.
+        controller, data, commands = self._make(live=(190.0, 10.0, 10.0, 0.0),
+                                                maximum=(200, 200, 200))
+        controller.set_distance(5)
+        commands.busy = True  # hold the lane: both taps queue
+        controller.jog("x", 1)
+        controller.jog("x", 1)
+        controller.jog("x", 1)  # no headroom is left: nothing is queued
+        self.assertAlmostEqual(controller._axis_estimate["x"], 200.0)
+        commands.busy = False
+        commands.changed.emit()  # the lane clears: the queue starts draining
+        self.assertEqual(len(self._scripts(commands)), 1)
+        data.set_state("paused", live=(190.0, 10.0, 10.0, 0.0),
+                       maximum=(200, 200, 200))
+        commands.complete()  # the last queued move goes out
+        self.assertEqual(len(self._scripts(commands)), 2)
+        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X5 F3000\nG90")
+        # The queue is drained and every poll so far is pre-move: the
+        # boundary tap stays refused.
+        data.set_state("paused", live=(190.0, 10.0, 10.0, 0.0),
+                       maximum=(200, 200, 200))
+        controller.jog("x", 1)
+        self.assertEqual(len(self._scripts(commands)), 2)
+        # The opposite direction still measures against the projection
+        # (200), not the stale poll (190).
+        commands.complete()  # the lane clears for the next move
+        controller.jog("x", -1)
+        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X-5 F3000\nG90")
+
+    def test_a_poll_below_the_pre_command_level_still_adopts(self):
+        # The reconciliation's other edge: an upward move's own reflection
+        # lags at the pre-command level, but a poll that drops BELOW it is
+        # the head genuinely moving down (an external macro, a home) and
+        # must be adopted — the projection may not freeze above the truth.
+        controller, data, _ = self._make(live=(10.0, 10.0, 10.0, 0.0))
+        controller.set_distance(5)
+        controller.jog("x", 1)  # projection 15
+        self.assertAlmostEqual(controller._axis_estimate["x"], 15.0)
+        data.set_state("paused", live=(10.0, 10.0, 10.0, 0.0))  # mid-flight
+        self.assertAlmostEqual(controller._axis_estimate["x"], 15.0)
+        data.set_state("paused", live=(4.0, 10.0, 10.0, 0.0))  # below the start
+        self.assertAlmostEqual(controller._axis_estimate["x"], 4.0)
 
     def test_polled_z_prefers_the_live_motion_report(self):
         controller, data, _ = self._make()
-        self.assertAlmostEqual(controller._polled_z(), 10.0)
+        self.assertAlmostEqual(controller._polled_axis("z"), 10.0)
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0, "high"]},
                   "gcode_move": {"gcode_position": [0, 0, 3.5]}}, auxiliary={})
-        self.assertAlmostEqual(controller._polled_z(), 3.5)
+        self.assertAlmostEqual(controller._polled_axis("z"), 3.5)
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0]},
                   "gcode_move": {"gcode_position": [0, 0, "north"]}}, auxiliary={})
-        self.assertIsNone(controller._polled_z())
+        self.assertIsNone(controller._polled_axis("z"))
         data.snapshot = SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0]},
                   "gcode_move": {"gcode_position": []}}, auxiliary={})
-        self.assertIsNone(controller._polled_z())
+        self.assertIsNone(controller._polled_axis("z"))
 
     def test_a_bad_axis_limit_abandons_the_clamp(self):
         controller, _, commands = self._make(live=(10.0, 10.0, 10.0, 0.0),
@@ -1630,12 +2318,162 @@ class ToolheadCoverageTests(unittest.TestCase):
     def test_the_queue_full_cap_rejects_the_newest_tap(self):
         controller, _, commands = self._make(state="paused")
         commands.busy = True
+        # A distance the axis projection never clamps (16 x 5 mm of
+        # headroom from x=10): the cap, not the limit, is what the
+        # newest tap hits.
+        controller.set_distance(5)
         for _ in range(16):
             controller.jog("x", 1)
         controller.jog("x", 1)
         self.assertEqual(len(controller._pending), 16)
         self.assertEqual(controller.values["jogStatus"],
                          "Too many queued moves — wait for the printer to catch up.")
+
+    def test_a_rejected_tap_at_the_queue_cap_never_advances_the_projection(self):
+        # Sixteen taps fill the queue; the seventeenth is refused by the
+        # depth cap. The projection tracks the QUEUE, so a refused entry
+        # must leave it — and the owed reflection — where the queue is.
+        controller, _, commands = self._make(state="paused")
+        commands.busy = True
+        controller.set_distance(5)
+        for _ in range(16):
+            controller.jog("x", 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 90.0)
+        controller.jog("x", 1)
+        self.assertEqual(len(controller._pending), 16)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 90.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 80.0)
+        self.assertEqual(controller.values["jogStatus"],
+                         "Too many queued moves — wait for the printer to catch up.")
+        # The refusal is about the queue's depth alone: the retained moves
+        # still run once the lane frees.
+        commands.busy = False
+        commands.changed.emit()
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+
+    def test_a_re_clamped_tail_that_is_refused_retreats_the_projection(self):
+        # The depth cap's refusal still re-clamps the tail it inherits.
+        # This queue walked the head down to the floor, so the tail's
+        # clamp no longer holds: it is dropped, and the distance it
+        # advanced leaves the projection with it — while the refused tap
+        # itself (3 mm) never reaches it.
+        controller, _, commands = self._make(live=(16.0, 10.0, 10.0, 0.0),
+                                             minimum=(0, 0, 0), maximum=(200, 200, 200))
+        commands.busy = True
+        controller.set_distance(1)
+        for _ in range(16):
+            controller.jog("x", -1)
+        self.assertEqual(len(controller._pending), 16)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 0.0)
+        controller.set_distance(3)
+        controller.jog("x", 1)
+        self.assertEqual(controller.values["jogStatus"],
+                         "Too many queued moves — wait for the printer to catch up.")
+        self.assertEqual(len(controller._pending), 15)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+        self.assertAlmostEqual(controller._axis_down_pending["x"], 15.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+
+    def test_a_dropped_queue_reconciles_the_projection(self):
+        # X=1: a queued +25 that never dispatches may not leave 25 mm of
+        # phantom headroom behind, or the next -25 is clamped against a
+        # position the head never reached and walks it below the floor.
+        controller, data, commands = self._make(live=(1.0, 10.0, 10.0, 0.0),
+                                                minimum=(0, 0, 0), maximum=(200, 200, 200))
+        commands.busy = True  # hold the lane: the tap has to stay queued
+        controller.jog("x", 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 25.0)
+        # The lock lands before the queued move dispatches: the drop
+        # withdraws the projection and the reflection owed for it.
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()
+        self.assertEqual(controller._pending, ())
+        self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+        # Unlocked: the -25 tap measures against the reconciled
+        # projection, so the floor refuses it.
+        data.observation = replace(data.observation, controls_locked=False)
+        controller.observe()
+        commands.busy = False
+        controller.jog("x", -1)
+        self.assertEqual(self._scripts(commands), [])
+        self.assertEqual(controller._pending, ())
+        # The other direction measures against the same reconciliation: a
+        # +25 from 1 is legal and lands where the projection says.
+        controller.jog("x", 1)
+        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+
+    def test_a_drop_leaves_a_projection_that_never_advanced_alone(self):
+        # The withdrawal's guards: a move queued with no position data
+        # advanced nothing, and a move that is not a relative axis move
+        # (extrude) projects nothing. A drop may not invent a retreat for
+        # either.
+        controller, data, commands = self._make()
+        data.snapshot = SimpleNamespace(core={}, auxiliary={})
+        data.changed.emit()
+        commands.busy = True
+        controller.jog("y", 1)  # no position data: nothing was advanced
+        controller.extrude(1)   # axis "e": no axis projection at all
+        self.assertEqual(len(controller._pending), 2)
+        self.assertIsNone(controller._axis_estimate["y"])
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()
+        self.assertEqual(controller._pending, ())
+        self.assertIsNone(controller._axis_estimate["y"])
+        self.assertEqual(controller._axis_up_pending["y"], 0.0)
+
+    def test_a_drop_keeps_the_dispatched_moves_in_the_projection(self):
+        # Only the moves that never dispatched are withdrawn: the one the
+        # lane already took still counts, and its reflection stays owed
+        # until the poll reports the head arriving.
+        controller, data, commands = self._make(live=(1.0, 10.0, 10.0, 0.0),
+                                                minimum=(0, 0, 0), maximum=(200, 200, 200))
+        controller.jog("x", 1)  # 1 -> 26, dispatched
+        self.assertEqual(len(self._scripts(commands)), 1)
+        controller.jog("x", 1)  # 26 -> 51, held in the queue
+        self.assertEqual(len(controller._pending), 1)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 51.0)
+        data.observation = replace(data.observation, controls_locked=True)
+        controller.observe()
+        controller._pump()  # the lock drops the queued move, not the sent one
+        self.assertEqual(controller._pending, ())
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+        self.assertAlmostEqual(controller._axis_up_pending["x"], 25.0)
+        # The pre-command poll still cannot pull the projection back: the
+        # dispatched move is committed.
+        data.observation = replace(data.observation, controls_locked=False)
+        data.set_state("paused", live=(1.0, 10.0, 10.0, 0.0),
+                       minimum=(0, 0, 0), maximum=(200, 200, 200))
+        self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+
+    def test_a_cancelled_pause_reconciles_away_the_queued_moves(self):
+        # The pause never lands, so the tap queued behind it is cancelled
+        # with it — and the projection may not keep the headroom that tap
+        # claimed (the failure and the deadline are two doors to the same
+        # drop).
+        for failed in (True, False):
+            controller, data, commands = self._make(state="printing",
+                                                   live=(1.0, 10.0, 10.0, 0.0),
+                                                   minimum=(0, 0, 0), maximum=(200, 200, 200))
+            controller.jog("x", 1)
+            self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
+            if failed:
+                data.commandChanged.emit({"name": "Pause", "terminal": True,
+                                          "outcome": "failed"})
+            else:
+                controller._deadline.timeout.emit()
+            self.assertEqual(controller._pending, ())
+            self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
+            self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
+            # The next tap is measured against the truth: -25 from 1 is
+            # refused rather than queued behind a pause that will not come.
+            controller.jog("x", -1)
+            self.assertEqual(controller._pending, ())
+            self.assertNotIn("G1 X-25", self._scripts(commands))
 
     def test_the_guard_cooldown_releases_the_fast_poll_floor(self):
         controller, data, commands = self._make(state="paused")

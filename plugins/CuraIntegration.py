@@ -6,7 +6,6 @@ import os
 import time
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
 from UM.Logger import Logger
 from UM.Backend.Backend import BackendState
 
@@ -319,17 +318,6 @@ class CuraIntegration(QObject):
             return True
         except Exception:
             return False
-
-    def confirm_replace(self, callback):
-        self.switch_to_preview()
-        def ask():
-            answer = QMessageBox.question(None, "Moonraker Print Follower",
-                "Replace Cura contents?\n\nThis will discard everything currently loaded in Cura and replace it "
-                "with the G-code currently printing in Moonraker.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if answer == QMessageBox.StandardButton.Yes: self.queue(callback)
-        self.queue(ask)
 
     def load(self, lease):
         if self._closed:

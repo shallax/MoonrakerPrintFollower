@@ -60,7 +60,6 @@ MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text(encoding="utf-8")
 TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text(encoding="utf-8")
 FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text(encoding="utf-8")
 FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text(encoding="utf-8")
-OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text(encoding="utf-8")
 TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text(encoding="utf-8")
 SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text(encoding="utf-8")
 MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text(encoding="utf-8")
@@ -71,6 +70,7 @@ BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text(encoding="utf-8")
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text(encoding="utf-8")
+CHART_COLOUR_DIALOG_QML = (PLUGINS / "MoonrakerChartColorDialog.qml").read_text(encoding="utf-8")
 FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text(encoding="utf-8")
 QMLDIR = (PLUGINS / "qmldir").read_text(encoding="utf-8")
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
@@ -85,7 +85,7 @@ SECTION_IDS = {
     "print", "setup", "toolhead", "macros", "profiles", "tuning",
     "fans", "leds", "pwm", "power", "system", "save",
     # Information and Printer status panes
-    "meshmap", "job", "temps", "fansinfo", "filament", "objects",
+    "meshmap", "job", "temps", "fansinfo", "filament",
     "systeminfo", "mcus", "temphistory",
     # The Monitor's own surface
     "console", "fileManager",
@@ -95,7 +95,7 @@ SECTION_IDS = {
 class MonitorModelContractTests(unittest.TestCase):
     def test_single_qt_model_exposes_dashboard_features(self):
         for token in ("monitorEta", "monitorFinish", "temperatureItems", "fanItems", "filamentSensorItems",
-            "excludeObjectItems", "powerDevices", "pausePrint", "resumePrint", "cancelPrint", "excludeObject",
+            "powerDevices", "pausePrint", "resumePrint", "cancelPrint", "excludeObject",
             "setPowerDevice", "hostLoad", "memoryAvailable", "cpuTemperature", "klipperVersion", "moonrakerVersion",
             "mcuSummary", "macroNames", "runMacro", "temperaturePresetNames", "applyTemperaturePreset",
             "homeAll", "runQuadGantryLevel", "calibrateBedMesh", "macroParameterDefinitions", "temperaturePresetItems",
@@ -104,6 +104,19 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(token, MONITOR_MODEL)
         self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
+
+    def test_section_content_insets_pair_left_and_right(self):
+        # The 4.6.0 right inset: every section
+        # content column with the left inset carries the SAME
+        # expression on the right — the pair pin, never one side.
+        left = 'Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
+        right = 'Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
+        carried = []
+        for path in sorted(PLUGINS.glob("*.qml")):
+            text = path.read_text(encoding="utf-8")
+            if left in text:
+                carried.append(path.name)
+                self.assertIn(right, text, path.name)
 
     def test_toolhead_control_surface(self):
         policy = (PLUGINS / "ToolheadPolicy.py").read_text(encoding="utf-8")
@@ -202,9 +215,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
-        self.assertEqual(len(SECTION_IDS), 23)
+        self.assertEqual(len(SECTION_IDS), 22)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
         # The extraction's header contract (the re-reviews' zero-width
         # catch, probe-verified): every section component's root is a
@@ -220,23 +233,22 @@ class MonitorModelContractTests(unittest.TestCase):
                             POWER_SECTION_QML, SYSTEM_SECTION_QML, SAVE_SECTION_QML,
                             FILE_MANAGER_SECTION_QML, MESH_SECTION_QML,
                             TEMP_HISTORY_SECTION_QML, FANS_INFO_SECTION_QML,
-                            FILAMENT_SECTION_QML, OBJECTS_SECTION_QML, TEMPS_SECTION_QML,
+                            FILAMENT_SECTION_QML, TEMPS_SECTION_QML,
                             SYSTEM_INFO_SECTION_QML, MCUS_SECTION_QML, JOB_SECTION_QML):
             self.assertIn("ColumnLayout {\n    id: root\n    spacing: 0", section_qml)
             header = section_qml[section_qml.index("CollapsibleSectionHeader {"):
                                  section_qml.index("CollapsibleSectionHeader {") + 400]
             self.assertIn("Layout.fillWidth: true", header)
             self.assertNotIn("width: parent.width", header)
-        # The two monitor sections sit in the STATUS PANE, not inside
+        # The system/mcu sections sit in the STATUS PANE, not inside
         # the chart pop-over's legend repeater (the adversarial
-        # critic's misplaced-insertion catch): the instantiation
-        # follows ObjectsSection in the pane's own content.
-        objects_at = MONITOR_QML.index("ObjectsSection {")
+        # critic's misplaced-insertion catch). Objects moved to the
+        # controls pane in 4.6.0 — its own ordering pin lives with
+        # the dashboard pins below.
         system_at = MONITOR_QML.index("SystemInfoSection {")
         mcus_at = MONITOR_QML.index("McusSection {")
-        self.assertLess(objects_at, system_at)
         self.assertLess(system_at, mcus_at)
-        pane_close = MONITOR_QML.index("                    }\n                }\n", objects_at)
+        pane_close = MONITOR_QML.index("                    }\n                }\n", system_at)
         self.assertLess(mcus_at, pane_close)
         # The mesh section's refresh rides an accessor — the monitor's
         # handler calls it through the instantiation id, never the
@@ -506,7 +518,6 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MCUS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -530,12 +541,11 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader")
                          + FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
-                         + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
                          + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
                          + SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + MCUS_SECTION_QML.count("CollapsibleSectionHeader")
                          + JOB_SECTION_QML.count("CollapsibleSectionHeader")
-                         + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
+                         + MONITOR_QML.count("CollapsibleSectionHeader"), 21)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
@@ -554,7 +564,6 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
         self.assertEqual(FANS_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MCUS_SECTION_QML.count('sectionIcon: "'), 1)
@@ -576,12 +585,11 @@ class MonitorModelContractTests(unittest.TestCase):
                          + MESH_SECTION_QML.count('sectionIcon: "')
                          + FANS_INFO_SECTION_QML.count('sectionIcon: "')
                          + FILAMENT_SECTION_QML.count('sectionIcon: "')
-                         + OBJECTS_SECTION_QML.count('sectionIcon: "')
                          + TEMPS_SECTION_QML.count('sectionIcon: "')
                          + SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
                          + MCUS_SECTION_QML.count('sectionIcon: "')
                          + JOB_SECTION_QML.count('sectionIcon: "')
-                         + MONITOR_QML.count('sectionIcon: "'), 19)
+                         + MONITOR_QML.count('sectionIcon: "'), 18)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
         # sectionIcon: count is unchanged.
@@ -725,7 +733,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("fileRequestRename(modelData.relpath)", FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
         # pre-selects the stem (the live reports).
-        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 6)
+        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 7)
         self.assertIn("renameField.select(0, root.renameStemLength(target.name))", FILE_MANAGER_QML)
         # The helper the open handler calls must be DEFINED — a
         # ReferenceError inside onOpened only fires on open, which
@@ -910,7 +918,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
         # mouse (the chosen position, mesh-style).
-        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 2)
+        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 4)
         # meshDetail is component-scoped: exactly one in-scope refresh
         # (inside meshContent) may reference it, or the outer handler
         # throws and kills the pop-over auto-close.
@@ -1037,10 +1045,18 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.snap(root._hoverMouseX", BED_MESH_MAP_QML)
         self.assertIn('"Probe points"', MONITOR_QML)
         self.assertIn("showProbePoints", BED_MESH_MAP_QML)
-        # The colour row offers a full picker beside the quick swatches.
-        self.assertIn('import QtQuick.Dialogs', MONITOR_QML)
+        # The colour row offers a full picker beside the quick swatches,
+        # and the picker is a platform dialog: the monitor must not
+        # import the module itself, and must build the dialog from its
+        # own document on the click — a host whose platform builds no
+        # colour dialog still gets the whole monitor.
+        self.assertNotIn("import QtQuick.Dialogs", MONITOR_QML)
+        self.assertIn('Qt.createComponent("MoonrakerChartColorDialog.qml")', MONITOR_QML)
         self.assertIn("chartColorDialog", MONITOR_QML)
+        self.assertIn("applyChartColorChoice", MONITOR_QML)
         self.assertIn('text: "Custom…"', MONITOR_QML)
+        self.assertIn("import QtQuick.Dialogs", CHART_COLOUR_DIALOG_QML)
+        self.assertIn("ColorDialog {", CHART_COLOUR_DIALOG_QML)
         self.assertIn("setShowProbePoints", MONITOR_QML)
         # Terminal order: the history sits above the input row.
         self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
@@ -1263,6 +1279,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # The Print-job section's bar is the stacked Rectangle (the
         # 2026-09-17 ruling) — no themed bar, the rule's intent.
         self.assertIn("THE STACKED BAR", JOB_SECTION_QML)
+        # The three fills own their stack positions: the print fill
+        # the bottom, the pause the middle, the layer the top (the
+        # live report: the fills piled at the top and the bar read
+        # broken whenever the values moved).
+        self.assertIn("anchors.bottom: parent.bottom", JOB_SECTION_QML)
+        self.assertIn("anchors.verticalCenter: parent.verticalCenter", JOB_SECTION_QML)
+        self.assertIn("anchors.top: parent.top", JOB_SECTION_QML)
         self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
@@ -1342,7 +1365,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.focusSliderIn(pwmSection, target, kind)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
-        self.assertIn('title: "Exclude object?"', MONITOR_QML)
+        # The exclude dialog died with the 4.6.0 rework: the gesture
+        # is the confirmation, and the stale "cannot be undone" copy
+        # must never survive anywhere in the monitor document.
+        self.assertNotIn("Exclude object?", MONITOR_QML)
+        self.assertNotIn("cannot be undone", MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text(encoding="utf-8")
         self.assertIn("DEBOUNCE_MS = 250", tuning)
         self.assertIn("current.revision != revision", tuning)
@@ -1417,7 +1444,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # arrow keys nudge one step.
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         for token in ("handlePress", "pressIsOnHandle", "parent.value = parent.valueBeforePress",
-                      "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: increase()", "forceActiveFocus()", "mouse.accepted = parent.handlePress"):
+                      "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: {", "increase()",
+                      "forceActiveFocus()", "mouse.accepted = parent.handlePress",
+                      # The handle-centre formula subtracts the
+                      # handle's own width — the old availableWidth
+                      # centre read a handle press as a track jump at
+                      # the track ends (the reviewer's finding).
+                      "availableWidth - handle.width"):
             self.assertIn(token, config)
         # The dashboard's OutlineSliders carry the same behaviours in
         # the shared component (4.2.0): the handle path drives the
@@ -1429,8 +1462,23 @@ class MonitorModelContractTests(unittest.TestCase):
         for token in ("handlePress", "pressIsOnHandle", "tuningActive", "focusPolicy: Qt.StrongFocus",
                       "forceActiveFocus()", "control.value = control.valueBeforePress",
                       "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
-                      "keyDebounce.restart()", "control.tuningActive = true"):
+                      "keyDebounce.restart()", "control.tuningActive = true",
+                      "availableWidth - handle.width",
+                      # The rebuild focus contract (the reviewer's
+                      # finding): the dying slider reports itself.
+                      "focusLostByDestruction", "_heldFocus"):
             self.assertIn(token, outline)
+        dashboard = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
+        for token in ("receiveSliderFocus", "focusSink: root.receiveSliderFocus"):
+            self.assertIn(token, dashboard)
+        for section in (FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML):
+            for token in ("focusSink", "onFocusLostByDestruction"):
+                self.assertIn(token, section)
+        # The preview card's exaggeration slider carries the same
+        # corrected formula (the shared ruling — no surface may keep
+        # the drift).
+        preview = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+        self.assertIn("availableWidth - handle.width", preview)
         self.assertIn("onValueCommitted", DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
         # The keyboard nudge holds the interaction state until its
         # value submits, and the fan/LED/PWM repeaters freeze while a
@@ -1475,6 +1523,103 @@ class MonitorModelContractTests(unittest.TestCase):
         # The popover carries the same clamped disclaimer the Preview's
         # legend makes (the request).
         self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", MONITOR_QML)
+
+    def test_the_popover_schedules_the_pause_at_its_own_layer(self):
+        # The popover's pause-at-layer block (4.6.0): the CARD's own
+        # schedule read from the POPOVER's own layer — the nine keys
+        # published on the monitor model, the three intents its
+        # controls send, and the QML that reads them. The card's own
+        # behaviour is untouched (the locked-surface ruling).
+        for token in (
+            'pauseAtLayerItems = value_property(QVariant, "pauseAtLayerItems", pauseAtLayerChanged, [])',
+            'pauseAtLayerCandidate = value_property(int, "pauseAtLayerCandidate", pauseAtLayerChanged, 0)',
+            'pauseAtLayerHasClearable = value_property(bool, "pauseAtLayerHasClearable", pauseAtLayerChanged, False)',
+            "def togglePauseAtLayer(self, layer):",
+            "def removePauseAtLayer(self, layer):",
+            "def clearPauseAtLayer(self):",
+            # The candidate's source is the FOLLOWER's layer, never
+            # Cura's Preview selection.
+            "index = self._follower_layer_anchor",
+        ):
+            self.assertIn(token, MONITOR_MODEL)
+        for token in (
+            'objectName: "moonrakerFollowerPauseButton"',
+            "root.printer.togglePauseAtLayer(root.printer.pauseAtLayerCandidate);",
+            "root.printer.removePauseAtLayer(pauseRow.pauseLayer);",
+            "root.printer.clearPauseAtLayer();",
+            "root.printer.pauseAtLayerItems",
+            "model.pauseAtLayerUnavailableText",
+            "root.printer.pauseAtLayerHasClearable === true",
+            # The schedule's column and its scrollable list (the live
+            # report): the rows belong BESIDE the plate — under it they
+            # squeezed the face onto the card's clipped bottom edge —
+            # and the list scrolls with the card's own chevrons rather
+            # than stopping at a counted remainder.
+            "id: pauseColumn",
+            "id: pauseBlockModel",
+            "model: pauseBlockModel",
+            "interactive: contentHeight > height",
+            # The list owns the column's remaining height (the live
+            # request) — the popover only, never the card's capped list.
+            "Layout.fillHeight: true",
+            "function onPauseAtLayerChanged() {",
+            "Component.onCompleted: syncPauseRows()",
+            '"↑"',
+            '"↓"',
+            "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
+        ):
+            self.assertIn(token, MONITOR_QML)
+        # The width split, scoped to each column's own body: the plate
+        # holds the width the popover's content had before the schedule
+        # moved beside it, and the schedule's column yields whatever is
+        # left. A floor on the schedule's column took 143 px off the
+        # 900 px pane's face and moved every geometry contract this
+        # face has, so the pair is pinned where it stands — a bare
+        # "minimumWidth: 0" matched anywhere would pass vacuously.
+        plate_column = MONITOR_QML[MONITOR_QML.index("id: plateProgressContent"):MONITOR_QML.index("PlateProgressFace {", MONITOR_QML.index("id: plateProgressContent"))]
+        plate_width = "585 * screenScaleFactor - 2 * UM.Theme.getSize(\"default_margin\").width"
+        self.assertIn("Layout.preferredWidth: %s" % plate_width, plate_column)
+        self.assertIn("Layout.minimumWidth: %s" % plate_width, plate_column)
+        pause_column = MONITOR_QML[MONITOR_QML.index("id: pauseColumn"):MONITOR_QML.index("id: pauseBlockModel")]
+        self.assertIn("Layout.preferredWidth: 340 * screenScaleFactor", pause_column)
+        self.assertIn("Layout.minimumWidth: 0", pause_column)
+        # The chevrons reuse the card's own expressions, so the
+        # no-reflow allow-list carries them once for both hosts.
+        for token in (
+            "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
+            "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+        ):
+            self.assertIn(token, MONITOR_QML)
+        # No control disappears with the schedule: the list, its heading,
+        # the reason line and the clear button collapse by HEIGHT while
+        # empty (the no-reflow rule's own replacement for a visibility
+        # gate). The reason line and the heading share the one idiom.
+        self.assertEqual(MONITOR_QML.count("Layout.preferredHeight: text.length > 0 ? implicitHeight : 0"), 2)
+        self.assertIn("readonly property bool clearAvailable: root.printer != null && root.printer.pauseAtLayerHasClearable === true", MONITOR_QML)
+        # The two actions share one row at the foot of the column (the
+        # live request): the pause button takes the slack and Clear keeps
+        # a width sized to its own word, side by side rather than stacked.
+        self.assertLess(MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'),
+                        MONITOR_QML.index("id: clearPausesButton"))
+        # The popover's own screen says the short word; the card keeps the
+        # longer line (its own file, its own pin). Both the width AND the
+        # height collapse with the clear action, so the row's other button
+        # expands into the whole foot — a collapsed slot that kept its
+        # width would leave the button beside a gap (the live request).
+        clear_block = MONITOR_QML[MONITOR_QML.index("id: clearPausesButton"):MONITOR_QML.index("root.printer.clearPauseAtLayer();")]
+        self.assertIn('text: "Clear"', clear_block)
+        self.assertIn("Layout.preferredWidth: pauseColumn.clearAvailable ? 60 * screenScaleFactor : 0", clear_block)
+        self.assertIn("Layout.preferredHeight: pauseColumn.clearAvailable ? UM.Theme.getSize(\"action_button\").height : 0", clear_block)
+        self.assertIn("enabled: pauseColumn.clearAvailable", clear_block)
+        # Both foot buttons centre their labels: the theme's content row
+        # packs from the left, so the fixed-width mode is what centring
+        # needs — without it the label hugs its text against the left edge
+        # (the live report).
+        pause_block = MONITOR_QML[MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'):MONITOR_QML.index("root.printer.togglePauseAtLayer(")]
+        for block in (pause_block, clear_block):
+            self.assertIn("fixedWidthMode: true", block)
+        self.assertNotIn("scheduledPauseList", MONITOR_QML, "the popover kept the static capped list")
+        self.assertNotIn("+ pauseColumn.hiddenRows", MONITOR_QML, "the popover counts a remainder instead of scrolling")
 
 
 class MonitorFormattingTests(unittest.TestCase):
@@ -2097,6 +2242,7 @@ class MonitorQtTests(unittest.TestCase):
             self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
         self.addCleanup(self.qt.events)
         self.addCleanup(self.follower.deinitialize)
+        self._stamp = 0.0
         self.config_type = self.qt.load("PrinterConfig").PrinterConfig
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
 
@@ -2106,12 +2252,36 @@ class MonitorQtTests(unittest.TestCase):
         self.addCleanup(output.stop)
         return output._current.activePrinter
 
+    def feed_chart(self, model, auxiliary):
+        """The chart's feed path (the 4.6.0 decoupling): the fixed 1 s
+        tick samples the latest aux snapshot while connected — aux
+        arrivals alone never feed the history."""
+        self.deliver()  # the client's connect transition
+        model._data._update(auxiliary=auxiliary)
+        model._on_chart_tick()
+        self.qt.events()  # the publish coalescer flushes on the next turn
+
     def stored_transcript(self):
         """The persisted transcript's home (4.5.0): the per-machine
         state shard under the persistence folder."""
         machine_id = self.follower.current_printer_identity()[0]
         shard = self.follower.persistence.get_machine_state(machine_id) or {}
         return shard.get("consoleTranscript", [])
+
+    def status_stamp(self):
+        """A strictly increasing issue stamp for a delivered frame.
+
+        Production stamps a poll when it is ISSUED, and the client
+        drops a sync that is not strictly newer than the last applied
+        one (the out-of-order-reply guard). The double delivers whole
+        frames back to back, so the sequence must carry its own
+        increasing stamps: a platform clock that quantises — Windows'
+        GetTickCount64 ticks at ~15.6 ms — would otherwise hand two
+        frames the same stamp and the second would be dropped whole as
+        a stale reply.
+        """
+        self._stamp = max(time.monotonic(), self._stamp + 0.001)
+        return self._stamp
 
     def deliver(self):
         client = self.follower.client
@@ -2121,7 +2291,7 @@ class MonitorQtTests(unittest.TestCase):
             "virtual_sdcard": {"file_size": 100, "file_position": 20},
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
     def deliver_state(self, state):
         client = self.follower.client
@@ -2133,8 +2303,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        import time
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
     def scripts(self):
         return [r for r in self.transport.requests if r.path == "printer/gcode/script"]
@@ -2473,7 +2642,7 @@ class MonitorQtTests(unittest.TestCase):
         # forbidden by the estimate — the head never goes below zero.
         # (The drain merges queued taps, so the script COUNT is not
         # pinned; the estimate is the guard.)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
         self.assertGreaterEqual(len(z_scripts), 1)
 
@@ -2533,7 +2702,7 @@ class MonitorQtTests(unittest.TestCase):
         # instead of re-arming against each stale poll.
         model.jog("z", -1)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
         self.assertIn("rejected", model._toolhead._status)
 
     def test_z_projection_follows_fresh_telemetry_and_upward_motion(self):
@@ -2547,25 +2716,24 @@ class MonitorQtTests(unittest.TestCase):
         model.jog("z", -1)  # projection 0.3
         self.qt.events(1)
         def deliver_z(z):
-            import time
             status = {"print_stats": {"state": "standby"},
                       "gcode_move": {"gcode_position": [0, 0, z, 0]},
                       "motion_report": {"live_position": [0, 0, z, 0]}}
             self.follower.client._handle_http_status({"result": {"status": status}}, None,
-                                                     self.follower.client._generation, time.monotonic())
+                                                     self.follower.client._generation, self.status_stamp())
         deliver_z(0.3)  # the head arrived: the poll adopts
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.3)
         model.jog("z", 1)  # upward: projection 0.4
         self.qt.events(1)
         deliver_z(0.4)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.4)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.4)
         model.jog("z", -1)  # downward again: projection 0.3
         self.qt.events(1)
         deliver_z(0.3)
         self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.3)
 
     def test_emergency_stop_clears_pending_jog_queue(self):
         model = self.monitor()
@@ -2851,6 +3019,11 @@ class MonitorQtTests(unittest.TestCase):
                 # live report: the chosen options were not
                 # saved between sessions).
                 "toolhead": {"jogDistance": 25.0, "extrudeDistance": 5.0, "extrudeSpeed": 300.0},
+                # The follower view settings are global (the live
+                # ruling) — the defaults ride the fresh document.
+                "followerView": {"showPrevious": True, "showNext": True,
+                                 "showBase": True, "showTravels": False,
+                                 "lineScale": 0.7},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.
@@ -2865,6 +3038,210 @@ class MonitorQtTests(unittest.TestCase):
         second.setSectionExpanded("toolhead", True)
         self.assertEqual(second._sections["toolhead"], True)
 
+    def _with_layers(self, model, anchor, count, split=0):
+        """Install a live plate payload at the coordinator's own seam:
+        the model's keys publish from the snapshot the face reads."""
+        coordinator = self.follower._runtime.coordinator
+        coordinator._snapshot = replace(
+            coordinator._snapshot,
+            plate_progress={"layers": {"prev": None, "current": {"classes": {}}, "next": None},
+                            "split": split, "anchor": anchor, "method": "motion index",
+                            "motionTotal": 100},
+            plate_layer_count=count)
+        model._publish()
+
+    def test_the_follower_keys_publish_their_defaults_and_the_served_layer(self):
+        model = self.monitor()
+        self.assertTrue(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertEqual(model.plateLayerCount, 0)
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        self.assertEqual(model.plateProgressAnchor, 7)
+        self.assertEqual(model.plateLayerCount, 12)
+
+    def test_a_refused_layer_says_so_instead_of_claiming_to_load(self):
+        # The live report: the label stood on "Loading layer…" forever
+        # with no way back — a refused layer was indistinct from one
+        # still arriving. A payload that carries the refusal names it.
+        model = self.monitor()
+        model.setFollowerPopoverOpen(True)
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        self.assertEqual(model.plateProgressReason, "",
+                         "a served layer carries no reason")
+        base = coordinator._snapshot
+        loading = {"layers": {"prev": None, "current": None, "next": None},
+                   "split": None, "anchor": 7, "method": "unavailable",
+                   "motionTotal": 0, "refusal": ""}
+        coordinator._snapshot = replace(base, plate_progress=loading)
+        model._publish()
+        self.assertFalse(model.plateProgressAvailable)
+        self.assertEqual(model.plateProgressReason, "Loading layer…")
+        # The same absent layer, but the service has said it will never
+        # arrive: the label names the refusal instead of promising a
+        # load that is not coming — and names WHICH refusal.
+        for refusal, text in (("failed", "This layer failed to load."),
+                              ("outside", "This layer is not in this file.")):
+            coordinator._snapshot = replace(
+                base, plate_progress=dict(loading, refusal=refusal))
+            model._publish()
+            self.assertFalse(model.plateProgressAvailable)
+            self.assertEqual(model.plateProgressReason, text,
+                             "a refused layer must say so, not claim to be loading")
+
+    def test_detaching_holds_the_layer_the_face_shows_and_reattaching_rejoins(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 7)
+        self.assertEqual(coordinator._plate_anchor, 7,
+                         "the frozen layer's window was never asked for")
+        # Detaching from the live layer seeds the scrub with the split
+        # the face stood at — the frozen view never jumps (the live
+        # report: a detach that changed nothing read as dead).
+        self.assertEqual(coordinator._plate_split, 0,
+                         "the detach did not seed the scrub with the live split")
+        # A manual layer IS a detach: the face cannot follow the print
+        # and hold another layer at once. The seek abandons the scrub —
+        # the split belonged to the layer the face left.
+        model.setFollowerLayerAnchor(3)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 3)
+        self.assertEqual(coordinator._plate_anchor, 3)
+        # A seek lands at the FULL layer (the live request).
+        self.assertEqual(coordinator._plate_split, -1)
+        model.setFollowerAttached(True)
+        self.assertTrue(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertIsNone(coordinator._plate_anchor, "re-attaching never rejoined the print")
+        self.assertIsNone(coordinator._plate_split, "re-attaching kept the scrub")
+
+    def test_the_progress_scrub_is_itself_a_detach_and_clamps_to_the_layer(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        # A scrub from the LIVE layer freezes it where it stood: the
+        # within-layer seek cannot follow the print and play at once.
+        model.setFollowerLayerProgress(41)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 7)
+        self.assertEqual(coordinator._plate_split, 41)
+        # The request clamps to the layer's motion count (the fixture's
+        # payload carries motionTotal 100). The scrub's own refresh
+        # reaps the injected payload, so it is re-armed first.
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerLayerProgress(9999)
+        self.assertEqual(coordinator._plate_split, 100)
+
+    def test_detaching_from_layer_zero_freezes_zero_not_missing(self):
+        # The P0 zero-index bug: `0 or -1` read the first layer as
+        # missing, so the detach was refused on layer 0 — a valid
+        # zero must freeze like any other layer.
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12, split=37)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached,
+                         "the detach on layer zero was refused")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0,
+                         "the frozen layer's window was never asked for")
+        self.assertEqual(coordinator._plate_split, 37,
+                         "the detach did not seed the scrub with the live split")
+        # A fresh publish must not undo the freeze (the refusal path
+        # used to flip the follower back to attached).
+        self._with_layers(model, anchor=0, count=12, split=40)
+        self.assertFalse(model.followerAttached,
+                         "the republish re-attached the layer-zero detach")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0)
+
+    def test_the_progress_scrub_from_attached_layer_zero_detaches(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerLayerProgress(41)
+        self.assertFalse(model.followerAttached,
+                         "the scrub on layer zero never detached")
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(coordinator._plate_anchor, 0)
+        self.assertEqual(coordinator._plate_split, 41)
+        # The detached state survives the refresh.
+        self._with_layers(model, anchor=0, count=12)
+        self.assertFalse(model.followerAttached,
+                         "the refresh re-attached the layer-zero scrub")
+        self.assertEqual(model.followerLayerAnchor, 0)
+
+    def test_reattaching_from_layer_zero_abandons_the_freeze(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=0, count=12, split=9)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        model.setFollowerAttached(True)
+        self.assertTrue(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertIsNone(coordinator._plate_anchor,
+                          "re-attaching never rejoined the print")
+        self.assertIsNone(coordinator._plate_split,
+                          "re-attaching kept the scrub")
+
+    def test_a_detach_with_no_layer_to_hold_is_refused(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        model.setFollowerAttached(False)
+        self.assertTrue(model.followerAttached,
+                        "the detach published a freeze the coordinator cannot serve")
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertIsNone(coordinator._plate_anchor)
+
+    def test_a_closed_popover_freezes_the_follower_payload_and_reopening_resumes(self):
+        model = self.monitor()
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        self._with_layers(model, anchor=8, count=12)
+        self.assertEqual(model.plateProgressAnchor, 8)
+        model.setFollowerPopoverOpen(False)
+        self._with_layers(model, anchor=9, count=12)
+        self.assertEqual(model.plateProgressAnchor, 8,
+                         "the closed popover took the fresh payload")
+        model.setFollowerPopoverOpen(True)
+        self.assertEqual(model.plateProgressAnchor, 9,
+                         "reopening never resumed the live payload")
+
+    def test_a_collapsed_mini_section_freezes_the_live_payload(self):
+        model = self.monitor()
+        self._with_layers(model, anchor=7, count=12)
+        self.assertEqual(model.plateLiveAnchor, 7)
+        model.setSectionExpanded("plateprogress", False)
+        self._with_layers(model, anchor=8, count=12)
+        self.assertEqual(model.plateLiveAnchor, 7,
+                         "the collapsed section took the fresh payload")
+        model.setSectionExpanded("plateprogress", True)
+        self.assertEqual(model.plateLiveAnchor, 8,
+                         "expanding never resumed the live payload")
+
+    def test_a_new_print_reattaches_the_follower(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        model.setFollowerAttached(False)
+        self.assertEqual(coordinator._plate_anchor, 7)
+        # The frozen layer belonged to the file that was printing.
+        coordinator._snapshot = replace(coordinator._snapshot, job_key=("next.gcode", 1))
+        model._publish()
+        self.assertTrue(model.followerAttached, "the frozen layer survived into the next print")
+        self.assertEqual(model.followerLayerAnchor, -1)
+        self.assertIsNone(coordinator._plate_anchor)
+
     def test_section_layout_persists_across_model_instances(self):
         # 4.4.0: the configure popups' committed reorder and hidden
         # set round-trip through the plugin-owned JSON file — a Cura
@@ -2872,7 +3249,7 @@ class MonitorQtTests(unittest.TestCase):
         # fresh model's EFFECTIVE layout (sectionLayoutFor) reads the
         # stored order and the hidden set, never the pane default.
         model = self.monitor()
-        order = ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"]
+        order = ["job", "temps", "fansinfo", "filament", "systeminfo", "mcus"]
         self.assertIsNone(model.setSectionLayout("status", order, ["mcus"]))
         section_path = self.follower.persistence.state_global_path
         with open(section_path, "r", encoding="utf-8") as handle:
@@ -3038,13 +3415,11 @@ class MonitorQtTests(unittest.TestCase):
         # publish. The mini preview is a separate, bounded payload
         # that keeps serving while the pop-over is closed.
         model = self.monitor()
-        model._data._update(auxiliary={
+        self.feed_chart(model, {
             "extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
             "heater_bed": {"temperature": 60.0, "target": 60.0},
             "temperature_sensor chamber": {"temperature": 40.0},
         })
-        model._data.auxiliaryChanged.emit()
-        self.qt.events(1)
         self.assertEqual(self.chart_of(model)["series"], [], "closed: the full payload is dormant")
         mini = self.mini_of(model)
         self.assertLessEqual(len(mini["series"]), 2, "the mini payload carries only its own series")
@@ -3056,24 +3431,22 @@ class MonitorQtTests(unittest.TestCase):
         model.setChartOpen(False)
         self.assertEqual(self.chart_of(model)["series"], [], "closing returns the full payload to dormancy")
 
-    def test_the_full_payload_stays_dormant_across_feeds_while_closed(self):
-        # The same dormant object across auxiliary feeds: the STORED
+    def test_the_full_payload_stays_dormant_across_ticks_while_closed(self):
+        # The same dormant object across chart ticks: the STORED
         # value's identity is stable, so the full-chart property never
         # re-converts and its signal never fires while the pop-over is
         # closed. (The property read itself crosses QVariant, so the
         # identity is asserted on the stored value, not the read.)
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events(1)
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0}})
         fired = []
         model.temperatureChartFullChanged.connect(lambda: fired.append(1))
         self.assertEqual(self.chart_of(model)["series"], [])
         dormant = model._values["temperatureChartFull"]
         for tick in range(5):
             model._data._update(auxiliary={"extruder": {"temperature": 200.0 + tick}})
-            model._data.auxiliaryChanged.emit()
-            self.qt.events(1)
+            model._on_chart_tick()
+            self.qt.events()
         self.assertIs(model._values["temperatureChartFull"], dormant,
                       "a feed must not rebuild the closed full payload")
         self.assertEqual(fired, [], "the full-chart signal fired while closed")
@@ -3112,8 +3485,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
                      "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.2}}
-        model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()  # the real feed path: _aux updates then emits
+        self.feed_chart(model, auxiliary)
         # Defaults: everything visible, palette colours, toggles on.
         default = self.legend_of(model)
         self.assertTrue(default["showTargets"])
@@ -3132,9 +3504,7 @@ class MonitorQtTests(unittest.TestCase):
         })
         # A fresh model restores the config from the file.
         second = self.monitor()
-        second._data._update(auxiliary=auxiliary)
-        second._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(second, auxiliary)
         legend = self.legend_of(second)
         self.assertFalse(legend["showTargets"])
         self.assertFalse(legend["showPower"])
@@ -3143,30 +3513,32 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
 
-    def test_history_feeds_once_per_auxiliary_arrival_not_per_publish(self):
+    def test_history_feeds_once_per_chart_tick_not_per_publish(self):
         model = self.monitor()
+        self.deliver()  # the client's connect transition
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}}
         model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
-        self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
-        # Core-only publishes (no aux reply) must not append samples:
-        # the old per-publish feed duplicated samples and halved the
-        # effective window.
+        self.qt.events()
+        self.assertEqual(len(self.mini_of(model)["series"]), 0,
+                         "an aux arrival alone never feeds the chart")
+        # Core-only publishes must not append samples either: the old
+        # per-publish feed duplicated samples and halved the effective
+        # window.
         for _ in range(5):
             model._data._update(core={"print_stats": {"state": "printing"}})
+        self.assertEqual(len(self.mini_of(model)["series"]), 0)
+        # The fixed 1 s tick samples the latest snapshot once.
+        model._on_chart_tick()
+        self.qt.events()
         self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
-        # A second aux reply appends exactly one more sample.
-        model._data._update(auxiliary=auxiliary)
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        # A second tick appends exactly one more sample.
+        model._on_chart_tick()
+        self.qt.events()
         self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 2)
 
     def test_history_resets_when_the_session_is_invalidated(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         self.assertEqual(len(self.mini_of(model)["series"]), 1)
         model._data.set_owner_active(False)  # emits invalidated
         self.assertEqual(self.mini_of(model)["series"], [])
@@ -3177,8 +3549,7 @@ class MonitorQtTests(unittest.TestCase):
 
     def test_chart_setters_are_idempotent_and_validate(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
-        model._data.auxiliaryChanged.emit()
+        self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         writes = []
         model._apply_chart_config = lambda: writes.append(1)
         # Re-applying the same value must not rewrite the state file
@@ -3202,8 +3573,7 @@ class MonitorQtTests(unittest.TestCase):
 
     def test_chart_config_prunes_vanished_sensors(self):
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}})
-        model._data.auxiliaryChanged.emit()
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}})
         model.setTemperatureSensorColor("ghost_sensor", "#123456")
         # Any later change prunes keys for sensors no longer present —
         # but never while the live set is empty.
@@ -3221,18 +3591,14 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(self.follower.current_printer_config().temperature_chart,
                          {"visible": {"extruder": False}, "colors": {"heater_bed": "#123456"},
                           "showTargets": True, "showPower": True})
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         legend = self.legend_of(model)
         extruder = next(item for item in legend["series"] if item["name"] == "extruder")
         bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
         second = self.monitor()
-        second._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        second._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(second, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         legend = self.legend_of(second)
         extruder = next(item for item in legend["series"] if item["name"] == "extruder")
         bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
@@ -3257,9 +3623,7 @@ class MonitorQtTests(unittest.TestCase):
                                             "colors": {"heater_bed": "#123456"},
                                             "showTargets": False, "showPower": False}}, handle)
         model = self.monitor()
-        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
-        model._data.auxiliaryChanged.emit()
-        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.feed_chart(model, {"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         # The legacy block was adopted once into the per-printer record…
         self.assertEqual(self.follower.current_printer_config().temperature_chart, {
             "visible": {"extruder": False},
@@ -3704,6 +4068,12 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
+        # The identity change now REBINDS the namespace stores (the
+        # budget-follow finding): the service's job resets with them,
+        # and the next status frame re-establishes it — exactly the
+        # production order for an identity resolution.
+        self.deliver_state("printing")
+        self.qt.events(1)
         model.improveEta()
         self.qt.events(1)
         self.qt.events()  # the publish coalescer flushes on the next turn
@@ -3767,7 +4137,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         tick = [1000.0]
         fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
@@ -3822,7 +4192,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         with patch.object(module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1700000000.0)):
             deliver(30)
@@ -3896,7 +4266,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
 
         with patch.object(module, "time", fake_time):
             deliver(30)
@@ -3945,7 +4315,7 @@ class MonitorQtTests(unittest.TestCase):
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
         with patch.object(module, "time", fake_time):
-            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
             self.qt.events(1)
             for step in range(coordinator.MR_META_CHECK_LIMIT):
                 meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
@@ -3958,7 +4328,7 @@ class MonitorQtTests(unittest.TestCase):
                 if step < coordinator.MR_META_CHECK_LIMIT - 1:
                     self.assertEqual(coordinator._mr_metadata_for(*key), {})
                     tick[0] += 31.0
-                    client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+                    client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
                     self.qt.events(1)
             # After the limit: the payload latched, flagged.
             self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)
@@ -3978,7 +4348,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
         self.qt.events(1)
         meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
@@ -4003,7 +4373,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
         self.qt.events(1)
         meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
@@ -4253,7 +4623,7 @@ Item {
     }
 }
 """.encode(), QUrl("sweep-pin.qml"))
-        self.assertFalse(component.isError(), [str(e) for e in component.errors()])
+        self.assertFalse(component.isError(), [e.toString() for e in component.errors()])
         item = component.create()
         self.assertIsNotNone(item)
         from PyQt6.QtCore import QObject
@@ -4638,6 +5008,59 @@ Item {
             # only change on a printer switch, which is user-initiated.
             "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
             "visible: root.printerModel != null && root.printerModel.hasBedMesh",
+            # The webcam FPS bar: parked until the pane is wide enough
+            # and the stream is live — layout-static within the pane.
+            "visible: root.cameraBarFits && root.cameraControlLive",
+            # The camera bar's two modes (zoom / FPS) and its compact
+            # chip: mode and size gates inside the camera pane's own
+            # reserved strip — never layout-shifting elsewhere.
+            'visible: root.cameraBarMode === "zoom"',
+            'visible: root.cameraBarMode === "fps"',
+            # The FPS scale's mirrored graduation edge: decoration
+            # inside the bar's own reserved strip (the zoom scope's
+            # own !major mirror).
+            "visible: !line",
+            "visible: !root.cameraBarFits && root.cameraControlLive && root.cameraPictureWidth >= 96 * screenScaleFactor && root.cameraPictureHeight >= 96 * screenScaleFactor",
+            "visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected && cameraImage.visible && cameraImage.imageWidth > 0 && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
+            # The plate's toolhead dot: scene-graph decoration INSIDE
+            # the canvas's reserved slot — it can never shift layout,
+            # only its own marker can appear inside the fixed map.
+            "visible: root._plot != null && root.dot != null && root.dot.valid === true",
+            "visible: mapping._plot != null && root.dot != null && root.dot.valid === true",
+            # The follower's unavailable state: an overlay INSIDE the
+            # face's own slot (the popover is a transient surface),
+            # never a layout shift.
+            "visible: !root.available()",
+            "visible: !root.available() && !root.compact",
+            "visible: !root.available() && root.compact",
+            # The mapping hides while the index is unavailable: the
+            # bed grid must not sit under the download offer's text —
+            # inside the face's own slot, never a layout shift.
+            "visible: root.available()",
+            # The objects list's current-row bar: a highlight behind
+            # the text, never a layout shift.
+            "visible: modelData.current",
+            # The picker's printed-legend row and its index offer:
+            # the printed state derives from the index, so both gate
+            # on its availability — inside the transient card.
+            "visible: root.printer != null && root.printer.plateProgressAvailable",
+            "visible: root.printer != null && root.printer.plateHasObjects && !root.printer.plateProgressAvailable",
+            # The scope's right-edge tick: the majors draw one full
+            # line, the halves and quarters an edge pair — scene-graph
+            # decoration inside the scope.
+            "visible: !major",
+            # The picker's gate (the live ruling): during a print the
+            # section shows the plate when the data exists, the
+            # download offer otherwise; it clears with the job epoch.
+            "visible: root.printer != null && root.printer.sectionHiddenMap[\"plate\"] !== true && (root.printer.printActive || root.printer.plateHasObjects)",
+            # The picker's download offer: inside the transient card,
+            # shown while the plate is empty.
+            "visible: root.printer != null && !root.printer.plateHasObjects",
+            # The follower's dot rides the layers: no index, no dot
+            # (scene decoration inside the canvas slot). A detached
+            # face draws the frozen layer, which the live position is
+            # not: the dot goes with the follow.
+            "visible: root.available() && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true",
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.
@@ -4683,6 +5106,10 @@ Item {
             # Its labels read empty while no pause lies ahead.
             "visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0",
             "visible: root.printer != null && root.printer.nextPauseFraction >= 0",
+            # The job bar's optimisation band (the live request): a
+            # state-gated sweep that vanishes at completion — it never
+            # flips per poll once the pass settles.
+            "visible: root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1",
             # The preview strip's own derived validity (computed in
             # updateStrip, not a model value).
             "visible: stripValid",
@@ -4715,7 +5142,6 @@ Item {
             # The Objects section's empty-state line (the
             # live request): the list arrives mid-print, an empty one
             # says so.
-            "visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0",
             # The console grab bar hides under the auto-collapse
             # width (the live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
@@ -4738,14 +5164,66 @@ Item {
             # the scrolled edge.
             "visible: flick.height > 0 && flick.contentY > 2",
             "visible: flick.height > 0 && flick.contentY < flick.contentHeight - flick.height - 2",
-            # The preview card's pause-list chevrons: the same idiom,
-            # on the capped five-row ListView.
+            # The pause-list chevrons: the file manager's idiom, on
+            # the capped five-row ListView the preview card and the
+            # follower popover each keep.
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+            # The follower face's travel raster: it hands over with the
+            # class raster (a peer's commit) — decoration inside the
+            # face's own slot, never a layout shift.
+            "visible: _travelsShown()",
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
             "visible: base.bedMeshAvailable && base.bedMeshVisible",
+            # The follower's zoom-gated toolhead row and the Pending
+            # option that only the live view carries (the 4.6.0 live
+            # requests).
+            "visible: progressFace.viewScale > 1.0 && progressFace.attached",
+            # The Reset view control: the host's checkbox-row label,
+            # hidden in place while at 100% — its row is permanent.
+            "visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0",
+            "visible: progressFace.attached",
+            # The plate face's native raster stack (the 4.6.0 render
+            # architecture): the images own their state gates — a
+            # full layer's raster, its travels, the grey partial
+            # base and the ghost pair.
+            "visible: _fullRaster()",
+            "visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)",
+            "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && _rasterOf(_ghost(\"prev\"))",
+            "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",
+            "visible: _partialBase() && _baseOf(root.progress.layers.current)",
+            "visible: _partialPrefixReady()",
+            # The invalidation hold (and the shown prefix's standing
+            # through repaints and stale deliveries): the old picture
+            # stays until the replacement's is committed — the atomic
+            # ownership swap. The continuation lines ride the same
+            # pin (the regex reads the visible line's first clause).
+            "visible: _partialPrefixReady() || root._prefixHold",
+            "visible: (_partialPrefixReady() || ((root._prefixHold && _leavingFull()) || (root._prefixWasShown && _prefixApplies() && !(root._textureReady && root._splitGate()))) || _prefixHoldsFull()) && !root._retainedStanding",
+            "visible: root._interactionActive",
+            # The full raster's standing: the full state OR the
+            # 100% -> partial entry's transaction — the predicate
+            # itself holds the previous composition until the
+            # replacement is presentation-ready (zero blank frames).
+            "visible: _fullPictureStanding()",
+            # The interaction raster: the warm full-bed composite
+            # owns the heavy scene during a camera gesture — the
+            # source latches at entry so a mid-gesture retirement
+            # never unloads the scene in hand (an interaction driven
+            # without an entry falls back to the live eligible URL).
+            "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
+            # The retained previous prefix (the atomic handover): the
+            # last uploaded prefix's pixels stand while the live
+            # replacement loads — never torn down early. Its visibility
+            # reads the live image's OWN readiness, so the swap that
+            # blanks that image and the record's stand are one
+            # evaluation (never a beat apart). The vector gate reads
+            # the DELIVERED coverage: the committed record runs a
+            # frame ahead of the scene, and a record admitted on it
+            # stacks its ink over the not-yet-trimmed bitmap.
+            "visible: root._retainedPrefixSource !== \"\" && root._retainedPrefixApplies() && (!root._compositionReady() || progressPrefixImage.status !== Image.Ready) && !(root._textureReady && root._vectorCoversShown === 0)",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).
@@ -4757,6 +5235,7 @@ Item {
             "visible: root.printerModel != null && root.printerModel.fileRenameConflict",
             "visible: root.uploadProgressState() === \"uploading\"",
             "visible: root.uploadProgressState() === \"failed\"",
+            "visible: root.downloadProgressName() !== \"\"",
             "visible: root.thumbState(modelData.relpath) === \"ready\" && recentsThumb.status !== Image.Error",
             "visible: root.thumbState(modelData.relpath) === \"loading\"",
             "visible: root.thumbState(modelData.relpath) === \"failed\" || root.thumbState(modelData.relpath) === \"none\"",
@@ -4818,11 +5297,13 @@ Item {
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section
-        # (Dashboard 13 controls, Monitor 2 information + 7 status).
+        # (Dashboard 13 controls; Monitor 4
+        # information + 6 status after the move and the follower's own
+        # section).
         # A new adopter trips the count — the whitelist's substring
         # blessing must not cover an unbounded family.
         for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 13),
-                                       ("MoonrakerMonitor.qml", 9)):
+                                       ("MoonrakerMonitor.qml", 10)):
             self.assertEqual(
                 (PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
                 expected, monitor_file)
@@ -4831,11 +5312,10 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
-            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && !modelData.excluded",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML + OBJECTS_SECTION_QML)
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it. The attach-gate round made the
         # width conditional on the toolpath (the hidden follow button
@@ -5172,6 +5652,169 @@ Item {
         # that controls stay silent.
         self.assertGreaterEqual(len(webcam_changes), 1)
         self.assertEqual(control_changes, [])
+
+    def test_the_decode_rate_persists_per_machine_and_costs_no_reconnect(self):
+        # The throttle is the renderer's decode cadence, never the
+        # stream: committing a rate must persist it per machine and
+        # leave the connection exactly as it was — no new generation,
+        # no rebind, no re-request of anything.
+        model = self.monitor()
+        self.deliver()
+        cameras = [{"uid": "front-uid", "name": "Front", "stream_url": "/front", "target_fps": 30}]
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 15.0, "the product default until the user moves it")
+        generation = self.follower.client._generation
+        requests = len(self.transport.requests)
+
+        model.setCameraFps(12.0)
+        self.qt.events()
+
+        self.assertEqual(model.cameraFps, 12.0, "the published rate is the one committed")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 12.0)
+        document = self.follower.persistence.settings_document()
+        machine_id = self.follower.current_printer_identity()[0]
+        self.assertEqual(document["machines"][machine_id]["camera_fps"], 12.0,
+                         "the rate rides the same per-machine settings record")
+        self.assertEqual(self.follower.client._generation, generation,
+                         "a rate change is never a reconnect")
+        self.assertEqual(len(self.transport.requests), requests,
+                         "and it asks the printer for nothing")
+
+        # The range it publishes is the camera's own, and the rate
+        # survives a restart of the whole follower.
+        self.assertEqual(model.cameraFpsMin, 0.5)
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        app2 = self.qt.Application(preferences=self.app.preferences)
+        transport2 = ScriptedTransport()
+        runtime_module = self.qt.load("FollowerRuntime")
+        real_client = runtime_module.MoonrakerClient
+        with patch.object(runtime_module, "MoonrakerClient", lambda parent: real_client(parent, transport=transport2, socket=ScriptedSocket())):
+            follower2 = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app2)
+        self.addCleanup(follower2.deinitialize)
+        self.assertEqual(follower2.current_printer_config().camera_fps, 12.0,
+                         "the rate is restored from the settings document")
+        restored = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(app2, follower2)
+        restored.start()
+        self.addCleanup(restored.stop)
+        restored_model = restored._current.activePrinter
+        restored_model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(restored_model.cameraFps, 12.0,
+                         "and the restored machine renders at it")
+
+    def test_an_idle_rate_control_never_saves_the_config(self):
+        # The commit is a real change or nothing: a stale widget echoing
+        # back the rate the model already holds (the pane's own binding
+        # round trip) must not write the settings document, and neither
+        # must a value that clamps to where the model already stands.
+        model = self.monitor()
+        model._data._update(webcams=[
+            {"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 15}])
+        self.qt.events(10)
+
+        def stored():
+            return json.dumps(self.follower.persistence.settings_document(), sort_keys=True)
+
+        settling = stored()
+        model.setCameraFps(15.0)  # already the effective rate
+        self.qt.events(10)
+        self.assertEqual(stored(), settling, "a stale echo of the current rate saves nothing")
+        model.setCameraFps(30.0)  # past the camera; clamps back onto it
+        self.qt.events(10)
+        self.assertEqual(stored(), settling, "and neither does a commit that cannot move it")
+        model.setCameraFps(0.2)  # below the floor
+        self.qt.events(10)
+        self.assertNotEqual(stored(), settling, "the floor clamp is a real change")
+        self.assertEqual(model.cameraFps, 0.5)
+
+    def test_the_rate_is_capped_by_the_selected_cameras_own_target(self):
+        # The ceiling is the camera's configured target_fps, never a
+        # product constant: a 15 FPS camera cannot be asked for 30, and
+        # the commit stores what was actually applied — while the
+        # OBSERVE path only lowers the effective rate, leaving the
+        # preference alone for the faster camera it came from.
+        model = self.monitor()
+        model._data._update(webcams=[
+            {"uid": "fast", "name": "Fast", "stream_url": "/fast", "target_fps": 60},
+            {"uid": "slow", "name": "Slow", "stream_url": "/slow", "target_fps": 15},
+        ])
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 60.0, "the selected camera's own ceiling")
+        model.setCameraFps(45.0)
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 45.0)
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0)
+
+        model.selectWebcam(1)  # the slower camera
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 15.0, "the new camera publishes its own ceiling")
+        self.assertEqual(model.cameraFps, 15.0, "and the effective rate follows it down")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0,
+                         "the stored preference is not rewritten by the cap")
+        model.setCameraFps(30.0)  # past this camera's ceiling
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 15.0, "the commit is capped at the camera")
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 45.0,
+                         "a commit that cannot move the rate rewrites nothing")
+        model.setCameraFps(10.0)  # inside this camera's ceiling
+        self.qt.events()
+        self.assertEqual(model.cameraFps, 10.0)
+        self.assertEqual(self.follower.current_printer_config().camera_fps, 10.0,
+                         "and a commit that does move it stores what was applied")
+        model.selectWebcam(0)  # back to the fast camera
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 60.0)
+        self.assertEqual(model.cameraFps, 10.0, "the user's own rate, uncapped by the slower camera")
+
+    def test_a_camera_without_a_usable_target_fps_falls_back_to_the_render_ceiling(self):
+        # An older Moonraker, or a front-end-written entry, carries no
+        # target_fps: the ceiling is the renderer's own idle cadence
+        # rather than a camera that cannot be read as one.
+        model = self.monitor()
+        for entry in (
+                {"uid": "none", "name": "None", "stream_url": "/none"},
+                {"uid": "zero", "name": "Zero", "stream_url": "/zero", "target_fps": 0},
+                {"uid": "junk", "name": "Junk", "stream_url": "/junk", "target_fps": "nonsense"},
+                {"uid": "huge", "name": "Huge", "stream_url": "/huge", "target_fps": 5000},
+                {"uid": "tiny", "name": "Tiny", "stream_url": "/tiny", "target_fps": 0.01},
+        ):
+            with self.subTest(entry=entry["uid"]):
+                model._data._update(webcams=[entry])
+                self.qt.events()
+                expected = {"huge": 120.0, "tiny": 0.5}.get(entry["uid"], 30.0)
+                self.assertEqual(model.cameraFpsMax, expected,
+                                 "a corrupt or absent target_fps lands on a usable ceiling")
+                self.assertLessEqual(model.cameraFps, model.cameraFpsMax)
+                self.assertGreaterEqual(model.cameraFps, model.cameraFpsMin)
+                model.setCameraFps(120.0)
+                self.qt.events()
+                self.assertEqual(model.cameraFps, min(expected, 120.0),
+                                 "the control can never ask the renderer for more")
+
+    def test_a_reconfigured_camera_re_reads_its_own_ceiling(self):
+        # The ceiling rides the camera SIGNATURE: an installation that
+        # changes its stream's target_fps while the pane is open must
+        # re-read it rather than keep offering the old range.
+        model = self.monitor()
+        cameras = [{"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 30}]
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        model.setCameraFps(20.0)
+        self.qt.events()
+
+        reconfigured = [{"uid": "cam", "name": "Cam", "stream_url": "/cam", "target_fps": 10}]
+        model._data._update(webcams=reconfigured)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 10.0, "the re-configured camera's new ceiling")
+        self.assertEqual(model.cameraFps, 10.0, "and the rate with it")
+        # The stored preference is the user's, uncapped: a stream put
+        # back to 30 restores the rate the user chose.
+        model._data._update(webcams=cameras)
+        self.qt.events()
+        self.assertEqual(model.cameraFpsMax, 30.0)
+        self.assertEqual(model.cameraFps, 20.0, "the user's own rate comes back with the room")
 
     def test_selected_camera_persists_through_the_settings_document_and_restores_after_webcams(self):
         model = self.monitor()

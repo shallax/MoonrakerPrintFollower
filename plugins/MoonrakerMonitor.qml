@@ -1,6 +1,5 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
-import QtQuick.Dialogs
 import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
@@ -27,14 +26,21 @@ Component {
         // every write.
         property bool cameraConfigured: false
 
-        onOpenPopOverChanged: {
-            // The chart pop-over's hydration gate (the 2026-09-19
-            // review's K): the model builds the full temperature
-            // payload only while the pop-over is open.
-            if (root.printer != null) {
-                root.printer.setChartOpen(openPopOver === "chart");
+        // The popover registration re-runs whenever the printer
+        // changes, not only when the open state changes: a printer
+        // that becomes available (or switches) while the popover is
+        // already open must re-claim the open state, or the model's
+        // gate freezes the payload forever (the review's attach
+        // finding).
+        function syncPopoverRegistration() {
+            if (root.printer == null) {
+                return;
             }
+            root.printer.setChartOpen(openPopOver === "chart");
+            root.printer.setFollowerPopoverOpen(openPopOver === "plateprogress");
+            root.printer.setPickerPopoverOpen(openPopOver === "plate");
         }
+        onOpenPopOverChanged: syncPopoverRegistration()
 
         // The camera image's visible AND source are applied
         // IMPERATIVELY: bindings on this dynamically created
@@ -74,9 +80,9 @@ Component {
             }
             _cameraApplyPending = true;
             Qt.callLater(function () {
-                    _cameraApplyPending = false;
-                    updateCameraImage();
-                });
+                _cameraApplyPending = false;
+                updateCameraImage();
+            });
         }
 
         Component.onCompleted: {
@@ -87,6 +93,10 @@ Component {
             // guarantees the reconciliation runs after the printer
             // binding and the pane have settled.
             scheduleCameraApply();
+            // Re-claim the popover gates with the live state: loading
+            // raced the printer binding, and the model's gate stays
+            // frozen until something re-claims it.
+            syncPopoverRegistration();
         }
 
         Connections {
@@ -132,9 +142,9 @@ Component {
             var rows = [];
             for (var j = 0; j < order.length; j++) {
                 rows.push({
-                        "id": order[j],
-                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                    });
+                    "id": order[j],
+                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                });
             }
             if (paneId === "information") {
                 root.infoConfigureRows = rows;
@@ -415,6 +425,11 @@ Component {
         onPrinterChanged: {
             refreshAvailabilityGates();
             openPopOver = "";
+            // The openPopOverChanged signal only fires on a CHANGE, so
+            // a printer swap while the popover was already closed
+            // never re-claims the gates and a stale open can freeze
+            // the payload. Re-claim the now-closed state explicitly.
+            syncPopoverRegistration();
             selectedChartSensor = "";
             // The stored section order applies on the model's ARRIVAL
             // (the deterministic trigger — no polling): the panes'
@@ -561,32 +576,40 @@ Component {
         readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
-        ColorDialog {
-            id: chartColorDialog
-            title: root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color"
-            onAccepted: {
-                var colour = selectedColor;
-                var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
-                if (root.printer != null && root.selectedChartSensor !== "") {
-                    root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
+        // The picker's dialog implementation is a platform module, so it
+        // is created on the first click rather than at construction: a
+        // host whose platform builds no colour dialog must still get a
+        // monitor, and the quick swatches work without it either way.
+        property var chartColorDialogComponent: null
+        property var chartColorDialog: null
+
+        function openChartColorDialog() {
+            if (chartColorDialog === null) {
+                if (chartColorDialogComponent === null) {
+                    chartColorDialogComponent = Qt.createComponent("MoonrakerChartColorDialog.qml");
                 }
+                if (chartColorDialogComponent.status !== Component.Ready) {
+                    console.log("Moonraker colour picker unavailable: " + chartColorDialogComponent.errorString());
+                    return;
+                }
+                chartColorDialog = chartColorDialogComponent.createObject(root);
+                if (chartColorDialog === null) {
+                    console.log("Moonraker colour picker failed to instantiate: " + chartColorDialogComponent.errorString());
+                    return;
+                }
+                chartColorDialog.title = root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color";
+                chartColorDialog.accepted.connect(root.applyChartColorChoice);
             }
+            chartColorDialog.open();
         }
 
-        Cura.MessageDialog {
-            id: excludeObjectDialog
-            property string targetName: ""
-            title: "Exclude object?"
-            text: targetName.length > 0 ? "Stop printing '" + targetName + "' for the rest of this job? This cannot be undone without restarting the print." : "Stop printing this object for the rest of this job?"
-            standardButtons: Dialog.Yes | Dialog.No
-            anchors.centerIn: Overlay.overlay
-            onAccepted: {
-                if (root.printer != null && targetName.length > 0) {
-                    root.printer.excludeObject(targetName);
-                }
-                targetName = "";
+        function applyChartColorChoice() {
+            if (chartColorDialog === null || root.printer == null || root.selectedChartSensor === "") {
+                return;
             }
-            onRejected: targetName = ""
+            var colour = chartColorDialog.selectedColor;
+            var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
+            root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
         }
 
         Connections {
@@ -816,6 +839,27 @@ Component {
                         MeshSection {
                             id: meshSection
                             visible: root.printer == null || root.printer.sectionHiddenMap["meshmap"] !== true
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            onPopOverToggleRequested: function (name) {
+                                root.openPopOver = root.openPopOver === name ? "" : name;
+                            }
+                        }
+                        PlateProgressSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["plateprogress"] !== true
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            onPopOverToggleRequested: function (name) {
+                                root.openPopOver = root.openPopOver === name ? "" : name;
+                            }
+                        }
+                        PlateSection {
+                            // During a print the picker shows either
+                            // the plate (when the print carries the
+                            // exclude-object data) or the download
+                            // offer (the live rulings); it clears
+                            // with the job epoch.
+                            visible: root.printer != null && root.printer.sectionHiddenMap["plate"] !== true && (root.printer.printActive || root.printer.plateHasObjects)
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
@@ -1377,8 +1421,7 @@ Component {
                                                 }
                                             }
                                         }
-                                    } catch (e) {
-                                    }
+                                    } catch (e) {}
                                     return "monospace";
                                 }
                                 // The transcript arrives oldest-first; the pane
@@ -1786,6 +1829,15 @@ Component {
                                                         // the caret's phase made the
                                                         // captures nondeterministic.
                                                         cursorVisible: false
+                                                        // No Esc handling here on
+                                                        // purpose: this read-only
+                                                        // pane declines the key
+                                                        // (as any text item
+                                                        // does), and the host
+                                                        // page's ladder answers
+                                                        // it — see
+                                                        // answerEscape() in
+                                                        // MoonrakerMonitorDashboard.
                                                     }
                                                 }
                                             }
@@ -2130,15 +2182,6 @@ Component {
                             visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
                             printerModel: root.printer
                         }
-                        ObjectsSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            onExcludeRequested: function (name) {
-                                excludeObjectDialog.targetName = name;
-                                excludeObjectDialog.open();
-                            }
-                        }
                         SystemInfoSection {
                             visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
                             Layout.fillWidth: true
@@ -2477,7 +2520,7 @@ Component {
         // open (the live report: in-bounds clicks dismissed the
         // pop-over).
         function clickInsideOpenPopOver(x, y) {
-            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel];
+            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel, platePanel, plateProgressPanel];
             for (var i = 0; i < cards.length; i++) {
                 var card = cards[i];
                 if (card.visible && x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height) {
@@ -2723,7 +2766,7 @@ Component {
                     }
                     Cura.SecondaryButton {
                         text: "Custom…"
-                        onClicked: chartColorDialog.open()
+                        onClicked: root.openChartColorDialog()
                         UM.ToolTip {
                             visible: parent.hovered
                             targetPoint: Qt.point(parent.width / 2, 0)
@@ -2770,6 +2813,44 @@ Component {
                 Layout.fillHeight: true
                 active: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
                 sourceComponent: meshContent
+            }
+        }
+
+        MonitorPopOver {
+            id: platePanel
+            visible: root.openPopOver === "plate" && root.printer != null
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 390 * screenScaleFactor
+            title: "Exclude Object Picker"
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: root.openPopOver === "plate" && root.printer != null
+                sourceComponent: plateContent
+            }
+        }
+
+        MonitorPopOver {
+            id: plateProgressPanel
+            visible: root.openPopOver === "plateprogress" && root.printer != null
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            height: Math.min((780 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            // The plate's 585 plus the pause column beside it (the live
+            // report: the schedule belongs in the width, not below the
+            // plate) — clamped to the room right of the card's own x, so
+            // the pause column is never the part that leaves the pane.
+            contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize("default_margin").width)
+            title: "Print Follower"
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: root.openPopOver === "plateprogress" && root.printer != null
+                sourceComponent: plateProgressContent
             }
         }
 
@@ -2908,6 +2989,1020 @@ Component {
                     text: "The faded perimeter is extrapolated to Cura's bed edge; values shown are the actual Klipper mesh heights. The Preview's height exaggeration adjusts from its card."
                     color: UM.Theme.getColor("text_inactive")
                     wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Component {
+            id: plateContent
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
+
+                // The picker's own download offer (the live request):
+                // an empty plate carries the action instead of a dead
+                // canvas.
+                PlateDownloadAction {
+                    Layout.fillWidth: true
+                    visible: root.printer != null && !root.printer.plateHasObjects
+                    printerModel: root.printer
+                    idleInstruction: "Click here to download and index the print — the picker draws the objects from the print's data."
+                }
+
+                PlateExcludeFace {
+                    id: plateFace
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 240 * screenScaleFactor
+                    printerModel: root.printer
+                    plate: root.printer != null ? root.printer.plateObjects : null
+                    // No toolhead dot in the picker (the live ruling)
+                    // — the map reads as the CONTROL, not a follower.
+                    onExcludeRequested: function (name) {
+                        if (root.printer != null) {
+                            root.printer.excludeObject(name);
+                        }
+                    }
+                    onRestoreRequested: function (name) {
+                        if (root.printer != null) {
+                            root.printer.restoreObject(name);
+                        }
+                    }
+                }
+
+                UM.Label {
+                    // The permanent single line (the mesh "hover row"
+                    // idiom): counter > hover (name and state) > hint.
+                    // NoWrap is the reflow lock: the theme label
+                    // defaults to wrapping, and a wrapped verdict
+                    // grew the row and reflowed the canvas above
+                    // (the live report).
+                    Layout.fillWidth: true
+                    wrapMode: Text.NoWrap
+                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoverDetail() : "Triple-click to exclude, or restore an excluded object")
+                    elide: Text.ElideRight
+                    color: plateFace.hoveredName !== "" ? plateFace.hoverInk() : UM.Theme.getColor("text_inactive")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("narrow_margin").width
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: UM.Theme.getColor("text")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "included"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: UM.Theme.getColor("primary")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "current"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        // The printed state derives from the index's
+                        // executed motions — no index, no green (the
+                        // live ruling: the legend must not promise
+                        // what the data cannot say).
+                        visible: root.printer != null && root.printer.plateProgressAvailable
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: MoonrakerTheme.plateCurrent
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "printed"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: MoonrakerTheme.dangerRed
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "excluded"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+                UM.Label {
+                    // The outcome slot: the gesture receipts land here —
+                    // the no-confirm ruling's confirmation (a refusal
+                    // must never be silent).
+                    Layout.fillWidth: true
+                    text: root.printer != null ? root.printer.actionStatus : ""
+                    color: UM.Theme.getColor("text")
+                    font: UM.Theme.getFont("default_italic")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                // The index offer for the printed state (the live
+                // rulings): the picker itself carries the download
+                // control — a compact row, back in the layout after
+                // the overlay overlapped the plate.
+                PlateDownloadAction {
+                    Layout.fillWidth: true
+                    visible: root.printer != null && root.printer.plateHasObjects && !root.printer.plateProgressAvailable
+                    printerModel: root.printer
+                    idleInstruction: "Download and index the print to track the printed state."
+                }
+
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: "A triple-click sends the command immediately — there is no confirmation dialog. A restore is allowed only inside the grace window."
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("default_italic")
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Component {
+            id: plateProgressContent
+            // Two columns: the schedule's rows lived under the plate and
+            // squeezed the face onto the card's clipped bottom edge (the live
+            // report), so the card is wider and the pause block pays in width
+            // — never in the plate's height.
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("default_margin").width
+
+                // The slider functions live on the COMPONENT ROOT: a
+                // function declared on a nested item is invisible to its
+                // own descendants, and these are called from all over the
+                // plate's column (the probe's ReferenceError).
+                // The slider follows the model's anchor — the live
+                // layer while attached, the frozen one after a seek —
+                // and never fights a drag in flight or a settle.
+                function syncLayerSlider() {
+                    if (layerSlider.interacting || layerSeekTimer.running) {
+                        return;
+                    }
+                    if (root.printer != null && root.printer.plateProgressAnchor >= 0) {
+                        layerSlider.value = root.printer.plateProgressAnchor;
+                    }
+                }
+                function commitLayerSeek() {
+                    if (root.printer != null) {
+                        root.printer.setFollowerLayerAnchor(layerSlider.selectedValue());
+                    }
+                }
+                function layerReadout() {
+                    if (root.printer == null || root.printer.plateLayerCount <= 0) {
+                        return "—";
+                    }
+                    var index = root.printer.followerAttached ? root.printer.plateProgressAnchor : layerSlider.selectedValue();
+                    if (index < 0) {
+                        return "—";
+                    }
+                    return (Math.round(index) + 1) + " / " + root.printer.plateLayerCount;
+                }
+                function syncProgressSlider() {
+                    if (layerProgressSlider.interacting) {
+                        return;
+                    }
+                    var split = root.printer != null ? root.printer.plateSplit : null;
+                    layerProgressSlider.value = split != null ? Math.max(0, split) : 0;
+                }
+                function commitProgressSeek() {
+                    if (root.printer != null) {
+                        root.printer.setFollowerLayerProgress(layerProgressSlider.selectedValue());
+                    }
+                }
+                // On the component root with the other slider functions: a
+                // function declared on a nested item is invisible to that
+                // item's own descendants, and the plate's column calls this
+                // one from beside its face (the engine's ReferenceError).
+                function _feedRenderView() {
+                    if (root.printer != null) {
+                        // The device-pixel backing (bounded supersampling):
+                        // the worker paints at the screen's physical
+                        // resolution and the scene-graph samples down to
+                        // the logical face — never an enlarged 1x raster.
+                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)));
+                    }
+                }
+
+                ColumnLayout {
+                    // The plate's width is the layout's invariant — the
+                    // popover's old content width, held at every pane
+                    // width. Without it the plate absorbs the whole
+                    // deficit itself and the empty schedule column beside
+                    // it takes the face's width instead.
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 585 * screenScaleFactor - 2 * UM.Theme.getSize("default_margin").width
+                    Layout.minimumWidth: 585 * screenScaleFactor - 2 * UM.Theme.getSize("default_margin").width
+                    spacing: UM.Theme.getSize("thin_margin").height
+                    // The keyboard path: the layer slider takes the focus
+                    // on open, so the arrows drive it immediately (the
+                    // live request).
+                    Component.onCompleted: layerSlider.forceActiveFocus()
+                    Connections {
+                        target: progressFace
+                        // The settle owns the native-render feed: the
+                        // view re-rasters ONCE, 150 ms after the last
+                        // zoom/pan/line change (the review's finding 1 —
+                        // per-tick feeds churned the renderer).
+                        function onViewSettled() {
+                            _feedRenderView();
+                        }
+                        function onPlotChanged() {
+                            var plot = progressFace.plot;
+                            if (root.printer != null && plot != null) {
+                                // The SURFACE is explicit (the review's
+                                // finding 1): this face is the popover.
+                                root.printer.setFollowerPlot("popover", plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
+                                _feedRenderView();
+                            }
+                        }
+                    }
+                    PlateProgressFace {
+                        id: progressFace
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 200 * screenScaleFactor
+                        printerModel: root.printer
+                        progress: root.printer != null ? ({
+                                "available": root.printer.plateProgressAvailable,
+                                "scrubVector": root.printer.plateScrubVector,
+                                "reason": root.printer.plateProgressReason,
+                                "layers": root.printer.plateLayers,
+                                "split": root.printer.plateSplit,
+                                "anchor": root.printer.plateProgressAnchor,
+                                "method": "motion index",
+                                "navigationData": root.printer.plateNavigationData,
+                                "navigationSplit": root.printer.plateNavigationSplit,
+                                "navigationBacking": root.printer.plateNavigationBacking
+                            }) : null
+                        dot: root.printer != null ? root.printer.plateDot : null
+                        // The persisted global view settings (the live
+                        // ruling) — the face's own handlers fire on the
+                        // rebinds and re-raster.
+                        showPrevious: root.printer != null ? root.printer.followerShowPrevious : true
+                        showNext: root.printer != null ? root.printer.followerShowNext : true
+                        // The layer ghost frames the frozen layer's
+                        // partial fill on ANY layer — attached or
+                        // detached (the live request).
+                        showBase: root.printer != null ? root.printer.followerShowBase : true
+                        showTravels: root.printer != null ? root.printer.followerShowTravels : false
+                        lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
+                        // The follow state (the centred follow is
+                        // retired — the per-poll re-pan was too slow).
+                        attached: root.printer == null || root.printer.followerAttached
+                    }
+
+                    // The toolhead view controls (the 4.6.0 request): the
+                    // jump is one shot onto the dot's bed position, the
+                    // option keeps it there. The jump is disabled with
+                    // nothing to centre on; the option is a preference and
+                    // persists, so it stays live. At 100% the whole bed
+                    // fits and both are moot — they hide in place (the
+                    // live request), the preference itself is untouched.
+
+                    // The checkbox's OWN text label (the live reports: a
+                    // separate Label neither toggles on click nor hugs the
+                    // indicator, and the wrapper rows warped the heights).
+                    // The control's text is part of its clickable area and
+                    // carries the theme's own snug indicator gap — so the
+                    // rows read as pairs at the standard flow gap.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("narrow_margin").height
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("narrow_margin").height
+                            UM.CheckBox {
+                                text: "Previous layer"
+                                checked: root.printer != null ? root.printer.followerShowPrevious : true
+                                onToggled: {
+                                    if (root.printer != null) {
+                                        root.printer.setFollowerShowPrevious(checked);
+                                    }
+                                }
+                            }
+                            UM.CheckBox {
+                                text: "Next layer"
+                                checked: root.printer != null ? root.printer.followerShowNext : true
+                                onToggled: {
+                                    if (root.printer != null) {
+                                        root.printer.setFollowerShowNext(checked);
+                                    }
+                                }
+                            }
+                            UM.CheckBox {
+                                text: "Layer ghost"
+                                checked: root.printer != null ? root.printer.followerShowBase : true
+                                onToggled: {
+                                    if (root.printer != null) {
+                                        root.printer.setFollowerShowBase(checked);
+                                    }
+                                }
+                            }
+                            UM.CheckBox {
+                                text: "Travels"
+                                checked: root.printer != null ? root.printer.followerShowTravels : false
+                                onToggled: {
+                                    if (root.printer != null) {
+                                        root.printer.setFollowerShowTravels(checked);
+                                    }
+                                }
+                            }
+                        }
+                        // The view reset: right of the checkbox row's free
+                        // space, outside the canvas entirely — its
+                        // appearance never reflows the plate.
+                        UM.Label {
+                            visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0
+                            text: "Reset view"
+                            font: UM.Theme.getFont("small")
+                            color: UM.Theme.getColor("primary")
+                            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: progressFace.resetView()
+                            }
+                        }
+                    }
+
+                    // The colour key: the class palette the progress canvas
+                    // paints with, plus the pending and travel styles (the
+                    // live request). One wrapping flow of swatch+label
+                    // pairs, the picker's legend idiom.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("WALL-OUTER")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Wall outer"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("WALL-INNER")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Wall inner"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("SKIN")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Skin"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("FILL")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Infill"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("SUPPORT")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Support"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: progressFace.classColour("SKIRT")
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Skirt"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 1 * screenScaleFactor
+                                color: MoonrakerTheme.plateTravel
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Travel"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Row {
+                            spacing: 2 * screenScaleFactor
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 2 * screenScaleFactor
+                                color: MoonrakerTheme.seriesDefault
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            UM.Label {
+                                text: "Layer ghost"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
+                    // The stroke thickness control (the live request):
+                    // scales every follower stroke, 0.5x to 2x.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        UM.Label {
+                            text: "Line thickness"
+                            color: UM.Theme.getColor("text_inactive")
+                        }
+                        Cura.SecondaryButton {
+                            id: thinnerButton
+                            fixedWidthMode: true
+                            width: 28 * screenScaleFactor
+                            text: "−"
+                            enabled: root.printer != null && root.printer.followerLineScale > 0.5
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerLineScale(Math.max(0.5, root.printer.followerLineScale - 0.25));
+                                }
+                            }
+                        }
+                        UM.Label {
+                            text: (root.printer != null ? root.printer.followerLineScale : 0.7).toFixed(2) + "×"
+                            width: 34 * screenScaleFactor
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                        Cura.SecondaryButton {
+                            id: thickerButton
+                            fixedWidthMode: true
+                            width: 28 * screenScaleFactor
+                            text: "+"
+                            enabled: root.printer != null && root.printer.followerLineScale < 2.0
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerLineScale(Math.min(2.0, root.printer.followerLineScale + 0.25));
+                                }
+                            }
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        // The toolhead controls ride the line-thickness
+                        // row (the live request: the centred follow's
+                        // retirement emptied their own row — the sliders
+                        // below close the gap). The jump hides at 100%
+                        // and the attach persists the row.
+                        Cura.SecondaryButton {
+                            id: jumpButton
+                            objectName: "moonrakerFollowerJump"
+                            visible: progressFace.viewScale > 1.0 && progressFace.attached
+                            text: "Jump to toolhead"
+                            enabled: progressFace.dotAvailable()
+                            onClicked: progressFace.centreOnToolhead()
+                        }
+                        Cura.SecondaryButton {
+                            id: attachButton
+                            objectName: "moonrakerFollowerAttach"
+                            fixedWidthMode: true
+                            width: 76 * screenScaleFactor
+                            text: root.printer != null && root.printer.followerAttached ? "Detach" : "Attach"
+                            // A detach holds the layer the face shows; an
+                            // attach needs a live index to rejoin.
+                            enabled: root.printer != null && (root.printer.followerAttached ? root.printer.plateProgressAnchor >= 0 : root.printer.plateLayerCount > 0)
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.setFollowerAttached(!root.printer.followerAttached);
+                                }
+                            }
+                        }
+                    }
+
+                    // The layer selection (the 4.6.0 request): the slider
+                    // seeks the anchor the face draws. A seek from the
+                    // LIVE layer is itself the detach — the model freezes
+                    // on the committed layer (the live request: the slider
+                    // must never sit dead while attached). A seek commits
+                    // only once the drag quietens: every step rebuilds a
+                    // layer window and rehydrates it, so a release commits
+                    // at once and a drag settles first.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        UM.Label {
+                            // The reserved label column: both slider rows
+                            // share it, so the tracks line up exactly over
+                            // each other (the live request).
+                            Layout.preferredWidth: 100 * screenScaleFactor
+                            Layout.maximumWidth: 100 * screenScaleFactor
+                            text: "Layer"
+                            color: UM.Theme.getColor("text_inactive")
+                            elide: Text.ElideRight
+                        }
+                        OutlineSlider {
+                            id: layerSlider
+                            objectName: "moonrakerFollowerLayerSlider"
+                            Layout.fillWidth: true
+                            from: 0
+                            to: Math.max(0, (root.printer != null ? root.printer.plateLayerCount : 0) - 1)
+                            stepSize: 1
+                            enabled: root.printer != null && root.printer.plateLayerCount > 0
+                            onValueTuning: {
+                                // The raw tick rides to the model: the
+                                // seek's perceived latency includes the
+                                // debounce, so the trace records it. The
+                                // signal is the slider's own — it never
+                                // fires during teardown.
+                                if (root.printer != null) {
+                                    root.printer.seekAnchorTicked();
+                                }
+                                layerSeekTimer.restart();
+                            }
+                            onValueCommitted: {
+                                layerSeekTimer.stop();
+                                progressFace.endInteraction();
+                                commitLayerSeek();
+                            }
+                        }
+                        UM.Label {
+                            objectName: "moonrakerFollowerLayerReadout"
+                            Layout.preferredWidth: 64 * screenScaleFactor
+                            Layout.maximumWidth: 64 * screenScaleFactor
+                            horizontalAlignment: Text.AlignRight
+                            text: layerReadout()
+                        }
+                    }
+
+                    // The within-layer progress (the 4.6.0 request): a
+                    // SCRUBBER, not a display bar — the slider plays the
+                    // frozen layer through manually (the live request).
+                    // Attached it mirrors the live split; a scrub is
+                    // itself the detach (the layer slider's rule).
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        UM.Label {
+                            // The same reserved column as the layer row:
+                            // the two tracks align exactly (the live
+                            // request).
+                            Layout.preferredWidth: 100 * screenScaleFactor
+                            Layout.maximumWidth: 100 * screenScaleFactor
+                            text: "Layer progress"
+                            color: UM.Theme.getColor("text_inactive")
+                            elide: Text.ElideRight
+                        }
+                        OutlineSlider {
+                            id: layerProgressSlider
+                            objectName: "moonrakerFollowerLayerProgress"
+                            Layout.fillWidth: true
+                            from: 0
+                            to: Math.max(0, root.printer != null ? root.printer.plateLayerMotionCount : 0)
+                            // The keyboard nudge steps a PERCENT of the
+                            // layer (a single motion over tens of
+                            // thousands is invisible — the live report);
+                            // the pointer keeps the full 1-motion
+                            // granularity.
+                            stepSize: layerProgressSlider.activeFocus ? Math.max(1, Math.round((root.printer != null ? root.printer.plateLayerMotionCount : 0) / 100)) : 1
+                            enabled: root.printer != null && root.printer.plateProgressAvailable && root.printer.plateLayerMotionCount > 0
+                            // The scrub commits on every drag tick — the
+                            // fill tracks the thumb at frame rate (the
+                            // live request), and the release commits once
+                            // more for the final position. A scrub input
+                            // also ends any camera interaction outright:
+                            // a latched warm raster standing over the
+                            // hidden exact scene during scrub repaints is
+                            // the wrong picture between frames.
+                            onValueTuning: {
+                                progressFace.endInteraction();
+                                commitProgressSeek();
+                            }
+                            onValueCommitted: {
+                                progressFace.endInteraction();
+                                commitProgressSeek();
+                            }
+                        }
+                        UM.Label {
+                            objectName: "moonrakerFollowerLayerProgressReadout"
+                            // The same reserved width as the layer row's
+                            // readout: the tracks stay equal.
+                            Layout.preferredWidth: 64 * screenScaleFactor
+                            Layout.maximumWidth: 64 * screenScaleFactor
+                            horizontalAlignment: Text.AlignRight
+                            text: {
+                                // An expression, not a call: the readout
+                                // must re-bind on the split and the count
+                                // (the live report — a call froze it and
+                                // an unset count read NaN%).
+                                var total = root.printer != null ? root.printer.plateLayerMotionCount : 0;
+                                var split = root.printer != null ? root.printer.plateSplit : null;
+                                if (total <= 0 || split == null || isNaN(split) || isNaN(total)) {
+                                    return "—";
+                                }
+                                var pct = Math.round(Math.max(0, split) / total * 100);
+                                return isNaN(pct) ? "—" : pct + "%";
+                            }
+                        }
+                    }
+
+                    Timer {
+                        id: layerSeekTimer
+                        // 40 ms (was 80/250): current-layer demand now
+                        // commits independently of ghosts and can preempt
+                        // background preparation. This still coalesces a
+                        // drag burst while removing another 40 ms from the
+                        // raw-tick -> available path. Explicit commits
+                        // remain immediate (the timer is stopped above).
+                        interval: 40
+                        onTriggered: commitLayerSeek()
+                    }
+                    Connections {
+                        target: root.printer
+                        function onPlateProgressChanged() {
+                            syncLayerSlider();
+                            syncProgressSlider();
+                        }
+                        function onFollowerViewChanged() {
+                            syncLayerSlider();
+                        }
+                    }
+                }
+
+                // The rule between the plate and the schedule. It is a
+                // hairline, and it takes its width from the schedule
+                // column's slack — that column's minimum is zero — so the
+                // plate's own width, the layout's invariant, is untouched.
+                Rectangle {
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 1
+                    Layout.minimumWidth: 1
+                    Layout.maximumWidth: 1
+                    color: UM.Theme.getColor("border")
+                }
+
+                // The pause at the end of a layer (the 4.6.0 request):
+                // the popover's OWN slider picks the layer, so the
+                // schedule targets the END of the layer it stands on —
+                // the card's schedule, the popover's own candidate. Its
+                // own column (the live report): stacked under the plate
+                // the list squeezed the face and ran onto the card's
+                // clipped bottom edge, so the width pays for it instead.
+                ColumnLayout {
+                    id: pauseColumn
+                    // Wide enough for a row's longest suffix ("— baked ·
+                    // passed") at the schedule's own font, and it yields
+                    // to the plate first when the pane is tight: with no
+                    // minimum of its own it takes only the room that is
+                    // left over.
+                    Layout.preferredWidth: 340 * screenScaleFactor
+                    Layout.minimumWidth: 0
+                    // The column fills the card: the schedule's list takes
+                    // whatever height the plate's column does not use.
+                    Layout.fillHeight: true
+                    spacing: UM.Theme.getSize("thin_margin").height
+                    // Whether the column's clear action has anything to
+                    // clear: the foot row collapses its slot on this.
+                    readonly property bool clearAvailable: root.printer != null && root.printer.pauseAtLayerHasClearable === true
+                    // The rows are read once at open: the block carries
+                    // values before the popover exists, so a signal-only
+                    // sync would leave the list blank until the next
+                    // publish (~2.5 s).
+                    Component.onCompleted: syncPauseRows()
+
+                    // The rows live in a STABLE model the publishes never
+                    // replace: the block arrives every poll with fresh ETA
+                    // strings, and handing that array straight to the view
+                    // replaced the model and jumped the scroll (the card's
+                    // own live report). syncPauseRows() diffs it in place
+                    // instead, so the model identity — and the scroll —
+                    // never move on their own.
+                    ListModel {
+                        id: pauseBlockModel
+                        objectName: "moonrakerFollowerPauseListModel"
+                    }
+
+                    function syncPauseRows() {
+                        var incoming = root.printer != null && root.printer.pauseAtLayerItems != null ? root.printer.pauseAtLayerItems : [];
+                        var keep = {};
+                        for (var i = 0; i < incoming.length; i++) {
+                            keep[Number(incoming[i].layer || 0)] = true;
+                        }
+                        for (var r = pauseBlockModel.count - 1; r >= 0; r--) {
+                            if (keep[pauseBlockModel.get(r).layerNo] !== true) {
+                                pauseBlockModel.remove(r);
+                            }
+                        }
+                        for (var k = 0; k < incoming.length; k++) {
+                            var row = incoming[k];
+                            // EVERY role is normalised to a concrete value:
+                            // a role whose first value is undefined is
+                            // dropped from a ListModel, and the delegate's
+                            // bare role lookup then throws.
+                            var payload = {
+                                "layerNo": Number(row.layer || 0),
+                                "eta": String(row.eta || ""),
+                                "pauseWord": String(row.state || "scheduled"),
+                                "passed": row.passed === true
+                            };
+                            var at = -1;
+                            for (var f = 0; f < pauseBlockModel.count; f++) {
+                                if (pauseBlockModel.get(f).layerNo === payload.layerNo) {
+                                    at = f;
+                                    break;
+                                }
+                            }
+                            if (at === -1) {
+                                // The published list is sorted, so a fresh
+                                // entry lands at its sorted position among
+                                // the rows already there — an append alone
+                                // would bury a pause scheduled below one
+                                // that already exists.
+                                var pos = pauseBlockModel.count;
+                                for (var s = 0; s < pauseBlockModel.count; s++) {
+                                    if (pauseBlockModel.get(s).layerNo > payload.layerNo) {
+                                        pos = s;
+                                        break;
+                                    }
+                                }
+                                pauseBlockModel.insert(pos, payload);
+                            } else if (pauseBlockModel.get(at).eta !== payload.eta || pauseBlockModel.get(at).pauseWord !== payload.pauseWord || pauseBlockModel.get(at).passed !== payload.passed) {
+                                pauseBlockModel.set(at, payload);
+                            }
+                        }
+                    }
+
+                    Connections {
+                        target: root.printer
+                        function onPauseAtLayerChanged() {
+                            pauseColumn.syncPauseRows();
+                        }
+                    }
+
+                    UM.Label {
+                        Layout.fillWidth: true
+                        // The heading collapses with its own text: it is
+                        // for a schedule that has rows (a height, never a
+                        // visibility — the no-reflow rule).
+                        Layout.preferredHeight: text.length > 0 ? implicitHeight : 0
+                        text: pauseBlockModel.count > 0 ? "Enabled pauses" : ""
+                        color: UM.Theme.getColor("text")
+                        font: UM.Theme.getFont("default_bold")
+                    }
+
+                    Item {
+                        id: pauseListViewport
+                        Layout.fillWidth: true
+                        // The list owns the column's remaining height (the
+                        // live request): as many rows as fit, and the
+                        // chevrons mark the ones that do not.
+                        Layout.fillHeight: true
+                        property real rowSpacing: 2 * screenScaleFactor
+
+                        // The wheel over the list belongs to the LIST: an
+                        // unaccepted notch fell through to the camera under
+                        // the card and zoomed the webcam (the live report).
+                        // A list with nothing to scroll swallows it too.
+                        WheelHandler {
+                            acceptedDevices: PointerDevice.Mouse
+                            onWheel: function (wheel) {
+                                wheel.accepted = true;
+                            }
+                        }
+
+                        ListView {
+                            id: pauseListView
+                            anchors.fill: parent
+                            clip: true
+                            spacing: pauseListViewport.rowSpacing
+                            // A schedule of five or fewer rows is never
+                            // dragged off its own content.
+                            interactive: contentHeight > height
+                            boundsBehavior: Flickable.StopAtBounds
+                            model: pauseBlockModel
+                            delegate: Row {
+                                id: pauseRow
+                                width: pauseListView.width
+                                height: UM.Theme.getSize("action_button").height
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                // The roles are DIRECT delegate-context
+                                // properties (the canonical ListModel
+                                // idiom): the layer and state ROLES carry
+                                // non-colliding names, because bare `layer`
+                                // and `state` hit Qt's built-in Item.layer /
+                                // Item.state on some engines — every row
+                                // then read layer 0 (the card's live
+                                // report) while eta and passed still
+                                // resolved.
+                                property int pauseLayer: Number(layerNo)
+                                property string pauseEta: String(eta || "")
+                                // "scheduled" | "fired" | "passed" |
+                                // "failed" | "timed_out" | "baked" — a
+                                // missed pause stays listed; a baked pause
+                                // is read-only (the card's rulings).
+                                property string pauseState: String(pauseWord || "scheduled")
+                                readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
+                                readonly property bool pauseBaked: pauseState === "baked"
+                                readonly property bool pausePassed: passed === true || pauseState === "passed"
+
+                                UM.Label {
+                                    width: Math.max(0, parent.width - removePauseGlyph.width - parent.spacing)
+                                    height: parent.height
+                                    text: "End of layer " + pauseRow.pauseLayer + (!pauseRow.pausePassed && pauseRow.pauseEta.length > 0 ? " · " + pauseRow.pauseEta : "") + (pauseRow.pauseMissed ? " — pause not taken" : "") + (pauseRow.pauseBaked ? (pauseRow.pausePassed ? " — baked · passed" : " — baked") : (pauseRow.pauseState === "passed" ? " — passed" : ""))
+                                    color: pauseRow.pauseMissed ? UM.Theme.getColor("error") : (pauseRow.pausePassed ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text"))
+                                    font: UM.Theme.getFont("default")
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                }
+
+                                UM.Label {
+                                    id: removePauseGlyph
+                                    // The narrow ✕ (the card's ruling): a
+                                    // glyph, not a chrome button — it never
+                                    // hides; a baked row dims it and the
+                                    // click does nothing.
+                                    width: parent.height
+                                    height: parent.height
+                                    text: "✕"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    color: pauseRow.pauseBaked ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("error")
+                                    font: UM.Theme.getFont("medium_bold")
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: !pauseRow.pauseBaked
+                                        hoverEnabled: true
+                                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: {
+                                            if (root.printer != null) {
+                                                root.printer.removePauseAtLayer(pauseRow.pauseLayer);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Scroll affordances, the card's idiom: small
+                        // chevrons centred over the list — an up arrow
+                        // while more content is above, a down arrow while
+                        // more is below (the ruling).
+                        UM.Label {
+                            text: "↑"
+                            visible: pauseListView.height > 0 && pauseListView.contentY > 2
+                            anchors.top: pauseListView.top
+                            anchors.horizontalCenter: pauseListView.horizontalCenter
+                            anchors.topMargin: 4 * screenScaleFactor
+                            color: UM.Theme.getColor("primary")
+                            font: UM.Theme.getFont("medium_bold")
+                        }
+                        UM.Label {
+                            text: "↓"
+                            visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2
+                            anchors.bottom: pauseListView.bottom
+                            anchors.horizontalCenter: pauseListView.horizontalCenter
+                            anchors.bottomMargin: 4 * screenScaleFactor
+                            color: UM.Theme.getColor("primary")
+                            font: UM.Theme.getFont("medium_bold")
+                        }
+                    }
+
+                    UM.Label {
+                        // Why the button below is dead, in the card's own
+                        // words. The line collapses by height while it has
+                        // nothing to say — a height, never a visibility.
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: text.length > 0 ? implicitHeight : 0
+                        text: {
+                            var model = root.printer;
+                            if (model == null || model.pauseAtLayerScheduled === true || model.pauseAtLayerCanToggle === true) {
+                                return "";
+                            }
+                            var why = model.pauseAtLayerUnavailableText;
+                            return why ? "Can't schedule: " + why : "";
+                        }
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default_italic")
+                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
+                    }
+
+                    // The two actions sit together at the foot of the
+                    // column (the live request): schedule or remove the
+                    // pause the slider stands on, and clear the rest.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        // Nothing to clear means no slot, no gap: the
+                        // schedule button then takes the whole row (the
+                        // live request).
+                        spacing: pauseColumn.clearAvailable ? UM.Theme.getSize("thin_margin").width : 0
+                        Cura.SecondaryButton {
+                            id: pauseAtLayerButton
+                            objectName: "moonrakerFollowerPauseButton"
+                            Layout.fillWidth: true
+                            // The label centres in the slack this button
+                            // takes (the live request); the theme's own
+                            // content row packs from the left, so the
+                            // fixed-width mode is what centring needs.
+                            fixedWidthMode: true
+                            // The button never hides (the no-reflow rule): it
+                            // disables, and the line below it says why.
+                            enabled: root.printer != null && root.printer.pauseAtLayerActive === true && (root.printer.pauseAtLayerScheduled === true || root.printer.pauseAtLayerCanToggle === true)
+                            text: {
+                                // The candidate is a 1-based human layer, 0
+                                // while no layer is known (the card's own
+                                // contract).
+                                var layer = Number(root.printer != null ? root.printer.pauseAtLayerCandidate : 0) || 0;
+                                if (layer <= 0) {
+                                    return "Pause at end of layer";
+                                }
+                                return root.printer.pauseAtLayerScheduled === true ? "Remove pause after layer " + layer : "Pause at end of layer " + layer;
+                            }
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.togglePauseAtLayer(root.printer.pauseAtLayerCandidate);
+                                }
+                            }
+                        }
+
+                        Cura.SecondaryButton {
+                            id: clearPausesButton
+                            // Collapses in place while nothing is clearable (a
+                            // baked-only list has no manual rows — the card's
+                            // own ruling): a height, never a visibility — and
+                            // the width goes with it, so the schedule button
+                            // beside it takes the whole row.
+                            // Its own screen's word (the live request): the
+                            // card keeps the longer line. The width is the
+                            // short word plus the theme's own side padding,
+                            // with a hair of slack so the label never elides.
+                            fixedWidthMode: true
+                            Layout.preferredWidth: pauseColumn.clearAvailable ? 60 * screenScaleFactor : 0
+                            Layout.preferredHeight: pauseColumn.clearAvailable ? UM.Theme.getSize("action_button").height : 0
+                            enabled: pauseColumn.clearAvailable
+                            text: "Clear"
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.clearPauseAtLayer();
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

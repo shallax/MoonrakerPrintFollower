@@ -547,13 +547,16 @@ def filter_option_counts(rows: Sequence[FileRow], *, now: float) -> Dict[str, An
     - print_time: the five upper bounds, counts of files within each.
     - never_printed: a single count (the toggle's badge).
     """
+    # The windows are decided in the naive local-time domain, never through
+    # a timestamp round-trip: converting a naive datetime back with
+    # `.timestamp()` reaches the C library's mktime, which raises OSError on
+    # Windows for the epoch-near instants a pinned `now` resolves to (the
+    # tests' now=10.0). `_match_modified` compares the same way.
     import datetime as _datetime
-    today = _datetime.datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
-    cutoffs = {
-        "today": today.timestamp(),
-        "7d": now - 7 * 86400,
-        "30d": now - 30 * 86400,
-    }
+    now_local = _datetime.datetime.fromtimestamp(now)
+    today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    week = now_local - _datetime.timedelta(days=7)
+    month = now_local - _datetime.timedelta(days=30)
 
     slicers: Dict[str, int] = {}
     labels: Dict[str, str] = {}
@@ -574,9 +577,9 @@ def filter_option_counts(rows: Sequence[FileRow], *, now: float) -> Dict[str, An
             stamped = _datetime.datetime.fromtimestamp(row.modified)
             if stamped >= today:
                 modified["today"] += 1
-            if stamped.timestamp() >= cutoffs["7d"]:
+            if stamped >= week:
                 modified["7d"] += 1
-            if stamped.timestamp() >= cutoffs["30d"]:
+            if stamped >= month:
                 modified["30d"] += 1
             if stamped.year == today.year:
                 modified["year"] += 1

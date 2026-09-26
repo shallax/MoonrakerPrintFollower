@@ -7,18 +7,79 @@ outside the slow loop. Run directly (like test_harness_specs.py):
 `python3 tests/harness/test_harness_runner.py`.
 """
 
+import contextlib
+import io
 import json
 import os
 import re
 import shutil
+import sys
 import time
+import tempfile
 import unittest
 from pathlib import Path
 
 import runner
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-SCRATCH = "/tmp/mpf/test-harness-runner"
+# A per-run scratch, never a fixed path: a fixed dir under the shared
+# /tmp/mpf collects files owned by the harness container's root user,
+# which the host-side legs cannot then overwrite (the live gate error).
+SCRATCH = tempfile.mkdtemp(prefix="test-harness-runner-", dir="/tmp/mpf")
+
+
+def _attempt(answered=True, verified=True, in_scene=True, is_visible=True,
+             before=5, gained=None, waited=40):
+    """One heartbeat attempt as the driver writes it: a change that
+    landed on a visible item in the window's own scene, and the frames
+    that answered it."""
+    if gained is None:
+        gained = 1 if answered else 0
+    return {"property": "opacity", "from": 0.0, "to": 1.0, "read_back": 1.0,
+            "verified": verified, "in_scene": in_scene, "is_visible": is_visible,
+            "swapped_before": before, "swapped_after": before + gained,
+            "gained": gained, "waited_ms": waited,
+            "answered": bool(answered and verified and in_scene and is_visible)}
+
+
+def _heartbeat(attempts=None, answered=None, calibrated=False, asked=True,
+               deadline_ms=1500, window="win#1", sequence=1, reason=None):
+    """One heartbeat record as the driver's `frames` reply carries it."""
+    if attempts is None:
+        attempts = [_attempt(answered=True)]
+    if answered is None:
+        answered = any(attempt["answered"] for attempt in attempts)
+    if reason is None:
+        reason = ("the window answered the heartbeat" if answered
+                  else f"the window answered no frame to {len(attempts)} forced "
+                       f"scene change(s) inside {deadline_ms}ms each")
+    return {"asked": asked, "item": "mpfLivenessHeartbeat", "sequence": sequence,
+            "window": window, "calibrated": calibrated, "answered": answered,
+            "deadline_ms": deadline_ms,
+            "waited_ms": sum(attempt["waited_ms"] for attempt in attempts),
+            "attempts": attempts, "cleaned": True, "reason": reason}
+
+
+def _missed(**fields):
+    """A heartbeat that was asked for, landed, and got no frame: the
+    measurement a stall is read from."""
+    return _heartbeat(attempts=[_attempt(answered=False),
+                                _attempt(answered=False, before=5)], **fields)
+
+
+def _probe(scenario, phase, ok=True, **fields):
+    """One presentation-probe sample as the driver answers it: a window
+    that is on the display and answers the forced repaint unless the
+    test says otherwise. Every field a verdict rests on is here, so a
+    test can only mean the one it overrides."""
+    sample = {"scenario": scenario, "phase": phase, "ok": ok,
+              "frame_signal": True, "fresh_window": False,
+              "visible": True, "exposed": True, "active": True,
+              "visibility": "Windowed", "state": "WindowNoState",
+              "platform": "xcb", "swapped": 5, "gained": 1,
+              "heartbeat": _heartbeat()}
+    sample.update(fields)
+    return sample
 
 
 def _png_bytes(width, height):
@@ -78,9 +139,9 @@ class ClassificationRatchetTests(unittest.TestCase):
         # the re-shows exist so each real dismissal can be tested),
         # so its six exec_slot re-shows and one marker-clear are the
         # floor for the feature's coverage (DECISIONS 4.1.0). The pin
-        # now counts exec_code and confirm_box, which the classifier
-        # itself calls direct invocation, so they can never hide
-        # outside the ratchet. One more deliberate raise (4.2.0,
+        # now counts exec_code, which the classifier itself calls
+        # direct invocation, so it can never hide outside the
+        # ratchet. One more deliberate raise (4.2.0,
         # DECISIONS): h6c's setBedMeshThresholds exec — the range
         # filter's window cannot change through a single click (the
         # handle-click no-op ruling makes a full-range window inert to
@@ -90,7 +151,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # session cycle, and no real-input path exists for a
         # reconnection:
         # 47 exec_slot + 12 exec_file_slot + 6 emit_click +
-        # 3 confirm_box + 6 exec_mode + 3 exec_validator +
+        # 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 23 exec_code.
         # One more deliberate raise (4.3.0, DECISIONS): g6's refused
@@ -103,7 +164,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # witness is the inline QTest click.
         text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         direct = len(re.findall(
-            r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
+            r'"op": "(exec_slot|exec_file_slot|emit_click|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
         # A deliberate raise (4.4.0, DECISIONS): the configure group's
         # nine slots — the reorder witness must dispatch through the
@@ -138,8 +199,8 @@ class ClassificationRatchetTests(unittest.TestCase):
         # input path exists for the monitor-side download (the h8
         # precedent's reasoning).
         # And x10's load flow: the fill's ETA needs the follower's
-        # observed layer, so the scenario rides the h2 load (its
-        # confirm_box counts, the h2 precedent).
+        # observed layer, so the scenario rides the h2 load (the h2
+        # precedent).
         # And p6/p7's determinism pin: the wait_sim on the layer
         # clock's first tick (the click's target must resolve from
         # the mapped layer, never the file-position fallback that
@@ -156,7 +217,16 @@ class ClassificationRatchetTests(unittest.TestCase):
         # before the re-arm contract holds, and the only real-input
         # path to a transport mode is the same exec_mode a2/a3/a10
         # use (there is no clickable transport-mode control).
-        self.assertLessEqual(direct, 151)
+        # Two more (4.6.0, the cleanup pass): i3's validCacheMax
+        # execs — the cache-size validator's accepted and refused
+        # bounds ride the same direct path as its sibling validators
+        # (typing into the pane's text field has no real-input op,
+        # the i3 precedent).
+        # Four fewer (4.6.0): the replace prompt is the card's own
+        # popup, so its four legs press a button instead of answering
+        # a widget box - the ratchet only tightens. Measured, not
+        # assumed: 154 became 150.
+        self.assertLessEqual(direct, 150)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
@@ -262,6 +332,1068 @@ class EvidenceRecordTests(unittest.TestCase):
         self.assertEqual(record["schema"], 1)
         self.assertEqual(record["title"], "test run")
         self.assertEqual(record["steps"][0]["scenario"], "f1")
+
+
+class _FakeSubprocess:
+    """subprocess.call/Popen, recorded. The second boot's gallery is
+    written by whichever call the test says writes it."""
+
+    DEVNULL = -3
+
+    def __init__(self, log, return_codes, galley_dir=None):
+        self.log = log
+        self.return_codes = list(return_codes)
+        self.gallery_dir = galley_dir
+
+    def call(self, argv, env=None, **kwargs):
+        self.log.append(("call", list(argv), dict(env or {})))
+        if argv[0] != sys.executable:
+            # The kill between the boots: no exit code of its own to
+            # spend, and no gallery of its own to write.
+            return 0
+        if self.gallery_dir and argv[2].endswith("2"):
+            os.makedirs(self.gallery_dir, exist_ok=True)
+            with open(os.path.join(self.gallery_dir, "index.html"), "w",
+                      encoding="utf-8") as handle:
+                handle.write("<html></html>")
+        return self.return_codes.pop(0) if self.return_codes else 0
+
+    def Popen(self, argv, cwd=None, **kwargs):
+        self.log.append(("popen", list(argv), cwd))
+        return object()
+
+
+class _FakeHost:
+    """The dispatch's two calls, named so the test can see them."""
+
+    def kill_command(self, system, **kwargs):
+        return ["kill", system]
+
+    def launch_command(self, system, binary, working_dir=None, **kwargs):
+        return {"argv": ["launch", binary], "cwd": working_dir}
+
+
+class TwoBootRunTests(unittest.TestCase):
+    """The two-boot legs' orchestration, pinned without an app.
+
+    On a native host this is the whole pair — each boot is the same
+    runner entry point the container leg calls, and the work between
+    them (stop the first app, clear the rendezvous, launch the second)
+    has no shell to live in — so what each boot sees is pinned here.
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        self.log = []
+        self._old = {name: getattr(runner, name)
+                     for name in ("RUN_DIR", "RPC_DIR", "subprocess",
+                                  "native_host", "wait_for_driver")}
+        self._old_env = os.environ.get("HARNESS_CURA_BIN")
+        os.environ["HARNESS_CURA_BIN"] = "/Applications/Cura.app/Contents/MacOS/UltiMaker-Cura"
+        os.environ["HARNESS_CURA_CWD"] = "/Applications/Cura.app/Contents/MacOS"
+        runner.RUN_DIR = SCRATCH
+        runner.RPC_DIR = SCRATCH
+        runner.native_host = _FakeHost()
+        runner.wait_for_driver = lambda deadline_s: {"ok": True}
+
+    def tearDown(self):
+        for name, value in self._old.items():
+            setattr(runner, name, value)
+        os.environ.pop("HARNESS_CURA_CWD", None)
+        if self._old_env is None:
+            os.environ.pop("HARNESS_CURA_BIN", None)
+        else:
+            os.environ["HARNESS_CURA_BIN"] = self._old_env
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+
+    def _set_subprocess(self, return_codes=(0, 0), gallery=True):
+        runner.subprocess = _FakeSubprocess(
+            self.log, return_codes,
+            galley_dir=os.path.join(SCRATCH, "boot2") if gallery else None)
+
+    def _boot_calls(self):
+        """The boots alone — the kill between them is a call too, and
+        it must not be what a test reads as boot 1."""
+        return [entry for entry in self.log
+                if entry[0] == "call" and entry[1][0] == sys.executable]
+
+    def test_boot_two_gets_its_own_gallery_and_the_same_handoff_document(self):
+        self._set_subprocess()
+        self.assertEqual(runner.two_boot_run("firstinstall"), 0)
+        boots = self._boot_calls()
+        self.assertEqual(len(boots), 2)
+        self.assertEqual([entry[1][2] for entry in boots],
+                         ["firstinstall1", "firstinstall2"])
+        first, second = (entry[2] for entry in boots)
+        self.assertEqual(first["HARNESS_RUN_DIR"], SCRATCH)
+        # Boot 2's gallery is its own directory (the container leg's
+        # layout), and the document it diffs against is boot 1's.
+        self.assertEqual(second["HARNESS_RUN_DIR"], os.path.join(SCRATCH, "boot2"))
+        document = os.path.join(SCRATCH, "boot1-document.json")
+        self.assertEqual(first["HARNESS_BOOT1_DOC"], document)
+        self.assertEqual(second["HARNESS_BOOT1_DOC"], document)
+
+    def test_the_first_boot_is_stopped_and_the_rendezvous_cleared_before_the_second(self):
+        self._set_subprocess()
+        for name in ("harness_port.txt", "harness_token.txt"):
+            with open(os.path.join(SCRATCH, name), "w", encoding="utf-8") as handle:
+                handle.write("stale")
+        self.assertEqual(runner.two_boot_run("migration"), 0)
+        launches = [entry for entry in self.log if entry[0] == "popen"]
+        self.assertEqual(len(launches), 1)
+        # The app is launched with the binary and directory the setup
+        # script exported, and the stale rendezvous is gone — a stale
+        # port would send boot 2 straight to a dead socket.
+        self.assertEqual(launches[0][1], ["launch", os.environ["HARNESS_CURA_BIN"]])
+        self.assertEqual(launches[0][2], os.environ["HARNESS_CURA_CWD"])
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "harness_port.txt")))
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "harness_token.txt")))
+
+    def test_the_modes_are_the_two_boot_pairs(self):
+        self.assertEqual(runner.TWO_BOOT_MODES["firstinstall"],
+                         ("firstinstall1", "firstinstall2"))
+        self.assertEqual(runner.TWO_BOOT_MODES["migration"], ("migration1", "migration2"))
+
+    def test_the_first_failing_boot_decides_the_verdict(self):
+        self._set_subprocess(return_codes=(3, 0))
+        self.assertEqual(runner.two_boot_run("firstinstall"), 3)
+        self._set_subprocess(return_codes=(0, 4))
+        self.assertEqual(runner.two_boot_run("firstinstall"), 4)
+
+    def test_a_second_boot_without_a_gallery_fails_the_leg(self):
+        # The workflow's EVIDENCE MISSING guard watches the first
+        # boot's directory only, so the second boot's gallery has to be
+        # defended here.
+        self._set_subprocess(gallery=False)
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+
+    def test_a_host_that_exports_no_binary_cannot_relaunch(self):
+        # An older setup script leaves the leg unable to boot twice:
+        # that is a failure with a name, not a silent second boot of
+        # the same app.
+        self._set_subprocess(return_codes=(0, 0))
+        os.environ.pop("HARNESS_CURA_BIN")
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+        self.assertEqual([entry for entry in self.log if entry[0] == "popen"], [])
+
+    def test_a_driver_that_never_answers_stops_the_leg(self):
+        # Without an answer there is nothing for boot 2 to drive: the
+        # leg fails here rather than in a traceback five minutes later.
+        self._set_subprocess()
+        runner.wait_for_driver = lambda deadline_s: None
+        self.assertEqual(runner.two_boot_run("firstinstall"), 1)
+        self.assertEqual(len(self._boot_calls()), 1)
+
+    def test_boot_ones_log_is_lifted_before_the_second_launch(self):
+        # The relaunch truncates cura.log, so boot 1's half of the
+        # evidence has to be taken between the boots, not at the end.
+        self._set_subprocess()
+        config = Path(tempfile.mkdtemp(prefix="two-boot-config-", dir="/tmp/mpf"))
+        (config / "cura.log").write_text("boot one", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(config)
+        try:
+            self.assertEqual(runner.two_boot_run("firstinstall"), 0)
+        finally:
+            os.environ.pop("HARNESS_CURA_CONFIG", None)
+            shutil.rmtree(config, ignore_errors=True)
+        self.assertTrue(os.path.isfile(os.path.join(SCRATCH, "cura.log-boot1")))
+
+
+class HarvestCuraLogTests(unittest.TestCase):
+    """Cura's own log is kept beside the evidence.
+
+    A native host has no ui_test.sh to harvest it, and that file is
+    what says why a driver never answered — so it is copied out of the
+    config directory the setup script exported, rotated files included.
+    """
+
+    def setUp(self):
+        self.src = Path(tempfile.mkdtemp(prefix="harvest-config-", dir="/tmp/mpf"))
+        self.dest = Path(tempfile.mkdtemp(prefix="harvest-dest-", dir="/tmp/mpf"))
+        self._old = os.environ.get("HARNESS_CURA_CONFIG")
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("HARNESS_CURA_CONFIG", None)
+        else:
+            os.environ["HARNESS_CURA_CONFIG"] = self._old
+        shutil.rmtree(self.src, ignore_errors=True)
+        shutil.rmtree(self.dest, ignore_errors=True)
+
+    def test_the_log_and_its_rotated_neighbour_are_both_kept(self):
+        (self.src / "cura.log").write_text("newest", encoding="utf-8")
+        (self.src / "cura.log.1").write_text("older", encoding="utf-8")
+        (self.src / "cura.cfg").write_text("not a log", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 2)
+        self.assertEqual(sorted(p.name for p in self.dest.iterdir()),
+                         ["cura.log", "cura.log.1"])
+
+    def test_the_boot_a_log_came_from_is_in_its_name(self):
+        (self.src / "cura.log").write_text("boot one", encoding="utf-8")
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest), suffix="-boot1"), 1)
+        self.assertEqual((self.dest / "cura.log-boot1").read_text(encoding="utf-8"),
+                         "boot one")
+
+    def test_a_host_without_a_config_dir_is_not_an_error(self):
+        # The container leg exports no HARNESS_CURA_CONFIG: ui_test.sh
+        # harvests the seeded roots itself.
+        os.environ.pop("HARNESS_CURA_CONFIG", None)
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 0)
+        os.environ["HARNESS_CURA_CONFIG"] = str(self.src / "absent")
+        self.assertEqual(runner.harvest_cura_log(str(self.dest)), 0)
+        self.assertEqual(list(self.dest.iterdir()), [])
+
+
+class StaticLegTests(unittest.TestCase):
+    """The static-green class: a leg whose screen does not move.
+
+    A green verdict over a frozen screen is not a success — the
+    macOS motion leg passed 73 of 73 steps while its 216 s recording
+    showed no visible change for about 173 s. The thresholds are
+    measured across the 51 galleries, and the frame comparison has to
+    tolerate the encoder's own dither, which is what made an exact-hash
+    reading miss a 394 s frozen stretch by two orders of magnitude."""
+
+    def _sequence(self, plan):
+        # plan: a list of (count, brightness) — the frames of each move.
+        frames = []
+        for count, level in plan:
+            frames.extend([bytes([level]) * 8] * count)
+        return frames
+
+    def test_a_leg_frozen_for_most_of_its_length_fails(self):
+        # 20 s of motion then 80 s of one picture: the macOS motion
+        # leg's shape, in miniature.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames)
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["span_s"], 80)
+        self.assertEqual(verdict["share"], 0.8)
+
+    def test_the_encoders_own_dither_still_reads_as_still(self):
+        # The measured encoder behaviour: 254 of 393 frozen pairs
+        # differ by exactly one grey level. An exact comparison sees
+        # 70 distinct frames and calls this leg busy; the frozen leg it
+        # really is has to read as frozen.
+        frames = [bytes([10]) * 8] * 30
+        frames += [bytes([40 if index % 2 else 41]) * 8 for index in range(70)]
+        self.assertEqual(len(set(frames)), 3)
+        verdict = runner.static_verdict(frames)
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["span_s"], 70)
+
+    def test_a_moving_leg_passes(self):
+        frames = [bytes([(index * 7) % 250]) * 8 for index in range(200)]
+        verdict = runner.static_verdict(frames)
+        self.assertTrue(verdict["ok"])
+        self.assertLess(verdict["span_s"], runner.STATIC_LEG_SECONDS)
+
+    def test_a_still_span_under_the_absolute_floor_passes(self):
+        # Legitimate idle: one step waiting on a model, a budget of
+        # 15-30 s. The longest span on a leg that is not one of the
+        # frozen macOS ones is 59 s, and no budget reaches the floor.
+        frames = self._sequence([(30, 10), (45, 90), (30, 200)])
+        self.assertTrue(runner.static_verdict(frames)["ok"])
+
+    def test_a_leg_too_short_to_judge_is_not_judged(self):
+        self.assertIsNone(runner.static_verdict([]))
+        self.assertIsNone(runner.static_verdict([b"\x00" * 8]))
+
+    def test_a_still_span_nobody_drove_is_not_judged(self):
+        # The group-status case in miniature: the leg pushes simulator
+        # state and reads models for the first 62 s (34 steps before its
+        # first click), so the screen is correctly still. The run covers
+        # frames 0..61, and the click that ENDS the stillness lands at
+        # 63 — after it. A span with no input inside it cannot say
+        # anything about the screen.
+        frames = self._sequence([(62, 90), (20, 10)])
+        verdict = runner.static_verdict(frames, interactions=[63.0])
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+        self.assertEqual(verdict["span_s"], 62)  # the span is still measured
+
+    def test_the_click_that_ends_a_stillness_does_not_excuse_it(self):
+        # The measured ubuntu case, to the tenth of a second: the run
+        # covers seconds 7..67 and the first click is at 68.4. An
+        # earlier version of this rule read the input's TRAILING edge
+        # and counted that very click as proof the stillness was fine.
+        frames = self._sequence([(7, 10), (61, 90), (20, 10)])
+        verdict = runner.static_verdict(frames, interactions=[68.4])
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+
+    def test_the_teeth_stay_when_the_span_was_driven(self):
+        # The macOS motion leg's shape: the screen froze WHILE the leg
+        # was clicking at it. That is the failure the rule exists for,
+        # and an interaction well inside the span must still fail it.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=[30.0])
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(verdict["driven"])
+
+    def test_an_input_needs_room_to_have_been_answered(self):
+        # The response margin: an input in the last moments of a run is
+        # the run ending, not a failure to answer. The run covers
+        # 20..99, so an input at 98 has had no time to show and one at
+        # 40 has.
+        frames = self._sequence([(20, 10), (80, 90)])
+        self.assertFalse(runner.static_verdict(frames, interactions=[98.0])["driven"])
+        self.assertTrue(runner.static_verdict(frames, interactions=[40.0])["driven"])
+
+    def test_an_unalignable_leg_keeps_the_old_verdict(self):
+        # None means the steps could not be placed in the recording
+        # (evidence with no at_s, an older artifact), and the check
+        # must then judge everything exactly as it did before rather
+        # than quietly retiring itself.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=None)
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(verdict["driven"], "unalignable means judged, not exempt")
+
+    def test_a_leg_with_no_input_anywhere_is_not_judged(self):
+        # An empty list is alignment that SUCCEEDED and found no input:
+        # different from None, and it means nothing here was driven.
+        frames = self._sequence([(20, 10), (80, 90)])
+        verdict = runner.static_verdict(frames, interactions=[])
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+
+    def test_the_interaction_seconds_come_from_the_sibling_evidence(self):
+        # The alignment is per recording: a second boot's recording must
+        # not be judged against the first boot's clicks. Only the
+        # input's START is carried — its duration says nothing about
+        # whether the screen answered it.
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"steps": [
+                {"class": "ui-interaction", "at_s": 10.0, "duration_ms": 2000},
+                {"class": "diagnostic-probe", "at_s": 12.0, "duration_ms": 500},
+                {"class": "ui-interaction", "at_s": 40.0, "duration_ms": 0},
+            ]}, handle)
+        self.assertEqual(runner._interaction_seconds(SCRATCH), [10.0, 40.0])
+
+    def test_evidence_that_cannot_place_its_steps_is_not_aligned(self):
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"steps": [{"class": "ui-interaction", "duration_ms": 10}]}, handle)
+        self.assertIsNone(runner._interaction_seconds(SCRATCH))
+        self.assertIsNone(runner._interaction_seconds(os.path.join(SCRATCH, "absent")))
+
+    def test_the_response_margin_is_the_documented_one(self):
+        # Two seconds: the decode samples at 1 fps and a step's offset
+        # from the recorder's start carries about a second of ffmpeg
+        # startup error.
+        self.assertEqual(runner.STATIC_DRIVEN_RESPONSE_S, 2.0)
+
+    def test_the_frame_length_is_the_duration(self):
+        # The decode is one frame per second, so a run's length IS its
+        # seconds and no frame rate has to be carried alongside.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn("fps=1,scale=", source)
+        self.assertIn("static_verdict(frames, interactions=interactions)", source)
+
+    def test_the_exit_path_judges_every_recording(self):
+        # The check must cover every mode — the suite groups, the
+        # boot-only legs and their second boots — so it runs in the
+        # runner's own exit path over the run directory, after the
+        # recorders are closed, and it lands in evidence.json as well
+        # as the gallery.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        harvest = source.index("harvest_cura_log(RUN_DIR)")
+        judge = source.index("static_leg_report(RUN_DIR)", harvest)
+        self.assertLess(harvest, judge, "every recording must be closed first")
+        self.assertIn('"static_leg"', source)
+        self.assertIn("for root, _dirs, names in os.walk(run_dir)", source)
+
+    def test_a_failed_leg_is_still_judged(self):
+        # A leg that failed its scenario must still get its static
+        # verdict recorded — those are the recordings an audit reads —
+        # so the exit path calls the check unconditionally instead of
+        # short-circuiting on the scenario's return code.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        tail = source[source.index("if __name__ =="):]
+        self.assertNotIn("_rc = _rc or static_leg_report", tail)
+        self.assertIn("sys.exit(_rc or _static_rc)", tail)
+
+    def test_a_scenario_that_delivered_no_frame_is_named(self):
+        # The probe's verdict is a reading of the END sample: a window
+        # that answered the forced repaint, then stopped, is the one
+        # whose recording the static check finds frozen.
+        records = runner.liveness_outcome([
+            _probe("g1", "start", swapped=12, gained=1),
+            _probe("g1", "end", swapped=12, gained=0, heartbeat=_missed()),
+            _probe("g2", "start", swapped=30, gained=1),
+            _probe("g2", "end", swapped=94, gained=1),
+        ])
+        self.assertEqual([r["scenario"] for r in records if r["outcome"] == "stalled"],
+                         ["g1"])
+        self.assertEqual([r["scenario"] for r in records if r["outcome"] == "rendered"],
+                         ["g2"])
+
+    def test_an_unanswered_probe_is_not_a_stall(self):
+        # A platform that cannot answer is recorded, never judged: an
+        # unanswered sample must not read as "the window never painted".
+        records = runner.liveness_outcome([
+            {"scenario": "g1", "phase": "start", "ok": False, "error": "boom"},
+            {"scenario": "g1", "phase": "end", "ok": False, "error": "boom"},
+            _probe("g2", "start", swapped=1, gained=1),
+            _probe("g2", "end", swapped=1, gained=0, heartbeat=_missed()),
+        ])
+        by_scenario = {record["scenario"]: record["outcome"] for record in records}
+        self.assertEqual(by_scenario["g1"], "unverified")
+        self.assertIn("did not answer", records[0]["reason"])
+        self.assertEqual(by_scenario["g2"], "stalled")
+
+    def test_the_thresholds_are_the_measured_ones(self):
+        # 60 s clears every legitimate idle measured across the 51
+        # galleries (the longest non-frozen span is 59 s) and the
+        # share separates a leg that froze (39-92% of its duration)
+        # from one that spent a step waiting.
+        self.assertEqual(runner.STATIC_LEG_SECONDS, 60.0)
+        self.assertEqual(runner.STATIC_LEG_SHARE, 0.35)
+        self.assertEqual(runner.STATIC_FRAME_MAD, 1.0)
+
+
+class RendererLivenessTests(unittest.TestCase):
+    """The presentation verdict: does the window present a change it is
+    told about?
+
+    A hosted mac boots Cura on the Apple software renderer, where the
+    window stops presenting partway through a leg, and that leg captures
+    nothing — so every step is answered in-process from the QML tree. A
+    responsive tree is not proof of rendering. The probe answers that by
+    making a frame DUE: it changes a visible item in the window's own
+    scene graph, verifies the change landed, and waits for the frame.
+    A passive count could not carry this verdict in either direction —
+    an idle window has no reason to paint, and every flat span of the
+    4.6.0 release run was exactly that, on windows that painted again
+    later in the same leg (the false positives this replaced).
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        runner.EVIDENCE[:] = []
+        runner.FRAME_PROBES[:] = []
+        self._old = (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON,
+                     runner.rpc)
+        runner.RUN_DIR = SCRATCH
+        # The judged case by default: a leg that reads the screen acts on
+        # a missed heartbeat. The picture-less legs are the ones pinned
+        # by their own tests below.
+        runner.CAPTURE = True
+
+    def tearDown(self):
+        (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON,
+         runner.rpc) = self._old
+        runner.EVIDENCE[:] = []
+        runner.FRAME_PROBES[:] = []
+
+    def _rpc_over(self, samples, seen=None):
+        """Answer the frames commands from `samples`, in order, and the
+        calibration resize with the geometry it was asked for."""
+        pending = list(samples)
+
+        def rpc(request, timeout=None):
+            if request.get("cmd") == "frames":
+                if seen is not None:
+                    seen.append(dict(request))
+                return dict(pending.pop(0))
+            if request.get("cmd") == "resize":
+                return {"ok": True,
+                        "size": [int(part) for part in runner.WINDOW_SIZE.split("x")]}
+            return {"ok": True}
+        return rpc
+
+    def _scenario(self, samples, seen=None):
+        """One scenario whose single step read the tree, over a window
+        the samples describe."""
+        runner.rpc = self._rpc_over(samples, seen)
+        return runner.suite_scenario(
+            {"id": "g2", "name": "the frozen stage",
+             "steps": [{"op": "dwell", "ms": 1}]},
+            step_fn=lambda step: (True, "dwell", "the simulator was read"))
+
+    def _outcomes(self):
+        return runner.liveness_outcome(runner.FRAME_PROBES)
+
+    def _failed(self, steps):
+        return [name for name, _action, _assertion, ok, _capture in steps if not ok]
+
+    def test_a_frozen_renderer_fails_the_scenario_when_the_screen_is_judged(self):
+        # The macOS hole, as the verdict reads it now: a window that had
+        # answered the forced repaint, then answered no frame to two
+        # scene changes it cannot ignore. Every step of this scenario
+        # passed over it, and it is a red scenario all the same.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), ["g2-zz-frames"])
+        _name, action, assertion, _ok, _capture = steps[-1]
+        self.assertIn("visual heartbeat", action)
+        self.assertIn("opacity 0.0->1.0", assertion)
+        self.assertIn("2 forced scene change(s)", assertion)
+        self.assertIn("swapped=40->40", assertion)
+        self.assertIn("platform=xcb", assertion)
+        # And it rides the evidence spine, so the artifact names the
+        # sample that failed it.
+        self.assertEqual([entry["name"] for entry in runner.EVIDENCE],
+                         ["g2-00", "g2-zz-frames"])
+        self.assertFalse(runner.EVIDENCE[-1]["ok"])
+        self.assertEqual(runner.EVIDENCE[-1]["class"], "diagnostic-probe")
+        # And the verdict the group hands the leg is the failing one.
+        self.assertEqual(runner._verdict(steps), 1)
+
+    def test_a_frozen_renderer_after_a_successful_calibration_fails_the_scenario(self):
+        # The gate the calibration exists for: this window answered a
+        # heartbeat of its own earlier in the run, so a miss now is a
+        # renderer that stopped rather than one never seen to present.
+        steps = self._scenario([_probe("g2", "start", swapped=41, gained=1),
+                                _probe("g2", "end", swapped=41, gained=0,
+                                       heartbeat=_missed(calibrated=True))])
+        self.assertEqual(self._failed(steps), ["g2-zz-frames"])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "stalled")
+        self.assertIn("already answered a heartbeat of its own",
+                      outcome["reason"])
+
+    def test_a_healthy_renderer_passes_the_same_scenario(self):
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=41, gained=1)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertEqual(len(steps), 1)  # the scenario's own step, alone
+        self.assertEqual(self._outcomes()[0]["outcome"], "rendered")
+
+    def test_the_release_run_s_idle_sample_can_no_longer_read_as_a_freeze(self):
+        # The regression this replaced, pinned from the run's own
+        # artifact: gate (ubuntu-26.04, group-status) scenario b6,
+        # swapped 14 -> 14 with nothing gained at either end, on a
+        # visible and exposed window — a scenario whose steps changed
+        # only the simulator's print state and touched nothing on the
+        # PREPARE stage. Twelve gate legs failed on samples like this
+        # one, 28 of the run's 29 called-frozen scenarios painting
+        # again later in the same leg. A sample that made no frame due
+        # cannot say the renderer stopped, whatever its counts did.
+        sample = dict(scenario="g2", phase="start", ok=True, frame_signal=True,
+                      fresh_window=False, visible=True, exposed=True, active=True,
+                      visibility="Windowed", state="WindowNoState",
+                      platform="xcb", swapped=14, gained=0)
+        steps = self._scenario([dict(sample),
+                                dict(sample, phase="end")])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("without a heartbeat", outcome["reason"])
+
+    def test_an_idle_scene_answers_the_heartbeat_though_nothing_else_painted(self):
+        # The same idle window under the new probe: the scenario's own
+        # steps still change nothing on screen — the count is where the
+        # previous sample left it — and the heartbeat is answered all
+        # the same, because it is the one thing that gave the renderer a
+        # reason to paint.
+        steps = self._scenario([
+            _probe("g2", "start", swapped=15, gained=1, since=14, active=False,
+                   heartbeat=_heartbeat(attempts=[_attempt(before=14)])),
+            _probe("g2", "end", swapped=16, gained=1, since=15, active=False,
+                   heartbeat=_heartbeat(calibrated=True, sequence=2,
+                                        attempts=[_attempt(before=15)]))])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "rendered")
+        self.assertIn("answered the heartbeat", outcome["reason"])
+        self.assertIn("opacity 0.0->1.0", outcome["reason"])
+        # Nothing painted between the samples: the only frames in the
+        # scenario are the two the heartbeats made due.
+        self.assertEqual(outcome["end"]["since"], outcome["start"]["swapped"])
+
+    def test_a_slow_renderer_that_answers_the_second_change_is_not_a_freeze(self):
+        # A software rasteriser's frame interval is of the same order as
+        # a fixed settle, so one missed change is not a stopped
+        # renderer: the second change is awaited with its own deadline,
+        # and the attempt that answered is what the verdict reads.
+        steps = self._scenario([_probe("g2", "start", swapped=8, gained=1),
+                                _probe("g2", "end", swapped=9, gained=0,
+                                       heartbeat=_heartbeat(attempts=[
+                                           _attempt(answered=False, waited=1500, before=9),
+                                           _attempt(answered=True, waited=1380, before=9)]))])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "rendered")
+        # Both attempts ride the diagnosis, so a slow answer is visible
+        # rather than inferred.
+        self.assertIn("gained 0 in 1500ms", outcome["reason"])
+        self.assertIn("gained 1 in 1380ms", outcome["reason"])
+
+    def test_a_scenario_that_painted_across_its_span_is_not_a_freeze(self):
+        # A window that painted while the scenario ran was presenting,
+        # whatever the closing heartbeat did.
+        steps = self._scenario([_probe("g2", "start", swapped=160, gained=2),
+                                _probe("g2", "end", swapped=189, gained=0,
+                                       heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "rendered")
+        self.assertIn("painted 29 frame(s) across the scenario",
+                      outcome["reason"])
+        self.assertIn("swapped=160->189", outcome["reason"])
+
+    def test_a_window_the_counter_just_attached_to_is_not_a_freeze(self):
+        # A leg's boot can replace the main window. The sample that
+        # attaches the counter to the replacement is that window's first
+        # count, and its heartbeat is the replacement's first too, so a
+        # small count against a large baseline is a new window rather
+        # than a renderer that stopped.
+        steps = self._scenario([_probe("g2", "start", swapped=160, gained=1),
+                                _probe("g2", "end", swapped=3, gained=0,
+                                       fresh_window=True, heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("was replaced for this sample", outcome["reason"])
+
+    def test_frames_on_a_replaced_window_are_not_the_new_one_s_history(self):
+        # The history the verdict reads starts at the last fresh
+        # attachment, so frames the replaced window delivered are not
+        # evidence that this one has ever presented: judged against the
+        # whole run the new window's zero would read as a freeze.
+        runner.FRAME_PROBES[:] = [
+            _probe("g1", "start", swapped=400, gained=1),
+            _probe("g1", "end", swapped=520, gained=1),
+            _probe("g2", "start", swapped=0, gained=0, fresh_window=True,
+                   heartbeat=_missed()),
+            _probe("g2", "end", swapped=0, gained=0, heartbeat=_missed()),
+        ]
+        outcomes = {record["scenario"]: record for record in self._outcomes()}
+        self.assertEqual(outcomes["g1"]["outcome"], "rendered")
+        self.assertEqual(outcomes["g2"]["outcome"], "unverified")
+        self.assertIn("no frame has been delivered on this platform in this run "
+                      "yet", outcomes["g2"]["reason"])
+
+    def test_a_window_that_never_delivered_a_frame_is_not_a_freeze(self):
+        # A platform that never emits the signal and a renderer that has
+        # not painted yet look identical from here. Both get their own
+        # outcome and the reason, and neither is called a freeze.
+        steps = self._scenario([_probe("g2", "start", swapped=0, gained=0,
+                                       heartbeat=_missed()),
+                                _probe("g2", "end", swapped=0, gained=0,
+                                       heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("initialising renderer", outcome["reason"])
+
+    def test_a_hidden_window_is_not_a_freeze(self):
+        # A minimised window delivers no frame by design; it must not be
+        # read as a renderer that stopped, and it must not pass as one
+        # that rendered either.
+        hidden = dict(visible=False, exposed=False, visibility="Minimized",
+                      state="WindowMinimized")
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=0,
+                                       heartbeat=_missed(), **hidden),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       heartbeat=_missed(), **hidden)])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("not on the display", outcome["reason"])
+        self.assertIn("Minimized", outcome["reason"])
+
+    def test_a_landed_change_is_what_the_verdict_reads(self):
+        # Item, scene and visibility are checked on every change: the
+        # mutation the heartbeat made is the thing the frame answered.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1,
+                                       heartbeat=_heartbeat(attempts=[
+                                           _attempt(before=40, verified=True,
+                                                    in_scene=True,
+                                                    is_visible=True)])),
+                                _probe("g2", "end", swapped=41, gained=1)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertEqual(self._outcomes()[0]["outcome"], "rendered")
+
+    def test_a_change_that_did_not_land_is_not_a_stall(self):
+        # A change that never reached the item made no frame due, so a
+        # miss against it is a measurement that could not be taken —
+        # never a renderer that stopped.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       heartbeat=_heartbeat(
+                                           answered=False,
+                                           attempts=[_attempt(answered=False,
+                                                              verified=False)]))])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("did not verifiably land", outcome["reason"])
+
+    def test_a_heartbeat_that_could_not_be_placed_is_not_a_stall(self):
+        # No engine to build the item with, no frame made due: the
+        # sample says so rather than reading as a window that stopped.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       heartbeat=_heartbeat(
+                                           asked=False, answered=False, attempts=[],
+                                           reason="no qml engine was reachable"))])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "unverified")
+        self.assertIn("the heartbeat was not placed: no qml engine",
+                      outcome["reason"])
+
+    def test_a_sample_without_a_heartbeat_measured_nothing(self):
+        # An older or truncated reply carries counts and no heartbeat:
+        # the counts cannot stand in for the measurement, so it is
+        # unverified rather than judged on them.
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       heartbeat=None)])
+        self.assertEqual(self._failed(steps), [])
+        self.assertIn("without a heartbeat", self._outcomes()[0]["reason"])
+
+    def test_a_detached_frame_signal_is_not_a_stall(self):
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       frame_signal=False, heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), [])
+        self.assertIn("could not be attached", self._outcomes()[0]["reason"])
+
+    def test_every_sample_asks_for_a_heartbeat_and_leaves_it_room(self):
+        # A count read cold would call an idle window frozen, so the
+        # forced change and its deadline go out with every sample.
+        requests = []
+        self._scenario([_probe("g2", "start", swapped=1, gained=1),
+                        _probe("g2", "end", swapped=2, gained=1)],
+                       seen=requests)
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertIs(request.get("heartbeat"), True)
+            self.assertGreater(request.get("deadline_ms", 0), 0)
+
+    def test_the_stall_is_announced_where_the_leg_judges_the_screen(self):
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=40, gained=1),
+                                  _probe("g2", "end", swapped=40, gained=0,
+                                         heartbeat=_missed())]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        self.assertIn("ui_test: NO FRAMES — scenario g2", out.getvalue())
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["frames_stalled"], ["g2"])
+        self.assertEqual(data["frames_report_only"], [])
+        self.assertEqual(data["frames_outcome"][0]["outcome"], "stalled")
+        # The samples themselves are kept, so the change the window was
+        # asked for and the counts behind the verdict are readable in
+        # the artifact.
+        self.assertEqual([s["phase"] for s in data["frames"]],
+                         ["start", "end"])
+        self.assertEqual(data["frames"][1]["heartbeat"]["attempts"][0]["waited_ms"],
+                         40)
+
+    def test_a_picture_less_leg_does_not_fail_a_scenario_on_a_heartbeat_miss(self):
+        # The hosted mac's leg captures nothing and has declared its
+        # screen unjudgeable, so a miss there is a diagnostic: recorded,
+        # announced, and never a functional scenario's verdict.
+        runner.CAPTURE = False
+        steps = self._scenario([_probe("g2", "start", swapped=40, gained=1),
+                                _probe("g2", "end", swapped=40, gained=0,
+                                       platform="cocoa", heartbeat=_missed())])
+        self.assertEqual(self._failed(steps), [])
+        outcome = self._outcomes()[0]
+        self.assertEqual(outcome["outcome"], "stalled")
+        self.assertFalse(outcome["judged"])
+        self.assertIn("report-only", outcome["gating"])
+
+    def test_a_report_only_miss_is_announced_and_never_read_as_a_failure(self):
+        # Silence would read as a pass. The line names the leg, the
+        # platform and the reason, and the artifact keeps the
+        # measurement out of the failures without losing it.
+        runner.CAPTURE = False
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=40, gained=1),
+                                  _probe("g2", "end", swapped=40, gained=0,
+                                         platform="cocoa", heartbeat=_missed())]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        log = out.getvalue()
+        self.assertIn("ui_test: HEARTBEAT REPORT-ONLY — scenario g2", log)
+        self.assertNotIn("ui_test: NO FRAMES", log)
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["frames_stalled"], [])
+        self.assertEqual(data["frames_report_only"], ["g2"])
+        self.assertEqual(data["frames_outcome"][0]["outcome"], "stalled")
+        self.assertFalse(data["frames_outcome"][0]["judged"])
+        self.assertIn("platform=cocoa", data["frames_outcome"][0]["gating"])
+
+    def test_an_unverified_outcome_is_announced_too(self):
+        # A leg whose window was never shown, or never seen to present,
+        # must not read as one where rendering was confirmed: the
+        # outcome is its own, and it says so in the log.
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=0, gained=0,
+                                         heartbeat=_missed()),
+                                  _probe("g2", "end", swapped=0, gained=0,
+                                         heartbeat=_missed()),
+                                  _probe("g3", "start", swapped=9, gained=0,
+                                         visible=False, exposed=False,
+                                         heartbeat=_missed()),
+                                  _probe("g3", "end", swapped=9, gained=0,
+                                         visible=False, exposed=False,
+                                         heartbeat=_missed())]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        log = out.getvalue()
+        self.assertIn("ui_test: FRAMES UNVERIFIED — scenario g2", log)
+        self.assertIn("ui_test: FRAMES UNVERIFIED — scenario g3", log)
+        self.assertNotIn("NO FRAMES", log)
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual([record["outcome"] for record in data["frames_outcome"]],
+                         ["unverified", "unverified"])
+        self.assertEqual(data["frames_stalled"], [])
+
+    def test_a_leg_that_recorded_one_sample_is_not_judged(self):
+        # The boot-only legs record none at all; a scenario that lost
+        # one end of its pair is not judged rather than guessed at.
+        runner.FRAME_PROBES[:] = [_probe("g2", "start", swapped=0, gained=0)]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.write_evidence("test run")
+        self.assertEqual(out.getvalue(), "")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["frames_outcome"], [])
+        self.assertEqual(data["frames_stalled"], [])
+
+
+class CaptureGateTests(unittest.TestCase):
+    """The macOS legs run without pictures (the capture gate).
+
+    A CI mac has no GPU, OpenGL in a macOS guest is software by
+    construction, and on that renderer Cura's window stops presenting
+    partway through a leg — measured: the stills go byte-identical
+    while the menu bar and the dock keep ticking in the same frames,
+    and a real click on Cura's own stage header changes nothing on
+    screen. Every step assertion is answered in-process, so the
+    pictures are the whole of what is lost. These pins hold that loss
+    to exactly the pictures: no capture, no capture failure, no
+    display guard, no static verdict — and never a silent one. The
+    presentation verdict is not in that set (see
+    RendererLivenessTests): it reads the app, not the screen.
+    """
+
+    def setUp(self):
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+        os.makedirs(SCRATCH, exist_ok=True)
+        runner.EVIDENCE[:] = []
+        self._old = (runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON)
+        runner.RUN_DIR = SCRATCH
+
+    def tearDown(self):
+        runner.RUN_DIR, runner.CAPTURE, runner.CAPTURE_REASON = self._old
+        runner.EVIDENCE[:] = []
+
+    def test_the_leg_says_off_and_nothing_else_does(self):
+        # The LEG carries this, not the platform: a Mac with a real GPU
+        # presents normally, so a local run must keep its pictures.
+        self.assertTrue(runner.capture_enabled(""))
+        self.assertTrue(runner.capture_enabled(None))
+        self.assertTrue(runner.capture_enabled("on"))
+        # A mangled variable fails toward the recording, not away from
+        # it: a leg that meant to capture and cannot is a red, and a
+        # leg that meant to skip and does not is a visible freeze.
+        self.assertTrue(runner.capture_enabled("flase"))
+        # Only "off" — modulo case and padding — turns it off.
+        self.assertFalse(runner.capture_enabled("off"))
+        self.assertFalse(runner.capture_enabled(" OFF "))
+
+    def test_no_capture_is_not_a_capture_failure(self):
+        # A leg told to take no picture must not fail every step for
+        # the absence of the picture: shot() answers an empty capture
+        # with NO error, which is what keeps _verdict() and the
+        # gallery's verdict column green.
+        runner.CAPTURE = False
+        capture = runner.shot("f1-00")
+        self.assertEqual(capture, (None, None))
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "f1-00.png")))
+        entry = runner._evidence_entry({"id": "f1"}, 0, {"op": "sim_set"},
+                                       "f1-00", True, "state", "applied",
+                                       capture, time.monotonic())
+        self.assertIsNone(entry["capture"])
+        self.assertIsNone(entry["capture_error"])
+        self.assertEqual(runner._verdict([("f1-00", "state", "applied", True, capture)]), 0)
+
+    def test_no_recorder_is_started_and_a_missing_one_is_safe_to_stop(self):
+        runner.CAPTURE = False
+        self.assertIsNone(runner.start_recorder(os.path.join(SCRATCH, "x.mp4")))
+        runner.stop_recorder(None)  # must not raise
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "x.mp4")))
+
+    def test_the_display_guard_stands_down_with_the_capture(self):
+        # The guard protects the RECORDING; with no frames it must not
+        # re-raise anything, and it must never fail a step.
+        runner.CAPTURE = False
+        guard = runner.foreground_guard()
+        self.assertEqual(guard["authority"], "not-applicable")
+        ok, assertion = runner._foreground_verdict(guard, True, "it landed")
+        self.assertTrue(ok)
+        # The verdict is untouched AND the assertion is left as it was:
+        # the leg's capture block says the guard stood down once, and a
+        # suffix on every step would bury the assertion it sits on.
+        self.assertEqual(assertion, "it landed")
+
+    def test_the_evidence_carries_the_mode_and_the_reason(self):
+        runner.CAPTURE = False
+        runner.CAPTURE_REASON = "the runner has no GPU"
+        runner.EVIDENCE.append(runner._evidence_entry(
+            {"id": "f1"}, 0, {"op": "sim_arm"}, "f1-00", True, "armed", "applied",
+            (None, None), time.monotonic()))
+        runner.write_evidence("test run")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["capture"]["mode"], "off")
+        self.assertEqual(data["capture"]["reason"], "the runner has no GPU")
+        self.assertFalse(data["capture"]["judged"])
+
+    def test_the_evidence_says_judged_when_it_captures(self):
+        runner.CAPTURE = True
+        runner.write_evidence("test run")
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["capture"]["mode"], "on")
+        self.assertTrue(data["capture"]["judged"])
+
+    def test_an_uncaptured_leg_is_not_judged_rather_than_passed(self):
+        # The dangerous shape is a record that reads as a PASS: the
+        # walk tool flags any static record with a falsy ok, and a
+        # skipped record would have to carry one. So nothing is
+        # written into static_leg at all — the mode in evidence.json
+        # is what says the leg was not judged, and the leg exits 0.
+        runner.CAPTURE = False
+        runner.write_evidence("test run")
+        self.assertEqual(runner.static_leg_report(SCRATCH), 0)
+        with open(os.path.join(SCRATCH, "evidence.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertNotIn("static_leg", data)
+        self.assertFalse(os.path.exists(os.path.join(SCRATCH, "static_leg.json")))
+
+    def test_the_measurement_is_not_stood_down_by_the_capture_gate(self):
+        # The probe judges the APP, not a picture: it is the one
+        # measurement a picture-less leg must keep, so no capture guard
+        # may stand it down. What the gate decides is whether a miss is
+        # ACTED on, and that decision is made once, in its own function,
+        # and recorded with the outcome — never folded into the reading
+        # (RendererLivenessTests holds the behaviour; this is the
+        # structural half).
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        verdict = source[source.index("def liveness_of("):]
+        verdict = verdict[:verdict.index("\ndef liveness_gating(")]
+        self.assertNotIn("CAPTURE", verdict)
+        gating = source[source.index("def liveness_gating("):]
+        gating = gating[:gating.index("\ndef liveness_outcome(")]
+        self.assertIn("if not CAPTURE:", gating)
+        # Every outcome carries the decision and its reason, so the
+        # artifact names the scenarios a leg did not act on.
+        outcome = source[source.index("def liveness_outcome("):]
+        outcome = outcome[:outcome.index("\ndef stalled_scenarios(")]
+        self.assertIn("liveness_gating(", outcome)
+        self.assertIn('"judged": judged, "gating": gating', outcome)
+        # And both lines are announced, whatever the mode: a stall where
+        # the leg acts on it, a report-only diagnostic where it does not.
+        printer = source[source.index('run["frames_outcome"] = outcomes'):]
+        printer = printer[:printer.index("with open(os.path.join(RUN_DIR")]
+        self.assertNotIn("CAPTURE", printer)
+        self.assertIn("ui_test: NO FRAMES", printer)
+        self.assertIn("ui_test: HEARTBEAT REPORT-ONLY", printer)
+
+    def test_the_verdict_lines_survive_a_cp1252_stdout(self):
+        # CI's Windows runners give Python a cp1252 stdout. The verdict
+        # lines carry a tick and a cross, so printing one raised
+        # UnicodeEncodeError and took the whole leg down — the Windows
+        # suite failed on "PASSED \u2705" itself, not on anything it was
+        # reporting. Both writers ask for UTF-8 up front.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn('_stream.reconfigure(encoding="utf-8", errors="replace")', source)
+        # Before the first print, or it has already raised.
+        self.assertLess(source.index("reconfigure(encoding="),
+                        source.index("def progress(message):"))
+        summary = (ROOT / "tools" / "gate_summary.py").read_text(encoding="utf-8")
+        self.assertIn('stream.reconfigure(encoding="utf-8", errors="replace")', summary)
+
+    def test_a_long_leg_reports_progress_as_it_runs(self):
+        # A leg that says nothing until it ends is unreadable while it
+        # runs, and a leg killed at its timeout dies with whatever is
+        # still buffered — so the stage lines flush.
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn("def progress(message):", source)
+        self.assertIn('print(f"ui_test: {message}", flush=True)', source)
+        self.assertIn("[{done}] {spec", source)   # the line that opens a scenario
+        self.assertIn("{spec['id']}: ", source)   # the one that closes it
+        # The verdict LEADS it, and both words are there: a scan must
+        # never have to read "0 failed" as a pass, nor hunt for which
+        # scenario is the red one.
+        self.assertIn('"PASSED \\u2705" if not failed else "FAILED \\u274c"', source)
+        self.assertIn("all {len(scenario_steps)} steps passed", source)
+        # The container leg runs the runner without -u, so the flush
+        # cannot be delegated to argv.
+        self.assertIn("python3 -u /tmp/mpf/harness_runner.py",
+                      (ROOT / "tools" / "ui_test.sh").read_text(encoding="utf-8"))
+
+    def test_a_failed_smoke_unit_says_why_in_the_job_log(self):
+        # The leg's own output goes into the run root, which the job
+        # uploads as an artifact — and a CI reader has only the job log.
+        # A red smoke unit that prints neither its failed steps nor the
+        # liveness verdicts behind them reads as a failure with no
+        # reason (the 2026-09-25 smoke red named nothing at all).
+        script = (ROOT / "tools" / "harness_smoke.sh").read_text(encoding="utf-8")
+        failure = script[script.index('echo "harness smoke $run FAILED"'):]
+        self.assertIn("grep -E '^ui_test: .*(FAILED|NO FRAMES|HEARTBEAT "
+                      "REPORT-ONLY|FRAMES UNVERIFIED)'", failure)
+        # And the tail covers the leg that died before it reported a
+        # step: a boot that never came up, a timeout.
+        self.assertIn('tail -n 20 "$RUN_ROOT/$run.log"', failure)
+
+    def test_the_gallery_opens_with_its_verdict(self):
+        # A 169-step page is read for its failures; hunting them by eye
+        # down a column of passing steps is how a red leg gets skimmed
+        # instead of read. Each failing step is listed at the top and
+        # links to its own entry, which is why the entries carry ids.
+        steps = [("p1-00", "clicked", "it landed", True, None),
+                 ("p1-01", "waited", "the card appeared", False, None)]
+        runner.write_gallery(steps, False, "test run")
+        page = open(os.path.join(SCRATCH, "index.html"), encoding="utf-8").read()
+        self.assertIn("1 of 2 steps FAILED", page)
+        self.assertIn('href="#step-p1-01"', page)
+        self.assertIn('id="step-p1-01"', page)
+        # And a clean leg says so, rather than leaving the reader to
+        # infer it from the absence of red.
+        runner.write_gallery([("p1-00", "clicked", "it landed", True, None)],
+                             False, "test run")
+        page = open(os.path.join(SCRATCH, "index.html"), encoding="utf-8").read()
+        self.assertIn("all 1 steps passed", page)
+
+    def test_the_macos_leg_carries_its_own_reason(self):
+        # The caveat has to reach the artifact without the CI environment
+        # supplying it, so the leg that turns the capture off must also
+        # hand over the reason. It is generated by the harness script
+        # into the env file the runner step SOURCES, so an apostrophe in
+        # it would close the quote early and truncate the reason
+        # silently — hence the no-apostrophe rule, pinned here.
+        script = (ROOT / "tools" / "native_harness.sh").read_text(encoding="utf-8")
+        self.assertIn("export HARNESS_CAPTURE='off'", script)
+        # The value is single-quoted and ends at the closing quote before
+        # the echo's own double quote, so [^']* IS the no-apostrophe rule:
+        # one would stop the match early and the content assertions below
+        # would fail on the truncation.
+        found = re.search(r"export HARNESS_CAPTURE_REASON='([^']*)'\"", script)
+        self.assertIsNotNone(found, "the leg must hand over a reason")
+        reason = found.group(1)
+        self.assertIn("no GPU", reason)
+        self.assertIn("TESTING.md", reason)
+        # And the reason states what a liveness miss MEANS on that leg:
+        # the measurement runs, and the verdict is not acted on there.
+        self.assertIn("report-only diagnostic", reason)
 
 
 if __name__ == "__main__":

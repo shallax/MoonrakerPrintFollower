@@ -660,6 +660,24 @@ class SubscribeCornerTests(SocketCase):
     """The subscribe reply is the one place a capability failure and a
     status policy are told apart."""
 
+    def subscribe_and_wait_reply(self, instance, objects):
+        """Issue one subscribe and wait for ITS reply to be consumed.
+
+        Keyed on the request entry leaving ``_pending``, never on a
+        stamp: a coarse monotonic clock hands two successive replies the
+        same value, and a stamp-based wait then calls a landed reply
+        lost."""
+        before = set(instance._pending)
+        instance.subscribe(objects)
+        issued = set(instance._pending) - before
+        self.assertEqual(len(issued), 1, "the subscribe issued no request")
+        request_id = issued.pop()
+        self.assertTrue(
+            self.wait_until(lambda: request_id not in instance._pending),
+            "the subscribe reply never landed",
+        )
+        return request_id
+
     def test_a_structured_refusal_is_a_capability_failure(self):
         server = self.loopback()
         instance = self.upgraded(server)
@@ -676,15 +694,48 @@ class SubscribeCornerTests(SocketCase):
         server = self.loopback()
         instance = self.upgraded(server)
         snapshots = []
+        generation = instance.generation
         instance.syncSnapshot.connect(lambda status, stamp: snapshots.append(status))
+        issued = []
         for result in ({}, "not a status"):
-            before = instance.last_auth_reply_at
             server.queue(("reply", {"result": result}))
-            instance.subscribe({"print_stats": None})
-            self.assertTrue(
-                self.wait_until(lambda b=before: instance.last_auth_reply_at > b),
-                "the reply never landed",
-            )
+            issued.append(self.subscribe_and_wait_reply(instance, {"print_stats": None}))
+        self.assertEqual(len(set(issued)), 2, "both replies did not ride their own request")
+        subscribes = [entry for entry in server.requests if entry.get("method") == "printer.objects.subscribe"]
+        self.assertEqual(len(subscribes), 2, "the two subscribes never reached the printer")
+        self.assertEqual(
+            [entry["params"]["objects"] for entry in subscribes],
+            [{"print_stats": None}] * 2,
+            "the subscribe asked for the wrong objects",
+        )
+        self.assertTrue(instance.is_upgraded, "a malformed reply dropped the feed")
+        self.assertEqual(instance.generation, generation, "a malformed reply bumped the generation")
+        self.assertEqual(self.failures, [])
+        self.assertEqual(snapshots, [], "a reply with no status object was published")
+        # Teardown is the pending map's last owner.
+        instance.stop()
+        self.assertEqual(instance._pending, {}, "teardown left a request pending")
+
+    def test_successive_replies_may_share_a_timestamp(self):
+        # A coarse monotonic clock (Windows ticks at ~15.6 ms) stamps
+        # successive replies identically. Freezing the socket module's
+        # clock reproduces that over a real loopback socket; freezing
+        # time.monotonic would stop the harness's own deadline expiring.
+        server = self.loopback()
+        instance = self.upgraded(server)
+        snapshots = []
+        instance.syncSnapshot.connect(lambda status, stamp: snapshots.append(status))
+        frozen = time.monotonic()
+        with mock.patch.object(socket_module, "_now", lambda: frozen):
+            self.assertEqual(socket_module._now(), frozen, "the socket clock was not substituted")
+            issued = []
+            for result in ({}, "not a status"):
+                server.queue(("reply", {"result": result}))
+                issued.append(self.subscribe_and_wait_reply(instance, {"print_stats": None}))
+            self.assertEqual(len(set(issued)), 2, "both replies did not ride their own request")
+            # The recorded stamp proves the freeze was live: both replies
+            # read the substituted clock, so they carry one timestamp.
+            self.assertEqual(instance.last_auth_reply_at, frozen, "the stamp bypassed the socket clock")
         self.assertEqual(snapshots, [])
         self.assertEqual(self.failures, [])
 
@@ -1156,7 +1207,7 @@ class TransportLaneTests(TransportCase):
 
     def test_cancelling_a_vanished_reply_does_not_raise(self):
         self.transport._pending["drop::c"] = self.module._PendingRequest(
-            _Vanished(), 1, "GET", "auxiliary", time.monotonic())
+            _Vanished(), 1, "GET", "auxiliary", time.perf_counter())
         self.transport.cancel_owner("drop")
         self.assertEqual(self.transport._pending, {})
 
@@ -1164,7 +1215,7 @@ class TransportLaneTests(TransportCase):
         # Touching the surface of a deleted QNetworkReply raises; the lane
         # must then be reclaimable instead of blocking every future poll.
         self.transport._pending["o::c"] = self.module._PendingRequest(
-            _Vanished(), 1, "GET", "auxiliary", time.monotonic())
+            _Vanished(), 1, "GET", "auxiliary", time.perf_counter())
         self.assertTrue(self.transport.send_json("o", "c", "GET", "/ok", self.callback()))
         self.assertTrue(self.poll(lambda: self.calls), "the lane stayed wedged")
 
@@ -1202,7 +1253,9 @@ class TransportStaleFinishTests(TransportCase):
     already gone when the transport touches it."""
 
     def _pending(self, reply):
-        entry = self.module._PendingRequest(reply, 1, "GET", "auxiliary", time.monotonic())
+        # The transport's own clock: the injected entry stands in for a
+        # request the transport stamped, so it must be the same counter.
+        entry = self.module._PendingRequest(reply, 1, "GET", "auxiliary", time.perf_counter())
         self.transport._pending[self.transport._key("o", "c")] = entry
         return entry
 

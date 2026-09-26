@@ -51,7 +51,7 @@ mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 # on which job it runs inside.
 make package >/dev/null
 
-docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
+"$root/tools/build_image.sh" mpf-cura-harness "$root/tools/harness" >/dev/null
 
 # The Cura fetches happen ONCE into the shared tree; parallel slots
 # copy their version's tree into their own work dir (the extraction

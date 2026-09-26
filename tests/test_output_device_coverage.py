@@ -170,8 +170,13 @@ if QT_AVAILABLE:
         def confirmForceLoadCurrentPrint(self): self.loads.append("load")
         def confirmDownloadForMonitor(self): self.loads.append("monitor")
         def request_file_download(self, relpath): self.loads.append(relpath)
+        def download_progress(self): return None
+        def cancel_file_download(self): self.loads.append("cancel")
+        def setPlateAnchor(self, anchor): self.loads.append(("anchor", anchor))
+        def setPlateSplit(self, motions): self.loads.append(("split", motions))
         def receive_preview_block(self, block): self.blocks.append(block)
         def has_toolpath(self): return True
+        def index(self): return None  # the render pins no-op without a service
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt runtime suite")

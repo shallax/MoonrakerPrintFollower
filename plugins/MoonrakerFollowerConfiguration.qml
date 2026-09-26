@@ -19,10 +19,11 @@ Cura.MachineAction {
     property bool validAuxInterval: true
     property bool validConsoleInterval: true
     property bool validZTolerance: manager.validZTolerance(zToleranceField.text)
+    property bool validCacheMax: manager.validCacheMax(cacheMaxField.text)
     property bool validRetryInterval: manager.validRetryInterval(retryIntervalField.text)
     property bool validTranslation: manager.validTranslation(translateInputField.text, translateOutputField.text)
     property bool connectionRequested: enabledBox.checked || (urlField.text.trim() !== "" && urlField.text.trim() !== "http://" && urlField.text.trim() !== "https://")
-    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
     // Two refusal causes share the slot with distinct copy: the
@@ -48,40 +49,42 @@ Cura.MachineAction {
             return;
         }
         var saved = manager.saveConfig({
-                "enabled": enabledBox.checked,
-                "url": urlField.text,
-                "api_key": apiKeyField.text,
-                "feed_mode": websocketMode.checked ? "websocket" : "http",
-                "poll_interval_ms": base.pollIntervalMoved ? Math.round(250 * Math.pow(2, pollIntervalSlider.value)) : manager.settingsPollInterval,
-                "aux_interval_ms": auxIntervalSlider.value,
-                "console_interval_ms": consoleIntervalSlider.value,
-                "follow_mode": followMode(),
-                "moonraker_layer_is_one_based": oneBasedBox.checked,
-                "path_follow": pathFollowBox.checked,
-                "path_smoothing": pathSmoothingBox.checked,
-                "eta_learn": etaLearnBox.checked,
-                "auto_preview": autoPreviewBox.checked,
-                "show_toolhead_indicator": toolheadIndicatorBox.checked,
-                "z_fallback": zFallbackBox.checked,
-                "z_tolerance": zToleranceField.text,
-                "trace_layer": layerTraceBox.checked,
-                "trace_http": httpTraceBox.checked,
-                "memory_diagnostics_log": memoryDiagnosticsBox.checked,
-                "memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked,
-                "camera_disabled": cameraDisabledBox.checked,
-                "frontend_url": frontendUrlField.text,
-                "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
-                "upload_dialog": uploadDialogBox.checked,
-                "upload_path": uploadPathField.text,
-                "upload_start_print": uploadStartPrintBox.checked,
-                "upload_remember_state": uploadRememberStateBox.checked,
-                "upload_autohide_message": uploadAutohideBox.checked,
-                "power_devices": powerDevicesField.text,
-                "ready_retry_interval_s": retryIntervalField.text,
-                "filename_translate_input": translateInputField.text,
-                "filename_translate_output": translateOutputField.text,
-                "filename_translate_remove": translateRemoveField.text
-            });
+            "enabled": enabledBox.checked,
+            "url": urlField.text,
+            "api_key": apiKeyField.text,
+            "feed_mode": websocketMode.checked ? "websocket" : "http",
+            "poll_interval_ms": base.pollIntervalMoved ? Math.round(250 * Math.pow(2, pollIntervalSlider.value)) : manager.settingsPollInterval,
+            "aux_interval_ms": auxIntervalSlider.value,
+            "console_interval_ms": consoleIntervalSlider.value,
+            "cache_max_mb": cacheMaxField.text,
+            "follow_mode": followMode(),
+            "moonraker_layer_is_one_based": oneBasedBox.checked,
+            "path_follow": pathFollowBox.checked,
+            "path_smoothing": pathSmoothingBox.checked,
+            "eta_learn": etaLearnBox.checked,
+            "auto_preview": autoPreviewBox.checked,
+            "show_toolhead_indicator": toolheadIndicatorBox.checked,
+            "z_fallback": zFallbackBox.checked,
+            "z_tolerance": zToleranceField.text,
+            "trace_layer": layerTraceBox.checked,
+            "trace_http": httpTraceBox.checked,
+            "seek_trace": seekTraceBox.checked,
+            "memory_diagnostics_log": memoryDiagnosticsBox.checked,
+            "memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked,
+            "camera_disabled": cameraDisabledBox.checked,
+            "frontend_url": frontendUrlField.text,
+            "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
+            "upload_dialog": uploadDialogBox.checked,
+            "upload_path": uploadPathField.text,
+            "upload_start_print": uploadStartPrintBox.checked,
+            "upload_remember_state": uploadRememberStateBox.checked,
+            "upload_autohide_message": uploadAutohideBox.checked,
+            "power_devices": powerDevicesField.text,
+            "ready_retry_interval_s": retryIntervalField.text,
+            "filename_translate_input": translateInputField.text,
+            "filename_translate_output": translateOutputField.text,
+            "filename_translate_remove": translateRemoveField.text
+        });
         saveRefused = !saved;
         saveRefusalText = saved ? "" : "Settings were not saved — the file could not be written. Check the disk and try again.";
         if (saved && closeDialog)
@@ -335,8 +338,15 @@ Cura.MachineAction {
                                 property bool handleDragged: false
                                 property real valueBeforePress: 0
                                 function pressIsOnHandle(mouseX) {
-                                    var centre = leftPadding + visualPosition * availableWidth;
-                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                    // The handle's own extent: the painted LEFT
+                                    // edge minus the width correction — the window
+                                    // centres on the handle's middle and spans its
+                                    // full width plus the margin (the reviewer's
+                                    // finding: one side of the grab handle moved
+                                    // the slider, the other never grabbed).
+                                    var leftEdge = leftPadding + visualPosition * (availableWidth - handle.width);
+                                    var centre = leftEdge + handle.width / 2;
+                                    return Math.abs(mouseX - centre) <= handle.width / 2 + 2 * screenScaleFactor;
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -372,18 +382,25 @@ Cura.MachineAction {
                                 Keys.onUpPressed: {
                                     increase();
                                     base.pollIntervalMoved = true;
+                                    // The apply must not steal the
+                                    // keyboard path (the reviewer's
+                                    // finding).
+                                    forceActiveFocus();
                                 }
                                 Keys.onDownPressed: {
                                     decrease();
                                     base.pollIntervalMoved = true;
+                                    forceActiveFocus();
                                 }
                                 Keys.onRightPressed: {
                                     increase();
                                     base.pollIntervalMoved = true;
+                                    forceActiveFocus();
                                 }
                                 Keys.onLeftPressed: {
                                     decrease();
                                     base.pollIntervalMoved = true;
+                                    forceActiveFocus();
                                 }
                                 value: Number(manager.settingsPollInterval) > 0 ? Math.max(0, Math.min(13, Math.log2(Number(manager.settingsPollInterval) / 250))) : 1
                                 onMoved: {
@@ -430,8 +447,15 @@ Cura.MachineAction {
                                 property bool handleDragged: false
                                 property real valueBeforePress: 0
                                 function pressIsOnHandle(mouseX) {
-                                    var centre = leftPadding + visualPosition * availableWidth;
-                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                    // The handle's own extent: the painted LEFT
+                                    // edge minus the width correction — the window
+                                    // centres on the handle's middle and spans its
+                                    // full width plus the margin (the reviewer's
+                                    // finding: one side of the grab handle moved
+                                    // the slider, the other never grabbed).
+                                    var leftEdge = leftPadding + visualPosition * (availableWidth - handle.width);
+                                    var centre = leftEdge + handle.width / 2;
+                                    return Math.abs(mouseX - centre) <= handle.width / 2 + 2 * screenScaleFactor;
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -463,10 +487,22 @@ Cura.MachineAction {
                                         mouse.accepted = true;
                                     }
                                 }
-                                Keys.onUpPressed: increase()
-                                Keys.onDownPressed: decrease()
-                                Keys.onRightPressed: increase()
-                                Keys.onLeftPressed: decrease()
+                                Keys.onUpPressed: {
+                                    increase();
+                                    forceActiveFocus();
+                                }
+                                Keys.onDownPressed: {
+                                    decrease();
+                                    forceActiveFocus();
+                                }
+                                Keys.onRightPressed: {
+                                    increase();
+                                    forceActiveFocus();
+                                }
+                                Keys.onLeftPressed: {
+                                    decrease();
+                                    forceActiveFocus();
+                                }
                                 value: Number(manager.settingsAuxInterval) > 0 ? Number(manager.settingsAuxInterval) : 2500
                                 onMoved: {
                                     auxIntervalValueLabel.text = value + " ms";
@@ -508,8 +544,15 @@ Cura.MachineAction {
                                 property bool handleDragged: false
                                 property real valueBeforePress: 0
                                 function pressIsOnHandle(mouseX) {
-                                    var centre = leftPadding + visualPosition * availableWidth;
-                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                    // The handle's own extent: the painted LEFT
+                                    // edge minus the width correction — the window
+                                    // centres on the handle's middle and spans its
+                                    // full width plus the margin (the reviewer's
+                                    // finding: one side of the grab handle moved
+                                    // the slider, the other never grabbed).
+                                    var leftEdge = leftPadding + visualPosition * (availableWidth - handle.width);
+                                    var centre = leftEdge + handle.width / 2;
+                                    return Math.abs(mouseX - centre) <= handle.width / 2 + 2 * screenScaleFactor;
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -541,10 +584,22 @@ Cura.MachineAction {
                                         mouse.accepted = true;
                                     }
                                 }
-                                Keys.onUpPressed: increase()
-                                Keys.onDownPressed: decrease()
-                                Keys.onRightPressed: increase()
-                                Keys.onLeftPressed: decrease()
+                                Keys.onUpPressed: {
+                                    increase();
+                                    forceActiveFocus();
+                                }
+                                Keys.onDownPressed: {
+                                    decrease();
+                                    forceActiveFocus();
+                                }
+                                Keys.onRightPressed: {
+                                    increase();
+                                    forceActiveFocus();
+                                }
+                                Keys.onLeftPressed: {
+                                    decrease();
+                                    forceActiveFocus();
+                                }
                                 value: Number(manager.settingsConsoleInterval) > 0 ? Number(manager.settingsConsoleInterval) : 1000
                                 onMoved: {
                                     consoleIntervalValueLabel.text = value + " ms";
@@ -883,6 +938,11 @@ Cura.MachineAction {
                             checked: manager.settingsTraceLayer
                         }
                         UM.CheckBox {
+                            id: seekTraceBox
+                            text: "Log follower seek timelines (diagnostics — the stage-by-stage layer-seek trace, off by default)"
+                            checked: manager.settingsSeekTrace
+                        }
+                        UM.CheckBox {
                             id: httpTraceBox
                             text: "Log HTTP requests (diagnostics)"
                             checked: manager.settingsTraceHttp
@@ -941,9 +1001,29 @@ Cura.MachineAction {
 
                         UM.Label {
                             width: parent.width
-                            text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again."
+                            text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again. The cache size limit is per printer; the clear button wipes the cache for ALL printers."
                             wrapMode: Text.WordWrap
                             color: UM.Theme.getColor("text_inactive")
+                        }
+                        RowLayout {
+                            width: parent.width
+                            spacing: UM.Theme.getSize("default_margin").width
+                            UM.Label {
+                                text: "Persistent cache size (MiB)"
+                            }
+                            Cura.TextField {
+                                id: cacheMaxField
+                                Layout.preferredWidth: 90
+                                text: manager.settingsCacheMaxMb
+                                maximumLength: 8
+                                onTextChanged: base.validCacheMax = manager.validCacheMax(text)
+                            }
+                            UM.Label {
+                                visible: !base.validCacheMax
+                                text: "Cache size must be between 16 and 4096 MiB."
+                                color: UM.Theme.getColor("error")
+                                font: UM.Theme.getFont("default_italic")
+                            }
                         }
                         RowLayout {
                             width: parent.width

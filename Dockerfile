@@ -12,22 +12,22 @@
 #
 #   docker run --rm -v "$PWD":/work moonraker-print-follower-dev \
 #       sh -c "python3 -m unittest discover -s tests -p 'test_*.py'"
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
-# Exact versions from the ubuntu:24.04 archive (bump together when the
+# Exact versions from the ubuntu:26.04 archive (bump together when the
 # base image moves).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git=1:2.43.0-1ubuntu7.3 \
-        python3=3.12.3-0ubuntu2.1 \
-        python3-pip=24.0+dfsg-1ubuntu1.3 \
-        python3-venv=3.12.3-0ubuntu2.1 \
-        wget=1.21.4-1ubuntu4.5 \
-        fonts-dejavu-core=2.37-8 \
-        libegl1=1.7.0-1build1 \
-        libgl1=1.7.0-1build1 \
-        libxkbcommon0=1.6.0-1build1 \
-        qt6-declarative-dev-tools=6.4.2+dfsg-4build3 \
-        shellcheck=0.9.0-1 \
+        git=1:2.53.0-1ubuntu1 \
+        python3=3.14.3-0ubuntu2 \
+        python3-pip=25.1.1+dfsg-1ubuntu2 \
+        python3-venv=3.14.3-0ubuntu2 \
+        wget=1.25.0-2ubuntu4.4 \
+        fonts-dejavu-core=2.37-8build1 \
+        libegl1=1.7.0-3 \
+        libgl1=1.7.0-3 \
+        libxkbcommon0=1.13.1-1 \
+        qt6-declarative-dev-tools=6.10.2+dfsg-3 \
+        shellcheck=0.11.0-2 \
     && rm -rf /var/lib/apt/lists/* \
     && wget -qO /usr/local/bin/hadolint \
         https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
@@ -50,8 +50,8 @@ RUN git config --system --add safe.directory /work
 
 WORKDIR /work
 
-# qmlformat 6.4 (Ubuntu 24.04) predates --check: format to stdout and
-# diff against the file instead. The binary installs outside PATH
+# The wrapper uses the format-to-stdout diff path (equivalent behaviour
+# across Qt versions). The binary installs outside PATH
 # (/usr/lib/qt6/bin); the symlink keeps plain `qmlformat` invocations
 # working for editors and quick iteration (by request).
 COPY tools/check_qml_format.sh /usr/local/bin/check_qml_format

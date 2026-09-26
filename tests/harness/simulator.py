@@ -88,6 +88,12 @@ KICKOFF_STATE: Dict[str, Any] = {
                    "config": {"extruder": {"filament_diameter": "1.75"}},
                    "settings": {"extruder": {"filament_diameter": 1.75}}},
     "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
+    # The plate's own object: a real Klipper carries exclude_object on
+    # every print, and the plugin subscribes to it (CORE_OBJECTS). The
+    # shape is Klipper's — objects with a name, a centre and a polygon —
+    # empty until a scenario arms one, so the empty-plate surfaces stay
+    # the kickoff state they were.
+    "exclude_object": {"objects": [], "excluded_objects": [], "current_object": None},
 }
 
 
@@ -175,7 +181,7 @@ class PrinterState:
         # sim_arm/sim_set refuse on these.
         self.unknown_keys = []
         try:
-            directory = tempfile.mkdtemp(prefix="mpf-frames-")
+            directory = tempfile.mkdtemp(prefix="mpfxtest-frames-")
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=2",
@@ -362,6 +368,10 @@ class PrinterState:
         # layer past the print's end (the x10 report) — restamping
         # per reset means every scenario's print starts from the
         # kickoff layer instead of the previous scenario's residue.
+        # The interval comes back too: a scenario that holds the
+        # clock mid-run must not hand the next one a print that
+        # never crosses a layer.
+        self.layer_clock_interval_s = 6.0
         self._layer_clock_at = time.monotonic()
         self._prev_state = None
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
@@ -965,10 +975,30 @@ class ControlHandler(tornado.web.RequestHandler):
             except Exception:
                 body = {}
             if body.pop("webcam_bridged", False):
-                # The container's own (non-loopback) IP plus this
+                # The host's own (non-loopback) IP plus this
                 # request's port: the exact URL the bridge will fetch.
+                # The address comes from a UDP connect, never a
+                # hostname lookup: gethostbyname resolves through
+                # DNS/mDNS, and macOS's local-network consent gate
+                # blocks that with a prompt no runner can answer, so
+                # the call never returns and wedges this single sim
+                # thread (the s5 leg died with a reset timeout and no
+                # gallery). The connect sends no packet — it only
+                # asks the routing table which local address it would
+                # use.
                 import socket
-                ip = socket.gethostbyname(socket.gethostname())
+                probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    probe.connect(("192.0.2.1", 9))
+                    ip = probe.getsockname()[0]
+                except OSError:
+                    # No route (an isolated container): the loopback
+                    # answer keeps the sim responsive; the bridge then
+                    # fetches over loopback, which no consent gate
+                    # covers.
+                    ip = "127.0.0.1"
+                finally:
+                    probe.close()
                 port = str(self.request.host).rsplit(":", 1)[-1]
                 self._printer.webcam_bridged_base = f"http://{ip}:{port}"
             self._printer.unknown_keys = []

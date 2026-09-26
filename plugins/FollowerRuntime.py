@@ -16,8 +16,8 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .BedMeshPresenter import BedMeshPresenter
+from .CacheNamespaces import CACHE_DIRECTORY_NAME
 from .CuraIntegration import CuraIntegration
-from .GCodeIndex import PersistentIndexCache
 from .GCodeIndexService import GCodeIndexService
 from .MigrationNotice import MigrationNotice
 from .MoonrakerClient import MoonrakerClient
@@ -141,14 +141,53 @@ class FollowerRuntime:
         # download — the unconditional entry point the bind/close
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
-        cache_dir = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
-        cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
-        self.index = GCodeIndexService(self.files, cache, parent)
+        # The cache root's name is the SHARED constant (never the
+        # package ID — the package manager's purge deletes a
+        # directory named after the replaced package, and the cache
+        # sits under the storage root the purge walks, so the old
+        # name cost the whole index cache on every package install).
+        # No migrator: the purge runs during the OLD package's
+        # uninstall, before this code boots, so a legacy directory
+        # rarely survives to move — the one-time rebuild after this
+        # upgrade is the accepted cost, and the clear action still
+        # sweeps the legacy name.
+        self._cache_root = os.path.join(Resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
+        # The per-machine namespace owner (the review's persistence
+        # finding): the configured printer's stable identity hashes
+        # into the cache's own subtree, so two printers can never
+        # collide on a filename, an eviction budget or a prepared
+        # table. The stores FOLLOW the active machine — the binding's
+        # changed signal (fired after every identity re-apply, the
+        # machine switch included) rebinds them, and a worker from
+        # the old machine never commits into the new one's cache.
+        from .CacheNamespaces import CacheNamespaces
+        self.index = GCodeIndexService(self.files, None, parent, None)
+        self.cache_namespaces = CacheNamespaces(
+            self._cache_root,
+            lambda: self.binding.identity[0] if self.binding.identity else "",
+            self.index,
+            # The per-machine cache bound (the author's setting): the
+            # ACTIVE machine's configured MiB limit, read fresh at
+            # every bind — each machine's own cache-v2 directory
+            # obeys its own saved value.
+            cache_bytes_source=lambda: int(
+                getattr(self.binding.config, "cache_max_mb", 512) or 512
+            ) * 1024 * 1024)
+        # The namespace follows BOTH its inputs: the machine switch's
+        # own signal and the binding's applied-config signal. follow()
+        # compares the effective key (machine hash + byte budget), so
+        # an unrelated settings save changes neither and costs
+        # nothing — a machine switch or a budget change rebinds
+        # through the ordinary writer-retirement lifecycle.
+        machine_signal = getattr(application, "globalContainerStackChanged", None)
+        if machine_signal is not None:
+            machine_signal.connect(lambda *_args: self.cache_namespaces.follow())
+        self.binding.changed.connect(lambda *_args: self.cache_namespaces.follow())
         self.preview = PreviewFollower(self.cura)
         # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
         # "Diagnostics"); it is never written in ordinary operation.
         trace_name = os.environ.get("MOONRAKER_FOLLOWER_SMOOTHING_TRACE")
-        trace_path = os.path.join(cache_dir, trace_name) if trace_name else None
+        trace_path = os.path.join(self._cache_root, trace_name) if trace_name else None
         self.motion = PreviewMotion(self.cura, self.preview.remember, parent, trace_path=trace_path)
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)

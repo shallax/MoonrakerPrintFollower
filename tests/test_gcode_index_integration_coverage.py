@@ -307,7 +307,10 @@ class IndexScanTests(unittest.TestCase):
         data = b";LAYER:0\n" + b"".join(b"G1 X%d\n" % value for value in range(10))
         with patch.object(gcode_index, "_MAX_MOTIONS_PER_LAYER", 3):
             index = build_index_from_bytes(data)
-        self.assertEqual(index.motion_count(0), 3)
+        # The PATH DATA truncates at the cap; the count stays the
+        # walk's honest total.
+        self.assertEqual(len(index.motion_offsets[0]), 3)
+        self.assertEqual(index.motion_count(0), 10)
         # The byte range still spans the whole layer, so following degrades
         # to the coarse fraction rather than stalling.
         self.assertGreater(index.ranges[0][1] - index.ranges[0][0], 10)
@@ -392,8 +395,33 @@ G1 X3
         compact = build_index_from_file(path, compact=True)
         self.assertTrue(compact.compact)
         self.assertEqual(compact.hydrated_layers, set())
-        self.assertEqual(compact.motion_count(0), 0)
+        # The count is the walk's metadata, born correct: only the
+        # GEOMETRY defers to the reader.
+        self.assertEqual(compact.motion_count(0), 1)
         self.assertFalse(build_index_from_file(path, compact=False).compact)
+
+    def test_compact_builds_carry_the_true_per_layer_motion_counts(self):
+        # The resumed-session report: a compact scan collects no
+        # motion arrays, so the counts must come from the walk's
+        # every-motion counter — otherwise a prepared-store resume
+        # serves every layer without hydration and the scrub slider
+        # stays dead (zero counts) forever.
+        path = self._write(
+            b";LAYER:0\nG1 X1\nG1 X2\n;LAYER:1\nG1 X3\n;LAYER:2\n"
+            b"G1 X4\nG1 X5\nG1 X6\n")
+        compact = build_index_from_file(path, compact=True)
+        full = build_index_from_file(path, compact=False)
+        self.assertEqual([compact.motion_count(i) for i in range(3)],
+                         [2, 1, 3],
+                         "the compact build's counts are not the "
+                         "walk's true totals")
+        self.assertEqual([full.motion_count(i) for i in range(3)],
+                         [2, 1, 3],
+                         "the non-compact build disagrees")
+        # The counts stand alone: the geometry still waits for the
+        # reader.
+        self.assertEqual(compact.hydrated_layers, set())
+        self.assertEqual(len(compact.motion_offsets[0]), 0)
 
 
 class HydrationTests(unittest.TestCase):
@@ -498,7 +526,10 @@ class HydrationTests(unittest.TestCase):
         hydrate_layer_from_file(index, path, 3)
         # The live print's layer wins over the worker's pick: the window
         # is [3, 5] around layer 4, not around the hydrated layer 3.
-        self.assertEqual(index.hydrated_layers, {3})
+        # The freshly hydrated layer keeps its own ±1 window too (the
+        # background pass's prepare window), so the walk's survivor 2
+        # stays until the next hydrate evicts it.
+        self.assertEqual(index.hydrated_layers, {2, 3})
         hydrate_layer_from_file(index, path, 5)
         self.assertEqual(index.hydrated_layers, {3, 5})
         hydrate_layer_from_file(index, path, 0, keep_anchor=0)
@@ -526,8 +557,9 @@ class CacheTests(unittest.TestCase):
         return RemoteFileIdentity(name, size, modified, uuid)
 
     def _path(self, remote):
-        digest = hashlib.sha256(remote.stable_key().encode("utf-8")).hexdigest()
-        return os.path.join(self.directory, f"{digest}.mpfi.gz")
+        # The production cache's own path (the per-print subdirectory
+        # layout) — the raw writes must land where the loader reads.
+        return PersistentIndexCache(self.directory)._path(remote)
 
     def _write_raw(self, remote, payload, magic=_CACHE_MAGIC, header=None):
         """Place a cache file at the identity's own path, bypassing save()."""
@@ -589,7 +621,10 @@ class CacheTests(unittest.TestCase):
         cache.save(identity, index)
         self.assertIsNone(cache.load(self._identity(size=200)))
         self.assertIsNone(cache.load(self._identity(modified=2.0)))
-        self.assertIsNone(cache.load(self._identity(uuid="u2")))
+        # The uuid is Moonraker's per-extraction token (the review's
+        # UUID-policy finding): any uuid with the same filename, size
+        # and modified is the same content.
+        self.assertIsNotNone(cache.load(self._identity(uuid="u2")))
         # A different filename is a different cache slot entirely.
         self.assertIsNone(cache.load(self._identity(name="other.gcode")))
 
@@ -653,8 +688,9 @@ class CacheTests(unittest.TestCase):
 
     def test_identity_fields_are_advisory_when_absent(self):
         # A header without the field list (or with one that is not a list)
-        # still loads on its own key; a mismatched uuid does not, and an
-        # unknown size vouches for nothing.
+        # still loads on its own key; a mismatched uuid loads too (the
+        # review's UUID-policy finding — only size/modified vouch for
+        # the content), and an unknown size vouches for nothing.
         identity = self._identity()
         cache = PersistentIndexCache(self.directory)
         self._write_raw(identity, self._body(), header=self._header(identity, identity_fields=None))
@@ -663,7 +699,7 @@ class CacheTests(unittest.TestCase):
         self.assertIsNotNone(cache.load(identity))
         self._write_raw(identity, self._body(),
                         header=self._header(identity, identity_fields=["part.gcode", 100, 1.0, "stale"]))
-        self.assertIsNone(cache.load(identity))
+        self.assertIsNotNone(cache.load(identity))
         self._write_raw(identity, self._body(),
                         header=self._header(identity, identity_fields=["part.gcode", 0, 1.0, "u1"]))
         self.assertIsNotNone(cache.load(identity))
@@ -715,7 +751,9 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory)
         with patch("os.replace", side_effect=OSError("disk full")):
             cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1\n"))
-        self.assertEqual(os.listdir(self.directory), [])
+        leftovers = [name for _root, _dirs, names in os.walk(self.directory)
+                     for name in names]
+        self.assertEqual(leftovers, [], "the failed write left a file behind")
         self.assertIsNone(cache.load(identity))
         # Even a cleanup that fails must not propagate: the cache is
         # best-effort, and a partial blob is never published either way.
@@ -723,7 +761,8 @@ class CacheTests(unittest.TestCase):
         with patch("os.replace", side_effect=OSError("disk full")), \
                 patch("os.remove", side_effect=OSError("locked")):
             cache.save(identity, index)
-        leftovers = os.listdir(self.directory)
+        leftovers = [name for _root, _dirs, names in os.walk(self.directory)
+                     for name in names]
         self.assertEqual(len(leftovers), 1)
         self.assertIn(".mpfi.gz.tmp-", leftovers[0])
         self.assertIsNone(cache.load(identity))
@@ -746,27 +785,38 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory, max_entries=1)
         for value in range(3):
             cache.save(self._identity(name=f"{value}.gcode"), index)
-        self.assertLessEqual(len([n for n in os.listdir(self.directory) if n.endswith(".mpfi.gz")]), 1)
+        blobs = [name for _root, _dirs, names in os.walk(self.directory)
+                 for name in names if name.endswith(".mpfi.gz")]
+        self.assertLessEqual(len(blobs), 1)
 
         with tempfile.TemporaryDirectory(prefix="mpfi-bytes-") as directory:
             cache = PersistentIndexCache(directory, max_bytes=1024 * 1024)
+            # The print-level layout: each filler print folder carries
+            # its index (and, in production, its prepared sibling —
+            # the policy's total covers both).
             for value in range(3):
-                blob = os.path.join(directory, f"filler-{value}.mpfi.gz")
+                folder = os.path.join(directory, f"p-filler-{value}")
+                os.makedirs(folder, exist_ok=True)
+                blob = os.path.join(folder, "index.mpfi.gz")
                 with open(blob, "wb") as handle:
                     handle.write(b"\x00" * 700000)
                 os.utime(blob, (1000.0, 1000.0 + value))
             cache.prune()
-            remaining = [n for n in os.listdir(directory) if n.endswith(".mpfi.gz")]
-            self.assertEqual(remaining, ["filler-2.mpfi.gz"])  # newest survives
+            remaining = sorted(folder for folder in os.listdir(directory)
+                               if folder.startswith("p-"))
+            self.assertEqual(remaining, ["p-filler-2"])  # newest survives
             # Another Cura instance pruning the same directory at the same
-            # moment can take the file first; the sweep still completes.
-            late = os.path.join(directory, "late.mpfi.gz")
+            # moment can take the folder first; the sweep still completes.
+            late_dir = os.path.join(directory, "p-late")
+            os.makedirs(late_dir, exist_ok=True)
+            late = os.path.join(late_dir, "index.mpfi.gz")
             with open(late, "wb") as handle:
                 handle.write(b"\x00" * 700000)
-            with patch("os.remove", side_effect=OSError("vanished")):
+            with patch("shutil.rmtree", side_effect=OSError("vanished")):
                 cache.prune()
             self.assertTrue(os.path.lexists(late))
-            self.assertTrue(os.path.lexists(os.path.join(directory, "filler-2.mpfi.gz")))
+            self.assertTrue(os.path.lexists(os.path.join(
+                directory, "p-filler-2", "index.mpfi.gz")))
 
     def test_the_constructor_clamps_its_budgets(self):
         cache = PersistentIndexCache(self.directory, max_bytes=1, max_entries=0)
@@ -799,7 +849,12 @@ class CacheTests(unittest.TestCase):
         cache = PersistentIndexCache(self.directory)
         cache.save(identity, build_index_from_bytes(b";LAYER:0\nG1 X1\n"))
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
-        self.assertEqual(os.listdir(self.directory), [f"{digest}.mpfi.gz"])
+        # The per-print folder (the unified lifecycle): one folder per
+        # print, keyed by the content digest, the index inside named
+        # by its role.
+        self.assertEqual(os.listdir(self.directory), [f"p-{digest[:24]}"])
+        self.assertEqual(os.listdir(os.path.join(self.directory, f"p-{digest[:24]}")),
+                         ["index.mpfi.gz"])
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -894,7 +949,10 @@ class CuraIntegrationTests(unittest.TestCase):
                 def readLocalFile(self, url, add_to_recent_files=False):
                     if self.read_error is not None:
                         raise self.read_error
-                    self.loaded.append(url.toLocalFile())
+                    # normpath: QUrl spells a local file with '/' even on
+                    # Windows, and the loaded paths are compared against the
+                    # native ones the lease was built from.
+                    self.loaded.append(os.path.normpath(url.toLocalFile()))
 
             if activity:
                 def updatePlatformActivity(self):
@@ -1480,35 +1538,6 @@ class CuraIntegrationTests(unittest.TestCase):
         integration.close()
         self.assertFalse(integration.load(lease))
         self.assertEqual(released, [lease.path])
-
-    # -- replace confirmation ---------------------------------------------
-
-    def test_confirm_replace_only_loads_on_yes(self):
-        app, integration = self.build()
-        answers = []
-        asked = []
-
-        class MessageBox:
-            # The buttons are OR-ed into one mask, so they have to be ints.
-            StandardButton = SimpleNamespace(Yes=1, No=2)
-
-            @classmethod
-            def question(cls, *args):
-                asked.append(args)
-                return answers[-1]
-
-        with patch.object(self.module, "QMessageBox", MessageBox):
-            answers.append(MessageBox.StandardButton.No)
-            ran = []
-            integration.confirm_replace(lambda: ran.append(1))
-            self.assertTrue(self._accept(lambda: bool(asked)))
-            self._pump(0.1)
-            self.assertEqual(ran, [])
-            answers.append(MessageBox.StandardButton.Yes)
-            integration.confirm_replace(lambda: ran.append(1))
-            self.assertTrue(self._accept(lambda: bool(ran)))
-        self.assertEqual(len(asked), 2)
-        self.assertEqual(app.controller.stage, "PreviewStage")
 
     # -- shutdown ---------------------------------------------------------
 

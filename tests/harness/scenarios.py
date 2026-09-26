@@ -6,6 +6,39 @@ boot with a simulator reset between scenarios. The coverage gate
 """
 from __future__ import annotations
 
+import json
+import os
+
+# The scratch the driver-side probes write into, shared with the runner
+# (runner.SCRATCH_DIR): the container's work dir IS /tmp/mpf, and on the
+# natives that path exists on neither side. Lowercase, unlike this
+# module's probe constants: test_harness_specs compiles every ALL-CAPS
+# str attribute as probe CODE, and a path is not code.
+_scratch_dir = os.environ.get("HARNESS_SCRATCH_DIR", "/tmp/mpf")
+
+
+def _scratch(name: str) -> str:
+    """A path in the shared scratch, as a literal for the driver's code.
+
+    json-encoded because a Windows work dir is all backslash escapes.
+    """
+    return json.dumps(os.path.join(_scratch_dir, name))
+
+
+# The application's own window floor: the em-scaled minimum the window
+# reports, read off the live window by the driver (880x528 under Xvfb,
+# 1040x624 on macOS and Windows). A step that wants the smallest size a
+# user can reach asks for it with the "min" axis and takes each
+# platform's own value. A LITERAL has to clear the largest of the floors
+# because one spec runs on every platform, and it has to clear the floor
+# at all because a size the application refuses is a size no user can
+# drag to — a step resting on one measures a geometry nobody can reach
+# (the 1000-wide requests were clamped to 1040 on Windows and measured
+# what the spec never asked for). Nothing forces past the floor;
+# test_harness_specs pins the rule.
+WINDOW_FLOOR_W = 1040
+WINDOW_FLOOR_H = 624
+
 # Shared probe bodies for the z-group geometry diagnostics: exact
 # rendered rects from the QML scene, the evidence calibration reads.
 RECT_PROBE = (
@@ -278,7 +311,7 @@ FM_POPUP_PROBE = (
     "        if isinstance(placeholder, str) and placeholder.strip():\n"
     "            result[\"fields\"].append([cls[:18], placeholder[:30], round(p.x()), round(p.y()),\n"
     "                                         round(item.width()), round(item.height())])\n"
-    "with open('/tmp/mpf/fm_popup_probe.json', 'w') as _f:\n"
+    "with open(" + _scratch("fm_popup_probe.json") + ", 'w') as _f:\n"
     "    _json.dump(result, _f)\n"
     "# The full census (with coordinates) rides the file; the RETURNED\n"
     "# summary stays well under the driver's 4000-char transport cap\n"
@@ -324,7 +357,7 @@ FM_BUTTON_PROBE = (
     "            chain.append([node.metaObject().className()[:24], None])\n"
     "    row.append(chain)\n"
     "    result[\"matches\"].append(row)\n"
-    "with open('/tmp/mpf/fm_button_probe.json', 'w') as f:\n"
+    "with open(" + _scratch("fm_button_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
     "result")
 
@@ -371,7 +404,7 @@ SETTINGS_PROBE = (
     "            result[\"config_items\"].append([cls[:22], str(name), str(text)[:30]])\n"
     "except Exception as exc:\n"
     "    result[\"walk_error\"] = repr(exc)\n"
-    "with open('/tmp/mpf/settings_probe.json', 'w') as f:\n"
+    "with open(" + _scratch("settings_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
     "result")
 
@@ -723,8 +756,19 @@ for item in _walk(window.contentItem()):
 if target is None:
     result["error"] = "no visible LayerSlider"
 else:
+    # The bounds are the theme's, not a literal: LayerSlider.qml sizes
+    # the handles from UM.Theme.getSize("slider_handle"), and that is
+    # 16 px only at a screen scale of 1 — the Windows and macOS runners
+    # scale it up (22 px there), where a hard-coded 16 matched nothing.
+    try:
+        from UM.Qt.Bindings.Theme import Theme
+        handle_size = float(Theme.getInstance().getSize("slider_handle").width())
+    except Exception:
+        handle_size = 16.0
+    if handle_size <= 0:
+        handle_size = 16.0
     handles = [child for child in target.childItems()
-               if abs(child.width() - 16) < 2 and abs(child.height() - 16) < 2 and bool(child.isVisible())]
+               if abs(child.width() - handle_size) < 2 and abs(child.height() - handle_size) < 2 and bool(child.isVisible())]
     if not handles:
         result = {"error": "no slider handles"}
     else:
@@ -851,8 +895,46 @@ for e in app.getExtensions():
         if state is not None:
             result["attached"] = bool(state.attached)
             result["expected_layer"] = state.expected_layer
+        # The attach drops ride the toolpath: a stage switch restores
+        # the follow only while Cura still HAS a toolpath to drive
+        # (the ruling), so a drop reads as either "the toolpath left
+        # and stayed away" or "the restore missed it" — the two need
+        # opposite fixes and the states tell them apart.
+        result["toolpath"] = bool(getattr(rt.cura, "has_toolpath", False))
+        result["user_detached"] = bool(getattr(rt.coordinator, "_user_detached", False))
         break
 """
+
+P_PAUSE_BLOCK_READ = """window = _main_window()
+result = {"pauseAtLayerRead": False}
+model = None
+for item in _walk(window.contentItem(), depth=64):
+    try:
+        candidate = item.property("printer")
+    except Exception:
+        candidate = None
+    if candidate is not None and hasattr(candidate, "pauseAtLayerCandidate"):
+        model = candidate
+        break
+if model is not None:
+    result["pauseAtLayerRead"] = True
+    result["pauseAtLayerActive"] = bool(model.pauseAtLayerActive)
+    result["pauseAtLayerCandidate"] = int(model.pauseAtLayerCandidate)
+    result["pauseAtLayerCanToggle"] = bool(model.pauseAtLayerCanToggle)
+    result["pauseAtLayerScheduled"] = bool(model.pauseAtLayerScheduled)
+    result["pauseAtLayerSummary"] = str(model.pauseAtLayerSummary)
+    # The model publishes this one wrapped in a QVariant. QML unwraps
+    # that transparently; Python cannot, so len() raised TypeError and
+    # took the WHOLE probe down with it -- the step then read an error
+    # reply on every poll and failed forever, on all three platforms.
+    try:
+        result["pauseAtLayerItems"] = len(model.pauseAtLayerItems or [])
+    except TypeError:
+        result["pauseAtLayerItems"] = None
+    result["pauseAtLayerUnavailableText"] = str(model.pauseAtLayerUnavailableText)
+    result["pauseAtLayerHasBaked"] = bool(model.pauseAtLayerHasBaked)
+    result["pauseAtLayerHasClearable"] = bool(model.pauseAtLayerHasClearable)
+result"""
 
 P_ATTACH_EMIT = """window = _main_window()
 result = {}
@@ -971,11 +1053,11 @@ CONFIGURE_CROSSTALK_PROBE = (
     "    order = list(effective.get(\"order\", []) or [])\n"
     "    result[\"order\"] = order\n"
     "    result[\"hidden\"] = list(effective.get(\"hidden\", []) or [])\n"
-    "    # The info pane's only two sections: the drag below moves\n"
-    "    # meshmap behind temphistory — and the controls popup's\n"
-    "    # reset must leave that order alone (the live report's\n"
-    "    # cross-talk).\n"
-    "    if order[:2] != [\"temphistory\", \"meshmap\"]:\n"
+    "    # The information pane's four sections, in the table order the\n"
+    "    # pop-over lists: the drag above takes the pane's FIRST row\n"
+    "    # (plateprogress) past the other three, so the layout the\n"
+    "    # controls popup's reset must leave alone ends plate-last.\n"
+    "    if order != [\"plate\", \"meshmap\", \"temphistory\", \"plateprogress\"]:\n"
     "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
@@ -1400,10 +1482,93 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "assert_model", "prop": "actionStatus", "value": ""},
      ]},
-    {"id": "b11", "group": "status", "name": "the exclude-object surface stays stable when absent",
+    {"id": "b11", "group": "status",
+     "name": "the exclude-object surface: empty, then armed, then the follower over it",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
-         {"op": "assert_model", "prop": "excludeObjectItems", "value": []},
+         {"op": "assert_model", "prop": "plateHasObjects", "value": False},
+         # The shared native/QML travel-width contract is a published,
+         # read-only surface. Read it explicitly so the coverage matrix
+         # has execution evidence rather than a bookkeeping-only entry.
+         {"op": "assert_model", "prop": "followerTravelVisualRatio", "value": 0.7},
+         # The armed half: Klipper's own exclude_object on the print's
+         # lane, in Klipper's shape (name, centre, polygon) — the map,
+         # the picker and the follower all read it. The resolved layer
+         # rides print_stats.info; the index the follower needs is
+         # built below from the picker's own download offer. The layer
+         # clock is off so the physical layer holds still through the
+         # run.
+         {"op": "sim_set_current_print"},
+         {"op": "sim_set", "state": {
+             "print_stats": {"state": "printing", "filename": "scenario1.gcode",
+                             "info": {"total_layer": 40, "current_layer": 20}},
+             "exclude_object": {
+                 "objects": [
+                     {"name": "cube_a", "center": [100.0, 100.0],
+                      "polygon": [[80.0, 80.0], [120.0, 80.0], [120.0, 120.0], [80.0, 120.0]]},
+                     {"name": "cube_b", "center": [140.0, 100.0],
+                      "polygon": [[120.0, 80.0], [160.0, 80.0], [160.0, 120.0], [120.0, 120.0]]}],
+                 "excluded_objects": [], "current_object": None}}},
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120, "layer_clock_interval_s": 0}},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "plateHasObjects", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPlateCanvas", "budget": 20},
+         # The 90 px thumbnail is the picker's only opener; the face
+         # the gestures live on is inside the card it opens.
+         {"op": "deliver_click", "objectName": "moonrakerPlateCanvas"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateExcludeFace", "budget": 20},
+         # The index the follower needs: the picker's own download row
+         # (download + index, no preview) — the path that carries no
+         # replace confirmation.
+         {"op": "click_text", "text": "Download and index the print to track the printed state."},
+         {"op": "wait_model", "prop": "plateLiveAvailable", "value": True, "budget": 90},
+         # A press that lands off the open card is swallowed by its
+         # outside-click layer, which closes it: the follower's own
+         # thumbnail is off the card's box, so its first press pays
+         # the dismissal and its second one opens the follower.
+         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateExcludeFace", "absent": True, "budget": 20},
+         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "wait_rect", "objectName": "moonrakerPlateProgressFace", "budget": 20},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerAttach", "budget": 20},
+         # The plate's own face over the live print: the toolhead dot is
+         # a physical position, and it stands while the follower follows
+         # the print (a detach hides it).
+         {"op": "wait_rect", "objectName": "moonrakerPlateToolheadDot", "budget": 20},
+         {"op": "wait_model", "prop": "followerAttached", "value": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerSlider", "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerReadout", "budget": 15},
+         {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerReadout", "contains": "/", "budget": 20},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerProgress", "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerProgressReadout", "budget": 15},
+         {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerProgressReadout", "contains": "%", "budget": 30},
+         # The face's three render switches and the stroke width are
+         # published state the checkboxes read back.
+         {"op": "wait_model", "prop": "followerShowPrevious", "value": True, "budget": 15},
+         {"op": "wait_model", "prop": "followerShowNext", "value": True, "budget": 15},
+         {"op": "wait_model", "prop": "followerShowBase", "value": True, "budget": 15},
+         {"op": "assert_model", "prop": "followerLineScale", "value": 0.7, "budget": 15},
+         # The checkbox row's real input: "Travels" is the one label the
+         # row does not share with the legend, so the press is
+         # unambiguous — toggled on, read back, and set back off.
+         {"op": "wait_model", "prop": "followerShowTravels", "value": False, "budget": 15},
+         {"op": "click_text", "text": "Travels"},
+         {"op": "wait_model", "prop": "followerShowTravels", "value": True, "budget": 15},
+         {"op": "click_text", "text": "Travels"},
+         {"op": "wait_model", "prop": "followerShowTravels", "value": False, "budget": 15},
+         # The popover's pause block: the button is laid out with the
+         # rest of the follower's controls, and the block behind it is
+         # read off the live model so the nine published keys carry
+         # execution evidence rather than a bookkeeping-only entry
+         # (the travel-ratio precedent above).
+         {"op": "wait_rect", "objectName": "moonrakerFollowerPauseButton", "budget": 15},
+         {"op": "wait_exec", "code": P_PAUSE_BLOCK_READ, "contains": '"pauseAtLayerRead": true', "budget": 20},
+         # The jump rides a view scale only the picture's wheel and
+         # right-drag can raise, and the harness's input set carries
+         # neither: at the fit it must be absent while the row-mate that
+         # shares its visibility rules is present. Its zoomed half is
+         # driven by the Qt suite (test_qml_real_engine.py).
+         {"op": "wait_rect", "objectName": "moonrakerFollowerJump", "absent": True, "budget": 5},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────
@@ -1463,11 +1628,19 @@ SCENARIOS = [
          # input: the field takes a real press to focus, the command
          # is typed, and the named Send button takes the real press.
          {"op": "exec_slot", "slot": "setConsoleExpanded", "args": [True]},
+         # The expand is chrome state and the pane lays out behind it, so
+         # the input is WITNESSED before it is pressed: without the wait
+         # the press lands on a console that has not been laid out yet and
+         # is refused as "no visible item" (the Windows gate leg, once, on
+         # the same commit whose other platform legs and other runs were
+         # green — a race, not a regression).
+         {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerConsoleInput"},
          {"op": "key_press", "key": "M"},
          {"op": "key_press", "key": "1"},
          {"op": "key_press", "key": "0"},
          {"op": "key_press", "key": "5"},
+         {"op": "wait_rect", "objectName": "moonrakerConsoleSend", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerConsoleSend"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -1501,9 +1674,46 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "refreshWebcams", "args": []},
          {"op": "wait_exec", "code": CAM_FRAMES, "contains": '"width": 320', "budget": 60},
      ]},
-    {"id": "e2", "group": "webcams", "name": "the webcam selector lists the peer's cameras",
+    {"id": "e2", "group": "webcams",
+     "name": "the camera's picture carries its overlays, and the scale stands in for the bar",
      "steps": [
          {"op": "assert_model", "prop": "webcamNames", "contains": "sim-cam", "budget": 30},
+         # The monitor page holds the camera pane; the stream starts on
+         # its own there (e1) and the picture lands fitted to the
+         # viewport, so the frame and the gesture surface are the live
+         # picture's own box.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "cameraImage", "budget": 60},
+         {"op": "wait_rect", "objectName": "cameraFrame", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraGestureArea", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraLiveBadge", "budget": 15},
+         # At the baseline geometry the picture clears the bar's fit
+         # rule (200 px wide, and tall enough to keep the chip's band
+         # clear above and below), so the bar is the control on the
+         # picture — resting on its zoom face, the default one.
+         {"op": "wait_rect", "objectName": "cameraBar", "budget": 20},
+         {"op": "wait_rect", "objectName": "cameraZoomScale", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomReadout", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomBar", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomMarker", "budget": 15},
+         # One bar, two faces, and they never share the box: the rate's
+         # face arrives on a gesture (Shift+wheel, right-drag) the
+         # harness's input set does not carry, and its render is driven
+         # by the Qt suite (test_qml_real_engine.py). The zoom face
+         # standing where the rate's is not is this rule's live half.
+         {"op": "wait_rect", "objectName": "cameraFpsScale", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsReadout", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsBar", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraFpsMarker", "absent": True, "budget": 5},
+         # The crush: the picture drops under the bar's fit rule and
+         # the compact chip takes the bar's place — the two stand-ins
+         # are mutually exclusive, so the chip's presence is the bar's
+         # absence proved from the other side.
+         {"op": "resize_window", "w": 1420, "h": 700},
+         {"op": "wait_rect", "objectName": "cameraBarChip", "budget": 20},
+         {"op": "wait_rect", "objectName": "cameraBarChipText", "budget": 15},
+         {"op": "wait_rect", "objectName": "cameraZoomScale", "absent": True, "budget": 5},
+         {"op": "wait_rect", "objectName": "cameraBar", "absent": True, "budget": 20},
      ]},
 
     # ─── files & print start ──────────────────────────────────
@@ -1532,8 +1742,9 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
-         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload.gcode"},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload.gcode"]},
+         {"op": "write_fixture", "path": os.path.join(_scratch_dir, "scenario-upload.gcode")},
+         {"op": "exec_file_slot", "slot": "fileUpload",
+          "args": [os.path.join(_scratch_dir, "scenario-upload.gcode")]},
          {"op": "sim_ledger", "needle": "files/upload", "field": "path", "min": 1, "budget": 30},
          # The honest-lane proof: only the sim's upload handler (not
          # the catch-all) adds the entry to the store, and the
@@ -1542,9 +1753,10 @@ SCENARIOS = [
          # The refusal half: the armed lane answers 400 with its own
          # message, and the note surfaces it. A dead lane would
          # accept this upload and the refusal string never appears.
-         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload-refused.gcode"},
+         {"op": "write_fixture", "path": os.path.join(_scratch_dir, "scenario-upload-refused.gcode")},
          {"op": "sim_arm", "arms": {"fail_upload": True}},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload-refused.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileUpload",
+          "args": [os.path.join(_scratch_dir, "scenario-upload-refused.gcode")]},
          {"op": "wait_model", "prop": "fileManagerNote", "contains": "simulated upload refusal", "budget": 30},
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
@@ -1616,6 +1828,10 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The pad sits below the pane's fold: the press must land on
+         # screen, never on a rendered-but-clipped aim (the s7 fix's
+         # honest-refusal finding).
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          # Every jog button takes a real press (the map names all six;
          # one representative press overclaimed the pad).
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
@@ -1631,6 +1847,9 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerHomeX", "budget": 30},
+         # The home row sits below the fold: same preposition as the
+         # jog pad (the s7 fix's honest-refusal finding).
+         {"op": "scroll_into_view", "objectName": "moonrakerHomeX"},
          # All three home buttons take a real press (the map names
          # all three).
          {"op": "deliver_click", "objectName": "moonrakerHomeX"},
@@ -1739,7 +1958,25 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
+         # Three answers, each witnessed. Escape and Cancel are the
+         # two ways to say no and neither may load (the load busy term
+         # is the model's own word on it); Return is the way to say
+         # yes. A prompt whose keyboard answers were never wired would
+         # otherwise look identical to one that has them.
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "absent": True, "budget": 20},
+         {"op": "assert_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": false'},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceCancelButton"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "absent": True, "budget": 20},
+         {"op": "assert_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": false'},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "wait_rect", "objectName": "moonrakerReplacePrompt", "budget": 30},
+         {"op": "key_press", "key": "Return"},
          {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
@@ -1829,6 +2066,8 @@ SCENARIOS = [
          {"op": "exec_validator", "validator": "validPollInterval", "args": [100], "expect": False},
          {"op": "exec_validator", "validator": "validPollInterval", "args": [1000], "expect": True},
          {"op": "exec_validator", "validator": "validRetryInterval", "args": [0.05], "expect": False},
+         {"op": "exec_validator", "validator": "validCacheMax", "args": [15], "expect": False},
+         {"op": "exec_validator", "validator": "validCacheMax", "args": [512], "expect": True},
      ]},
     {"id": "i4", "group": "settings", "name": "the camera config persists",
      "steps": [
@@ -2014,8 +2253,11 @@ SCENARIOS = [
          # Narrow enough that the camera cannot hold the panes: both
          # fold to their strips, and the column that fold frees is
          # over the console's threshold again — the console comes back
-         # on its own rule, with no user click.
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # on its own rule, with no user click. The width is the
+         # application's own floor, the narrowest a user can drag to:
+         # 880 under Xvfb, 1040 on native (Windows always ran the
+         # native one — the old 1000 was clamped to it there).
+         {"op": "resize_window", "w": "min", "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerInfoContent", "absent": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStatusContent", "absent": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
@@ -2046,19 +2288,35 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "openFileManager", "args": []},
          {"op": "exec_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
          {"op": "exec_slot", "slot": "filePreviewRename", "args": ["benchy-renamed.gcode"]},
-         {"op": "exec_slot", "slot": "fileConfirmRename", "args": []},
+         # The confirm is the dialog's own verb, pressed on screen: a
+         # slot call leaves the modal popup open, and its scrim then
+         # covers every later scenario in the leg — clicks a user
+         # could not make, over a recording that never moved. The
+         # witness/absent pair keeps the absence non-vacuous.
+         {"op": "wait_rect", "text": "Rename file", "budget": 30},
+         {"op": "deliver_click", "objectName": "renameConfirmButton"},
+         {"op": "wait_rect", "text": "Rename file", "absent": True, "budget": 30},
          {"op": "wait_model", "prop": "fileManagerRows", "contains": "benchy-renamed", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerFileRowName", "any": True,
           "contains": "benchy-renamed", "budget": 30},
+         # The manager is a full-area page: the next scenario's panes
+         # must be the ones on screen, and its own Close button is
+         # the visible way out.
+         {"op": "deliver_click", "objectName": "fileManagerCloseButton"},
      ]},
     {"id": "v11", "group": "visual",
      "name": "the file manager's narrow mode hides the search field, wide restores it",
      "steps": [
          {"op": "exec_slot", "slot": "openFileManager", "args": []},
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # The application's own floor for the width — the narrowest a
+         # user can drag to, each platform's own value.
+         {"op": "resize_window", "w": "min", "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "absent": True, "budget": 30},
          {"op": "resize_window", "w": 1840, "h": 1040},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "budget": 30},
+         # The page leaves with the scenario: the rest of the leg
+         # asserts the panes behind it.
+         {"op": "deliver_click", "objectName": "fileManagerCloseButton"},
      ]},
     {"id": "v12", "group": "visual",
      "name": "the bed mesh view renders in the information pane",
@@ -2142,7 +2400,10 @@ SCENARIOS = [
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
@@ -2203,14 +2464,22 @@ SCENARIOS = [
          # file position — progress 0.5 lands INSIDE the baked
          # pause's layer, the gate refuses, and the whole scenario
          # cascades (the 2026-09-18 flake). The first tick makes the
-         # resolution deterministic: layer 1, the candidate 2.
+         # resolution deterministic: layer 1, the candidate 2. The
+         # clock is held while the click resolves: on a loaded
+         # runner the resolution outlasts the 6s tick, the candidate
+         # lands a layer later, and the row never reads "End of
+         # layer 2" (the CI flake) — the pin alone cannot pin it.
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 3600}},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
          # The row the click made, not any row: the baked row also
          # reads "End of layer", and matching it hid a refused click
          # (the 2026-09-18 flake's false positive).
          {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         # The row is read: the pause now has to fire, and it fires
+         # by the print crossing the layer.
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
          # The 4.3.0 ruling: a fired pause STAYS listed, restyled as
@@ -2228,9 +2497,12 @@ SCENARIOS = [
          # layer-clock tick the resolver's file-position fallback
          # lands inside the baked pause's layer and the click refuses.
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
+         # The same held clock as p6, released once the row is read.
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 3600}},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
          {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
@@ -2273,8 +2545,23 @@ SCENARIOS = [
          {"op": "sim_set_current_print"},
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         # The load's own precondition: the plugin's activity gate reads
+         # the OBSERVED print (a load request is dropped while the lane
+         # sees no active print), and sim_set_current_print only moves
+         # the sim. A slow feed then turns the button press into a
+         # no-op whose only trace is a missing indicator — the printing
+         # group's h2 waits for the same filename before its press.
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
+         # And the plugin's own load gate, so a load that never engages
+         # fails here with the gate readout instead of 30 s later on the
+         # indicator (h2's assertion).
+         {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
@@ -2304,9 +2591,17 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
+         # The press rides the button's OWN enable binding — a disabled
+         # QML item is skipped by the hit test, so an early press falls
+         # through to the Flickable and reports a refusal with no reason
+         # in it. Wait for the term the binding reads.
+         {"op": "wait_model", "prop": "canPausePrint", "value": True, "budget": 20},
+         {"op": "model_read", "prop": "pauseReason"},
          {"op": "click_text", "text": "Pause"},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
+         {"op": "wait_model", "prop": "canResumePrint", "value": True, "budget": 20},
+         {"op": "model_read", "prop": "resumeReason"},
          {"op": "click_text", "text": "Resume"},
          {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
          {"op": "sim_set", "state": {"display_status": {"message": "RENDERED-A", "progress": 0.5}}},
@@ -2317,6 +2612,12 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # wait_rect proves presence in the rendered tree, and
+         # mapToScene reports through clipping: the controls pane is
+         # taller than its Flickable's viewport, so an unscrolled press
+         # at the pad's scene centre lands below the window — empty
+         # space. Scroll it into view first, as the fans leg does.
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
          {"op": "exec_console", "text": "M105"},
@@ -2331,6 +2632,9 @@ SCENARIOS = [
          # recovery path — error ALLOWS the restart, the assumption
          # blocks until the cycle.
          {"op": "assert_model", "prop": "canRestart", "value": True},
+         # The refusal's own words, so a restart that never fires is
+         # named here rather than inferred from an empty ledger.
+         {"op": "model_read", "prop": "restartReason"},
          {"op": "exec_slot", "slot": "emergencyHoldReleased", "args": []},
          {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
          {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},
@@ -2350,6 +2654,10 @@ SCENARIOS = [
          # of the dashboard's scroll — the click must land like a
          # human's would: scrolled into view, then pressed.
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The row's enable binding: the fans section is disabled while
+         # the controls are locked, and a disabled track swallows the
+         # press without committing anything.
+         {"op": "wait_model", "prop": "controlsLocked", "value": False, "budget": 20},
          {"op": "scroll_into_view", "objectName": "moonrakerFansSection"},
          {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
          # One track click commits exactly ONCE (the UX re-review:
@@ -2470,8 +2778,13 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
          {"op": "deliver_click", "objectName": "whatsNewCloseButton"},
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
-         # The repo link's press lands (the browser launch is Qt's
-         # own behaviour — outside the harness's claim).
+         # The repo link's press lands. Qt hands the URL to the OS,
+         # which on the natives raises a browser OVER Cura — after
+         # which nothing else in the run is visible. The runner's
+         # foreground guard (before every frame) re-raises Cura and
+         # reads the state back, so the recording stays Cura's and a
+         # display that does not come home fails the step instead of
+         # being scoped away.
          {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
          {"op": "wait_rect", "objectName": "whatsNewRepoLink", "budget": 20},
          {"op": "scroll_into_view", "objectName": "whatsNewRepoLink"},
@@ -2490,6 +2803,11 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The jog grid now sits below the controls pane's fold at the
+         # suite geometry: the preposition scrolls its Flickable so the
+         # press has a place to land (the driver refuses an aim outside
+         # the window's content).
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -2501,6 +2819,10 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "jogEnabled", "value": False, "budget": 15},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The same fold as z10: a refused press still has to reach the
+         # control, so the row is scrolled into the pane's viewport
+         # first.
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus", "expect": "not_accepted"},
      ]},
     {"id": "z1", "group": "probe",
@@ -2785,19 +3107,30 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
      ]},
     {"id": "x7", "group": "configure",
-     "name": "the collapsed readouts hide whole lines when the window cannot fit them",
+     "name": "the collapsed rails keep their readouts at the smallest window this stage allows",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "resize_window", "w": 1600, "h": 300},
+         # The window goes to the application's own minimum height — the
+         # shortest a user can drag it. The strip's hide is measured
+         # against the pane's VISIBLE height, and at MonitorStage the
+         # panes' own minimums (180+190+240+200 * screenScaleFactor plus
+         # chrome) hold the window at 1600x880 under Xvfb, far above the
+         # height that would trip it: the visibility stays ON and each
+         # collapsed rail keeps its readout on screen. Measured on Linux
+         # — all three found by the visibility-filtered walk, all three
+         # in view. The waits below assert that; the absence they
+         # replaced held only at a forced 1600x300, a size the floor
+         # rule refuses and no user can reach.
+         {"op": "resize_window", "w": 1600, "h": "min"},
          {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
                                      "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "budget": 15},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "budget": 15},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
-         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "budget": 15},
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},
@@ -2866,7 +3199,10 @@ SCENARIOS = [
          {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
-         {"op": "confirm_box", "button": "Yes"},
+         # The prompt is the card's own dialog: the button is on screen
+         # and pressed, the same way the rename confirm is.
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
          {"op": "click_stage", "stage": "MonitorStage"},

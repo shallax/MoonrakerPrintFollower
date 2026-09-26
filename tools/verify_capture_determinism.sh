@@ -33,7 +33,7 @@ mkdir -p "$tmp"
 # concurrent builds — ten builds over a mutating context raced the
 # tar layer and died with "unexpected EOF", pure stress-harness noise.
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
-    docker build --pull -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
+    "$(dirname "$0")/build_image.sh" moonraker-print-follower-dev . --pull >/dev/null 2>&1 || {
         echo "determinism check: the capture image failed to build — aborting rather than comparing a stale image" >&2
         exit 1
     }
@@ -59,6 +59,7 @@ capture_leg() {
     python3 tools/capture_settings.py "$tmp/\$leg"
     python3 tools/capture_upload.py "$tmp/\$leg"
     python3 tools/capture_whatsnew.py "$tmp/\$leg"
+    python3 tools/capture_filemanager.py "$tmp/\$leg"
 }
 capture_leg run1 cura-light >"$tmp/run1.log" 2>&1 & p1=\$!
 capture_leg run2 cura-light >"$tmp/run2.log" 2>&1 & p2=\$!

@@ -59,6 +59,14 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         if monitor is not None:
             monitor.stripPausePrint()
 
+    def _pause_intent(self, name: str) -> Optional[Any]:
+        """The popover's pause intents ride the presentation's own
+        signals — the Preview card's intents, already connected to the
+        coordinator — so both hosts reach ONE schedule by one path. A
+        double without them leaves the popover's button inert."""
+        signal = getattr(self._follower.presentation, name, None)
+        return signal.emit if signal is not None else None
+
     def _grant_monitor_routing(self, monitor: Any) -> None:
         """The current monitor's sole Preview routing: the verdicts
         and the preview block publish only from the selected machine's
@@ -166,9 +174,22 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_load=self._follower.confirmForceLoadCurrentPrint,
                 request_file_download=self._follower.request_file_download,
                 download_failed=self._follower.download_failed,
+                request_download_progress=self._follower.download_progress,
+                cancel_file_download=self._follower.cancel_file_download,
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
+                request_plate_anchor=self._follower.setPlateAnchor,
+                request_plate_split=self._follower.setPlateSplit,
+                request_follower_popover_open=getattr(self._follower, "setFollowerPopoverOpen", None),
+                # The popover's pause block and its three intents (the
+                # capability-guarded form, like the demand gate above:
+                # a follower double without them publishes no block).
+                pause_at_layer_block=getattr(self._follower, "pauseAtLayerBlock", None),
+                request_pause_toggle=self._pause_intent("pauseAtLayerRequested"),
+                request_pause_remove=self._pause_intent("removePauseRequested"),
+                request_pause_clear=self._pause_intent("clearPausesRequested"),
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
+                index_service=self._follower.index(),
             )
             # The Preview wirings are NOT made here: the grant below
             # attaches them to the current monitor only, and a machine

@@ -13,10 +13,28 @@ from __future__ import annotations
 import html
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+
+# Every verdict line carries a tick or a cross, and CI's Windows runners
+# give Python a cp1252 stdout: printing one raised UnicodeEncodeError and
+# took the whole leg down (measured - the Windows suite failed on
+# "PASSED \u2705" itself, not on anything it was reporting). Ask for
+# UTF-8 once, here, rather than avoiding the characters.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 import time
+
+# The platform dispatch lives beside this file (the container staging
+# copies it next to the runner) and is the ONE place a host platform is
+# chosen.
+import native_host
 
 DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 # One display geometry (the round-2 contract): the screen SIZE, the
@@ -26,9 +44,146 @@ DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 SIZE = os.environ.get("HARNESS_GEOMETRY", "1920x1080")
 WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x1040")
 RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-" + time.strftime("%Y-%m-%d-%H%M%S"))
-PORT_FILE = "/tmp/mpf/harness_port.txt"
-TOKEN_FILE = "/tmp/mpf/harness_token.txt"
+# The RPC rendezvous: the driver, inside Cura, writes the port and the
+# per-run token here and the runner reads them back. ONE variable —
+# the two sides then cannot disagree about the path — and the default
+# keeps the Linux container (whose work dir IS /tmp/mpf) unchanged.
+RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
+PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
+TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
+# The scratch Cura and the runner both read. The container's work dir IS
+# /tmp/mpf, so one literal served both sides of its mount; on the natives
+# it serves neither — there is no /tmp/mpf, and Windows resolves a
+# leading-slash path against the CALLER's drive, so the driver (Cura's
+# drive) and the runner (the checkout's) opened different files under the
+# same string. The native harness points this at its own work dir.
+SCRATCH_DIR = os.environ.get("HARNESS_SCRATCH_DIR", "/tmp/mpf")
 DRIVER_HOST = "127.0.0.1"
+SYSTEM = native_host.current_system()
+
+
+def progress(message):
+    """One line of stage progress, flushed.
+
+    A leg that prints nothing until it ends is unreadable while it runs,
+    and worse: a leg killed at its timeout dies with whatever is still
+    sitting in a block buffer, so the log shows nothing of how far it
+    got. flush=True rather than a `-u` on every caller, because the
+    container leg, the native legs and a local run all reach this file
+    by different argv."""
+    print(f"ui_test: {message}", flush=True)
+
+
+def still_argv(path):
+    """One frame's ffmpeg argv — the capture helper's platform choice.
+    The natives record the display they are given, so the display must
+    already be at HARNESS_GEOMETRY or the frame fails shot()'s own
+    size check, which is the honest reading of a frame that is not the
+    one the run asked for."""
+    return native_host.still_argv(SYSTEM, path, size=SIZE, display=DISPLAY,
+                                  screen_index=native_host.screen_index())
+
+
+def record_argv(path, framerate=15):
+    """A recording's ffmpeg argv: the platform's input device, and the
+    natives' fragmented output flags — a native recorder is stopped by
+    a kill, and a plain mp4 would lose the index that makes it
+    playable."""
+    return native_host.recorder_argv(SYSTEM, path, size=SIZE, display=DISPLAY,
+                                     screen_index=native_host.screen_index(),
+                                     framerate=framerate)
+
+
+# The capture gate. A leg whose screen cannot be relied on to present
+# runs its steps with no recorder and no stills: every step assertion
+# is answered in-process from the live QML tree and the models, so the
+# pictures are the whole of what is lost — the static verdict and the
+# display guard read them, and nothing else does. The renderer-liveness
+# verdict is deliberately NOT part of this gate: it reads the app's own
+# frame count, has nothing to do with the screen or the recorder, and
+# is the one measurement a picture-less leg must keep, because a
+# responsive QML tree is not proof of rendering.
+#
+# The LEG says so, not the platform: tools/native_harness.sh exports
+# HARNESS_CAPTURE=off with its reason for the CI mac, whose runner has
+# no GPU (OpenGL in a macOS guest is software by construction — Apple's
+# paravirtual GPU is Metal-only) and on which the window stops
+# presenting partway through a leg. Measured on
+# gate-group-connection-macos-latest: the stills go byte-identical
+# while the menu bar clock and the dock keep ticking in the same
+# frames, and a real click on Cura's own MonitorStage header (`a9-07`)
+# changes nothing on screen — while all 45 steps pass, because they
+# read the tree. A Mac with a real GPU presents normally, so this is
+# deliberately not a platform default: a local run keeps its pictures,
+# and HARNESS_CAPTURE=on restores them on the CI mac for a look.
+# The recorder's own origin: every step records its offset from this,
+# which is what aligns a step to the second of the recording it ran in.
+# None when nothing is being recorded.
+CAPTURE_T0 = None
+
+
+def capture_enabled(override):
+    """The gate's decision: off only when the leg said off. Anything
+    else — unset, empty, "on", a typo — captures, so a missing or
+    mangled variable fails toward the recording rather than away from
+    it."""
+    return (override or "").strip().lower() != "off"
+
+
+CAPTURE = capture_enabled(os.environ.get("HARNESS_CAPTURE"))
+CAPTURE_REASON = os.environ.get("HARNESS_CAPTURE_REASON") or (
+    "" if CAPTURE else "this leg was told to capture nothing (HARNESS_CAPTURE=off) "
+                       "and gave no reason — see TESTING.md on the capture gate")
+
+
+def start_recorder(path, framerate=15):
+    """The platform recorder, or None when this leg captures nothing."""
+    global CAPTURE_T0
+    if not CAPTURE:
+        return None
+    CAPTURE_T0 = time.monotonic()
+    return subprocess.Popen(record_argv(path, framerate=framerate))
+
+
+def stop_recorder(video):
+    """Stop a recorder whatever start_recorder returned."""
+    if video is None:
+        return
+    time.sleep(1)
+    video.terminate()
+    try:
+        video.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        video.kill()
+
+
+def harvest_cura_log(dest_dir, suffix=""):
+    """Cura's own log, kept beside the evidence.
+
+    The container leg harvests this from the seeded XDG roots; a native
+    leg has no ui_test.sh behind it, so its setup script hands the
+    config directory over as HARNESS_CURA_CONFIG and the copy happens
+    here. It is the file that says why a driver never answered, and it
+    is deliberately taken more than once on the two-boot legs: the
+    relaunch truncates cura.log, so boot 1's log has to be lifted
+    before the second launch starts.
+    """
+    src = os.environ.get("HARNESS_CURA_CONFIG", "")
+    if not src or not os.path.isdir(src) or not os.path.isdir(dest_dir):
+        return 0
+    kept = 0
+    for name in sorted(os.listdir(src)):
+        if not name.startswith("cura.log"):
+            continue
+        try:
+            shutil.copyfile(os.path.join(src, name),
+                            os.path.join(dest_dir, name + suffix))
+        except OSError:
+            continue
+        kept += 1
+    if kept:
+        print(f"ui_test: kept {kept} Cura log file(s) in {dest_dir}")
+    return kept
 
 
 def rpc(request, timeout=20.0):
@@ -91,17 +246,20 @@ def shot(name):
     read as a failure — a silently missing image would otherwise fall
     back to a stale frame with the same name (the panel's finding).
     The frame must also match the declared SIZE: a clamped or
-    truncated x11grab still writes a plausible file, and every
+    truncated grab still writes a plausible file, and every
     evidence claim downstream rests on these pixels."""
+    if not CAPTURE:
+        # No frame, and deliberately no error: a leg that captures
+        # nothing must not fail every step for the absence of the
+        # picture it was told not to take.
+        return (None, None)
     path = os.path.join(RUN_DIR, f"{name}.png")
     try:
         os.unlink(path)
     except FileNotFoundError:
         pass
     try:
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab",
-                        "-video_size", SIZE, "-i", DISPLAY, "-frames:v", "1", path],
-                       check=True, timeout=30)
+        subprocess.run(still_argv(path), check=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as exc:
         return (path, f"capture failed: {exc!r}"[:80])
     if not os.path.exists(path) or os.path.getsize(path) < 100:
@@ -245,9 +403,7 @@ def discover():
 def scenario(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -274,15 +430,223 @@ def scenario(expect_fail=False):
             steps.append(("13-final", "all stage transitions reached by real clicks",
                           "PREPARE -> PREVIEW -> MONITOR -> PREPARE", True, shot("13-final")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     write_gallery(steps, expect_fail, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
+
+
+# A leg whose screen does not move is not a success (the static-green
+# ruling): the recording IS the evidence, so a leg that shows the same
+# picture for most of its length cannot have exercised anything,
+# whatever its steps reported. The thresholds are measured, not
+# chosen: across the 51 galleries the longest static span on a leg
+# that is not one of the frozen macOS ones is 59 s, and every
+# legitimate idle (a step waiting on a model, a budget of 15-30 s) sits
+# well under that, so the absolute floor is 60 s; the share is what
+# separates a leg that froze (39-92% of its duration) from one that
+# spent a single step waiting.
+STATIC_LEG_SECONDS = 60.0
+STATIC_LEG_SHARE = 0.35
+# The encoder's own dither moves a frozen frame by about one grey
+# level (measured on the galleries: 254 of 393 frozen consecutive
+# pairs differ by at most 1), so an exact-hash comparison reads a 394 s
+# frozen stretch as 3 s — two orders of magnitude wrong. Frames are
+# compared as 64x36 grey means, and a pair counts as unchanged within
+# one level.
+STATIC_FRAME_MAD = 1.0
+STATIC_SAMPLE = (64, 36)
+# The room a driven span needs for its response to be captured before
+# the span can be called still anyway: the decode samples at one frame
+# per second, and a step's offset from the recorder's start carries
+# about a second of ffmpeg startup error, so two seconds covers both.
+STATIC_DRIVEN_RESPONSE_S = 2.0
+
+
+def frame_mad(before, after):
+    """Mean absolute difference between two grey frames (0-255)."""
+    if not before or len(before) != len(after):
+        return 255.0
+    return sum(abs(a - b) for a, b in zip(before, after, strict=True)) / float(len(before))
+
+
+def static_run(frames):
+    """The longest near-identical run: (start, length) in frames."""
+    best = (0, 1) if frames else (0, 0)
+    start = 0
+    length = 1
+    for index in range(1, len(frames)):
+        if frame_mad(frames[index - 1], frames[index]) <= STATIC_FRAME_MAD:
+            length += 1
+        else:
+            start, length = index, 1
+        if length > best[1]:
+            best = (start, length)
+    return best
+
+
+def static_verdict(frames, seconds=STATIC_LEG_SECONDS, share=STATIC_LEG_SHARE,
+                   interactions=None):
+    """Whether a leg's frame sequence is too static to be a success.
+
+    Returns None when there is nothing to judge (fewer than two
+    frames), else a dict with the span, its share of the leg and the
+    verdict. One frame per second, so a length IS a duration.
+
+    A span nobody DROVE is not judged (the non-interactive ruling). The
+    rule exists to catch a window that stopped presenting while it was
+    being driven; a stretch whose steps only pushed simulator state and
+    read models asked nothing of the screen, so its stillness says
+    nothing about the screen. gate-group-status is the measured case:
+    its first 34 steps contain no input at all, the recording is
+    correctly still across them, and the leg went red on Windows at
+    62 s where ubuntu ran the same leg at 59 s — a one-second margin
+    deciding a verdict is the tell that the span was not the thing
+    being measured.
+
+    "Drove" means an input landed INSIDE the run with room to spare,
+    not that one clipped its edge: a click in the last moments of a run
+    is the event that ENDED the stillness — the run is still, and
+    correctly so, right up to it. Measured on ubuntu's group-status:
+    the run covers seconds 7..67 and the first click is at 68.4, so a
+    rule reading the input's trailing edge (as an earlier version of
+    this did) counted the very click that broke the stillness as proof
+    the stillness was fine. STATIC_DRIVEN_RESPONSE_S is the room a
+    response needs to be captured: the decode samples at one frame per
+    second and the step's offset carries about a second of startup
+    error, so two seconds covers both.
+
+    `interactions` is the list of seconds at which the leg sent real
+    input; None means the alignment is unknown, and every span is
+    judged as before — a leg that cannot be aligned keeps the old teeth
+    rather than silently losing them."""
+    if len(frames) < 2:
+        return None
+    start, length = static_run(frames)
+    covered = length / float(len(frames))
+    last = start + length - 1
+    driven = interactions is None or any(
+        start <= at <= last - STATIC_DRIVEN_RESPONSE_S for at in interactions)
+    ok = not (length >= seconds and covered >= share) or not driven
+    return {"ok": ok, "start_s": start, "span_s": length,
+            "share": round(covered, 3), "frames": len(frames),
+            "driven": driven}
+
+
+def _interaction_seconds(run_dir):
+    """The seconds at which the recording was driven, from the sibling
+    evidence.json: when each real-input step STARTED, on the recorder's
+    own clock. None when the evidence cannot place the steps (no
+    `at_s`), which keeps the old everything-is-judged behaviour rather
+    than silently retiring the check; a list — possibly empty, for a leg
+    that clicked nothing — when it can.
+
+    The step's START is the whole of what this needs: whether the
+    screen answered an input is a question about the run AFTER it, so
+    the input's own duration says nothing, and carrying it in only ever
+    stretched a late input back over a stillness it did not break."""
+    path = os.path.join(run_dir, "evidence.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    steps = data.get("steps") or []
+    if not any(step.get("at_s") is not None for step in steps):
+        return None
+    return [step["at_s"] for step in steps
+            if step.get("class") == "ui-interaction" and step.get("at_s") is not None]
+
+
+def static_leg_check(video_path, interactions=None):
+    """The leg-level static check: decode the recording at one frame
+    per second and fail the leg when one near-identical run covers
+    most of it. The recorder itself is ffmpeg, so the decoder is
+    present wherever a recording exists; a leg with no analysable
+    recording is recorded, never failed (there is nothing to read)."""
+    if not video_path or not os.path.exists(video_path):
+        return None
+    argv = ["ffmpeg", "-v", "error", "-i", video_path,
+            "-vf", f"fps=1,scale={STATIC_SAMPLE[0]}:{STATIC_SAMPLE[1]},format=gray",
+            "-f", "rawvideo", "-"]
+    try:
+        done = subprocess.run(argv, capture_output=True, check=False)
+    except OSError:
+        return None
+    size = STATIC_SAMPLE[0] * STATIC_SAMPLE[1]
+    raw = done.stdout
+    frames = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
+    return static_verdict(frames, interactions=interactions)
+
+
+def _merge_static_into_evidence(run_dir, records):
+    """Put the leg's static verdict in the machine-readable record as
+    well as the gallery: the artifact audit reads evidence.json."""
+    path = os.path.join(run_dir, "evidence.json")
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    data["static_leg"] = records
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+
+
+def static_leg_report(run_dir):
+    """Every recording a leg leaves, judged (the static-green ruling).
+
+    The leg fails when one near-identical run covers most of a
+    recording, whatever its steps reported. It runs in the runner's own
+    exit path, so it covers every mode: the suite groups, the
+    boot-only first-install and migration legs, and their second boots.
+    A recording that cannot be decoded is left unjudged rather than
+    called static. A leg that captures nothing is not judged at all:
+    the static rule reads pictures, and there are none to read."""
+    if not CAPTURE:
+        print("ui_test: STATIC LEG — not judged: this leg captures nothing "
+              f"({CAPTURE_REASON or 'no reason recorded'})")
+        return 0
+    records = []
+    for root, _dirs, names in os.walk(run_dir):
+        for name in sorted(names):
+            if not name.endswith(".mp4"):
+                continue
+            path = os.path.join(root, name)
+            # A recording is judged against the steps that ran beside
+            # it: the second boot's recording must not be read against
+            # the first boot's interactions.
+            interactions = _interaction_seconds(root)
+            verdict = static_leg_check(path, interactions=interactions)
+            if verdict is None:
+                continue
+            verdict["file"] = os.path.relpath(path, run_dir)
+            records.append(verdict)
+            if not verdict["ok"]:
+                print(f"ui_test: STATIC LEG — {verdict['file']}: the screen was still "
+                      f"for {verdict['span_s']}s of its {verdict['frames']}s "
+                      f"({int(verdict['share'] * 100)}%)")
+            elif not verdict.get("driven", True):
+                # Named, never silent: a span nobody drove is not a pass
+                # on the screen, it is a stretch where the screen was
+                # not asked anything.
+                print(f"ui_test: STATIC LEG — {verdict['file']}: not judged, "
+                      f"no input step fell inside its {verdict['span_s']}s still "
+                      f"stretch (of {verdict['frames']}s)")
+    if not records:
+        return 0
+    with open(os.path.join(run_dir, "static_leg.json"), "w", encoding="utf-8") as handle:
+        json.dump(records, handle, indent=2)
+        handle.write("\n")
+    _merge_static_into_evidence(run_dir, records)
+    return 1 if any(not record["ok"] for record in records) else 0
 
 
 def _verdict(steps):
@@ -295,7 +659,10 @@ def _verdict(steps):
     failed = [name for name, _, _, ok, cap in steps
               if not ok or (isinstance(cap, tuple) and cap[1])]
     if failed:
-        print(f"ui_test: FAILED steps: {', '.join(failed)}")
+        print(f"ui_test: FAILED \u274c {len(failed)} of {len(steps)} steps failed: "
+              f"{', '.join(failed)}")
+    else:
+        print(f"ui_test: PASSED \u2705 all {len(steps)} steps passed")
     return 0 if not failed else 1
 
 
@@ -308,6 +675,334 @@ def _verdict(steps):
 # them null rather than absent.
 EVIDENCE = []
 
+# The presentation record (the static-green ruling): what the window
+# was asked to present at each end of a scenario, and whether a frame
+# answered. Every step reads the QML tree, so an app whose window
+# stopped painting still passes every assertion over a still screen —
+# this is the measurement that says whether the window was painting at
+# all, and it separates a stalled scene graph from a stalled capture.
+FRAME_PROBES = []
+
+# The sample's own vocabulary. Only a stall is a claim about the app:
+# everything the probe could not tell apart from a stall is named as
+# unverified with the reason, because a measurement that could not be
+# taken must not read as one that was.
+LIVENESS_RENDERED = "rendered"
+LIVENESS_STALLED = "stalled"
+LIVENESS_UNVERIFIED = "unverified"
+
+# The heartbeat's deadline, sent with every sample: the window is asked
+# to present a change its scene graph cannot ignore, and the frame that
+# makes due has this long to land — twice, because a software
+# rasteriser's frame interval is close to the fixed settle this
+# replaced and one missed frame is not a stopped renderer.
+FRAME_HEARTBEAT_DEADLINE_MS = 1500
+
+
+def _count(value):
+    """A frame count, or None when the sample did not carry one: an
+    absent count must never be read as zero, which is a stall."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _delivered(sample):
+    """Whether a frame was delivered in this sample's own window."""
+    return (_count(sample.get("gained")) or 0) > 0
+
+
+def _saw_frames(sample):
+    """Whether this sample knows of a frame at all — the cumulative
+    count moved, now or earlier in the run. This is what separates a
+    renderer that stopped from one that was never seen to paint."""
+    return (_count(sample.get("swapped")) or 0) > 0 or _delivered(sample)
+
+
+def _advanced(start, end):
+    """Whether the window painted across the scenario: the count it
+    carried at the scenario's start against the count at its end."""
+    before, after = _count(start.get("swapped")), _count(end.get("swapped"))
+    return before is not None and after is not None and after > before
+
+
+def _shown(sample):
+    """Whether the display can be expected to show this window: an
+    explicit yes on both flags. A hidden or minimised window delivers
+    no frame by design, so it must not be read as a freeze, and a flag
+    that did not arrive must not be read as either."""
+    return sample.get("visible") is True and sample.get("exposed") is True
+
+
+def _heartbeat_of(sample):
+    """The sample's heartbeat record, or None when it carried none: a
+    sample without one made no frame due, and nothing is not a pass."""
+    record = sample.get("heartbeat")
+    return record if isinstance(record, dict) else None
+
+
+def _answered(sample):
+    """Whether a frame answered the forced scene change this sample
+    made — the measurement the verdict rests on."""
+    record = _heartbeat_of(sample)
+    return bool(record and record.get("answered"))
+
+
+def _landed(sample):
+    """Whether the sample's change verifiably landed on a visible item
+    in the window's own scene: a change that did not land made no frame
+    due, so a miss against one says nothing about the renderer."""
+    record = _heartbeat_of(sample)
+    if not record or not record.get("asked"):
+        return False
+    return any(attempt.get("verified") and attempt.get("in_scene")
+               and attempt.get("is_visible")
+               for attempt in record.get("attempts") or [])
+
+
+def _calibrated(sample, seen):
+    """Whether this window's render loop has been observed presenting in
+    this run: either a heartbeat of its own was answered earlier (the
+    strong reading — the loop answered a change it was told about), or
+    it has delivered frames, which the sample's own count carries. A
+    window that is neither has never been seen to present anything, and
+    a miss from it is not a freeze."""
+    record = _heartbeat_of(sample)
+    if record is not None and record.get("calibrated"):
+        return True
+    return bool(seen)
+
+
+def _calibration_note(sample, seen):
+    record = _heartbeat_of(sample)
+    if record is not None and record.get("calibrated"):
+        return f"it had already answered a heartbeat of its own ({record.get('window')})"
+    if seen:
+        return "it had painted earlier in this run"
+    return "it has never been seen to present"
+
+
+def _shape(sample):
+    # What the sample saw, for a diagnostic that names the window it
+    # judged rather than only the count.
+    return (f"swapped={sample.get('swapped')} gained={sample.get('gained')} "
+            f"visible={sample.get('visible')} exposed={sample.get('exposed')} "
+            f"active={sample.get('active')} visibility={sample.get('visibility')} "
+            f"state={sample.get('state')} platform={sample.get('platform')}")
+
+
+def _span(start, end):
+    # The pair a stall is read from: the baseline the scenario's own
+    # advance is measured against, the window it was measured on, and
+    # the closing sample's own counts.
+    return (f"swapped={start.get('swapped')}->{end.get('swapped')} "
+            f"gained={end.get('gained')} visible={end.get('visible')} "
+            f"exposed={end.get('exposed')} active={end.get('active')} "
+            f"visibility={end.get('visibility')} state={end.get('state')} "
+            f"platform={end.get('platform')}")
+
+
+def _beat(sample):
+    """The heartbeat half of a diagnostic: what was asked of the window,
+    what came back, and what it cost."""
+    record = _heartbeat_of(sample)
+    if record is None:
+        return "no heartbeat rode with this sample"
+    if not record.get("asked"):
+        return f"the heartbeat was not placed: {record.get('reason')}"
+    plot = " then ".join(
+        f"{attempt.get('property')} {attempt.get('from')}->{attempt.get('to')} "
+        f"swapped {attempt.get('swapped_before')}->{attempt.get('swapped_after')} "
+        f"gained {attempt.get('gained')} in {attempt.get('waited_ms')}ms"
+        for attempt in record.get("attempts") or [])
+    return (f"{record.get('window')} beat {record.get('sequence')} "
+            f"[{plot or 'no change landed'}] "
+            f"deadline={record.get('deadline_ms')}ms")
+
+
+def frames_probe(phase, scenario_id):
+    """One presentation sample, recorded.
+
+    The window is told to present a change its scene graph cannot
+    ignore, and the sample carries what that change was, whether it
+    landed and whether a frame answered it. The frame counts ride
+    beside it as diagnostics: a window with no reason to paint answers
+    a passive render request with nothing while a healthy renderer sits
+    behind it, so a count that did not move is not evidence of a
+    freeze, and the heartbeat is."""
+    sample = {"scenario": scenario_id, "phase": phase}
+    try:
+        reply = rpc({"id": 1, "cmd": "frames", "heartbeat": True,
+                     "deadline_ms": FRAME_HEARTBEAT_DEADLINE_MS}, timeout=60)
+    except Exception as exc:
+        reply = {"ok": False, "error": repr(exc)}
+    for key in ("swapped", "gained", "since", "exposed", "visible", "active",
+                "visibility", "state", "platform", "error",
+                "frame_signal", "fresh_window", "heartbeat"):
+        if key in reply:
+            sample[key] = reply[key]
+    sample["ok"] = bool(reply.get("ok"))
+    FRAME_PROBES.append(sample)
+    # The request and its completion go into the leg's own log, not only
+    # into the artifact: a red leg must say what the window was asked
+    # for and what came back without a reader opening evidence.json.
+    print(f"ui_test: heartbeat {scenario_id}/{phase}: {_beat(sample)} — "
+          + ("a frame answered it" if _answered(sample) else "no frame answered it"),
+          flush=True)
+    return sample
+
+
+def liveness_of(start, end, seen):
+    """One scenario's outcome and the reason for it.
+
+    `end` is the measurement: the window was told to present a change
+    its scene graph cannot ignore, and either a frame answered it or
+    none did. `start` is the baseline the scenario's own advance is read
+    against, and `seen` says whether this window has been observed
+    painting in this run — the reading that separates a freeze from a
+    window never seen to present anything."""
+    if end.get("frame_signal") is False:
+        return (LIVENESS_UNVERIFIED,
+                "the frame signal could not be attached to the window")
+    if not end.get("ok"):
+        detail = end.get("error")
+        return (LIVENESS_UNVERIFIED, "the window did not answer the probe"
+                + (f": {detail}" if detail else ""))
+    if _count(end.get("swapped")) is None:
+        return (LIVENESS_UNVERIFIED,
+                "the probe answered without a frame count, so it measured nothing")
+    if _heartbeat_of(end) is None:
+        return (LIVENESS_UNVERIFIED,
+                "the probe answered without a heartbeat, so no frame was made "
+                f"due and a count that did not move says nothing ({_shape(end)})")
+    if _answered(end):
+        return (LIVENESS_RENDERED,
+                f"the window answered the heartbeat that forced a repaint with "
+                f"{end.get('gained')} frame(s) ({_beat(end)}; {_shape(end)})")
+    # From here the heartbeat missed, and every gate below is what must
+    # hold before that miss can be read as a renderer that stopped.
+    if end.get("fresh_window") is True:
+        # The counter attached to a window it had not been counting, so
+        # this is that window's first count and the scenario's span was
+        # read off the window it replaced: neither end is a reading of
+        # this one, so it cannot carry a verdict.
+        return (LIVENESS_UNVERIFIED,
+                "the window was replaced for this sample, so the count has no "
+                f"history to be read against ({_shape(end)})")
+    if _advanced(start, end):
+        return (LIVENESS_RENDERED,
+                f"the window painted {_count(end['swapped']) - _count(start['swapped'])} "
+                "frame(s) across the scenario, so the renderer was presenting; the "
+                f"heartbeat that closed it gained none ({_span(start, end)})")
+    if not _landed(end):
+        return (LIVENESS_UNVERIFIED,
+                "the heartbeat's change did not verifiably land on a visible item "
+                f"in the window's own scene, so no frame was due from it "
+                f"({_beat(end)})")
+    if not _shown(end):
+        return (LIVENESS_UNVERIFIED,
+                "the window is not on the display, so no frame is due from it "
+                f"({_shape(end)})")
+    if _calibrated(end, seen):
+        record = _heartbeat_of(end) or {}
+        attempts = record.get("attempts") or []
+        return (LIVENESS_STALLED,
+                "the window is visible and exposed and answered no frame to "
+                f"{len(attempts)} forced scene change(s) inside "
+                f"{record.get('deadline_ms')}ms each, and painted nothing across "
+                "the scenario, having been seen to present in this run "
+                f"({_beat(end)}; {_calibration_note(end, seen)}; {_span(start, end)})")
+    return (LIVENESS_UNVERIFIED,
+            "no frame has been delivered on this platform in this run yet, so an "
+            "initialising renderer and a platform that never emits the frame "
+            f"signal look the same here ({_shape(end)})")
+
+
+def liveness_gating(platform):
+    """Whether a measured stall FAILS the scenario here, and why.
+
+    The measurement is the same in both capture modes; what differs is
+    whether a leg may act on it. Linux and Windows legs read the screen
+    beside the app, so a window that answered no forced repaint is a
+    red. A leg that captures nothing has declared its own screen
+    unjudgeable — the hosted macOS runner, whose software OpenGL stops
+    presenting partway through a leg — and there a heartbeat failure is
+    a REPORT-ONLY diagnostic: kept in the evidence, announced in the
+    log, and never read as renderer coverage the platform has not
+    demonstrated. HARNESS_CAPTURE=on restores the pictures on that leg,
+    and with them the verdict."""
+    if not CAPTURE:
+        return False, ("report-only: this leg captures nothing and has declared "
+                       f"its screen unjudgeable (platform={platform}), so a missed "
+                       "heartbeat is a diagnostic here and no renderer coverage "
+                       "is claimed for it")
+    return True, "judged"
+
+
+def liveness_outcome(samples):
+    """Every scenario's presentation outcome, in scenario order.
+
+    The verdict reads a scenario's two samples together: the END one
+    carries the heartbeat — the change the window was told to present —
+    and the START one is the baseline the scenario's own advance is read
+    against. A frame answering the heartbeat, or frames delivered across
+    the span, mean the renderer was presenting. A miss is a stall only
+    where every gate holds: the window was shown, the change landed on a
+    visible item, the count did not move, the window was not replaced
+    under the sample, and this window has been seen to present already
+    in this run. Everything the probe cannot tell apart from that is its
+    own outcome with its reason — an unanswered probe, a missing
+    heartbeat, a change that did not land, a hidden or minimised window,
+    a window the counter attached to fresh, a renderer never seen to
+    paint — so neither a freeze nor a missing measurement can pass as
+    the other. Whether a measured stall is ACTED on is separate and
+    platform-appropriate (liveness_gating), and it is recorded with the
+    outcome rather than left to the reader."""
+    phases = {}
+    for index, sample in enumerate(samples):
+        phases.setdefault(sample.get("scenario"), {})[sample.get("phase")] = index
+    records = []
+    for scenario_id in sorted(phases, key=str):
+        start_index = phases[scenario_id].get("start")
+        end_index = phases[scenario_id].get("end")
+        if start_index is None or end_index is None:
+            # Both ends are what make the reading a comparison rather
+            # than a threshold; a scenario with one sample is not
+            # judged (the boot-only legs record none at all).
+            continue
+        # A leg's boot can replace the window, and frames seen on the
+        # window that was replaced say nothing about this one: the
+        # history the verdict reads starts at the last fresh
+        # attachment at or before the sample it judges.
+        fresh = [index for index in range(start_index, end_index + 1)
+                 if samples[index].get("fresh_window") is True]
+        floor = fresh[-1] if fresh else 0
+        seen = any(_saw_frames(sample) for sample in samples[floor:end_index])
+        outcome, reason = liveness_of(samples[start_index], samples[end_index],
+                                      seen)
+        judged, gating = liveness_gating(samples[end_index].get("platform"))
+        records.append({"scenario": scenario_id, "outcome": outcome,
+                        "reason": reason, "judged": judged, "gating": gating,
+                        "start": samples[start_index],
+                        "end": samples[end_index]})
+    return records
+
+
+def stalled_scenarios(records):
+    """The scenarios whose renderer stopped presenting and whose leg
+    acts on it: the ones that fail, whatever the leg captured."""
+    return [record["scenario"] for record in records
+            if record["outcome"] == LIVENESS_STALLED and record["judged"]]
+
+
+def report_only_scenarios(records):
+    """The scenarios whose window answered no forced repaint on a leg
+    that does not judge its screen: measured, announced, and not acted
+    on — kept apart from the stalls so a reader can never mistake a
+    report-only diagnostic for a pass, or for a failure."""
+    return [record["scenario"] for record in records
+            if record["outcome"] == LIVENESS_STALLED and not record["judged"]]
+
 # F08's evidence classification: a step's class derives from its
 # MECHANISM, never from a declared label — the scenario's claim is
 # the minimum class over its steps (one real click plus six slot
@@ -319,7 +1014,7 @@ CLASS_ORDER = {"diagnostic-probe": 0, "application-integration": 1,
 
 DIRECT_INVOCATION_OPS = frozenset((
     "exec_slot", "exec_file_slot", "emit_click", "click_jog",
-    "confirm_box", "exec_mode", "exec_validator", "exec_console",
+    "exec_mode", "exec_validator", "exec_console",
     "exec_extrude", "exec_test_connection", "exec_code"))
 
 REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text",
@@ -352,8 +1047,60 @@ def _classify(op, delivery):
     return "diagnostic-probe"
 
 
+def foreground_guard():
+    """The display belongs to Cura between steps (the visible-
+    interactions ruling): the evidence records the DISPLAY, so a step
+    that hands it to another process — a link press opening a browser
+    — makes every frame after it evidence of that process instead.
+    The driver re-raises and reads the state back. A platform with no
+    foreground authority (the WM-less Xvfb, before the window has ever
+    been active) answers `none`: recorded, never a failure, because
+    there is no baseline to read a theft against."""
+    if not CAPTURE:
+        # The guard protects the RECORDING. With no frames there is
+        # nothing to protect, and re-raising Cura would be a side
+        # effect on a leg that claims nothing about the display.
+        return {"authority": "not-applicable", "capture": "off"}
+    try:
+        state = rpc({"id": 1, "cmd": "foreground", "raise": True}, timeout=20)
+    except Exception as exc:
+        return {"authority": "unreachable", "foreground": None,
+                "error": repr(exc)[:120]}
+    if not state.get("ok"):
+        return {"authority": "unreachable", "foreground": None,
+                "error": str(state.get("error"))[:120]}
+    after = state.get("after") or {}
+    before = state.get("before") or {}
+    return {"authority": state.get("authority"),
+            "foreground": state.get("foreground"),
+            "raised": bool(state.get("raised")),
+            "focus": after.get("focus"), "held_by": before.get("focus")}
+
+
+def _foreground_verdict(foreground, ok, assertion):
+    """Fold the guard into a step's verdict: a display that did not
+    come home fails the step (its own frames, and every later one, are
+    evidence of the wrong process); a display that came home is named
+    in the assertion, never hidden."""
+    if foreground is None:
+        return ok, assertion
+    if foreground.get("authority") == "not-applicable":
+        # Left unsaid on every assertion, deliberately: the capture
+        # block in evidence.json already records the mode once for the
+        # whole leg, and a suffix on each of 55 steps is noise that
+        # hides the assertion it is appended to.
+        return ok, assertion
+    if foreground.get("foreground") is False and foreground.get("authority") not in (
+            None, "none", "unreachable"):
+        return False, (f"{assertion} · the display was taken from Cura and the "
+                       "re-raise did not get it back")
+    if foreground.get("raised"):
+        return ok, f"{assertion} · another window had taken the display; Cura was re-raised"
+    return ok, assertion
+
+
 def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started,
-                    delivery=None, geometry=None, walk=None):
+                    delivery=None, geometry=None, walk=None, foreground=None):
     path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
     op = step.get("op") if isinstance(step, dict) else "boot"
     return {
@@ -369,6 +1116,11 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "capture": os.path.basename(path) if path else None,
         "capture_error": capture_error,
         "duration_ms": round((time.monotonic() - started) * 1000),
+        # Seconds from the recorder's start to this step's start: what
+        # aligns a step to the second of the recording it ran in, which
+        # is how the static check knows whether a still span was driven.
+        "at_s": (round(started - CAPTURE_T0, 1)
+                 if CAPTURE_T0 is not None else None),
         "delivery": delivery,
         # The evidence-visibility fields (the review's C8/C9): the
         # resolved element's scene rect — what the capture outlines —
@@ -377,6 +1129,9 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "geometry": geometry,
         "walk": walk,
         "class": _classify(op, delivery),
+        # The foreground record (the visible-interactions ruling): what
+        # the display showed when the step's frame was captured.
+        "foreground": foreground,
     }
 
 
@@ -409,8 +1164,49 @@ def write_evidence(title):
             "steps": by_class,
             "scenario_minimum": scenario_min,
         },
+        # The capture record, always present: a reader of this file must
+        # never have to infer from an empty gallery whether the leg took
+        # no pictures because it was told not to or because the harness
+        # broke.
+        "capture": {
+            "mode": "on" if CAPTURE else "off",
+            "reason": CAPTURE_REASON,
+            "judged": CAPTURE,
+        },
         "steps": EVIDENCE,
     }
+    if FRAME_PROBES:
+        run["frames"] = FRAME_PROBES
+        outcomes = liveness_outcome(FRAME_PROBES)
+        # The outcome list rides beside the samples so a reader of the
+        # artifact gets the verdict the leg acted on, not only the
+        # counts it was derived from.
+        run["frames_outcome"] = outcomes
+        run["frames_stalled"] = stalled_scenarios(outcomes)
+        # Kept apart from the stalls: a window that answered no forced
+        # repaint on a leg that does not judge its screen is measured
+        # and announced, and it is not a failure — nor a pass.
+        run["frames_report_only"] = report_only_scenarios(outcomes)
+        # Announced whatever the capture mode: the pictures are what the
+        # capture gate gives up, and whether the app painted is the
+        # measurement that must not go with them silently. A stall is
+        # announced as a red where the leg acts on it and as a
+        # report-only diagnostic where the leg does not, and an
+        # unverified scenario says so too — a window that was never
+        # shown, or never seen to present, must not read as one where
+        # rendering was confirmed.
+        for record in outcomes:
+            if record["outcome"] == LIVENESS_STALLED and record["judged"]:
+                print(f"ui_test: NO FRAMES — scenario {record['scenario']}: "
+                      f"{record['reason']}")
+            elif record["outcome"] == LIVENESS_STALLED:
+                print(f"ui_test: HEARTBEAT REPORT-ONLY — scenario "
+                      f"{record['scenario']}: {record['reason']} "
+                      f"[{record['gating']}]")
+            elif record["outcome"] == LIVENESS_UNVERIFIED:
+                print(f"ui_test: FRAMES UNVERIFIED — scenario {record['scenario']}: "
+                      f"{record['reason']}")
+
     with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
         json.dump(run, handle, indent=2)
 
@@ -434,7 +1230,8 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
         if capture_error:
             verdict = "FAIL"
         rows.append(
-            f'<div class="step {"pass" if ok and not capture_error else "fail"}">'
+            f'<div class="step {"pass" if ok and not capture_error else "fail"}" '
+            f'id="step-{html.escape(str(name))}">'
             f'<h3>{html.escape(name)} — {verdict}</h3>'
             f'<p><b>Action:</b> {html.escape(action)}</p>'
             f'<p><b>Assertion:</b> {html.escape(assertion)}</p>'
@@ -443,23 +1240,52 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
                if os.path.exists(path) else "")
             + "</div>")
     body = "\n".join(rows)
+    # The summary first: a 169-step gallery is read for its failures,
+    # and hunting them by eye down a page of passing steps is how a red
+    # leg gets skimmed instead of read. Each failing step links to its
+    # own entry below.
+    failed = [(name, assertion) for name, _action, assertion, ok, path in steps
+              if not ok or (isinstance(path, tuple) and path[1])]
+    expected = [name for name, _a, _s, _ok, _p in steps if name == "13-deliberate-failure"]
+    if failed:
+        summary = ('<div class="summary fail">'
+                   f'<h2>{len(failed)} of {len(steps)} steps FAILED</h2><ul>'
+                   + "".join(f'<li><a href="#step-{html.escape(str(n))}">{html.escape(str(n))}</a>'
+                             f' — {html.escape(str(a))}</li>' for n, a in failed)
+                   + "</ul></div>")
+    else:
+        summary = (f'<div class="summary pass"><h2>all {len(steps)} steps passed</h2>'
+                   + (f'<p class="note">({len(expected)} expected failure by design)</p>'
+                      if expected else "")
+                   + "</div>")
     provenance = " · ".join(part for part in (
         f"Cura {os.environ.get('CURA_VERSION', '?')}",
         f"plugin {os.environ.get('PLUGIN_VERSION', '?')}",
         os.environ.get("HARNESS_MODE", ""),
         time.strftime("%Y-%m-%d %H:%M"),
     ) if part)
-    video_tag = (f'<video src="{html.escape(os.path.basename(video))}" controls '
-                 f'style="max-width:100%"></video>'
-                 if video and os.path.exists(video) else
-                 '<p class="note">no recording for this run</p>')
+    if not CAPTURE:
+        # Say WHY the gallery is empty, in the gallery: an unlabelled
+        # picture-free page reads as a broken harness.
+        video_tag = ('<p class="note"><b>No captures on this leg by design.</b> '
+                     f'{html.escape(CAPTURE_REASON)}</p>')
+    else:
+        video_tag = (f'<video src="{html.escape(os.path.basename(video))}" controls '
+                     f'style="max-width:100%"></video>'
+                     if video and os.path.exists(video) else
+                     '<p class="note">no recording for this run</p>')
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>body{{font-family:sans-serif;background:#111;color:#ddd;margin:2em}}
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
 .pass{{border-left:6px solid #2ea043}}.fail{{border-left:6px solid #f85149}}
+.summary{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#181818}}
+.summary.fail{{border-left:6px solid #f85149}}.summary.pass{{border-left:6px solid #2ea043}}
+.summary h2{{margin:0 0 .5em}}.summary ul{{margin:0;padding-left:1.4em}}
+.summary a{{color:#f85149}}a{{color:#79c0ff}}
 img{{max-width:100%;border:1px solid #444}}h3{{margin-top:0}}</style></head>
 <body><h1>{html.escape(title)}</h1>
 <p class="note">{html.escape(provenance)}</p>
+{summary}
 {video_tag}
 {body}</body></html>"""
     with open(os.path.join(RUN_DIR, "index.html"), "w", encoding="utf-8") as handle:
@@ -673,6 +1499,31 @@ for item in _walk(window.contentItem()):
             result[name] = False
 """
 
+# The replace prompt's own button, emitted — the classic probes' mechanism
+# throughout (their host is the WM-less Xvfb, where a synthesized click
+# does not reach the card). The prompt is the card's popup, so this is the
+# QML handler a real press runs, not a widget box to answer.
+REPLACE_CONFIRM_EMIT = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerReplaceConfirmButton" and bool(item.isVisible()):
+        item.clicked.emit()
+        result["emitted"] = True
+        break
+"""
+
+
+def press_replace_confirm(budget=15.0, interval=1.0):
+    """Answer the card's replace prompt: its own Replace button.
+    Replaces the widget path — there is no QMessageBox to find."""
+    return bool(wait_for(
+        lambda: exec_rpc(REPLACE_CONFIRM_EMIT).get("emitted"), budget, interval))
+
 
 SLOT_READ = """
 window = _main_window()
@@ -875,10 +1726,22 @@ if target is None:
     result["error"] = "no visible LayerSlider"
 else:
     # The layer slider is the VERTICAL bar on the preview's right
-    # edge; the layer changes by dragging its UPPER handle (the
-    # 16x16 Rectangle whose MouseArea drives setCurrentLayer).
+    # edge; the layer changes by dragging its UPPER handle (the square
+    # Rectangle whose MouseArea drives setCurrentLayer). Its size is
+    # asked of the theme the QML itself reads (LayerSlider.qml:
+    # handleSize = UM.Theme.getSize("slider_handle").width) — a
+    # literal 16 is only right at a screen scale of 1, and the Windows
+    # and macOS runners scale the theme up, where the handles are 22 px
+    # and the size test matched nothing at all.
+    try:
+        from UM.Qt.Bindings.Theme import Theme
+        handle_size = float(Theme.getInstance().getSize("slider_handle").width())
+    except Exception:
+        handle_size = 16.0
+    if handle_size <= 0:
+        handle_size = 16.0
     handles = [child for child in target.childItems()
-               if abs(child.width() - 16) < 2 and abs(child.height() - 16) < 2 and bool(child.isVisible())]
+               if abs(child.width() - handle_size) < 2 and abs(child.height() - handle_size) < 2 and bool(child.isVisible())]
     if not handles:
         result = {"error": "no slider handles"}
     else:
@@ -1110,9 +1973,7 @@ def scenario9():
     # without pausing; the entry stays listed, restyled as missed.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario9.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario9.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1142,8 +2003,7 @@ def scenario9():
         empty = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        wait_for(lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-                 15.0, 1.0)
+        press_replace_confirm()
         action = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
@@ -1160,12 +2020,7 @@ def scenario9():
         steps.append(("06-missed", "the printer drove past the layer without pausing",
                       "the entry restyled as missed", missed, shot("06-missed")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #9 — pause list verified-only"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1180,9 +2035,7 @@ def scenario8():
     # receipt canary (the WS feed keeps flowing end to end).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario8.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "5", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario8.mp4")])
+    video = start_recorder(video_path, framerate=5)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1245,12 +2098,7 @@ def scenario8():
                       "%d ws entries in the 100-entry window" % ws_count,
                       bool(ws_count >= 95), shot("07-receipt-canary")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #8 — dwell profile"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1264,9 +2112,7 @@ def scenario10():
     # print then starts and the latch clears.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario10.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario10.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1316,12 +2162,7 @@ def scenario10():
                       "the plugin shows the fresh job connected",
                       bool(fresh and model.get("connected")), shot("06-fresh-print")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #10 — restart arming / e-stop latch"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1335,9 +2176,7 @@ def scenario11():
     # last command on the up arrow.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario11.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario11.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1389,12 +2228,7 @@ def scenario11():
                       "the input shows %r" % recall_state.get("text"),
                       bool(recall_state.get("text") == "G28"), shot("08-recall")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #11 — scroll-to-prompt"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1409,9 +2243,7 @@ def scenario7():
     # WS entries grew (the positive sentinel).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario7.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario7.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1457,12 +2289,7 @@ def scenario7():
                       "WS entries grew %d -> %d (must grow)" % (baseline_ws, ws_after),
                       ws_after > baseline_ws, shot("06-ws-sentinel")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #7 — transport handover"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1477,9 +2304,7 @@ def scenario6():
     # and back re-attaches — THE ONLY automatic re-attach.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario6.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario6.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1508,9 +2333,7 @@ def scenario6():
         empty = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        confirmed = bool(wait_for(
-            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-            15.0, 1.0))
+        confirmed = press_replace_confirm()
         action = bool(wait_for(
             lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
@@ -1546,12 +2369,7 @@ def scenario6():
                       "the attached state survived the view swap (the ONLY automatic re-attach)",
                       preserved, shot("08-swap-preserves-attach")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #6 — detach on any layer selection change"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1567,9 +2385,7 @@ def scenario5():
     # its first sample right after the sync snapshot.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario5.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario5.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1639,12 +2455,7 @@ def scenario5():
                       bool(aux_state and aux_state.get("aux_extruder_temperature") == 200.0),
                       shot("07-aux-datum")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #5 — temperatures at print start"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1659,9 +2470,7 @@ def scenario4():
     # viewport's changing test pattern prove liveness.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario4.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario4.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1721,12 +2530,7 @@ def scenario4():
                           "viewport crops differ: %s... vs %s..." % (hash_a[:8], hash_b[:8]),
                           live, shot("05-camera-b")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #4 — camera first load"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1740,9 +2544,7 @@ def scenario3():
     # previous content returns (empty, fixed height — no reflow).
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario3.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario3.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1790,12 +2592,7 @@ def scenario3():
                       bool(cleared_ok) and cleared.get("height") == baseline_height,
                       shot("07-cleared")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #3 — M117 in the Print-job section"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1810,9 +2607,7 @@ def scenario2(expect_fail=False):
     # the empty card must never reappear.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario2.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario2.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1845,12 +2640,10 @@ def scenario2(expect_fail=False):
         # The card's button: window-level synthesized clicks do not
         # reach this control under the WM-less Xvfb, so the button's
         # clicked signal is emitted — the exact QML handler a real
-        # click runs. The replace-confirm QMessageBox that follows is
-        # answered through the classic widget path (confirm_box).
+        # click runs. The replace-confirm that follows is the card's
+        # own popup, pressed at its button.
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
-        confirmed = bool(wait_for(
-            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
-            15.0, 1.0))
+        confirmed = press_replace_confirm()
         steps.append(("05-load-click", "Load current print (clicked-signal emission) + replace-confirm Yes — then HANDS-OFF",
                       "the load was requested and confirmed", bool(confirmed), shot("05-load-click")))
         # The hands-off trace: samples every 2 s, no interaction.
@@ -1881,12 +2674,7 @@ def scenario2(expect_fail=False):
                       "empty card absent in every post-click sample",
                       empty_never_back and bool(settled_at), shot("07-settled")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #2 — the card stays through load and after render"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -1902,9 +2690,7 @@ def scenario1(expect_fail=False):
     # throughout.
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "scenario1.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario1.mp4")])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1973,12 +2759,7 @@ def scenario1(expect_fail=False):
         steps.append(("08-one-connection", "the whole scenario ran on one websocket connection",
                       "connections == 1 (no reconnect needed)", one_connection, shot("08-one-connection")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Gate #1 — the failure state clears itself"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2041,10 +2822,11 @@ def document_of(reply):
 
 
 def cura_process_alive():
-    """Cura's own process, by full command line (the bracket keeps
-    pgrep from matching its own argv — the harness's standing idiom)."""
+    """Cura's own process, through the platform dispatch. The call was
+    a bare pgrep, which on Windows raises OSError and reads as "still
+    running" — a clean quit then reports as a failed one."""
     try:
-        done = subprocess.run(["pgrep", "-f", "UltiMaker-Cur[a]"],
+        done = subprocess.run(native_host.process_alive_argv(SYSTEM),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         return True
@@ -2073,9 +2855,7 @@ def first_install1():
     boot leaves on disk."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall1.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2152,12 +2932,7 @@ def first_install1():
                       "closeApplication accepted and the process is gone",
                       bool(quit_reply.get("ok")) and exited, shot("05-quit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "First install — boot 1: the clean activation and the save"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2171,9 +2946,7 @@ def first_install2():
     blob — the machine record must still be there, field for field."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "firstinstall2.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2214,16 +2987,116 @@ def first_install2():
                       "the document is identical to the one the first boot left",
                       untouched, shot("03-untouched")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "First install — boot 2: the config survives the second boot"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
+
+
+# ---- the two-boot legs on a native host (modes firstinstall / migration) ----
+#
+# On Linux tools/ui_test.sh drives the pair: it owns the launch there, so
+# the between-boots work (stop the first app, clear the rendezvous, boot
+# again) lives in that script. A native host's setup script launches ONCE
+# per job, so that same work has no shell to live in and happens here.
+#
+# Each boot is the SAME runner entry point the container leg calls, run as
+# a subprocess: the gallery, the video and the verdict come from identical
+# code, and the boots stay as isolated as they are on Linux. The mode
+# itself stops being a fall-through to scenario(), which is what a job
+# asking for "firstinstall" used to get on a native host.
+
+TWO_BOOT_MODES = {"firstinstall": ("firstinstall1", "firstinstall2"),
+                  "migration": ("migration1", "migration2")}
+
+# The natives' own setup scripts wait 300 ticks for the driver's port
+# file; the second boot starts from the same cold cache (no OS file
+# cache for Cura's bundle is shared across processes) and gets the same
+# budget.
+SECOND_BOOT_DEADLINE_S = 300.0
+
+
+def boot_env(run_dir, boot1_document):
+    """The environment one boot runs with: where its gallery lands and
+    the document boot 1 leaves for boot 2 to diff against."""
+    env = dict(os.environ)
+    env["HARNESS_RUN_DIR"] = run_dir
+    env["HARNESS_BOOT1_DOC"] = boot1_document
+    return env
+
+
+def wait_for_driver(deadline_s):
+    """The driver ANSWERING — which is not the same as the port file
+    existing: the file outlives the process, so boot 1's port would
+    pass the check while the socket behind it is dead."""
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        try:
+            reply = rpc({"id": 1, "cmd": "hello"}, timeout=10)
+        except RuntimeError:
+            continue
+        if reply.get("ok"):
+            return reply
+    return None
+
+
+def two_boot_run(mode):
+    """The two-boot legs, both boots, from the mode the workflow names."""
+    boot1_mode, boot2_mode = TWO_BOOT_MODES[mode]
+    runner = os.path.abspath(__file__)
+    boot1_document = os.path.join(RUN_DIR, "boot1-document.json")
+
+    print(f"ui_test: {mode}: boot 1 ({boot1_mode}) -> {RUN_DIR}")
+    rc1 = subprocess.call([sys.executable, runner, boot1_mode],
+                          env=boot_env(RUN_DIR, boot1_document))
+    # Boot 1's log before boot 2's launch truncates it.
+    harvest_cura_log(RUN_DIR, suffix="-boot1")
+
+    # Boot 2 needs the tree to itself: whatever the first boot left
+    # running goes first, and the rendezvous files go with it (a stale
+    # port would send the second boot to a dead socket). The kill is
+    # unconditional — a runner that crashed mid-scenario must not leave
+    # an app behind that the second boot then races.
+    subprocess.call(native_host.kill_command(SYSTEM),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1)
+    for name in ("harness_port.txt", "harness_token.txt"):
+        try:
+            os.remove(os.path.join(RPC_DIR, name))
+        except OSError:
+            pass
+
+    binary = os.environ.get("HARNESS_CURA_BIN", "")
+    if not binary:
+        print("ui_test: HARNESS_CURA_BIN is unset - the native setup script must export it, "
+              "or the second boot has no app to launch")
+        return rc1 or 1
+    command = native_host.launch_command(SYSTEM, binary,
+                                         working_dir=os.environ.get("HARNESS_CURA_CWD") or None)
+    # start_new_session: the app must outlive this process (the capture,
+    # not the launcher, is what keeps it alive), and it inherits this
+    # process's environment — the one the setup script exported, GL
+    # variables included.
+    subprocess.Popen(command["argv"], cwd=command["cwd"], start_new_session=True)
+    print(f"ui_test: {mode}: relaunched {binary} for boot 2")
+
+    hello = wait_for_driver(SECOND_BOOT_DEADLINE_S)
+    if hello is None:
+        print(f"ui_test: the second boot's driver never came up within "
+              f"{SECOND_BOOT_DEADLINE_S:.0f}s - Cura did not load the staged plugin")
+        return 1
+
+    boot2_dir = os.path.join(RUN_DIR, "boot2")
+    print(f"ui_test: {mode}: boot 2 ({boot2_mode}) -> {boot2_dir}")
+    rc2 = subprocess.call([sys.executable, runner, boot2_mode],
+                          env=boot_env(boot2_dir, boot1_document))
+    # The second boot's gallery is half this leg's evidence, and the
+    # workflow's guard only knows about the first boot's directory.
+    if not os.path.isfile(os.path.join(boot2_dir, "index.html")):
+        print(f"ui_test: EVIDENCE MISSING - boot 2 wrote no gallery at {boot2_dir}/index.html")
+        return rc2 or 1
+    return rc1 or rc2
 
 
 # ---- The migration leg (modes migration1 / migration2) ----
@@ -2305,9 +3178,7 @@ def migration1():
     real one-shot, and the machine switch re-routes the live model."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration1.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2389,12 +3260,7 @@ def migration1():
         steps.append(("07-clean-exit", "the app quit cleanly after the migration",
                       "the driver acked the quit", bool(quit_reply.get("ok")), shot("07-clean-exit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Migration — boot 1: the v1 blob migrates into the v2 files"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2406,9 +3272,7 @@ def migration2():
     migrated tree alone — the one-shot never re-runs."""
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "migration2.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2464,12 +3328,7 @@ result = {"backups": sorted(
         steps.append(("05-clean-exit", "the app quit cleanly after the second boot",
                       "the driver acked the quit", bool(quit_reply.get("ok")), shot("05-clean-exit")))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Migration — boot 2: the second boot leaves the migrated tree alone"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2520,9 +3379,7 @@ def suite_run(group_id):
         return 1
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2540,6 +3397,8 @@ def suite_run(group_id):
                                         "boot gate: active machine present, no welcome overlay",
                                         "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
         wait_stage("PrepareStage", timeout_ms=60000)
+        progress(f"{group_id}: {len(specs)} scenario(s) in this group")
+        done = 0
         for spec in specs:
             if spec.get("container_skip"):
                 # The engine-divergent scenarios (real Cura
@@ -2573,14 +3432,26 @@ def suite_run(group_id):
             rpc({"id": 1, "cmd": "hide_update_toast"})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
-            steps.extend(suite_scenario(spec))
+            started = time.monotonic()
+            done += 1
+            # One line per scenario, flushed. A silent leg is unreadable
+            # while it runs and — worse — a leg killed at its timeout
+            # dies with whatever is still buffered, so the log shows
+            # nothing of how far it got.
+            progress(f"[{done}] {spec['id']} — {spec.get('name', '')}")
+            scenario_steps = suite_scenario(spec)
+            steps.extend(scenario_steps)
+            failed = [entry[0] for entry in scenario_steps if not entry[3]]
+            # The verdict LEADS: a scan of this log should never have
+            # to read "0 failed" as a pass, or hunt for which scenario
+            # is the red one.
+            progress(f"[{done}] {spec['id']}: "
+                     + ("PASSED \u2705" if not failed else "FAILED \u274c")
+                     + f" in {time.monotonic() - started:.0f}s — "
+                     + (f"{len(scenario_steps)} steps, failed: {', '.join(failed)}"
+                        if failed else f"all {len(scenario_steps)} steps passed"))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = f"Scenario group {group_id}"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2592,6 +3463,7 @@ def suite_scenario(spec, step_fn=None):
     if step_fn is None:
         step_fn = suite_step
     steps = []
+    start_sample = frames_probe("start", spec["id"])
     # The calibration pre-step (a suite default, not a per-spec
     # field): every scenario starts from the baseline geometry, so no
     # scenario's resize can leak into the next inside a group's
@@ -2632,13 +3504,18 @@ def suite_scenario(spec, step_fn=None):
             delivery = result[3] if len(result) > 3 else None
             geometry = result[4] if len(result) > 4 else None
             walk = result[5] if len(result) > 5 else None
+            # Before the frame: a step that handed the display to
+            # another process gets one chance to bring it home, and
+            # the capture then shows Cura rather than the intruder.
+            foreground = foreground_guard()
+            ok, assertion = _foreground_verdict(foreground, ok, assertion)
             _FRAME_OUTLINE[0] = geometry
             capture = shot(name)
             _FRAME_OUTLINE[0] = None
             steps.append((name, action, assertion, ok, capture))
             EVIDENCE.append(_evidence_entry(spec, index, step, name, ok, action,
                                             assertion, capture, started, delivery,
-                                            geometry, walk))
+                                            geometry, walk, foreground))
         except Exception as exc:
             capture = shot(name)
             steps.append((name, f"{spec['name']}: {step.get('op')}",
@@ -2646,6 +3523,33 @@ def suite_scenario(spec, step_fn=None):
             EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
                                             f"{spec['name']}: {step.get('op')}",
                                             f"step error: {exc!r}", capture, started))
+    end_sample = frames_probe("end", spec["id"])
+    # The liveness verdict, folded into the scenario's own steps: a
+    # window that answered no forced repaint FAILS the scenario where
+    # the leg acts on it, because a scenario whose every assertion was
+    # answered over a window that had stopped painting is not a pass. A
+    # leg that does not judge its screen keeps the measurement as a
+    # report-only diagnostic (announced by write_evidence), so a miss
+    # there never changes a functional scenario's verdict — and no
+    # scenario's verdict turns on a passive count that merely held
+    # still, which is what an idle window's count does.
+    records = liveness_outcome([start_sample, end_sample])
+    if records and records[0]["outcome"] == LIVENESS_STALLED and records[0]["judged"]:
+        record = records[0]
+        name = f"{spec['id']}-zz-frames"
+        action = ("the visual heartbeat: the scene change this scenario's closing "
+                  "sample forced on the window and the frame it was due")
+        assertion = record["reason"]
+        # A still of the stalled window is the one picture worth taking
+        # on a failing scenario — and there is none to take on a leg
+        # that captures nothing, where shot() answers (None, None).
+        capture = shot(name)
+        steps.append((name, action, assertion, False, capture))
+        # Index -4: the negative block is the harness's own steps, not a
+        # spec step, and the classification reads it as a diagnostic.
+        EVIDENCE.append(_evidence_entry(spec, -4, {"op": "frames_probe"}, name,
+                                        False, action, assertion, capture,
+                                        time.monotonic()))
     return steps
 
 # ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────
@@ -2775,9 +3679,7 @@ def real_run():
     os.makedirs(RUN_DIR, exist_ok=True)
     video_path = os.path.join(RUN_DIR, "real.mp4")
     video_path = os.path.join(RUN_DIR, "real.mp4")
-    video = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, video_path])
+    video = start_recorder(video_path, framerate=15)
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -2789,12 +3691,7 @@ def real_run():
         for spec in specs:
             steps.extend(suite_scenario(spec, step_fn=real_step))
     finally:
-        time.sleep(1)
-        video.terminate()
-        try:
-            video.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            video.kill()
+        stop_recorder(video)
     title = "Real-printer read-only — observation, no commands"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
@@ -2853,6 +3750,12 @@ def suite_step(step):
         reply = rpc(request)
         time.sleep(0.6)
         delivery = reply.get("delivery") or {}
+        if not reply.get("ok"):
+            # The driver refuses an aim that provably cannot land
+            # (outside the window, or clipped out by a pane) — the
+            # honest failure a silent empty-space click never gave.
+            return False, f"a real press/release on {step.get('objectName') or step.get('text')}", \
+                f"refused before the press: {reply.get('error')}", None, reply.get("geometry"), reply.get("walk")
         if step.get("expect") == "not_accepted":
             # The negative half of the proof: the target RESOLVED (a
             # real item is under the aim) but no item accepted the
@@ -2895,10 +3798,6 @@ def suite_step(step):
         reply = exec_rpc(code)
         time.sleep(0.6)
         return bool(reply.get("emitted")), f"the '{step['text']}' button's clicked signal (the QML path a real click drives)", "emitted"
-    if op == "confirm_box":
-        reply = rpc({"id": 1, "cmd": "confirm_box", "button": step.get("button", "Yes")})
-        time.sleep(0.5)
-        return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", "answered"
     if op == "sim_set":
         reply = sim_http("/harness/scenario", "POST", step["state"])
         unknown = reply.get("unknown") or []
@@ -3113,8 +4012,8 @@ def suite_step(step):
         changed = value != before and value is not None
         return changed, f"the model's {step['prop']} changed from {before!r}", f"now {value!r}"
     if op == "write_fixture":
-        # A local gcode file for the upload flow — the runner and the
-        # simulator share /tmp/mpf, so the path resolves on both sides.
+        # A local gcode file for the upload flow — the spec builds the
+        # path from SCRATCH_DIR, so it resolves on both sides here.
         path = step["path"]
         try:
             with open(path, "w", encoding="utf-8") as handle:
@@ -3265,13 +4164,20 @@ def suite_step(step):
         reply = rpc({"id": 1, "cmd": "rect", **ref})
         now = "absent" if not reply.get("ok") else reply["rect"]
         geometry = None
+        view_note = ""
         if reply.get("ok") and isinstance(reply.get("rect"), dict):
             rect = reply["rect"]
             geometry = [rect["x"], rect["y"], rect["w"], rect["h"]]
+            # Presence in the tree is not presence on screen: an item
+            # scrolled out of its pane still reports a rect (mapToScene
+            # ignores clipping). Say so rather than let "entered the
+            # rendered tree" imply the control is reachable.
+            if rect.get("in_view") is False:
+                view_note = " · NOT in view (a press at its centre would land on empty space)"
         seen_note = ("observed earlier" if (observed or SUITE_STATE["rect"].get(("seen", key)))
                      else "never observed in this scenario")
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
-                f"now {now} ({seen_note})", None, geometry, reply.get("walk"))
+                f"now {now} ({seen_note}){view_note}", None, geometry, reply.get("walk"))
 
     if op == "census":
         # The data-render census: every data class present in the
@@ -3308,10 +4214,25 @@ def suite_step(step):
         return True, f"visible items matching {needle!r}", brief or "no matches"
 
     if op == "resize_window":
-        reply = rpc({"id": 1, "cmd": "resize", "w": int(step["w"]), "h": int(step["h"])})
+        # A "min" axis is the application's own floor, read off the
+        # live window by the driver, so one spec asks every platform
+        # for the smallest size its users can drag to. Nothing forces
+        # past that floor.
+        asked = [step["w"], step["h"]]
+        reply = rpc({"id": 1, "cmd": "resize", "w": asked[0], "h": asked[1]})
         if not reply.get("ok"):
-            return (False, f"resize to {step['w']}x{step['h']}", f"driver: {reply.get('error')}")
-        return True, f"the window resized to {step['w']}x{step['h']}", f"actual {reply['size']}"
+            return (False, f"resize to {asked[0]}x{asked[1]}", f"driver: {reply.get('error')}")
+        got = reply.get("size") or [0, 0]
+        note = f"actual {got}"
+        if reply.get("minimum"):
+            # Recorded on every resize so the floor each platform
+            # reports stays visible (macOS and Windows 1040x624, Xvfb
+            # 880x528) — a target below it is a geometry nobody can
+            # reach, and the note is where that shows.
+            note += f" · window minimum {reply['minimum']}"
+        if "min" in asked:
+            note += f" · asked {asked[0]}x{asked[1]}"
+        return True, f"the window resized to {got[0]}x{got[1]}", note
 
     if op == "sim_set_current_print":
         # The running-job state the load needs, with the sim's REAL
@@ -3389,7 +4310,8 @@ def suite_step(step):
                 "app = Application.getInstance()\n"
                 "result = {}\n"
                 "try:\n"
-                "    app.readLocalFile(QUrl.fromLocalFile(\"/tmp/mpf/models/voron_cube.stl\"),"
+                "    app.readLocalFile(QUrl.fromLocalFile("
+                + json.dumps(os.path.join(SCRATCH_DIR, "models", "voron_cube.stl")) + "),"
                 " add_to_recent_files=False)\n"
                 "    result[\"read\"] = True\n"
                 "except Exception as exc:\n"
@@ -3793,6 +4715,12 @@ def main():
         return first_install1()
     if mode == "firstinstall2":
         return first_install2()
+    if mode in TWO_BOOT_MODES:
+        # Both boots, driven from here: only a native host reaches this
+        # (tools/ui_test.sh runs the container's pair itself), and
+        # without it "firstinstall" fell through to scenario() below —
+        # a different leg wearing the mode's name.
+        return two_boot_run(mode)
     if mode == "migration1":
         return migration1()
     if mode == "migration2":
@@ -3813,4 +4741,16 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        _rc = main()
+    finally:
+        # In a finally: a run that raised is the one whose log is worth
+        # reading, and a native leg has nowhere else to keep it.
+        harvest_cura_log(RUN_DIR)
+    # The leg-level static check, after every recording is closed: a
+    # green verdict over a screen that never moved is not a success.
+    # Both run even when the scenario already failed — the recordings of
+    # a failed leg are the ones whose verdicts get read afterwards, and
+    # an `or` here would leave exactly those legs without the record.
+    _static_rc = static_leg_report(RUN_DIR)
+    sys.exit(_rc or _static_rc)

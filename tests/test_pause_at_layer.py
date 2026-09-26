@@ -3,7 +3,9 @@ import unittest
 
 from tests.fake_moonraker import FakeMoonraker
 from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
+from plugins.PreviewFormatting import pause_items, pause_summary
 from plugins.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory
+from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
@@ -95,7 +97,6 @@ class PauseAtLayerTests(unittest.TestCase):
         # The 2026-09-16 ruling: the list merges the manual schedule
         # with the gcode's baked pauses, always sorted by layer, and
         # the baked rows are read-only.
-        from plugins.PreviewFormatting import pause_items
         remaining = {3: 120.0, 7: 400.0, 11: 900.0}
         items = pause_items({7}, {7: "scheduled"}, {3, 11},
                             lambda layer: remaining.get(layer),
@@ -259,6 +260,241 @@ class NextPausePolicyTests(unittest.TestCase):
         pipeline, _, _, _ = self._pipeline()
         pipeline.update_anchor("job1", "paused", 110.0)
         self.assertIsNone(pipeline.update_anchor("job2", "printing", 200.0))
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt model suite")
+class MonitorPauseBlockTests(unittest.TestCase):
+    """The popover's reading of the schedule (the monitor model's own
+    surface): the Preview card's rows and flags, and — the load-bearing
+    difference — the candidate re-read for the layer the POPOVER stands
+    on rather than Cura's Preview selection. Scheduling one pause at the
+    end of that layer and no other is the point of the whole block."""
+
+    def setUp(self):
+        context = runtime()
+        self.qt = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+        self.client = self.qt.load("MoonrakerClient").MoonrakerClient(transport=ScriptedTransport())
+        self.client.configure("http://printer-a", "test-key", 750)
+        self.client._poll_timer.stop()
+        self.addCleanup(self.client.stop)
+        self.block_data = self.block()
+        self.model = None
+
+    # ---- the harness -------------------------------------------------
+
+    def block(self, manual=(), states=None, baked=(), current=10, **overrides):
+        """The block the coordinator publishes, built the way it builds
+        it (the row helper and the flags are the coordinator's own) —
+        its candidate is CURA'S selection, the one value the popover
+        must not adopt."""
+        items = pause_items(set(manual), dict(states or {}), set(baked),
+                            lambda layer: None, lambda seconds: f"{seconds:.0f}s",
+                            current=current)
+        block = {
+            "pauseAtLayerActive": True,
+            "pauseAtLayerCandidate": 5,  # Cura's Preview selection
+            "pauseAtLayerCanToggle": True, "pauseAtLayerScheduled": False,
+            "pauseAtLayerSummary": pause_summary(items),
+            "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": "",
+            "pauseAtLayerHasBaked": any(item["state"] == "baked" for item in items),
+            "pauseAtLayerHasClearable": bool(manual),
+        }
+        block.update(overrides)
+        return block
+
+    def snapshot(self, index=10, total=40):
+        from plugins.PrintState import PhysicalLayer, PrintSnapshot
+        from plugins.RemoteJobService import PrintObservation
+        return PrintSnapshot(observation=PrintObservation("printing", "part.gcode", 100, 20, 12.5),
+                             layer=PhysicalLayer(index=index, total=total))
+
+    def build(self, **kwargs):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Mesh(QObject):
+            changed = pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self.snapshot = {}
+                self.visible = True
+
+            def set_thresholds(self, low, high): pass
+            def set_visible(self, value): self.visible = value
+
+        self.print_state = self.snapshot()
+        kwargs.setdefault("pause_at_layer_block", lambda: self.block_data)
+        model = self.qt.load("MoonrakerMonitorModel").MoonrakerMonitorModel(
+            None, 1,
+            client=self.client,
+            print_state=lambda: self.print_state,
+            config=lambda: self.qt.load("PrinterConfig").PrinterConfig(
+                url="http://printer-a", api_key="test-key"),
+            apply_config=lambda config: None,
+            bed_mesh=Mesh(),
+            identity=lambda: ("A", "Printer A"),
+            **kwargs)
+        self.addCleanup(model.setMonitoringActive, False)
+        self.model = model
+        return model
+
+    def value(self, name):
+        value = getattr(self.model, name)
+        return value.value() if hasattr(value, "value") else value
+
+    def publish(self, index=10, total=40):
+        self.print_state = self.snapshot(index, total)
+        self.model._publish()
+
+    # ---- the surface -------------------------------------------------
+
+    def test_the_whole_block_reaches_the_popover_for_its_own_layer(self):
+        # The owner's scenario: the popover's slider stands on layer 200
+        # (the anchor is the 0-based 199) while Cura's Preview selection
+        # is 5. Every published value is read for layer 200 — the rows
+        # and the flags are the card's, the candidate and its gates are
+        # the popover's.
+        self.build()
+        self.block_data = self.block(manual={199}, states={199: "scheduled"}, baked={12}, current=13)
+        self.publish(index=13, total=250)
+        self.model.setFollowerLayerAnchor(199)
+        self.assertEqual(self.model.followerLayerAnchor, 199)
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 200)
+        self.assertTrue(self.value("pauseAtLayerActive"))
+        self.assertTrue(self.value("pauseAtLayerCanToggle"))
+        self.assertTrue(self.value("pauseAtLayerScheduled"))
+        self.assertTrue(self.value("pauseAtLayerHasBaked"))
+        self.assertTrue(self.value("pauseAtLayerHasClearable"))
+        self.assertEqual(self.value("pauseAtLayerUnavailableText"), "")
+        self.assertEqual(self.value("pauseAtLayerSummary"), "End-of-layer PAUSE: 13, 200")
+        self.assertEqual(self.value("pauseAtLayerItems"),
+                         [{"layer": 13, "eta": "ETA unavailable", "state": "baked", "passed": True},
+                          {"layer": 200, "eta": "ETA unavailable", "state": "scheduled"}])
+
+    def test_the_candidate_is_the_follower_layer_not_cura_selection(self):
+        # The pin that matters: the block's candidate (Cura's selection,
+        # 5) never becomes the popover's. Both are asserted so the test
+        # cannot pass by the block happening to agree.
+        self.build()
+        self.publish()
+        self.assertEqual(self.block_data["pauseAtLayerCandidate"], 5)
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 0, "no layer yet is no candidate")
+        self.model.setFollowerLayerAnchor(199)
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 200)
+        self.assertEqual(self.model.followerLayerAnchor + 1, self.value("pauseAtLayerCandidate"))
+
+    def test_the_live_layer_is_the_candidate_before_any_slider_commit(self):
+        # Attached and never slid: the popover schedules where it is
+        # actually showing, so the published anchor is the fallback.
+        self.build()
+        self.model.setFollowerPopoverOpen(True)
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_progress={"layers": {"current": {"classes": {}}}, "split": 7,
+                            "method": "motion index", "anchor": 7})
+        self.model._publish()
+        self.assertEqual(self.value("plateProgressAnchor"), 7)
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 8)
+
+    def test_the_gates_follow_the_popovers_layer(self):
+        # The card's gates are the popover's gates, re-read for its
+        # layer: the block's own canToggle/scheduled (Cura's 5) must not
+        # cross.
+        self.build()
+        self.block_data = self.block(manual={199}, states={199: "scheduled"})
+        self.publish(index=5, total=250)            # the popover sits BEHIND the print
+        self.model.setFollowerLayerAnchor(3)
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 4)
+        self.assertFalse(self.value("pauseAtLayerCanToggle"))
+        self.assertFalse(self.value("pauseAtLayerScheduled"))
+        self.assertEqual(self.value("pauseAtLayerUnavailableText"), "Layer 4 already printed")
+        # The last layer ends the print: the same refusal the controller
+        # applies at total - 1.
+        self.publish(index=39, total=40)
+        self.model.setFollowerLayerAnchor(39)
+        self.assertFalse(self.value("pauseAtLayerCanToggle"))
+        self.assertEqual(self.value("pauseAtLayerUnavailableText"), "Final layer ends the print")
+
+    def test_a_baked_pause_at_the_popovers_layer_blocks_the_toggle(self):
+        # The controller's backstop, mirrored: the gcode's own pause at
+        # this layer leaves the manual button inert, and the reason is
+        # the card's own wording.
+        self.build()
+        self.block_data = self.block(baked={199})
+        self.publish()
+        self.model.setFollowerLayerAnchor(199)
+        self.assertFalse(self.value("pauseAtLayerCanToggle"))
+        self.assertFalse(self.value("pauseAtLayerScheduled"))
+        self.assertEqual(self.value("pauseAtLayerUnavailableText"),
+                         "a pause is baked into the gcode at this layer")
+
+    def test_without_the_seam_the_block_is_inert(self):
+        # A model built without the coordinator's seam publishes the
+        # declared defaults — never a half-built block.
+        self.build(pause_at_layer_block=None)
+        self.publish()
+        self.assertEqual(self.value("pauseAtLayerCandidate"), 0)
+        self.assertEqual(self.value("pauseAtLayerItems"), [])
+        self.assertEqual(self.value("pauseAtLayerSummary"), "")
+        self.assertFalse(self.value("pauseAtLayerCanToggle"))
+        self.assertFalse(self.value("pauseAtLayerActive"))
+
+    def test_the_pause_group_notifies_when_the_schedule_changes(self):
+        # A key outside its signal's group never notifies: the popover
+        # binds to the group, so a changed block must emit — and a quiet
+        # poll must not.
+        self.build()
+        self.publish()
+        seen = []
+        self.model.pauseAtLayerChanged.connect(lambda: seen.append(1))
+        self.model._publish()
+        self.assertEqual(seen, [], "a quiet poll re-notified")
+        self.block_data = self.block(manual={11}, states={11: "scheduled"})
+        self.model._publish()
+        self.assertTrue(seen, "the pause block changed without notifying")
+        self.assertTrue(self.value("pauseAtLayerHasClearable"))
+
+    # ---- the intents -------------------------------------------------
+
+    def test_the_toggle_asks_for_the_end_of_the_layer_it_stands_on(self):
+        # The popover's own layer, handed over as the 1-based human layer
+        # the controller takes — and nothing else: the 0-based schedule
+        # slot for layer 200 is 199, which is due only once the print has
+        # moved PAST it (the end of 200, never its beginning, never any
+        # other layer).
+        toggles, removals, clears = [], [], []
+        self.build(request_pause_toggle=toggles.append, request_pause_remove=removals.append,
+                   request_pause_clear=lambda: clears.append(True))
+        self.publish()
+        self.model.setFollowerLayerAnchor(199)
+        self.model.togglePauseAtLayer(self.value("pauseAtLayerCandidate"))
+        self.assertEqual(toggles, [200])
+        self.assertEqual(due_end_of_layer_pauses({199}, 199), [], "layer 200's own beginning")
+        self.assertEqual(due_end_of_layer_pauses({199}, 200), [199], "the end of layer 200")
+        self.assertEqual(due_end_of_layer_pauses({199}, 201), [199])
+        # Junk and an absent layer never reach the coordinator.
+        for layer in ("junk", None, -4, 0):
+            self.model.togglePauseAtLayer(layer)
+            self.model.removePauseAtLayer(layer)
+        self.assertEqual(toggles, [200])
+        self.assertEqual(removals, [])
+        self.model.removePauseAtLayer(200)
+        self.model.clearPauseAtLayer()
+        self.assertEqual(removals, [200])
+        self.assertEqual(clears, [True])
+
+    def test_the_toggle_republishes_immediately(self):
+        # The button's own label flips on the click: the model must not
+        # wait for the next poll to re-read the schedule.
+        self.block_data = self.block()
+        self.build(request_pause_toggle=lambda layer: setattr(
+            self, "block_data", self.block(manual={199}, states={199: "scheduled"})))
+        self.publish()
+        self.model.setFollowerLayerAnchor(199)
+        self.assertFalse(self.value("pauseAtLayerScheduled"))
+        self.model.togglePauseAtLayer(200)
+        self.assertTrue(self.value("pauseAtLayerScheduled"),
+                        "the schedule changed without a publish")
 
 
 if __name__ == "__main__": unittest.main()

@@ -30,6 +30,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
@@ -122,6 +123,8 @@ ColumnLayout {
                 // always present, so a lone bar names it plainly.
                 text: {
                     var shown = [];
+                    if (root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1)
+                        shown.push("the background optimisation's sweep (teal, top edge)");
                     if (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0)
                         shown.push("the current layer's progress (top)");
                     if (root.printerModel != null && root.printerModel.nextPauseFraction >= 0)
@@ -141,9 +144,12 @@ ColumnLayout {
                 border.width: 1 * screenScaleFactor
                 border.color: UM.Theme.getColor("lining")
                 Rectangle {
-                    // Thirds with a scheduled pause, halves without,
-                    // the whole height without layer info (the live
+                    // The overall print fill owns the BOTTOM: thirds
+                    // with a scheduled pause, halves without, the
+                    // whole height without layer info (the live
                     // ruling).
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
                     height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
                     // monitorProgress is a PERCENTAGE (0..100); the
                     // layer value is already 0..1.
@@ -158,14 +164,34 @@ ColumnLayout {
                     // poll and landed its invalidation inside the
                     // column's polish (the 4.5.0 live find).
                     objectName: "nextPauseFill"
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
                     height: parent.height / 3
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
                     color: MoonrakerTheme.neonOrange
                 }
                 Rectangle {
+                    // The current layer's fill owns the TOP.
+                    anchors.left: parent.left
+                    anchors.top: parent.top
                     height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
                     color: UM.Theme.getColor("primary")
+                }
+                Rectangle {
+                    // The background optimisation's sweep (the live
+                    // request): a slim band across the bar's top edge
+                    // that crawls with the prepared share — visible
+                    // only while the pass is walking, and gone at 1.0,
+                    // so a completed pass adds nothing to the bar.
+                    // Only THIS bar shows it (the live ruling).
+                    objectName: "optimisationBand"
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    height: 3 * screenScaleFactor
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.platePassFraction : -1.0))
+                    color: MoonrakerTheme.jobOptimisation
+                    visible: root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1
                 }
             }
         }
@@ -362,7 +388,7 @@ ColumnLayout {
                         // The hourglass flips and rests at
                         // each 180-degree stop while the
                         // sand drains, then flips again.
-                        SequentialAnimation on rotation  {
+                        SequentialAnimation on rotation {
                             running: root.printerModel != null && root.printerModel.improvingEta
                             loops: Animation.Infinite
                             NumberAnimation {
@@ -435,7 +461,7 @@ ColumnLayout {
                     // current width — no captured
                     // endpoints, no restart tricks.
                     property real sweepPhase: 0
-                    NumberAnimation on sweepPhase  {
+                    NumberAnimation on sweepPhase {
                         running: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0
                         from: 0
                         to: 1

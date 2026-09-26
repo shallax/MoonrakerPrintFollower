@@ -9,13 +9,31 @@ on:
     - cron: "23 7 * * 3"
 
 
+# Every python process in these jobs runs unbuffered. A step whose
+# output lands only when the process exits is unreadable while it runs —
+# and on a matrix of 51 legs that is most of the wait. Set as an
+# environment variable rather than -u at each call site so it reaches
+# the nested ones too (docker_dev.sh's container, the harness scripts).
+env:
+  PYTHONUNBUFFERED: "1"
+  # Python's UTF-8 mode: on the Windows runners the default stdio codec
+  # is cp1252, which cannot encode the tick and cross every verdict line
+  # carries. This is the declarative half; the runners also reconfigure
+  # their own streams so they hold wherever they are invoked.
+  PYTHONUTF8: "1"
 jobs:
   cross-platform-suites:
-    # The headless pure-Python suites on the OSes the plugin ships
-    # to: Windows and macOS defects (the no-O_NOFOLLOW write failure,
-    # the boot-storm crashers' siblings) must not wait for a manual
-    # pass. No display needed — the Qt-gated tests
-    # skip where PyQt6 is absent, and the container legs stay Linux.
+    # The host suites on the OSes the plugin ships to: Windows and
+    # macOS defects (the no-O_NOFOLLOW write failure, the Windows
+    # process-liveness sweep, the boot-storm crashers' siblings) must
+    # not wait for a manual pass. No display is needed with the
+    # offscreen platform plugin, which the pinned PyQt6 wheel ships on
+    # both runners.
+    #
+    # The Qt runtime is INSTALLED here on purpose: without it every
+    # Qt-gated test skips, the leg reports green having run the
+    # platform-relevant half of nothing, and the Windows behaviour
+    # (RC-01's sweep) is never executed on the OS it exists for.
     name: Suites (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -30,9 +48,204 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run the headless host suites
+      - name: Install the pinned Qt runtime (Cura supplies Qt in production)
+        run: python -m pip install PyQt6==6.11.0
+
+      - name: Pin the harness font (the dev container pins fonts-dejavu 2.37)
         shell: bash
-        run: JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+        run: |
+          # The dev container pins fonts-dejavu-core=2.37 so text metrics
+          # are fixed. The runners carry no such pin, and their own fonts
+          # are wider — which moves every text-driven layout these suites
+          # measure (a frame laid out at the mount less its chrome, a
+          # fold crossing that shifts with the typeface). The suites run
+          # offscreen, where Qt's basic font database honours
+          # QT_QPA_FONTDIR, so the same version is pinned here.
+          #
+          # Python owns the path: RUNNER_TEMP is a Windows-style path on
+          # the Windows runner and bash would mangle its backslashes, so
+          # the directory is created in native form and printed back.
+          # stdlib only — unzip is not guaranteed on either runner.
+          #
+          # RUNNER_TEMP, never tempfile.gettempdir(): on the Windows
+          # runner the latter answers with the 8.3 SHORT form
+          # (C:\Users\RUNNER~1\AppData\Local\Temp), and Qt's font loader
+          # then finds no usable font at all — the failing leg rendered
+          # every glyph as an empty box, which is what widened its
+          # layout (the frame census read 108 px against this
+          # container's 88). macOS is green with the same pin, so the
+          # mechanism is sound and the path is the fault.
+          dir="$(python - <<'PY'
+          import io, os, sys, urllib.request, zipfile
+
+          url = ("https://github.com/dejavu-fonts/dejavu-fonts/releases/"
+                 "download/version_2_37/dejavu-fonts-ttf-2.37.zip")
+          target = os.path.join(
+              os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR") or "/tmp",
+              "mpf-fonts")
+          os.makedirs(target, exist_ok=True)
+          blob = urllib.request.urlopen(url, timeout=60).read()
+          archive = zipfile.ZipFile(io.BytesIO(blob))
+          written = []
+          for name in archive.namelist():
+              base = os.path.basename(name)
+              if base.startswith("DejaVuSans") and base.endswith(".ttf"):
+                  with open(os.path.join(target, base), "wb") as handle:
+                      handle.write(archive.read(name))
+                  written.append(base)
+          if not written:
+              raise SystemExit("no DejaVuSans ttf in the release archive")
+          sys.stderr.write("pinned: %s\n" % ", ".join(sorted(written)))
+          sys.stdout.write(target)
+          PY
+          )"
+          echo "font dir: $dir"
+          test -n "$dir" || { echo "::error::the font pin produced no directory"; exit 1; }
+          echo "QT_QPA_FONTDIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Probe the harness environment (what the censuses measure in)
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # The pixel censuses read the geometry and the font this step
+          # reports. It runs HERE, not inside the suite, because
+          # tools/run_tests.sh prints a worker's log only on failure and
+          # only its FAIL:/ERROR: neighbourhood — a probe living in the
+          # tests is discarded on exactly the legs that need it.
+          python - <<'PY'
+          import os
+          from PyQt6.QtGui import QFontDatabase, QGuiApplication
+          from PyQt6.QtQuick import QQuickWindow
+
+          app = QGuiApplication([])
+          families = sorted(QFontDatabase.families())
+          print("probe: default family %r" % QGuiApplication.font().family())
+          print("probe: QT_QPA_FONTDIR %r" % os.environ.get("QT_QPA_FONTDIR", ""))
+          print("probe: %d families, first %r" % (len(families), families[:8]))
+          screen = QGuiApplication.primaryScreen()
+          if screen is not None:
+              print("probe: screen %dx%d dpr %s"
+                    % (screen.size().width(), screen.size().height(),
+                       screen.devicePixelRatio()))
+          for want in ((80, 400), (110, 400), (700, 700)):
+              window = QQuickWindow()
+              window.resize(*want)
+              window.show()
+              app.processEvents()
+              print("probe: asked %dx%d, window got %dx%d"
+                    % (want[0], want[1], window.width(), window.height()))
+              window.close()
+          PY
+
+      - name: Render the mounts the geometry censuses use (artefact)
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # A number in a log says the frame is 108 px; a picture says
+          # WHY. These are the exact mounts the pixel censuses create,
+          # rendered offscreen and published as an artefact, so a leg
+          # that disagrees about geometry can be LOOKED at instead of
+          # inferred from an assertion message.
+          mkdir -p "$RUNNER_TEMP/shots"
+          cat > "$RUNNER_TEMP/mount_shot.py" <<'PY'
+          import os
+          import sys
+          import unittest
+
+          sys.path.insert(0, os.path.join(os.environ["REPO"], "tests"))
+          sys.path.insert(0, os.environ["REPO"])
+
+          import test_qml_real_engine as _re
+
+
+          class MountShot(_re.CameraFpsControlTests):
+              def test_shot(self):
+                  out = os.environ["SHOT_DIR"]
+                  for width, height, tag in ((80, 400, "tiny"),
+                                             (110, 400, "narrow"),
+                                             (700, 700, "roomy")):
+                      _pane, window, _model, _image, frame = self._fps_pane(width, height)
+                      self._pump_ms(300)
+                      window.grabWindow().save(os.path.join(out, tag + ".png"))
+                      print("shot %s: asked %dx%d, window %dx%d, frame %.1fx%.1f"
+                            % (tag, width, height, window.width(), window.height(),
+                               frame.width(), frame.height()))
+                      sys.stdout.flush()
+
+
+          unittest.TextTestRunner(verbosity=0).run(
+              unittest.TestSuite([MountShot("test_shot")]))
+          PY
+          REPO="$PWD" SHOT_DIR="$RUNNER_TEMP/shots" PYTHONPATH="$PWD/tests" \
+              python "$RUNNER_TEMP/mount_shot.py" || true
+
+      - name: Run the host suites with the real Qt runtime
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          # Every failing real-engine test publishes the windows it had
+          # open into this directory, named for the test.
+          HARNESS_SHOT_DIR: ${{ runner.temp }}/shots
+        run: |
+          # The sentinel is the guard: this step being PRESENT is not
+          # something the step itself can check, and a leg that never
+          # ran the suites reports exactly the same green as a leg that
+          # passed them. The platform-safety step below requires it.
+          JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+          touch "$RUNNER_TEMP/host-suites-ran"
+
+      - name: Publish the rendered mounts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: harness-mounts-${{ matrix.os }}
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+
+      - name: Platform-safety suite (the Qt-gated regressions must EXECUTE)
+        shell: bash
+        run: |
+          # A green leg that skipped its Qt-gated tests is the false
+          # pass this step exists to stop, and a leg that ran nothing
+          # at all still exits 0. Demand a positive test count and the
+          # skip-free verdict: `OK` alone, never `OK (skipped=n)`.
+          #
+          # The host-suites sentinel is the same guard one level up: a
+          # leg whose "Run the host suites" step is missing or renamed
+          # reports byte-identical green to one that passed them. Only
+          # the step that runs the suites can leave the marker, so its
+          # absence is the failure.
+          if [ ! -f "${RUNNER_TEMP:-/tmp}/host-suites-ran" ]; then
+            echo "::error::the host suites never ran in this leg (no sentinel)"
+            exit 1
+          fi
+          log="${RUNNER_TEMP:-/tmp}/platform-safety.log"
+          python -m unittest discover -s tests -p "test_platform_safety.py" -v >"$log" 2>&1 || {
+            cat "$log"
+            exit 1
+          }
+          cat "$log"
+          python - "$log" <<'PY'
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
+              report = handle.read()
+          # unittest colourises on a forced-colour environment as well as a
+          # tty, and an escape between the line start and `OK` would walk the
+          # verdicts past every pattern below.
+          report = re.sub(r"\x1b\[[0-9;]*m", "", report)
+          ran = re.search(r"^Ran (\d+) tests? in ", report, re.M)
+          if ran is None or int(ran.group(1)) < 1:
+              sys.exit("::error::the platform-safety suite executed no tests")
+          if re.search(r"^OK \(skipped=\d+\)", report, re.M):
+              sys.exit("::error::the platform-safety suite skipped: the Qt runtime is missing")
+          if not re.search(r"^OK", report, re.M):
+              sys.exit("::error::the platform-safety suite did not pass")
+          print("platform-safety: {} test(s) executed, none skipped".format(ran.group(1)))
+          PY
 
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against
@@ -40,7 +253,7 @@ jobs:
     # container brings its own Xvfb and ffmpeg, so the ubuntu runner
     # needs no display. Galleries upload alongside the other evidence.
     name: Harness smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       packages: read
@@ -61,7 +274,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -143,7 +356,7 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -178,7 +391,7 @@ jobs:
 
   python-compatibility:
     name: Python ${{ matrix.python-version }} and Qt runtime
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -212,9 +425,25 @@ jobs:
           python -c "from PyQt6.QtCore import QCoreApplication"
           env JOBS=2 LEGS=host tools/run_tests.sh
 
+      - name: Write the JUnit report
+        if: ${{ !cancelled() }}
+        run: python tools/unittest_junit.py
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        # One action, two report types: codecov-action carries both, and
+        # test-results-action says so itself ("being deprecated in favor
+        # of 'codecov-action' ... with 'report_type: test_results'").
+        # Same version as the coverage upload above, deliberately.
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: tests.junit.xml
+          report_type: test_results
+
   release:
     name: Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -276,6 +505,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
 
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v7
@@ -289,13 +519,16 @@ jobs:
 
   screenshot-sync:
     name: Screenshot sync
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
       - name: Build the pinned capture image
-        run: docker build -q -t moonraker-print-follower-dev .
+        # Through the retrying helper: this step's apt install is the
+        # one that fails on a bad mirror, and a red image build here
+        # reads as a stale-screenshot failure it has nothing to do with.
+        run: ./tools/build_image.sh moonraker-print-follower-dev .
 
       - name: Regenerate screenshots in the canonical container
         # The dev container pins the toolchain (Qt, fonts) that makes the
@@ -307,8 +540,8 @@ jobs:
                 && python3 tools/capture_preview.py dist/screenshots \
                 && python3 tools/capture_settings.py dist/screenshots \
                 && python3 tools/capture_upload.py dist/screenshots \
-                && python3 tools/capture_whatsnew.py dist/screenshots"
-
+                && python3 tools/capture_whatsnew.py dist/screenshots \
+                && python3 tools/capture_filemanager.py dist/screenshots"
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
         # committed-compare above only has a CHANCE of catching a
@@ -334,7 +567,7 @@ jobs:
 
   analyze:
     name: Analyze (CodeQL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       security-events: write
     strategy:

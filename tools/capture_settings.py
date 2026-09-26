@@ -181,6 +181,16 @@ class SettingsManager(QObject):
     def settingsZTolerance(self):
         return "0.040"
 
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsCacheMaxMb(self):
+        return "512"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRestoreWindow(self):
+        # The shipped default (RESTORE_WINDOW_DEFAULT): the capture
+        # renders what a fresh install shows, never a blank combo.
+        return "3"
+
     # --- Integrated Moonraker output settings ---
     @pyqtProperty(str, notify=settingsChanged)
     def settingsFrontendUrl(self):
@@ -232,6 +242,10 @@ class SettingsManager(QObject):
 
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceLayer(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsSeekTrace(self):
         return False
 
     @pyqtProperty(bool, notify=settingsChanged)
@@ -299,6 +313,14 @@ class SettingsManager(QObject):
         except (TypeError, ValueError):
             return False
         return 0.005 <= number <= 0.250
+
+    @pyqtSlot(str, result=bool)
+    def validCacheMax(self, value):
+        try:
+            size = int(str(value).strip())
+        except (TypeError, ValueError):
+            return False
+        return 16 <= size <= 4096
 
     @pyqtSlot(str, result=bool)
     def validRetryInterval(self, value):

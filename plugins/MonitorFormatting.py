@@ -666,15 +666,11 @@ def peripheral_values(snapshot):
                 "load": f"{max(0, stats['mcu_awake'] * 100):.1f}%" if "mcu_awake" in stats else "—",
                 "task": " · ".join(tasks) or "—", "frequency": f"{frequency / 1000000:.3f} MHz" if frequency else "—",
                 "memory": format_bytes(memory), "transport": " · ".join(traffic) or "—"})
-    exclude = snapshot.auxiliary.get("exclude_object") or {}
-    excluded = exclude.get("excluded_objects") or ()
-    objects = [{"name": str(item["name"]), "excluded": item["name"] in excluded, "current": item["name"] == exclude.get("current_object")}
-        for item in exclude.get("objects", ()) if isinstance(item, Mapping) and item.get("name")]
     system = snapshot.auxiliary.get("system_stats") or {}
     memory = number(system.get("memavail"))
     klippy = str((snapshot.auxiliary.get("webhooks") or {}).get("state") or snapshot.server.get("klippy_state") or "unknown")
     return {"temperatureItems": temperatures, "fanItems": fans, "filamentSensorItems": filament,
-        "excludeObjectItems": objects, "mcuItems": mcus, "mcuSummary": " · ".join(versions) or "—",
+        "mcuItems": mcus, "mcuSummary": " · ".join(versions) or "—",
         "hostLoad": f"{number(system.get('sysload')):.2f}" if system.get("sysload") is not None else "—",
         "memoryAvailable": f"{memory / 1048576:.2f} GB" if memory >= 1048576 else f"{memory / 1024:.0f} MB" if memory > 0 else "—",
         "cpuTemperature": f"{cpu:.1f} °C" if cpu is not None else "—", "klippyState": klippy.capitalize(),
@@ -758,4 +754,325 @@ def infer_macro_parameters(gcode):
                 if old["type"] == "string" and kind != "string": old["type"] = kind
                 if not old["hasDefault"] and item["hasDefault"]: old.update(default=item["default"], hasDefault=True, required=False)
     return list(found.values())
+
+
+# The plate map's object budget: beyond it, rows are dropped and the
+# truncation is stated rather than silently ignored.
+MAX_PLATE_OBJECTS = 256
+# The per-polygon vertex budget: the silhouette is what the map
+# draws, and the paint cost is vertices × objects per repaint.
+MAX_PLATE_VERTICES = 64
+# A bed-coordinate sanity cap: real beds are orders of magnitude below
+# this, so anything past it is printer-controlled garbage, not a plate.
+_COORD_CAP = 1e7
+
+
+def _natural_key(name: str):
+    """casefolded with numeric runs split, so STL_2 precedes STL_10."""
+    return [int(part) if part.isdigit() else part.casefold()
+            for part in re.split(r"(\d+)", str(name))]
+
+
+def _finite_pair(value):
+    """A [x, y] pair as finite, sane floats — else None."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            x, y = float(value[0]), float(value[1])
+            if math.isfinite(x) and math.isfinite(y) and abs(x) < _COORD_CAP and abs(y) < _COORD_CAP:
+                return [x, y]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def containing_object(rows, x, y):
+    """The first row whose polygon contains the bed point (ray
+    casting) — the local printed-cache's probe (the live ruling: the
+    DEFINE order is NOT the print order on every machine, so the
+    toolhead's own visits are the truth)."""
+    for row in rows:
+        polygon = row.get("polygon")
+        if polygon and _point_in_polygon(x, y, polygon):
+            return row["name"]
+    return None
+
+
+def _point_in_polygon(x, y, polygon):
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i][0], polygon[i][1]
+        xj, yj = polygon[j][0], polygon[j][1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def polygon_bounds(polygon):
+    """The polygon's bounding box, as (min_x, min_y, max_x, max_y) —
+    the print walk's cheap rejection before any vertex test."""
+    xs = [point[0] for point in polygon]
+    ys = [point[1] for point in polygon]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _orientation(ax, ay, bx, by, cx, cy):
+    """The turn sign of a -> b -> c: 1 left, -1 right, 0 collinear."""
+    value = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    if value > 0.0:
+        return 1
+    if value < 0.0:
+        return -1
+    return 0
+
+
+def _on_span(ax, ay, bx, by, px, py):
+    """The collinear point *p* lies within the a -> b box."""
+    return (min(ax, bx) <= px <= max(ax, bx)
+            and min(ay, by) <= py <= max(ay, by))
+
+
+def _segments_cross(ax, ay, bx, by, cx, cy, dx, dy):
+    """True when segment a-b meets segment c-d, endpoints included."""
+    first = _orientation(ax, ay, bx, by, cx, cy)
+    second = _orientation(ax, ay, bx, by, dx, dy)
+    third = _orientation(cx, cy, dx, dy, ax, ay)
+    fourth = _orientation(cx, cy, dx, dy, bx, by)
+    if first != second and third != fourth:
+        return True
+    # The collinear cases: a vertex standing on the other segment's span
+    # still means the two meet.
+    return ((first == 0 and _on_span(ax, ay, bx, by, cx, cy))
+            or (second == 0 and _on_span(ax, ay, bx, by, dx, dy))
+            or (third == 0 and _on_span(cx, cy, dx, dy, ax, ay))
+            or (fourth == 0 and _on_span(cx, cy, dx, dy, bx, by)))
+
+
+def _segment_in_polygon(x0, y0, x1, y1, polygon):
+    """True when the segment meets the polygon at all.
+
+    An extrusion edge deposits inside the object whether it ends there
+    or passes through: a corner clipping whose two ends both sit outside
+    still prints material in the object, so the crossing test runs when
+    the ends alone say nothing. The walk pre-rejects with the polygon's
+    bounds, so this only sees segments that could meet it.
+    """
+    if _point_in_polygon(x0, y0, polygon) or _point_in_polygon(x1, y1, polygon):
+        return True
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        if _segments_cross(x0, y0, x1, y1, polygon[j][0], polygon[j][1],
+                           polygon[i][0], polygon[i][1]):
+            return True
+        j = i
+    return False
+
+
+def _finite_polygon(value):
+    """[[x, y], ...] pairs or a flat [x, y, x, y, ...] run, sanitised:
+    any non-finite or absurd coordinate drops the polygon entirely — a
+    printer-controlled value must never reach the path builder. The
+    ring decimates to the vertex budget: the map needs the silhouette,
+    not the raw perimeter's thousands of vertices (the live report —
+    full-vertex polygons repainted per poll crawled the picker)."""
+    if not isinstance(value, (list, tuple)) or not value:
+        return None
+    points = []
+    if isinstance(value[0], (list, tuple)):
+        for point in value:
+            pair = _finite_pair(point)
+            if pair is None:
+                return None
+            points.append(pair)
+    else:
+        if len(value) % 2:
+            return None
+        for index in range(0, len(value), 2):
+            pair = _finite_pair((value[index], value[index + 1]))
+            if pair is None:
+                return None
+            points.append(pair)
+    if len(points) < 3:
+        return None
+    if len(points) <= MAX_PLATE_VERTICES:
+        return points
+    # Distance decimation over the closed ring; the last vertex is
+    # kept so the closing edge always draws.
+    perimeter = sum(math.hypot(points[index][0] - points[index - 1][0],
+                               points[index][1] - points[index - 1][1])
+                    for index in range(1, len(points)))
+    stride = perimeter / (MAX_PLATE_VERTICES - 2)
+    kept = [points[0]]
+    travelled = 0.0
+    for index in range(1, len(points) - 1):
+        travelled += math.hypot(points[index][0] - points[index - 1][0],
+                                points[index][1] - points[index - 1][1])
+        if travelled >= stride:
+            kept.append(points[index])
+            travelled = 0.0
+    kept.append(points[-1])
+    return kept
+
+
+def plate_values(exclude_object):
+    """The plate map's object projection: normalised polygons in bed
+    coordinates, the natural-sort order, and the truncation count. Pure
+    and lane-agnostic — the model passes whichever lane carries the
+    exclude_object status, and merges the grace verdicts it owns."""
+    exclude_object = exclude_object if isinstance(exclude_object, Mapping) else {}
+    excluded = frozenset(exclude_object.get("excluded_objects") or ())
+    current = exclude_object.get("current_object")
+    objects = []
+    truncated = 0
+    for index, item in enumerate(exclude_object.get("objects") or ()):
+        if not isinstance(item, Mapping) or not item.get("name"):
+            continue
+        if len(objects) >= MAX_PLATE_OBJECTS:
+            truncated += 1
+            continue
+        name = str(item["name"])
+        objects.append({
+            "name": name,
+            "center": _finite_pair(item.get("center")),
+            "polygon": _finite_polygon(item.get("polygon")),
+            # The DEFINE order (Klipper prints objects in it, layer by
+            # layer — the live-verified order); the passed flag derives
+            # from it in the model.
+            "order": index,
+            "excluded": name in excluded,
+            "current": name == current,
+        })
+    # The natural name sort for the display (the live ruling: the
+    # status order read as 1, 10, 11, ..., 2, 20); the `order` field
+    # keeps the DEFINE sequence for the printed rule.
+    objects.sort(key=lambda row: _natural_key(row["name"]))
+    return {"objects": objects, "truncated": truncated, "excludedCount": len(excluded)}
+
+
+# A job no memo has projected yet. None is a real job value (the
+# monitor-only print's unresolved identity), so the fresh state needs
+# a sentinel of its own.
+_NO_PLATE_JOB = object()
+
+
+def _plate_points(value):
+    """A private copy of a raw point run, in the payload's own container
+    shape — the copy is what keeps the later comparison honest (a run
+    mutated in place after it was judged must not read as unchanged),
+    and matching shapes keep that comparison C-level. A flat run
+    (Klipper's own shape) copies in one pass, its elements being
+    immutable scalars; only a paired run rebuilds its points."""
+    if not isinstance(value, (list, tuple)):
+        return value
+    if value and isinstance(value[0], (list, tuple)):
+        copied = [list(point) if isinstance(point, (list, tuple)) else point
+                  for point in value]
+        return tuple(copied) if isinstance(value, tuple) else copied
+    return tuple(value) if isinstance(value, tuple) else list(value)
+
+
+def _plate_definition(source):
+    """The definition the projection reads, snapshotted away from the
+    payload: the object rows in DEFINE order (name, centre, ring), the
+    excluded names and the current one. None when the payload's
+    `objects` is not a sequence — then it cannot be judged cheaply and
+    is projected fresh every poll."""
+    objects = source.get("objects") or ()
+    if not isinstance(objects, (list, tuple)):
+        return None
+    rows = []
+    for item in objects:
+        rows.append((item.get("name"), _plate_points(item.get("center")),
+                     _plate_points(item.get("polygon")))
+                    if isinstance(item, Mapping) else None)
+    return (rows, frozenset(source.get("excluded_objects") or ()),
+            source.get("current_object"))
+
+
+def _canonical_points(value):
+    """The run as a tuple of tuples, for the fallback compare — never
+    cached, so it may alias the payload."""
+    if value and isinstance(value[0], (list, tuple)):
+        return tuple(tuple(point) if isinstance(point, (list, tuple)) else point
+                     for point in value)
+    return tuple(value)
+
+
+def _same_points(cached, fresh):
+    """Point-run equality: the cached side is a private copy in the
+    payload's own shape, so the steady state is ONE C-level compare of
+    like containers — this compare is the memo's own per-poll cost. A
+    payload that flips container types normalises both sides once
+    rather than re-walking the ring for a difference that is not
+    there."""
+    if cached is fresh or cached == fresh:
+        return True
+    if not isinstance(cached, (list, tuple)) or not isinstance(fresh, (list, tuple)):
+        return False
+    return _canonical_points(cached) == _canonical_points(fresh)
+
+
+def _same_definition(saved, source):
+    """Whether the payload still carries the definition the cached
+    projection was built from. The rings compare as whole runs at C
+    speed, so nothing is re-validated per vertex."""
+    rows, excluded, current = saved
+    if excluded != frozenset(source.get("excluded_objects") or ()) \
+            or current != source.get("current_object"):
+        return False
+    objects = source.get("objects") or ()
+    if not isinstance(objects, (list, tuple)) or len(objects) != len(rows):
+        return False
+    for saved_row, item in zip(rows, objects, strict=True):
+        if isinstance(item, Mapping) != (saved_row is not None):
+            return False
+        if saved_row is None:
+            continue
+        if saved_row[0] != item.get("name") \
+                or not _same_points(saved_row[1], item.get("center")) \
+                or not _same_points(saved_row[2], item.get("polygon")):
+            return False
+    return True
+
+
+class PlateProjectionMemo:
+    """The plate projection, memoised across polls.
+
+    A core poll carries virtual_sdcard's moving file position and
+    print_stats' advancing clock; the exclude_object definition rides
+    along unchanged, and the session boundary hands out a freshly
+    deep-copied status, so object identity can never tell a changed
+    definition from a moved one. This judges the DEFINITION instead —
+    names, centres, rings and the two flag fields — and reuses the
+    normalised rows while it matches, which keeps the per-vertex walk
+    (coordinate validation plus ring decimation, O(vertices) of Python
+    per object, on the owner thread) off the poll path. A late
+    EXCLUDE_OBJECT_DEFINE and a changed silhouette both arrive as a
+    changed row, and the job boundary drops a finished print's
+    geometry rather than carrying it into the next one.
+    """
+
+    def __init__(self):
+        self._job = _NO_PLATE_JOB
+        self._definition = None
+        self._value = None
+
+    def value(self, exclude_object, job=None):
+        """The normalised projection for this payload, re-walked only
+        when its definition or the job actually changed."""
+        source = exclude_object if isinstance(exclude_object, Mapping) else {}
+        try:
+            unchanged = self._definition is not None and self._value is not None \
+                and job == self._job and _same_definition(self._definition, source)
+        except Exception:
+            # A payload the cheap compare cannot judge (an exotic value
+            # type) is projected fresh — exactly what the caller did
+            # before the memo existed.
+            unchanged = False
+        if not unchanged:
+            self._value = plate_values(source)
+            self._job = job
+            self._definition = _plate_definition(source)
+        return self._value
 

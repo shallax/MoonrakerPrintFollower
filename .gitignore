@@ -22,3 +22,5 @@ review/
 .determinism-check/
 .claude/*
 !.claude/skills/
+# The JUnit report the CI leg writes and uploads; an artifact, never shipped.
+tests.junit.xml

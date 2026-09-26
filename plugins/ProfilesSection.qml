@@ -23,6 +23,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.temperaturePresetItems.length > 0 && root.printerModel.sectionExpandedMap["profiles"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -71,7 +72,7 @@ ColumnLayout {
             }
             UM.Label {
                 height: 36 * screenScaleFactor
-                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive ? "Disabled during a print" : "—")) : "—"
+                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Disabled during a print" : "—")) : "—"
                 wrapMode: Text.NoWrap
                 elide: Text.ElideRight
                 color: UM.Theme.getColor("text")
@@ -87,7 +88,7 @@ ColumnLayout {
                     width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
                     // sentence in the tooltip (the ruling).
-                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
+                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Temperature profiles are disabled while the print is running. A paused print allows them." : "")) : ""
                 }
             }
         }

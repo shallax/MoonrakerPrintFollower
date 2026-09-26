@@ -21,6 +21,8 @@ class MoonrakerPrintFollower(QObject, Extension):
     def transport(self): return self.client.transport
     @property
     def print_state(self): return self._runtime.coordinator.snapshot
+
+    def index(self): return self._runtime.index
     @property
     def bed_mesh(self): return self._runtime.bed_mesh
     @property
@@ -28,10 +30,12 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def has_toolpath(self): return self._runtime.cura.has_toolpath
 
-    def request_file_download(self, relpath): self._runtime.file_download.request(relpath)
+    def request_file_download(self, relpath): self._runtime.file_download.request_save(relpath)
 
     @property
     def download_failed(self): return self._runtime.file_download.failed
+    def download_progress(self): return self._runtime.file_download.progress()
+    def cancel_file_download(self): self._runtime.file_download.cancel()
 
     def current_printer_config(self): return self._runtime.binding.config
     def current_printer_identity(self): return self._runtime.binding.identity
@@ -49,10 +53,17 @@ class MoonrakerPrintFollower(QObject, Extension):
     @pyqtSlot()
     def toggleFollowingPause(self): self._runtime.coordinator.toggle_attachment()
 
+    def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
+    def setPlateSplit(self, motions): self._runtime.coordinator.set_plate_split(motions)
+    def setFollowerPopoverOpen(self, popover_open): self._runtime.coordinator.set_popover_open(popover_open)
+    # The popover's pause block: the one the Preview card just received.
+    def pauseAtLayerBlock(self): return self._runtime.coordinator.pause_block
+
+    def invalidateIndex(self): self._runtime.index.invalidate()
+
     def deinitialize(self):
         self._whats_new.close()
-        # The leak probe stops with the plugin — no dead runtime
-        # retained, no timer stacking on re-register.
+        # The leak probe stops with the plugin (no dead runtime, no re-stacked timer).
         from .LeakProbe import stop_leak_probe
         stop_leak_probe()
         self._runtime.close()

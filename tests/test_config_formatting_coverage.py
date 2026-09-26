@@ -47,7 +47,7 @@ from plugins.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY
                                         can_restart, can_resume, can_set_absolute,
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
-from plugins.MonitorTemperatureHistory import (PALETTE, TemperatureHistory, _segments,
+from plugins.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
                                                chart_payload, series_metadata)
 from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
 from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
@@ -57,7 +57,8 @@ from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, 
 from plugins.PluginPersistence import PluginPersistence
 from plugins.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
                                        pause_unavailable, status_icon, status_text)
-from plugins.PrinterConfig import (FeedMode, PrinterConfig, PrinterConfigStore, normalise_url,
+from plugins.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
+                                   PrinterConfig, PrinterConfigStore, normalise_url,
                                    normalise_temperature_chart, upload_path_safe)
 from plugins.StateStore import StateStore
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
@@ -524,6 +525,7 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
 
     def test_peripheral_values_projects_the_auxiliary_status(self):
         snapshot = SimpleNamespace(
+            core={},
             auxiliary={
                 "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.4},
                 "temperature_host raspberry_pi": {"temperature": 45.5},
@@ -562,9 +564,6 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(mcus["Main MCU"]["frequency"], "40.000 MHz")
         self.assertIn("TX 2.0 kB", mcus["Main MCU"]["transport"])
         self.assertEqual(mcus["Extra"]["frequency"], "—")
-        self.assertEqual([item["name"] for item in values["excludeObjectItems"]], ["cube", "sphere"])
-        self.assertTrue(values["excludeObjectItems"][1]["excluded"])
-        self.assertTrue(values["excludeObjectItems"][0]["current"])
         self.assertEqual(values["memoryAvailable"], "2.00 GB")
         self.assertEqual(values["hostLoad"], "1.50")
         self.assertEqual(values["klippyState"], "Ready")
@@ -573,7 +572,7 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(values["cpuTemperature"], "45.5 °C")
 
     def test_peripheral_values_survives_an_empty_auxiliary(self):
-        snapshot = SimpleNamespace(auxiliary={}, server={}, printer={})
+        snapshot = SimpleNamespace(core={}, auxiliary={}, server={}, printer={})
         values = peripheral_values(snapshot)
         self.assertEqual(values["temperatureItems"], [])
         self.assertEqual(values["mcuSummary"], "—")
@@ -584,7 +583,8 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(values["memoryAvailable"], "—")
 
     def test_peripheral_values_reports_a_small_memory_reading_in_megabytes(self):
-        snapshot = SimpleNamespace(auxiliary={"system_stats": {"memavail": 524288}},
+        snapshot = SimpleNamespace(core={},
+                                   auxiliary={"system_stats": {"memavail": 524288}},
                                    server={}, printer={})
         self.assertEqual(peripheral_values(snapshot)["memoryAvailable"], "512 MB")
 
@@ -724,26 +724,34 @@ class PrinterConfigCoverageTests(unittest.TestCase):
             "z_tolerance": "nonsense",
             "ready_retry_interval_s": "nonsense",
             "camera_rotation": "nonsense",
+            "camera_fps": "nonsense",
             "aux_interval_ms": "nonsense",
             "console_interval_ms": "nonsense",
+            "cache_max_mb": "nonsense",
         })
         self.assertEqual(config.poll_interval_ms, 750)
         self.assertEqual(config.z_tolerance, 0.04)
         self.assertEqual(config.ready_retry_interval_s, 0.5)
         self.assertEqual(config.camera_rotation, 0)
+        self.assertEqual(config.camera_fps, CAMERA_FPS_DEFAULT)
         self.assertEqual(config.aux_interval_ms, 2500)
         self.assertEqual(config.console_interval_ms, 1000)
+        self.assertEqual(config.cache_max_mb, 512)
 
         clamped = PrinterConfig.from_dict({
             "poll_interval_ms": 10 ** 9, "z_tolerance": 0.5, "ready_retry_interval_s": 120.0,
-            "camera_rotation": 45, "aux_interval_ms": 10, "console_interval_ms": 10 ** 6,
+            "camera_rotation": 45, "camera_fps": 10 ** 6, "aux_interval_ms": 10,
+            "console_interval_ms": 10 ** 6, "cache_max_mb": 10 ** 6,
         })
         self.assertEqual(clamped.poll_interval_ms, 3_600_000)
         self.assertEqual(clamped.z_tolerance, 0.04)          # above the 0.250 ceiling
         self.assertEqual(clamped.ready_retry_interval_s, 60.0)
         self.assertEqual(clamped.camera_rotation, 0)         # not a quarter turn
+        self.assertEqual(clamped.camera_fps, CAMERA_FPS_MAX)  # the corrupt-record guard
         self.assertEqual(clamped.aux_interval_ms, 250)
         self.assertEqual(clamped.console_interval_ms, 60_000)
+        self.assertEqual(clamped.cache_max_mb, 4096)         # above the 4096 ceiling
+        self.assertEqual(PrinterConfig.from_dict({"cache_max_mb": 1}).cache_max_mb, 16)
         self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("nan")}).z_tolerance, 0.04)
         self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 0}).poll_interval_ms, 1)
         self.assertEqual(PrinterConfig.from_dict({"ready_retry_interval_s": 0.0}).ready_retry_interval_s,
@@ -752,6 +760,27 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(PrinterConfig.from_dict({"camera_rotation": 180}).camera_rotation, 180)
         self.assertEqual(PrinterConfig.from_dict({"camera_rotation": 90}).camera_rotation, 90)
         self.assertIsInstance(PrinterConfig.from_dict(None), PrinterConfig)
+
+    def test_from_dict_holds_the_decode_rate_inside_the_throttles_own_range(self):
+        # The rate is the user's own throttle, so the stored value is
+        # held to what the renderer can honour: the floor is the 0.5 the
+        # control bottoms out at, and the ceiling is the corrupt-record
+        # guard — a real camera's own target_fps caps it again at the
+        # camera, which is MonitorCamera's job, not the store's.
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 0}).camera_fps, CAMERA_FPS_MIN)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": -4}).camera_fps, CAMERA_FPS_MIN)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": float("nan")}).camera_fps,
+                         CAMERA_FPS_DEFAULT)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": None}).camera_fps,
+                         CAMERA_FPS_DEFAULT)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 0.5}).camera_fps, 0.5)
+        self.assertEqual(PrinterConfig.from_dict({"camera_fps": 60}).camera_fps, 60.0)
+        # An absent key is the product default, and the round trip keeps
+        # the rate exactly.
+        self.assertEqual(PrinterConfig.from_dict({}).camera_fps, CAMERA_FPS_DEFAULT)
+        settings, _state = split_record({"url": "http://a:7125", "camera_fps": 2.5})
+        self.assertEqual(settings["camera_fps"], 2.5, "the rate rides the settings side")
+        self.assertEqual(PrinterConfig.from_dict(settings).camera_fps, 2.5)
 
     def test_from_dict_cleans_the_console_transcript(self):
         config = PrinterConfig.from_dict({"console_transcript": [
@@ -1142,9 +1171,9 @@ class MonitorTemperatureHistoryCoverageTests(unittest.TestCase):
 
     def test_the_window_and_the_sample_cap_both_bound_the_memory(self):
         history = TemperatureHistory(window_seconds=1_000_000.0)
-        for step in range(1900):
+        for step in range(MAX_SAMPLES + 100):
             history.observe({"heater_bed": {"temperature": 60.0}}, step * 0.5)
-        self.assertEqual(len(history.series("heater_bed")), 1800)
+        self.assertEqual(len(history.series("heater_bed")), MAX_SAMPLES)
 
     def test_filling_reports_a_window_that_is_still_collecting(self):
         history = TemperatureHistory()
@@ -2556,14 +2585,60 @@ if QT_AVAILABLE:
             self.service._wanted = True
             self.service._hydrate = {2, 1}
             hydrations = []
+            # The stub carries the production signature, `should_stop`
+            # included: the pass's own hydration hands the interpreter
+            # back on it, and a stub that rejects the keyword fails the
+            # whole batch instead of hydrating the layer.
             with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
-                       side_effect=lambda index, path, layer: hydrations.append(layer) or True):
+                       side_effect=lambda index, path, layer, should_stop=None: (
+                           hydrations.append(layer),
+                           index.hydrated_layers.add(layer),
+                           True)[2]):
                 self.service._advance()
             # The lowest pending layer goes first, and each completion
-            # re-advances until the window is drained.
-            self.assertEqual(hydrations, [1, 2])
+            # re-advances until the window is drained. The background
+            # full-cache pass then walks the remaining layers in
+            # order (0 here — the window's own already hydrate).
+            self.assertEqual(hydrations, [1, 2, 0])
             self.assertEqual(self.service._hydrate, set())
             self.assertIsNone(self.service._hydrating)
+
+        def test_a_pass_batch_that_raises_is_latched_not_resubmitted(self):
+            """A batch the worker cannot run walks no layer, and the
+            task terminal re-enters `_advance` on the submitting stack
+            — the inline executor's own contract. Tested only by the
+            frontier, that re-entry resubmitted the same batch at
+            once, and again after that: an unbounded recursion, which
+            this harness sees as a RecursionError escaping into Qt
+            (the process aborts; no assertion ever runs). The pass's
+            failure latches instead, so one batch fails once."""
+            index = self._index()
+            index.compact = True
+            self.service.bind(self.job)
+            self.service._view = IndexView(self.job, index)
+            self.files.identity = SimpleNamespace(uuid="u", modified=1)
+            self.files.path = self.path
+            self.service._restored = True
+            self.service._wanted = True
+            submitted = []
+            original = self.service._submit
+
+            def counted(kind, work, lease=None):
+                submitted.append(kind)
+                return original(kind, work, lease)
+
+            self.service._submit = counted
+            with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
+                       side_effect=OSError("the file went away")):
+                self.service._advance()
+                self.assertEqual(submitted, ["fullprep"],
+                                 "the failed pass batch was resubmitted")
+                self.assertEqual(self.service._full_next, 0)
+                self.assertIn("went away", self.service._pass_error)
+                # The latch is not the pass's death: a re-download's
+                # new bytes reopen it, and the retry is one batch.
+                self.service._on_files_changed()
+                self.assertEqual(submitted, ["fullprep", "fullprep"])
 
         def test_a_pending_hydration_without_a_lease_asks_for_the_file(self):
             index = self._index()
@@ -3388,13 +3463,18 @@ class SettingsPageMigrationMirrorTests(unittest.TestCase):
         opened = []
 
         def fake_open(url):
+            # QUrl spells a local file with '/' on every platform, while the
+            # path Cura hands out is native ('\' on Windows): the comparison
+            # below normalizes both sides rather than pin one spelling.
             opened.append(url.toLocalFile())
 
         action = self._action(self._Follower(None))
         with patch.object(QDesktopServices, "openUrl", staticmethod(fake_open)):
             action.openMigrationBackupFolder()
         from UM.Resources import Resources
-        self.assertEqual(opened, [Resources.getConfigStoragePath()])
+        expected = Resources.getConfigStoragePath()
+        self.assertEqual([os.path.normcase(os.path.normpath(path)) for path in opened],
+                         [os.path.normcase(os.path.normpath(expected))])
 
 
 class PluginPackageCoverageTests(unittest.TestCase):

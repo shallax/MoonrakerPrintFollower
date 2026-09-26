@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -735,9 +737,14 @@ class LateActivationTests(unittest.TestCase):
             Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
         self.config_patcher = patch.object(
             Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", side_effect=lambda *args, **kwargs: base.name)
         self.resources_patcher.start()
         self.config_patcher.start()
+        self.cache_patcher.start()
         self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
         self.addCleanup(self.config_patcher.stop)
         from plugins.FollowerRuntime import FollowerRuntime
         self.FollowerRuntime = FollowerRuntime
@@ -793,6 +800,491 @@ class LateActivationTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         self.assertEqual(announce.call_count, 1)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class MachineNamespaceTests(unittest.TestCase):
+    """The review's machine-namespace P0: the RUNTIME's persistence
+    stores follow the active Cura machine — one runtime, a machine
+    switch, and the same service rebinds to the new machine's own
+    cache directory (never a construction-time freeze, never a
+    stranded unknown hash)."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.base = base.name
+        self.prefs = Preferences({})
+        from UM.Resources import Resources
+        self.resources_patcher = patch.object(
+            Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
+        self.config_patcher = patch.object(
+            Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", return_value=base.name)
+        self.resources_patcher.start()
+        self.config_patcher.start()
+        self.cache_patcher.start()
+        self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
+        from plugins.FollowerRuntime import FollowerRuntime
+        self.FollowerRuntime = FollowerRuntime
+
+    def _app(self, started):
+        app = self.qt.Application(self.prefs)
+        app.started = started
+        return app
+
+    def _payload(self, marker):
+        from plugins.PlateProgress import encode_layer
+        return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0],
+                                                   [1.0, float(marker), 1.0]]]},
+                             "travels": [], "travelStarts": [], "travelEnds": [],
+                             "motions": 2})
+
+    def _switch(self, app, machine_id):
+        app.stack = self.qt.Machine(machine_id)
+        app.globalContainerStackChanged.emit()
+
+    def test_a_machine_switch_rebinds_the_runtime_stores(self):
+        # The actual runtime lifecycle: machine A active, persist
+        # identifiable A data; Cura switches to B — the persistence
+        # directory changes and B's data lands in B's namespace; back
+        # to A — A's original persisted state is recovered.
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        store_a = owner.index._prepared
+        store_a.finalise("print-key", [self._payload(1)])
+        self.assertIsNotNone(store_a.load_table("print-key"))
+        self._switch(app, "B")
+        self.assertIsNot(owner.index._prepared, store_a,
+                         "the switch kept the old machine's store")
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+                            os.path.dirname(store_a.directory),
+                            "the two machines share one cache directory")
+        store_b = owner.index._prepared
+        store_b.finalise("print-key", [self._payload(2)])
+        # The isolation: B's write never touched A's store, and vice
+        # versa — the same key holds each machine's own payload.
+        from plugins.PlateProgress import decode_layer
+        table_a = store_a.load_table("print-key")
+        table_b = store_b.load_table("print-key")
+        self.assertNotEqual(decode_layer(store_a.read("print-key", table_a["table"], 0)),
+                            decode_layer(store_b.read("print-key", table_b["table"], 0)),
+                            "the two machines share one payload")
+        # Back to A: the ORIGINAL persisted state is recovered, and
+        # B's namespace keeps its own.
+        self._switch(app, "A")
+        self.assertEqual(owner.index._prepared.directory, store_a.directory,
+                         "the return to A never rebound its own namespace")
+        table = owner.index._prepared.load_table("print-key")
+        self.assertIsNotNone(table, "A's cache was lost over the switch")
+        self.assertEqual(decode_layer(owner.index._prepared.read(
+            "print-key", table["table"], 0))["classes"]["SKIN"][0][1][1], 1.0,
+            "A's persisted layer never round-tripped")
+
+    def test_a_runtime_born_unknown_moves_off_the_unknown_hash(self):
+        # The runtime constructs while Cura's active machine is
+        # unresolved: the stores sit on the unknown hash, nothing is
+        # persisted there, and the FIRST resolution moves them to the
+        # real machine's namespace.
+        app = self._app(started=True)
+        app.stack = None  # unresolved at construction
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        unknown_store = owner.index._prepared
+        from plugins.CacheNamespaces import CacheNamespaces
+        self.assertEqual(owner.cache_namespaces.machine_hash,
+                         CacheNamespaces._hash("unknown"),
+                         "the unresolved runtime never hashed the unknown id")
+        self._switch(app, "A")
+        self.assertIsNot(owner.index._prepared, unknown_store,
+                         "the first resolution kept the unknown store")
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+                            os.path.dirname(unknown_store.directory))
+        owner.index._prepared.finalise("print-key", [self._payload(3)])
+        self.assertIsNone(unknown_store.load_table("print-key"),
+                          "data stranded in the unknown namespace")
+
+    def test_the_cache_budget_follows_the_machine_config(self):
+        # The author's per-machine cache setting: BOTH unified
+        # stores' byte bounds ride the ACTIVE machine's configured
+        # value, read fresh at every bind — each machine's own
+        # cache-v2 directory obeys its own saved size, and the
+        # default is 512 MiB. The index's entry-count bound is
+        # disabled (the byte budget is the user-facing limit).
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        store_a = owner.index._prepared
+        index_a = owner.index._cache
+        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
+                         "the prepared default bound is not 512 MiB")
+        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024,
+                         "the index default bound is not the machine's")
+        self.assertIsNone(index_a.max_entries,
+                          "the hidden entry-count cap survived")
+        owner.persistence.set_machine("A", {"cache_max_mb": 256})
+        owner.persistence.set_machine("B", {"cache_max_mb": 128})
+        self._switch(app, "B")
+        store_b = owner.index._prepared
+        index_b = owner.index._cache
+        self.assertEqual(store_b.max_bytes, 128 * 1024 * 1024,
+                         "B's prepared store never bound its size")
+        self.assertEqual(index_b.max_bytes, 128 * 1024 * 1024,
+                         "B's index store never bound its size")
+        self.assertIsNone(index_b.max_entries,
+                          "B kept the hidden entry-count cap")
+        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
+                         "the switch rewrote A's store object")
+        self._switch(app, "A")
+        self.assertEqual(owner.index._prepared.max_bytes, 256 * 1024 * 1024,
+                         "the return to A never bound A's prepared size")
+        self.assertEqual(owner.index._cache.max_bytes, 256 * 1024 * 1024,
+                         "the return to A never bound A's index size")
+
+    def test_a_budget_change_rebinds_the_active_machine_stores(self):
+        # Test A (the reviewer's same-machine case): changing the
+        # ACTIVE machine's budget through the real binding/apply
+        # signal path rebinds BOTH stores — no machine switch, no
+        # restart — and Test B: an unrelated settings save leaves
+        # the store instances untouched (a frequent binding.changed
+        # must never retire an active prepared writer needlessly).
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        index_a = owner.index._cache
+        prepared_a = owner.index._prepared
+        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024)
+        self.assertEqual(prepared_a.max_bytes, 512 * 1024 * 1024)
+        machine_hash = owner.cache_namespaces.machine_hash
+
+        config = owner.binding.config
+        config.cache_max_mb = 256
+        self.assertTrue(owner.binding.apply(config))
+        index_new = owner.index._cache
+        prepared_new = owner.index._prepared
+        self.assertIsNot(index_new, index_a,
+                         "the index store never rebound on the budget change")
+        self.assertIsNot(prepared_new, prepared_a,
+                         "the prepared store never rebound on the budget change")
+        self.assertEqual(index_new.max_bytes, 256 * 1024 * 1024)
+        self.assertEqual(prepared_new.max_bytes, 256 * 1024 * 1024)
+        self.assertIsNone(index_new.max_entries,
+                          "the rebound index kept a hidden count cap")
+        self.assertEqual(owner.cache_namespaces.machine_hash, machine_hash,
+                         "the budget change moved the machine namespace")
+
+        config = owner.binding.config
+        config.poll_interval_ms = 3000
+        self.assertTrue(owner.binding.apply(config))
+        self.assertIs(owner.index._cache, index_new,
+                      "an unrelated save rebound the index store")
+        self.assertIs(owner.index._prepared, prepared_new,
+                      "an unrelated save rebound the prepared store")
+
+    def test_the_index_side_cannot_evict_before_the_machine_budget(self):
+        # The review's premature-eviction finding: with both stores
+        # on the SAME machine budget, the index's prune can never
+        # delete a folder below the configured limit — a retained
+        # set that fits the machine's budget survives the index
+        # prune even when it exceeds the index's OLD 128 MiB
+        # standalone default.
+        from plugins.GCodeIndex import PersistentIndexCache
+        from plugins.PreparedStore import PreparedCache
+        machine_budget = 256 * 1024 * 1024
+        index = PersistentIndexCache(self.base, max_bytes=machine_budget,
+                                     max_entries=None)
+        prepared = PreparedCache(self.base, max_bytes=machine_budget)
+        # Three prints totalling ~165 MiB — over the index's OLD
+        # 128 MiB standalone default, comfortably under the
+        # machine's 256 MiB budget.
+        payload = self._payload(1)
+        for key in ("p1", "p2", "p3"):
+            prepared.finalise(key, [payload * 750000])  # ~45 MiB each
+        self.assertGreater(len(payload) * 750000 * 3, 128 * 1024 * 1024,
+                           "the fixture never crossed the old default")
+        self.assertLess(len(payload) * 750000 * 3, machine_budget,
+                        "the fixture never fits the machine budget")
+        folders = {key: os.path.dirname(prepared._path(key))
+                   for key in ("p1", "p2", "p3")}
+        index.prune()
+        for key, folder in folders.items():
+            self.assertTrue(os.path.exists(os.path.join(folder, "prepared.mpfp")),
+                            "the index pruned print %s under the "
+                            "machine budget" % key)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class WriterOwnershipTests(unittest.TestCase):
+    """The review's writer-ownership findings (F1+F2): the machine
+    switch and the normal close RETIRE the in-flight prepared writer
+    before the checkpoint — the retired flag plus the store's lock
+    make the freeze and the publication one atomic step, so a blocked
+    pass worker can never append or finalise through the swapped (or
+    closed) stores, the checkpoint lands in the machine whose pass
+    produced it, and the already-committed layers are never lost."""
+
+    class Identity:
+        uuid = "u"
+        modified = 1
+        size = 100
+
+        def __init__(self, key):
+            self._key = key
+
+        def stable_key(self):
+            return self._key
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.base = base.name
+        self.prefs = Preferences({})
+        from UM.Resources import Resources
+        self.resources_patcher = patch.object(
+            Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
+        self.config_patcher = patch.object(
+            Resources, "getConfigStoragePath", return_value=base.name)
+        self.cache_patcher = patch.object(
+            Resources, "getCacheStoragePath", return_value=base.name)
+        self.resources_patcher.start()
+        self.config_patcher.start()
+        self.cache_patcher.start()
+        self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        self.addCleanup(self.cache_patcher.stop)
+        from plugins.FollowerRuntime import FollowerRuntime
+        self.FollowerRuntime = FollowerRuntime
+
+    def _app(self, started):
+        app = self.qt.Application(self.prefs)
+        app.started = started
+        return app
+
+    def _owner(self, machine):
+        app = self._app(started=True)
+        app.stack = self.qt.Machine(machine)
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        return app, owner
+
+    def _switch(self, app, machine_id):
+        app.stack = self.qt.Machine(machine_id)
+        app.globalContainerStackChanged.emit()
+
+    def _start_blocked_pass(self, owner):
+        """Seed the runtime's REAL service with a view and run the
+        fullprep pass with the worker blocked inside layer 1's
+        prepare — layer 0 is committed to the writer BEFORE the block
+        (the `entered` event fires only after that append), so the
+        cutover below always races a worker that still owns the
+        writer."""
+        from plugins.GCodeIndexService import IndexView
+        import plugins.GCodeIndexService as service_module
+        from tests.test_plate_progress import make_index
+
+        service = owner.index
+        job_key = ("part.gcode", 100, 1)
+        owner.files._job = job_key
+        owner.files._identity = self.Identity("print-key")
+        service.bind(job_key)
+        service._wanted = True
+        service._restored = True
+        service._view = IndexView(job_key, make_index(layers=5, motions=20))
+        service._prepared_open(owner.files.identity)
+
+        entered = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        real_prepare = service_module._prepare_layer
+        calls = []
+        def blocking_prepare(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                entered.set()
+                if not release.wait(30.0):
+                    raise RuntimeError("the test never released the blocked worker")
+            return real_prepare(*args, **kwargs)
+        service_module._prepare_layer = blocking_prepare
+        self.addCleanup(setattr, service_module, "_prepare_layer", real_prepare)
+
+        service._advance()
+        self.assertTrue(entered.wait(10.0),
+                        "the pass never reached the blocked layer")
+        writer = service._prepared_writer
+        self.assertIsNotNone(writer, "the pass opened no prepared writer")
+        self.assertIsNotNone(writer["table"][0],
+                             "layer 0 never committed before the block")
+        return service, release, writer["handle"]
+
+    def _drain(self, service):
+        """Pump the queue until the stale worker's completion lands."""
+        from PyQt6.QtCore import QCoreApplication
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and service._busy:
+            QCoreApplication.processEvents()
+            time.sleep(0.005)
+        return service._busy == ""
+
+    @staticmethod
+    def _empty_slots_after(loaded, first_empty):
+        """The checkpoint holds exactly the pre-cutover layers: every
+        slot after the committed prefix reads EMPTY."""
+        from plugins.PreparedStore import STATE_EMPTY
+        return all(entry[0] == STATE_EMPTY
+                   for entry in loaded["table"][first_empty:])
+
+    def test_a_blocked_preparation_cannot_cross_a_machine_switch(self):
+        # F1's required regression, through the real lifecycle: the
+        # runtime's own service runs the pass, the worker blocks
+        # inside layer 1's prepare with layer 0 committed, and the
+        # machine switch RETIRES the writer before the checkpoint —
+        # A's checkpoint appears only under A, B contains no A file,
+        # the released worker's later appends no-op, nothing raises
+        # from the closed handle, and A's partial coverage is
+        # recoverable on the return.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_a = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        self._switch(app, "B")
+
+        table_a = store_a.load_table("print-key")
+        self.assertIsNotNone(table_a, "A's checkpoint never published")
+        self.assertFalse(table_a["complete"],
+                         "the cutover published the partial as complete")
+        self.assertEqual(table_a["table"][0][0], STATE_CACHED)
+        self.assertGreater(table_a["table"][0][2], 0)
+        self.assertIsNotNone(store_a.read("print-key", table_a["table"], 0),
+                             "the checkpointed layer never reads back")
+        self.assertTrue(self._empty_slots_after(table_a, 1),
+                        "a layer crossed the cutover into the checkpoint")
+        self.assertTrue(handle.closed,
+                        "the cutover never closed the writer's handle")
+        self.assertIsNone(service._prepared_writer,
+                          "the cutover kept the old writer attached")
+        # B contains no A prepared file — the checkpoint (and every
+        # later append) stays in A's namespace.
+        self.assertIsNone(service._prepared.load_table("print-key"),
+                          "A's writer published into B's namespace")
+
+        release.set()
+        self.assertTrue(self._drain(service), "the stale worker never completed")
+        self.assertEqual(failed, [], "the cutover surfaced a worker failure")
+        self.assertEqual(service._error, "")
+        # The released worker's later appends landed nowhere.
+        self.assertIsNone(service._prepared.load_table("print-key"),
+                          "the released worker wrote into B's store")
+        self.assertTrue(self._empty_slots_after(
+            store_a.load_table("print-key"), 1),
+            "the released worker appended after the cutover")
+
+        # Back to A: the partial is recoverable — the fresh store over
+        # A's namespace reads the checkpoint and resumes from the
+        # EMPTY slots.
+        self._switch(app, "A")
+        recovered = service._prepared.load_table("print-key")
+        self.assertIsNotNone(recovered, "A's checkpoint never recovered")
+        self.assertFalse(recovered["complete"])
+        self.assertEqual(recovered["table"][0][0], STATE_CACHED)
+        self.assertIsNotNone(
+            service._prepared.read("print-key", recovered["table"], 0))
+
+    def test_a_budget_change_retires_the_in_flight_writer(self):
+        # The reviewer's Test D: a same-machine budget change rides
+        # the ORDINARY rebind lifecycle — the in-flight prepared
+        # writer retires and checkpoints through the OLD store in
+        # the SAME machine namespace, the new stores carry the new
+        # budget, the released worker cannot append through the
+        # retired writer, and the committed partial stays
+        # recoverable.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_old = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        config = owner.binding.config
+        config.cache_max_mb = 256
+        self.assertTrue(owner.binding.apply(config))
+
+        table = store_old.load_table("print-key")
+        self.assertIsNotNone(table, "the budget rebind never checkpointed A")
+        self.assertEqual(table["table"][0][0], STATE_CACHED)
+        self.assertTrue(handle.closed,
+                        "the budget rebind never closed the writer's handle")
+        self.assertIsNot(service._prepared, store_old,
+                         "the budget rebind kept the old prepared store")
+        self.assertEqual(service._prepared.max_bytes, 256 * 1024 * 1024,
+                         "the rebound prepared store kept the old budget")
+        self.assertEqual(service._cache.max_bytes, 256 * 1024 * 1024,
+                         "the rebound index store kept the old budget")
+        self.assertIsNone(service._cache.max_entries)
+
+        release.set()
+        self.assertTrue(self._drain(service))
+        self.assertEqual(failed, [])
+        self.assertTrue(self._empty_slots_after(
+            store_old.load_table("print-key"), 1),
+            "the released worker appended after the budget rebind")
+
+    def test_a_blocked_preparation_survives_a_normal_close(self):
+        # F2's second required regression: the normal shutdown retires
+        # the in-flight writer the same way — the checkpoint publishes
+        # the committed layers, the released worker's later appends
+        # are refused, and nothing raises from touching the retired
+        # (closed) writer.
+        from plugins.PreparedStore import STATE_CACHED
+        app, owner = self._owner("A")
+        service, release, handle = self._start_blocked_pass(owner)
+        store_a = service._prepared
+        failed = []
+        service.failed.connect(lambda message: failed.append(message))
+
+        owner.close()
+        self.assertTrue(handle.closed, "the close never closed the writer's handle")
+        table = store_a.load_table("print-key")
+        self.assertIsNotNone(table, "the close never checkpointed the partial")
+        self.assertFalse(table["complete"])
+        self.assertEqual(table["table"][0][0], STATE_CACHED)
+        self.assertIsNotNone(store_a.read("print-key", table["table"], 0),
+                             "the committed layer was lost over the close")
+        self.assertTrue(self._empty_slots_after(table, 1),
+                        "a layer crossed the close into the checkpoint")
+
+        release.set()
+        self.assertTrue(self._drain(service), "the stale worker never completed")
+        self.assertEqual(failed, [], "the close surfaced a worker failure")
+        self.assertEqual(service._error, "")
+        self.assertTrue(self._empty_slots_after(
+            store_a.load_table("print-key"), 1),
+            "a post-close append landed")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -925,6 +1417,29 @@ class BindingReadinessTests(unittest.TestCase):
                                  cura_cfg_path=self.cura_cfg, old_state_path=None)
         binding.start()
         self.assertEqual(self.persistence.settings_document()["machines"]["A"]["url"], "http://a:7125")
+
+    def test_an_early_config_read_does_not_pin_pre_migration_state(self):
+        # The bootstrap regression (the cache-size source reads the
+        # config at construction): an early read populates the
+        # per-machine cache, and the already-ready start() must
+        # invalidate it after its migration — the same clear
+        # mark_ready performs. The apply-path reads may repopulate
+        # the cache, but only with the MIGRATED record, never the
+        # pre-migration one. (The end-to-end form lives in the
+        # bootstrap test, where the pre-migration record genuinely
+        # differs.)
+        self.app.started = True
+        binding = PrinterBinding(self.app, self.client, self.persistence,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=None)
+        self.assertIsNotNone(binding.config)  # the early boot read
+        self.assertIsNotNone(binding._config_cache,
+                             "the early read never cached the record")
+        binding.start()
+        self.assertEqual(binding.config.url, "http://a:7125")
+        cache = binding._config_cache
+        if cache is not None:
+            self.assertEqual(cache[1].url, "http://a:7125",
+                             "the cache kept a pre-migration record")
 
     def test_repeated_readiness_notifications_are_idempotent(self):
         original = PrinterBinding.run_persistence_migration

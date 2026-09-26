@@ -17,11 +17,28 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 from UM.Application import Application
 
-PORT_FILE = "/tmp/mpf/harness_port.txt"
-TOKEN_FILE = "/tmp/mpf/harness_token.txt"
+# Where the port and the per-run token are published for the runner:
+# ONE variable, because the runner reads them back through it and the
+# two sides must never disagree about the path. The driver runs inside
+# Cura, which inherits the launch environment, so both sides resolve
+# the same value. The default is the Linux container's work dir, which
+# IS /tmp/mpf.
+RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
+PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
+TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
+
+
+def _ensure_rpc_dir():
+    # The natives have no /tmp/mpf: the launcher points HARNESS_RPC_DIR
+    # at a real scratch dir and this creates it. In the container the
+    # work dir already exists, so the call is a no-op.
+    try:
+        os.makedirs(RPC_DIR, exist_ok=True)
+    except OSError:
+        pass
 
 
 def _mint_token():
@@ -53,6 +70,7 @@ class HarnessServer(QObject):
         self._win_events = []
         self._py_clicks = []
         self._buffers = {}
+        _ensure_rpc_dir()
         self._token = _mint_token()
         if not self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
             return
@@ -211,17 +229,26 @@ class HarnessServer(QObject):
         # own position for screen coordinates (mapToGlobal proved
         # desynced under a WM-less Xvfb after an X-level move).
         try:
-            scene = item.mapToScene(QPointF(0, 0))
             window = item.window()
             origin = window.position() if window is not None else None
+            width, height = float(item.width()), float(item.height())
+            corners = [item.mapToScene(QPointF(px, py))
+                       for px, py in ((0.0, 0.0), (width, 0.0), (0.0, height), (width, height))]
         except Exception:
-            scene, origin = None, None
-        if scene is None or origin is None:
+            corners, origin = None, None
+        if not corners or origin is None:
             top_left = item.mapToGlobal(QPointF(0, 0))
             return {"x": round(top_left.x()), "y": round(top_left.y()),
                     "w": round(item.width()), "h": round(item.height())}
-        return {"x": round(scene.x() + origin.x()), "y": round(scene.y() + origin.y()),
-                "w": round(item.width()), "h": round(item.height())}
+        # The mapped corners, not width()/height(): a rotated control
+        # (the collapsed rails run at -90°) occupies its bounding box
+        # on screen, and reporting the unrotated size put the box
+        # across the wrong axis — a rect the evidence then read as
+        # somewhere the item is not.
+        xs = [point.x() for point in corners]
+        ys = [point.y() for point in corners]
+        return {"x": round(min(xs) + origin.x()), "y": round(min(ys) + origin.y()),
+                "w": round(max(xs) - min(xs)), "h": round(max(ys) - min(ys))}
 
     def _handle(self, request):
         request_id = request.get("id")
@@ -371,6 +398,79 @@ class HarnessServer(QObject):
                              "visible": bool(window.isVisible()),
                              "title": window.title() or ""})
             return {"id": request_id, "ok": True, "windows": rows}
+        if cmd == "frames":
+            # Whether the app is actually presenting. Every step reads
+            # the QML tree, so a window whose scene graph stopped
+            # painting still answers every read and every step still
+            # passes over a screen that never moved (the static-green
+            # ruling). This makes a frame DUE and reports whether it
+            # came: attach to the main window's frameSwapped, change a
+            # temporary visible item in the window's own scene graph,
+            # verify the change landed, and await the frame it made due.
+            # The counts ride beside the heartbeat as diagnostics only —
+            # an idle window has no reason to paint, so a count that
+            # stopped moving is not evidence of a freeze.
+            try:
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                # A window the counter was not counting is that window's
+                # first count: a leg's boot can replace the window, and
+                # a count with no history on it is a different answer
+                # from a count that stopped moving. The window's
+                # heartbeat calibration starts over with it.
+                fresh = _FRAMES.window is not window
+                attached = _FRAMES.attach(window)
+                if request.get("reset"):
+                    _FRAMES.count = 0
+                since = _FRAMES.count
+                heartbeat = None
+                if request.get("heartbeat", True):
+                    heartbeat = _heartbeat(
+                        window,
+                        request.get("deadline_ms", HEARTBEAT_DEADLINE_MS))
+                reply = {"id": request_id, "ok": True, "swapped": _FRAMES.count,
+                         "since": since, "gained": _FRAMES.count - since,
+                         "frame_signal": attached, "fresh_window": fresh,
+                         "exposed": bool(window.isExposed()),
+                         "visible": bool(window.isVisible()),
+                         "active": bool(window.isActive()),
+                         "visibility": _enum_name(window.visibility()),
+                         "state": _enum_name(window.windowState()),
+                         "platform": QGuiApplication.platformName()}
+                if heartbeat is not None:
+                    reply["heartbeat"] = heartbeat
+                return reply
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "foreground":
+            # The foreground guard (the visible-interactions ruling):
+            # evidence records the DISPLAY, so a step that hands the
+            # foreground to another process — a link press opening a
+            # browser — makes every frame after it evidence of that
+            # process instead. Ask, re-raise when the display is not
+            # Cura's, and answer with what the raise actually got.
+            try:
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                before = _foreground_state(window)
+                raised = False
+                if not before["foreground"] and request.get("raise", True):
+                    raised = True
+                    # A lost foreground sometimes needs two attempts
+                    # (Windows consumes the first clearing the lock).
+                    for _ in range(2):
+                        _raise_main_window(window)
+                        _settle(request.get("settle_ms", 250))
+                        if _foreground_state(window)["foreground"]:
+                            break
+                after = _foreground_state(window)
+                return {"id": request_id, "ok": True, "authority": after["authority"],
+                        "foreground": after["foreground"], "raised": raised,
+                        "before": before, "after": after}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "find":
             for window in visible_windows:
                 for item in self._items(window):
@@ -428,13 +528,29 @@ class HarnessServer(QObject):
             # reverted by a late boot-pin reapply (the stale-read
             # class window_pin was rewritten to fix), so the verb
             # keeps applying until the read-back holds.
+            #
+            # A "min" axis asks for the window's OWN minimum, read off
+            # the live window (the em-scaled window_minimum_size the
+            # application resolves per platform: 880x528 under Xvfb,
+            # 1040x624 on native). A target below that minimum is
+            # refused rather than built: it is a geometry no user can
+            # drag to, so a scenario resting on it asserts nothing —
+            # and nothing here drops the minimum to reach one.
             try:
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
                 _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
-                want = [int(request.get("w", int(_win[0]))),
-                        int(request.get("h", int(_win[1])))]
+                minimum = window.minimumSize()
+                asked = [request.get("w", int(_win[0])),
+                         request.get("h", int(_win[1]))]
+                want = [minimum.width() if axis == "min" else int(axis)
+                        for axis in asked]
+                if want[0] < minimum.width() or want[1] < minimum.height():
+                    return {"id": request_id, "ok": False,
+                            "error": (f"{asked[0]}x{asked[1]} below the window minimum "
+                                      f"{minimum.width()}x{minimum.height()}"),
+                            "minimum": [minimum.width(), minimum.height()]}
                 got = [0, 0]
                 for _attempt in range(5):
                     window.setGeometry(0, 0, want[0], want[1])
@@ -443,7 +559,8 @@ class HarnessServer(QObject):
                     if got == want:
                         break
                 return {"id": request_id, "ok": True, "size": got,
-                        "wanted": want}
+                        "wanted": want,
+                        "minimum": [minimum.width(), minimum.height()]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
@@ -608,9 +725,12 @@ class HarnessServer(QObject):
                     if target is None:
                         return {"id": request_id, "ok": False, "error": "stage button not found",
                                 "stage": stage_target}
-                    scene = target.mapToScene(QPointF(0, 0))
-                    x = round(scene.x() + target.width() / 2)
-                    y = round(scene.y() + target.height() / 2)
+                    aim = _aim_point(target)
+                    if aim is None:
+                        return {"id": request_id, "ok": False,
+                                "error": "the stage button carries no mappable centre",
+                                "stage": stage_target}
+                    x, y = aim
                     label = target.property("text")
                 else:
                     row = getattr(self, "_mounted_switch", None)
@@ -860,9 +980,11 @@ class HarnessServer(QObject):
                     control = _nearest_control(target)
                     if control is not None:
                         target = control
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre", "text": wanted}
+                x, y = aim
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
@@ -904,9 +1026,12 @@ class HarnessServer(QObject):
                     return {"id": request_id, "ok": True, "aim": "clicked.emit()",
                             "objectName": wanted,
                             "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre",
+                            "objectName": wanted}
+                x, y = aim
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
@@ -954,9 +1079,19 @@ class HarnessServer(QObject):
                 if target is None:
                     return {"id": request_id, "ok": False,
                             "error": "no visible item with that name/text", "wanted": wanted}
-                scene = target.mapToScene(QPointF(0, 0))
-                x = round(scene.x() + target.width() / 2)
-                y = round(scene.y() + target.height() / 2)
+                aim = _aim_point(target)
+                if aim is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the target carries no mappable centre", "wanted": wanted}
+                x, y = aim
+                # An aim that provably cannot land refuses HERE: a
+                # press at empty space used to report as an ordinary
+                # unaccepted click, which reads like a stolen click.
+                blocker = _viewport_blocker(window, target, x, y)
+                if blocker is not None:
+                    return {"id": request_id, "ok": False, "error": blocker,
+                            "aim": [x, y], "wanted": wanted,
+                            "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
                 delivery = _deliver_press(window, x, y, Qt.MouseButton.LeftButton, target)
                 return {"id": request_id, "ok": True, "mechanism": "deliver",
                         "aim": [x, y], "window": window.objectName() or "",
@@ -1021,9 +1156,19 @@ class HarnessServer(QObject):
                 viewport_h = flickable.height()
                 before = (round(origin.y()), round(origin.y() + target.height()))
                 if origin.y() < 0 or origin.y() + target.height() > viewport_h:
-                    flickable.setProperty(
-                        "contentY",
-                        max(0.0, origin.y() - (viewport_h - target.height()) / 2))
+                    # The origin is measured in the viewport's own space,
+                    # so the new contentY is a DELTA from the current one.
+                    # An absolute origin only landed right while the pane
+                    # sat at 0; a pane an earlier leg had scrolled stayed
+                    # below the fold and the press then missed the window.
+                    try:
+                        current = float(flickable.property("contentY"))
+                        ceiling = max(0.0, float(flickable.property("contentHeight")) - viewport_h)
+                        wanted = min(current + origin.y() - (viewport_h - target.height()) / 2,
+                                     ceiling)
+                    except Exception:
+                        wanted = origin.y() - (viewport_h - target.height()) / 2
+                    flickable.setProperty("contentY", max(0.0, wanted))
                     qtest.QTest.qWait(200)
                     origin = target.mapToItem(viewport_item, QPointF(0, 0))
                 contained = 0 <= origin.y() and origin.y() + target.height() <= viewport_h
@@ -1090,7 +1235,7 @@ class HarnessServer(QObject):
                             name = None
                         if wanted_name and name == wanted_name:
                             rect = self._rect(item)
-                            name_matches.append((rect["y"], rect["x"], rect))
+                            name_matches.append((rect["y"], rect["x"], rect, item))
                             continue
                         if wanted_text or wanted_class:
                             try:
@@ -1101,8 +1246,10 @@ class HarnessServer(QObject):
                             if (wanted_text and label == wanted_text) or \
                                (wanted_class and klass == wanted_class):
                                 if "Button" in klass:
+                                    rect = self._rect(item)
+                                    rect["in_view"] = _aim_in_view(item)
                                     return {"id": request_id, "ok": True,
-                                            "rect": self._rect(item), "found": klass,
+                                            "rect": rect, "found": klass,
                                             "walk": dict(_WALK_STATS)}
                                 if best is None or (item.width() * item.height() >
                                                     best.width() * best.height()):
@@ -1110,13 +1257,20 @@ class HarnessServer(QObject):
                 if name_matches:
                     # Repeater rows share the objectName: the topmost
                     # (then leftmost) is the row the user reads first.
-                    name_matches.sort()
+                    name_matches.sort(key=lambda row: (row[0], row[1]))
+                    rect = dict(name_matches[0][2])
+                    # Presence in the rendered tree is not presence on
+                    # screen (see _viewport_blocker): the flag rides
+                    # the reply so the evidence never conflates them.
+                    rect["in_view"] = _aim_in_view(name_matches[0][3])
                     return {"id": request_id, "ok": True,
-                            "rect": name_matches[0][2], "found": "objectName",
+                            "rect": rect, "found": "objectName",
                             "walk": dict(_WALK_STATS)}
                 if best is not None:
+                    rect = self._rect(best)
+                    rect["in_view"] = _aim_in_view(best)
                     return {"id": request_id, "ok": True,
-                            "rect": self._rect(best),
+                            "rect": rect,
                             "found": best.metaObject().className(),
                             "walk": dict(_WALK_STATS)}
                 return {"id": request_id, "ok": False,
@@ -1174,34 +1328,6 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": False,
                         "error": "no visible item with that objectName",
                         "objectName": wanted}
-            except Exception as exc:
-                return {"id": request_id, "ok": False, "error": str(exc)}
-        if cmd == "confirm_box":
-            # Native modal QMessageBoxes block the application until
-            # answered (the plugin's replace-confirm uses one). QTest
-            # clicks the QPushButton directly — the classic widget
-            # path, immune to the QML overlay delivery quirks.
-            try:
-                wanted = str(request.get("button") or "Yes")
-                standard = {"Yes": QMessageBox.StandardButton.Yes,
-                            "No": QMessageBox.StandardButton.No,
-                            "Ok": QMessageBox.StandardButton.Ok,
-                            "Cancel": QMessageBox.StandardButton.Cancel}.get(wanted)
-                if standard is None:
-                    return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
-                boxes = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMessageBox)]
-                if not boxes:
-                    return {"id": request_id, "ok": False, "error": "no QMessageBox up"}
-                qtest = _import_qtest()
-                clicked = 0
-                for box in boxes:
-                    button = box.button(standard)
-                    if button is None:
-                        continue
-                    qtest.QTest.mouseClick(button, Qt.MouseButton.LeftButton)
-                    qtest.QTest.qWait(80)
-                    clicked += 1
-                return {"id": request_id, "ok": True, "clicked": clicked}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":
@@ -1746,8 +1872,8 @@ def _lookup_windows():
     # The main window first, then every other visible QML window by
     # size: the file manager and the dialogs are separate windows,
     # and a main-window-only walk never finds their items. Widget
-    # windows (the QMessageBox) have no contentItem — the QML walks
-    # died on them with AttributeError whenever one happened to be up.
+    # widget windows have no contentItem — the QML walks died on
+    # them with AttributeError whenever one happened to be up.
     from PyQt6.QtQuick import QQuickWindow
     windows = [w for w in QGuiApplication.topLevelWindows()
                if isinstance(w, QQuickWindow)]
@@ -1835,6 +1961,393 @@ def _main_window():
             best_area = area
             best = window
     return best
+
+
+def _settle(milliseconds):
+    """Let the display catch up after a raise — on the GUI thread, so
+    the events that carry the activation are actually processed."""
+    try:
+        qtest = _import_qtest()
+        if qtest:
+            qtest.QTest.qWait(int(milliseconds))
+            return
+    except Exception:
+        pass
+    time.sleep(max(0.0, float(milliseconds) / 1000.0))
+
+
+def _window_handle(window):
+    """The window's native handle where the OS can be asked about it:
+    Windows is the one platform whose foreground this process reads
+    back directly. Elsewhere the answer is None and the guard falls
+    back to Qt's own activation state."""
+    try:
+        import ctypes
+        if not hasattr(ctypes, "windll"):
+            return None
+        return int(window.winId())
+    except Exception:
+        return None
+
+
+def _os_foreground_owner():
+    """The display's foreground window and the process that owns it,
+    where the OS answers. The OWNER is what the guard reads: Cura's
+    own modal dialogs are Cura on screen, and raising the main window
+    over one of them would break the step that is driving it."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        value = int(user32.GetForegroundWindow())
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(value, ctypes.byref(owner))
+        return value, int(owner.value)
+    except Exception:
+        return None, None
+
+
+# A platform that never granted the window activation — the WM-less
+# Xvfb — has no baseline to read a theft against, so the guard records
+# "no authority" instead of failing every step of the run. One
+# observation of the window active is enough to arm it.
+_FOREGROUND_SEEN = [False]
+
+
+# A per-run number for the window the counter is attached to, so the
+# evidence can name which window a heartbeat was placed on.
+_WINDOW_SEQ = [0]
+
+
+class _FrameCounter:
+    """Counts the main window's delivered frames, and remembers how
+    the window answered the heartbeats placed on it.
+
+    frameSwapped is emitted on the render thread and delivered to the
+    connectING thread, so a slot here is called on the driver's thread
+    and a plain counter is enough — no lock, no cross-thread reads.
+    The window is remembered because a leg's boot can replace it, and
+    the heartbeat bookkeeping is the WINDOW's rather than the run's:
+    a count with no history on this window says nothing about it, so a
+    window the counter has just attached to is uncalibrated until a
+    heartbeat of its own is answered.
+    """
+
+    def __init__(self):
+        self.count = 0
+        self.window = None
+        self.window_id = 0
+        self.heartbeats = 0
+        self.answered = 0
+        self.calibrated = False
+
+    def _swapped(self):
+        self.count += 1
+
+    def attach(self, window):
+        """Attach to `window`, and say whether the counter is on it:
+        a window that never took the connection has no count to report,
+        which is a different answer from a count of zero."""
+        if self.window is window:
+            return self.window is not None
+        previous = self.window
+        self.window = window
+        if window is not None:
+            try:
+                window.frameSwapped.connect(self._swapped)
+            except Exception:
+                self.window = previous
+                return False
+        if previous is not None:
+            try:
+                previous.frameSwapped.disconnect(self._swapped)
+            except Exception:
+                pass
+        self.count = 0
+        _WINDOW_SEQ[0] += 1
+        self.window_id = _WINDOW_SEQ[0]
+        self.heartbeats = 0
+        self.answered = 0
+        self.calibrated = False
+        return True
+
+
+_FRAMES = _FrameCounter()
+
+
+# ─── The visual heartbeat (the liveness proof) ───
+# A passive frame count cannot tell an idle window from a frozen one:
+# the render request that read it proves nothing about whether Qt had a
+# reason to paint, and a scenario whose steps changed only model state
+# answers zero correctly (measured: every flat span of the 4.6.0 release
+# run, on windows that painted again later in the same leg). What
+# separates the two is a change the scene graph cannot ignore, so the
+# sample makes one: a temporary item is parented into the window's
+# content item, its opacity is driven on Cura's GUI thread (this server
+# is served on it), the change is read back off the item, and the
+# sample then waits for the frameSwapped the change made due —
+# event-driven and bounded, twice, because a software rasteriser's
+# frame interval is of the same order as a fixed settle and one missed
+# frame is not a stopped renderer.
+#
+# The item is 4x4 px and lives only for the heartbeat: it is out of the
+# scene before the verb returns, so no step's still can carry it, and
+# its footprint is three orders of magnitude below the static verdict's
+# frame-mean tolerance (MAD 1.0 of 255).
+HEARTBEAT_OBJECT = "mpfLivenessHeartbeat"
+HEARTBEAT_DEADLINE_MS = 1500
+HEARTBEAT_CHANGES = (("opacity", 1.0), ("opacity", 0.0))
+HEARTBEAT_QML = b"""
+import QtQuick 2.15
+Rectangle {
+    objectName: "mpfLivenessHeartbeat"
+    x: 2
+    y: 2
+    width: 4
+    height: 4
+    z: 1e9
+    color: "#ff00ff"
+    opacity: 0.0
+}
+"""
+
+
+def _heartbeat_engine(window):
+    """The engine the heartbeat item is built with: the app's own, so
+    the item lands in the scene the frame must come from."""
+    engine = HarnessServer._engine
+    if engine is None:
+        try:
+            from UM.Qt.QtApplication import QtApplication
+            engine = QtApplication.getInstance()._qml_engine
+        except Exception:
+            engine = None
+    if engine is None and window is not None:
+        try:
+            engine = qmlEngine(window.contentItem())
+        except Exception:
+            engine = None
+    return engine
+
+
+def _place_heartbeat(window):
+    """The item, parented into the window's scene, or why not."""
+    engine = _heartbeat_engine(window)
+    if engine is None:
+        return None, "no qml engine was reachable to build the heartbeat item"
+    component = QQmlComponent(engine)
+    component.setData(HEARTBEAT_QML, QUrl())
+    item = component.create()
+    if item is None:
+        errors = "; ".join(str(error.toString()) for error in component.errors())
+        return None, ("the heartbeat item did not build"
+                      + (f": {errors}" if errors else ""))
+    try:
+        item.setParentItem(window.contentItem())
+    except Exception as exc:
+        return None, f"the heartbeat item could not be placed in the window: {exc!r}"
+    return item, ""
+
+
+def _remove_heartbeat(item):
+    """Out of the scene and gone: a test-only item that outlived its
+    heartbeat would sit in every later still."""
+    try:
+        item.setParentItem(None)
+        item.deleteLater()
+        return True
+    except Exception:
+        return False
+
+
+def _await_frames(before, deadline_ms):
+    """Wait for a frame past `before`, event-driven and bounded.
+
+    qWait runs the event loop — the render loop lives in it, and on a
+    software rasteriser so does the paint — in short slices, so the
+    deadline is checked against the clock rather than trusted to one
+    sleep, and the GUI thread keeps serving the loop it must."""
+    started = time.monotonic()
+    deadline = started + max(0.0, float(deadline_ms) / 1000.0)
+    while _FRAMES.count <= before:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        _settle(min(50.0, left * 1000.0))
+    return _FRAMES.count - before, int((time.monotonic() - started) * 1000.0)
+
+
+def _plain(value):
+    """A value the evidence can hold: json will not take a QVariant."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _same_number(left, right):
+    try:
+        return abs(float(left) - float(right)) < 1e-6
+    except (TypeError, ValueError):
+        return False
+
+
+def _drive_heartbeat(item, window, name, value, deadline_ms):
+    """One change to the item, read back off it, then awaited."""
+    attempt = {"property": name, "to": value, "verified": False,
+               "in_scene": False, "is_visible": False, "answered": False,
+               "gained": 0, "waited_ms": 0}
+    try:
+        attempt["from"] = _plain(item.property(name))
+        item.setProperty(name, value)
+        attempt["read_back"] = _plain(item.property(name))
+        attempt["verified"] = _same_number(attempt["read_back"], value)
+        attempt["in_scene"] = item.parentItem() is window.contentItem()
+        attempt["is_visible"] = bool(item.isVisible())
+    except Exception as exc:
+        attempt["error"] = repr(exc)
+        return attempt
+    if not (attempt["verified"] and attempt["in_scene"] and attempt["is_visible"]):
+        # A change that did not land is a measurement that could not be
+        # taken, never a renderer that did not paint.
+        return attempt
+    attempt["swapped_before"] = _FRAMES.count
+    gained, waited = _await_frames(_FRAMES.count, deadline_ms)
+    attempt["swapped_after"] = _FRAMES.count
+    attempt["gained"] = gained
+    attempt["waited_ms"] = waited
+    attempt["answered"] = gained > 0
+    return attempt
+
+
+def _heartbeat_reason(record):
+    """What the heartbeat saw, in one line: the change it made, the
+    count it moved and how long it took, or that no frame answered."""
+    plot = "; ".join(
+        f"{attempt.get('property')} {attempt.get('from')}->{attempt.get('to')} "
+        f"gained {attempt.get('gained')} in {attempt.get('waited_ms')}ms"
+        for attempt in record.get("attempts") or [])
+    if record.get("answered"):
+        return f"the window answered the heartbeat ({plot})"
+    if not record.get("asked"):
+        return record.get("reason") or "the heartbeat was not placed"
+    if any(attempt.get("error") or not attempt.get("verified")
+           for attempt in record.get("attempts") or []):
+        return ("the heartbeat change did not verifiably land on the item "
+                f"({plot}), so no frame was due from it")
+    return (f"the window answered no frame to {len(record.get('attempts') or [])} "
+            f"forced scene change(s) inside {record.get('deadline_ms')}ms each "
+            f"({plot})")
+
+
+def _heartbeat(window, deadline_ms=HEARTBEAT_DEADLINE_MS):
+    """One sample's forced scene change, awaited and recorded.
+
+    The record rides the evidence whether or not a frame arrived, and
+    it names what could not be measured (an item that would not build,
+    a change that did not land) as its own reason, so a missing
+    measurement can never read as a renderer that painted."""
+    record = {"asked": False, "item": HEARTBEAT_OBJECT,
+              "sequence": _FRAMES.heartbeats + 1,
+              "window": f"win#{_FRAMES.window_id}",
+              "calibrated": bool(_FRAMES.calibrated),
+              "answered": False, "deadline_ms": int(deadline_ms),
+              "waited_ms": 0, "attempts": [], "cleaned": False}
+    item, error = _place_heartbeat(window)
+    if item is None:
+        record["reason"] = error
+        return record
+    record["asked"] = True
+    _FRAMES.heartbeats += 1
+    try:
+        for name, value in HEARTBEAT_CHANGES:
+            attempt = _drive_heartbeat(item, window, name, value, deadline_ms)
+            record["attempts"].append(attempt)
+            record["waited_ms"] += attempt["waited_ms"]
+            if attempt["answered"]:
+                record["answered"] = True
+                break
+    finally:
+        record["cleaned"] = _remove_heartbeat(item)
+    if record["answered"]:
+        _FRAMES.calibrated = True
+        _FRAMES.answered += 1
+    record["reason"] = _heartbeat_reason(record)
+    return record
+
+
+def _enum_name(value):
+    """A Qt enum as a name, never as int(value).
+
+    PyQt6 hands back the enum wrapper (QWindow.Visibility), and int()
+    on it raises — the first live run of the frame probe answered every
+    sample with that TypeError and so measured nothing. The name is
+    also the readable half in the evidence.
+    """
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _foreground_state(window):
+    """Whether the DISPLAY shows this application — its own dialogs
+    included: the evidence records the display, so a step that hands
+    the foreground to another process makes every later frame
+    evidence of that other process instead."""
+    focus = QGuiApplication.focusWindow()
+    handle = _window_handle(window)
+    if handle is not None:
+        authority = "os"
+        value, owner = _os_foreground_owner()
+        # The owning process is the honest test: a modal dialog of
+        # this app is this app on screen.
+        held = (owner == os.getpid()) if owner else (value == handle)
+    else:
+        authority = "qt"
+        held = bool(window.isActive() or focus is not None)
+        if not _FOREGROUND_SEEN[0]:
+            authority = "none"
+    state = {"authority": authority, "foreground": bool(held),
+             "active": bool(window.isActive()),
+             "focus": (focus.title() or focus.objectName()) if focus is not None else None,
+             "app_windows": len([w for w in QGuiApplication.topLevelWindows()
+                                 if w.isVisible()]),
+             "platform": QGuiApplication.platformName()}
+    if state["active"] or held:
+        _FOREGROUND_SEEN[0] = True
+    return state
+
+
+def _raise_main_window(window):
+    """Reclaim the display for Cura: Qt's raise+activate, then — on
+    Windows, where a process that lost the foreground cannot take it
+    back with SetForegroundWindow alone (the foreground lock) — the
+    topmost round-trip that clears it. Nothing here is assumed: the
+    caller reads the state back and fails the step when the display
+    did not come home."""
+    try:
+        window.raise_()
+        window.requestActivate()
+    except Exception:
+        pass
+    handle = _window_handle(window)
+    if handle is None:
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        flags = 0x0001 | 0x0002  # SWP_NOSIZE | SWP_NOMOVE
+        user32.SetWindowPos(handle, -1, 0, 0, 0, 0, flags)   # HWND_TOPMOST
+        user32.SetWindowPos(handle, -2, 0, 0, 0, 0, flags)   # HWND_NOTOPMOST
+        user32.BringWindowToTop(handle)
+        user32.SetForegroundWindow(handle)
+    except Exception:
+        pass
 
 
 def _click_windows():
@@ -1987,6 +2500,81 @@ def _identify(item):
     return {"objectName": name or None, "class": chain[0], "chain": chain}
 
 
+def _viewport_blocker(window, target, x, y):
+    # Why a press at (x, y) cannot land on the target — None when it
+    # can. mapToScene ignores clipping: an item scrolled out of its
+    # pane's Flickable still reports a plausible rect while rendering
+    # nowhere, and a press aimed there is a click on EMPTY SPACE that
+    # surfaces only as hit=None, accepted=False (the s7 jog leg: the
+    # aim sat 28px below the window's bottom edge, and the harness
+    # could not tell that from a swallowed click). The check names the
+    # first blocker so the step fails with the reason instead.
+    try:
+        root = window.contentItem()
+        rw, rh = float(root.width()), float(root.height())
+    except Exception:
+        return None
+    if not (0 <= x < rw and 0 <= y < rh):
+        return (f"the aim {[x, y]} is outside the window content "
+                f"({round(rw)}x{round(rh)}) — nothing can receive the press")
+    node = target
+    while node is not None:
+        try:
+            node = node.parentItem()
+        except Exception:
+            return None
+        if node is None:
+            break
+        try:
+            if not bool(node.property("clip")):
+                continue
+            local = node.mapFromItem(root, QPointF(x, y))
+            w, h = float(node.width()), float(node.height())
+        except Exception:
+            continue
+        if not (-0.5 <= local.x() <= w + 0.5 and -0.5 <= local.y() <= h + 0.5):
+            try:
+                origin = node.mapToScene(QPointF(0, 0))
+                place = [round(origin.x()), round(origin.y())]
+            except Exception:
+                place = None
+            label = node.property("objectName") or node.metaObject().className()
+            return (f"the aim {[x, y]} is outside the clipped viewport of {label} "
+                    f"({round(w)}x{round(h)} at scene {place}) — scroll the target into view first")
+    return None
+
+
+def _aim_point(item):
+    # The item's own centre, in the window content's coordinates — the
+    # space _viewport_blocker() judges and _deliver_press() presses in.
+    # mapToScene(w/2, h/2) is the centre of the body AS DRAWN: adding
+    # w/2, h/2 to the mapped ORIGIN mixed item axes into scene axes, so
+    # a rotated control (the collapsed rails run at -90°) was aimed off
+    # its own body — every press at a rail landed beside it, and every
+    # rail rect was reported "NOT in view" while the rail rendered.
+    try:
+        centre = item.mapToScene(QPointF(float(item.width()) / 2.0,
+                                         float(item.height()) / 2.0))
+    except Exception:
+        return None
+    return (round(centre.x()), round(centre.y()))
+
+
+def _aim_in_view(item):
+    # Whether a press at the item's centre could actually land — the
+    # observation half of _viewport_blocker, reported with every rect
+    # so a "rendered" item that is scrolled out of sight reads as such
+    # in the evidence instead of passing as visible.
+    try:
+        window = item.window()
+    except Exception:
+        return None
+    aim = _aim_point(item)
+    if aim is None:
+        return None
+    return _viewport_blocker(window, item, aim[0], aim[1]) is None
+
+
 def _deliver_press(window, x, y, button, target=None):
     # A QTest press/release with delivery introspection. The hit is
     # the item geometrically under the aim point BEFORE the press;
@@ -2129,6 +2717,18 @@ _server = None
 def register(app):
     """Uranium plugin entry: the driver lives for the process lifetime."""
     global _server
+    # No dialog a leg might meet may be drawn by the PLATFORM: the
+    # driver's presses reach Qt's own widgets, and a platform-drawn
+    # dialog is not one of them, so one that opened would sit over the
+    # rest of the scenario unanswered. The attribute is read when a
+    # dialog is SHOWN, so setting it at plugin load is enough. The
+    # product opens no modal of its own — the replace prompt is the
+    # card's popup — so this is a floor for Cura's dialogs, not a
+    # workaround for one of ours.
+    try:
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
+    except Exception:
+        pass
     if _server is None:
         _server = HarnessServer(app)
         _attach_qml_warnings(app)

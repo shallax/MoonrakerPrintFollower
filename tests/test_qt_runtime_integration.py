@@ -25,6 +25,13 @@ class QtRuntimeTests(unittest.TestCase):
         self.clients = []
         self.followers = []
         self.addCleanup(self.close_runtime)
+        # The download flow opens the save picker; this harness process
+        # has no QApplication for a real dialog, so the class-level
+        # patch covers every test that drives a download.
+        self.dialog_patch = patch("PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+                                  return_value=("/tmp/never-written.gcode", ""))
+        self.dialog_patch.start()
+        self.addCleanup(self.dialog_patch.stop)
 
     def close_runtime(self):
         for follower in self.followers:
@@ -118,6 +125,30 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
 
+    def test_the_stored_cache_budget_reaches_the_running_stores(self):
+        # The boot e2e: the v1 record's stored budget binds the
+        # stores through the REAL construction + migration boot, and
+        # the migrated connection keeps its identity. (The migration
+        # cannot itself change the budget: cache_max_mb post-dates
+        # every legacy source and the v1 record is the early read's
+        # own input — the change-without-restart case is the apply
+        # path, pinned in the namespace tests.)
+        prefs = Preferences({
+            "moonraker/instances": json.dumps({"A": {
+                "url": "http://imported", "api_key": "import-key"}}),
+            "moonrakerprintfollower/printer_configs_v1": json.dumps(
+                {"A": {"feed_mode": "http", "cache_max_mb": 384}}),
+        })
+        app, follower, transport = self.follower(preferences=prefs)
+        parts = follower._runtime
+        self.assertEqual(transport.identity, ("http://imported", "import-key"))
+        self.assertEqual(parts.index._prepared.max_bytes, 384 * 1024 * 1024,
+                         "the stored budget never reached the prepared store")
+        self.assertEqual(parts.index._cache.max_bytes, 384 * 1024 * 1024,
+                         "the stored budget never reached the index store")
+        self.assertIsNone(parts.index._cache.max_entries,
+                          "the runtime cache kept a hidden count cap")
+
     def test_session_invalidation_cancels_in_flight_downloads(self):
         from PyQt6.QtCore import QObject, pyqtSignal
         app, follower, transport = self.follower()
@@ -159,7 +190,13 @@ class QtRuntimeTests(unittest.TestCase):
         transport.network = SimpleNamespace(get=lambda request: NeverReply())
         messages = []
         follower.download_failed.connect(messages.append)
-        follower.request_file_download("prints/part.gcode")
+        # The download flow now opens the save picker first — patch the
+        # CLASS (this harness process has no QApplication for a real
+        # dialog, and the runtime loads its own module copies that
+        # module-level patches would miss).
+        with patch("PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+                   return_value=("/tmp/never-written.gcode", "")):
+            follower.request_file_download("prints/part.gcode")
         follower.deinitialize()
         self.assertEqual(len(messages), 1)
         self.assertIn("cancelled", messages[0])
@@ -1973,6 +2010,128 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.assertTrue(self._wait(lambda: len(messages) == 1))
         self.assertIn("does not match the file listing", messages[0])
 
+    def _cura_double(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class CuraDouble(QObject):
+            loadFailed = pyqtSignal(str)
+
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.loads = []
+
+            def load(self, lease):
+                self.loads.append(lease)
+
+        return CuraDouble()
+
+    def _file_download(self, **kwargs):
+        """The file-manager save lane over this REAL one-shot service."""
+        module = self.qt.load("FileDownload")
+        download = module.FileDownload(self.files, self._cura_double(), None, **kwargs)
+        self.addCleanup(download.close)
+        return module, download
+
+    def _save_target(self, name="saved.gcode", payload=None):
+        directory = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        target = os.path.join(directory, name)
+        if payload is not None:
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+        return target
+
+    def test_the_two_cancel_terminals_stay_distinct(self):
+        # The reviewer's A at its source: the user's Cancel and an
+        # invalidated session are different terminals, and the user's
+        # never borrows the connection-change explanation. Both retire
+        # their own temp directory as they deliver.
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        cancelled = []
+        download = self.files.download_once(
+            "prints/part.gcode", on_ready=lambda path, error: cancelled.append((path, error)))
+        directory = download._directory
+        download.cancel()
+        self.assertEqual(cancelled, [(None, "The download was cancelled")])
+        self.assertNotIn("connection", cancelled[0][1])
+        self.assertFalse(os.path.exists(directory))
+
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        invalidated = []
+        self.files.download_once(
+            "prints/part.gcode", on_ready=lambda path, error: invalidated.append((path, error)))
+        self.files.cancel_one_shots()
+        self.assertEqual(invalidated,
+                         [(None, "The printer connection changed; the download was cancelled")])
+
+    def test_a_real_save_replaces_the_picked_file(self):
+        # End to end through the streamed lane: the temp file lands at
+        # the picked path, an existing file is replaced, and nothing of
+        # the transfer survives beside it.
+        directory = tempfile.mkdtemp(prefix="mpfxtest-save-")
+        target = os.path.join(directory, "saved.gcode")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("OLD\n")
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"G1 X0\n", size=6)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        self.assertIsNotNone(download.progress())  # the window is open for the transfer
+
+        reply.readyRead.emit()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: download._save is None))
+
+        self.assertEqual(failures, [])
+        self.assertIsNone(download.progress())
+        with open(target, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "G1 X0\n")
+        self.assertEqual(sorted(os.listdir(directory)), ["saved.gcode"])
+
+    def test_the_popup_cancel_ends_a_real_save_with_the_user_message(self):
+        target = self._save_target()
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        reply.readyRead.emit()
+
+        download.cancel()
+
+        self.assertEqual(failures, ["The download was cancelled"])
+        self.assertIsNone(download.progress())
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual([name for name in os.listdir(self.files._root) if name.startswith("file-")], [])
+
+    def test_a_session_invalidation_mid_save_touches_no_destination(self):
+        target = self._save_target(payload="OLD\n")
+        module, download = self._file_download()
+        failures = []
+        download.failed.connect(failures.append)
+        reply = self._reply_double(payload=b"A" * 8, size=8)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        with patch.object(module, "QFileDialog") as dialog:
+            dialog.getSaveFileName.return_value = (target, "")
+            self.assertTrue(download.request_save("prints/part.gcode"))
+        reply.readyRead.emit()
+
+        self.files.cancel_one_shots()  # the runtime's invalidation wire
+
+        self.assertTrue(self._wait(lambda: download._save is None))
+        self.assertEqual(failures, ["The printer connection changed; the download was cancelled"])
+        with open(target, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "OLD\n")
+        self.assertEqual([name for name in os.listdir(self.files._root) if name.startswith("file-")], [])
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class ToolheadControllerTests(unittest.TestCase):
@@ -2140,13 +2299,41 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertIn("G91\nG1 Z5 F600\nG90", self.scripts())
         self.controller.jog("z", 1)
         self.assertEqual(len(self.scripts()), 1)  # at the boundary: no-op
-        self.assertEqual(self.controller._z_estimate, 200.0)
+        self.assertEqual(self.controller._axis_estimate["z"], 200.0)
         self.commands.complete()
         # A fresh poll at the boundary keeps the tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 200.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
         self.assertEqual(self.controller._pending, ())
+
+    def test_merged_x_and_y_tails_never_overshoot_the_axis_limits(self):
+        # The stale-poll overshoot, X- and Y-flavoured (the Z fix
+        # generalised): rapid taps at the axis MAXIMUM used to clamp
+        # each against the stale poll, so the merged queue walked the
+        # head past the limit — the client-side projection now
+        # advances with every queued move on every axis, and the
+        # second tap at the boundary is a no-op.
+        self.data.set_state("paused")
+        self.controller.set_distance(25)
+        for axis, index in (("x", 0), ("y", 1)):
+            self.controller._reset()
+            self.data.snapshot.core["motion_report"]["live_position"][index] = 195.0
+            self.data.changed.emit()
+            self.controller.jog(axis, 1)
+            self.assertIn("G91\nG1 %s5 F3000\nG90" % axis.upper(), self.scripts())
+            self.assertEqual(self.controller._axis_estimate[axis], 200.0)
+            before = len(self.scripts())
+            self.controller.jog(axis, 1)
+            self.assertEqual(len(self.scripts()), before,
+                             "the %s+ tail overshot the maximum" % axis)
+            self.commands.complete()
+            # A fresh poll at the boundary keeps the tap a no-op.
+            self.data.snapshot.core["motion_report"]["live_position"][index] = 200.0
+            self.data.changed.emit()
+            self.controller.jog(axis, 1)
+            self.assertEqual(self.controller._pending, (),
+                             "the %s+ tap fired at the boundary" % axis)
 
     def test_z_floor_is_zero_even_with_a_negative_configured_minimum(self):
         # The live ruling: the jog pad must never send the
@@ -2177,10 +2364,16 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.controller.jog("z", -1)  # same burst: no second note
         self.assertEqual(len(notes), 1)
-        # An accepted move re-arms the note for the next burst.
+        # An accepted move re-arms the note for the next burst. The
+        # polls must report the head where it is: a poll still reading
+        # the pre-command level would be the accepted move's own
+        # reflection lagging (the dispatch seam), not the head the
+        # nudge is measured against.
         self.controller.jog("z", 1)
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 1.1
+        self.data.changed.emit()  # the head reported at the moved level
         self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
-        self.data.changed.emit()
+        self.data.changed.emit()  # ...and back one nudge above the floor
         self.controller.jog("z", -1)
         self.assertEqual(len(notes), 2)
 
@@ -2300,6 +2493,21 @@ class RemoteFileServiceMetadataTests(unittest.TestCase):
         self.addCleanup(self.service.close)
         self.service.bind(("part.gcode", 1000, 1))
 
+    def _wait_for_the_backoff_to_expire(self, timeout=3.0):
+        """Pump events until the service's own retry window has passed.
+
+        The window is read from time.monotonic(), which on Windows is
+        GetTickCount64 — a clock that only advances every ~15 ms tick, so
+        a 5 ms window is not cleared by waiting 5 ms (or 15). Waiting on
+        the implementation's own deadline keeps the assertion as strict
+        on a coarse clock as on a fine one; the iteration bound means a
+        clock that never advances fails the assertion, not the suite.
+        """
+        for _ in range(int(timeout * 200)):
+            if time.monotonic() >= self.service._metadata_retry_at:
+                return
+            self.qt.events(5)
+
     def test_metadata_failure_retries_after_backoff_and_completes_on_success(self):
         self.service.METADATA_RETRY_DELAYS_MS = (5,)
         self.service.request_metadata()
@@ -2316,7 +2524,7 @@ class RemoteFileServiceMetadataTests(unittest.TestCase):
         self.assertEqual(len(self.transport.requests), 1)
 
         # After the window the same job retries; success completes metadata.
-        self.qt.events(15)
+        self._wait_for_the_backoff_to_expire()
         self.service.request_metadata()
         self.assertEqual(len(self.transport.requests), 2)
         self.transport.requests[-1].callback({"result": {"estimated_time": 3600, "uuid": "u-1"}}, None)
@@ -2415,7 +2623,12 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         self.assertEqual(messages, [])
         self.assertTrue(self.cura.loading)  # the new load holds the stage
         self.assertIn(path, self.releases)  # the superseded lease released, never leaked
-        self.assertEqual(self.app.loaded, [path, second])  # both loads reached Cura
+        # QUrl spells a local file with '/' on every platform, so the
+        # recorded spelling and the temp dir's own differ on Windows
+        # only by separator and case: both loads reached Cura either way.
+        self.assertEqual([os.path.normcase(os.path.normpath(entry)) for entry in self.app.loaded],
+                         [os.path.normcase(os.path.normpath(path)),
+                          os.path.normcase(os.path.normpath(second))])
 
     def test_watchdog_unsticks_loading_and_keeps_the_file(self):
         path = self._make_file()
@@ -2521,6 +2734,7 @@ class SettingsSaveRefusalTests(unittest.TestCase):
             "console_interval_ms": 1000,
             "follow_mode": "exact",
             "z_tolerance": "0.05",
+            "cache_max_mb": "512",
             "ready_retry_interval_s": "1.0",
             "filename_translate_input": "a",
             "filename_translate_output": "b",

@@ -37,11 +37,43 @@ log_dir="${TMPDIR:-/tmp/mpf}"
 mkdir -p "$log_dir"
 log="$(mktemp "$log_dir/mpf-tests.XXXXXX")"
 
+# Elapsed time as a person reads it: seconds while they are still
+# countable, then m/s, then h/m/s — a leg that runs long enough for
+# "3725s" to be unhelpful says "1h02m05s" instead.
+elapsed_text() {
+    seconds="$1"
+    if [ "$seconds" -lt 60 ]; then
+        printf '%ss' "$seconds"
+    elif [ "$seconds" -lt 3600 ]; then
+        printf '%dm %02ds' "$((seconds / 60))" "$((seconds % 60))"
+    else
+        printf '%dh %02dm %02ds' "$((seconds / 3600))" "$(((seconds % 3600) / 60))" "$((seconds % 60))"
+    fi
+}
+
 run_once() {
     name="$1"
     shift
     echo "== $name =="
-    if "$@" >"$log" 2>&1; then
+    heartbeat=0
+    # The leg's output goes to the scratch log (a failing run must not
+    # have to be re-run to be read), which leaves a CI log dead still
+    # for as long as the leg takes — minutes, for the container leg.
+    # A heartbeat every 10 s is the difference between "working" and
+    # "hung" for whoever is watching, and it costs four lines a minute.
+    "$@" >"$log" 2>&1 &
+    leg_pid=$!
+    started=$(date +%s)
+    while kill -0 "$leg_pid" 2>/dev/null; do
+        sleep 2
+        kill -0 "$leg_pid" 2>/dev/null || break
+        now=$(date +%s)
+        if [ $((now - started)) -ge $((heartbeat + 10)) ]; then
+            heartbeat=$((now - started))
+            echo "   ... $name still running ($(elapsed_text "$heartbeat"))"
+        fi
+    done
+    if wait "$leg_pid"; then
         # A green exit that ran nothing is a false pass: an empty worker
         # list or a -p pattern matching no file both exit 0 before
         # 3.12 (which added the "NO TESTS RAN" failure). Demand a count.
@@ -54,7 +86,11 @@ run_once() {
         return 0
     fi
     echo "FAILED — the full output is at $log"
-    grep -B2 -A12 "FAIL:\|ERROR:" "$log" || true
+    # 40 lines, not 12: a shared-helper traceback (mount_window ->
+    # mount, _probe_rig -> _mount_line) spends a dozen lines on frames
+    # alone, and the dropped tail is the exception line itself — the
+    # one thing a leg we cannot re-run locally is read for.
+    grep -B2 -A40 "FAIL:\|ERROR:" "$log" || true
     grep -E "^(Ran|FAILED)" "$log" || true
     return 1
 }
@@ -109,6 +145,8 @@ if [ "${LEGS:-all}" = "host" ]; then
     run_once "stdlib suite" run_files
     run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
     run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+    run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
+    run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
     echo "host legs passed"
     exit 0
 fi
@@ -120,6 +158,8 @@ run_once "stdlib suite" run_files
 # directly.
 run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
 run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
+run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
 run_once "real-Qt suite (dev container, $jobs workers)" run_files_container
 
 echo "all test suites passed"

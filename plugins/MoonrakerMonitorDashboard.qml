@@ -96,9 +96,9 @@ Component {
             var rows = [];
             for (var j = 0; j < order.length; j++) {
                 rows.push({
-                        "id": order[j],
-                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                    });
+                    "id": order[j],
+                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                });
             }
             root.controlsConfigureRows = rows;
             root.controlsConfigureHidden = layout ? layout.hidden : [];
@@ -224,48 +224,67 @@ Component {
         }
         // Esc on the Monitor page (a live request): the pop-overs
         // close first, then the page itself — Preview when anything
-        // is sliced, Prepare otherwise. THE one window-level
-        // shortcut: the whole Esc ladder in one place, so the key
-        // can never have two claimants (the live report: the popup's
-        // own shortcut and this one fought, and the popup lost).
-        // This document hosts every layer — the monitor's pop-ups
-        // ride openPopOver on the loaded monitor root, this pane's
-        // pop-up is configurePaneOpen, and the file manager is
-        // fileManagerOpen — so the ladder lives here, not in the
-        // monitor document (its own shortcut fired the stage-exit
-        // branch for this pane's pop-up, which it cannot see — the
-        // harness probe's finding).
+        // is sliced, Prepare otherwise. THE one ladder, in the
+        // document that hosts every layer: the monitor's pop-ups ride
+        // openPopOver on the loaded monitor root, this pane's pop-up
+        // is configurePaneOpen, and the file manager is
+        // fileManagerOpen.
+        function escapeLadder() {
+            var monitor = baseMonitorLoader.item;
+            if (root.printer != null && root.printer.fileManagerOpen) {
+                if (fileManagerCard.columnsPopupOpen()) {
+                    // The columns popup is the TOP layer inside
+                    // the card: Esc closes it first (the live
+                    // report: Esc ignored the popup).
+                    fileManagerCard.closeColumnsPopup();
+                } else if (root.printer.filePrintConfirm !== "") {
+                    // The print confirmation is the TOP layer: Esc
+                    // cancels it, not the popup (the ruling).
+                    root.printer.fileCancelPrint();
+                } else {
+                    root.printer.setFileManagerOpen(false);
+                }
+            } else if (monitor !== null && (monitor.openPopOver === "sections-info" || monitor.openPopOver === "sections-status")) {
+                // The configure pop-ups close FIRST — Esc must
+                // never leave the page from under an open popup
+                // (the live report).
+                monitor.openPopOver = "";
+            } else if (configurePaneOpen !== "") {
+                configurePaneOpen = "";
+            } else if (monitor !== null && (monitor.openPopOver !== "" || monitor.selectedChartSensor !== "")) {
+                monitor.openPopOver = "";
+                monitor.selectedChartSensor = "";
+            } else if (OutputDevice != null) {
+                OutputDevice.leaveMonitorStage();
+            }
+        }
+
+        // The press arrives by two routes, and the engine in the field
+        // makes only one of them live: with nothing focused the window
+        // shortcut carries it, but with a TEXT item focused — the
+        // console output is one — that engine answers Escape inside the
+        // item and the shortcut never fires, so the press bubbles up the
+        // item chain to Keys.onEscapePressed instead. Both routes ask
+        // answerEscape, so one press is one rung: the first takes it and
+        // the second stands down until the dispatch (both deliveries sit
+        // inside one key event) has ended.
+        property bool escapeAnswered: false
+        function answerEscape() {
+            if (escapeAnswered)
+                return;
+            escapeAnswered = true;
+            escapeLadder();
+            Qt.callLater(function () {
+                root.escapeAnswered = false;
+            });
+        }
+        Keys.onEscapePressed: function (event) {
+            answerEscape();
+            event.accepted = true;
+        }
         Shortcut {
             sequence: "Esc"
-            onActivated: {
-                var monitor = baseMonitorLoader.item;
-                if (root.printer != null && root.printer.fileManagerOpen) {
-                    if (fileManagerCard.columnsPopupOpen()) {
-                        // The columns popup is the TOP layer inside
-                        // the card: Esc closes it first (the live
-                        // report: Esc ignored the popup).
-                        fileManagerCard.closeColumnsPopup();
-                    } else if (root.printer.filePrintConfirm !== "") {
-                        // The print confirmation is the TOP layer: Esc
-                        // cancels it, not the popup (the ruling).
-                        root.printer.fileCancelPrint();
-                    } else {
-                        root.printer.setFileManagerOpen(false);
-                    }
-                } else if (monitor !== null && (monitor.openPopOver === "sections-info" || monitor.openPopOver === "sections-status")) {
-                    // The configure pop-ups close FIRST — Esc must
-                    // never leave the page from under an open popup
-                    // (the live report).
-                    monitor.openPopOver = "";
-                } else if (configurePaneOpen !== "") {
-                    configurePaneOpen = "";
-                } else if (monitor !== null && (monitor.openPopOver !== "" || monitor.selectedChartSensor !== "")) {
-                    monitor.openPopOver = "";
-                    monitor.selectedChartSensor = "";
-                } else if (OutputDevice != null) {
-                    OutputDevice.leaveMonitorStage();
-                }
-            }
+            onActivated: root.answerEscape()
         }
 
         // ONE popover at a time, the other direction: when the
@@ -367,6 +386,17 @@ Component {
                 refocusTimer.attempts = 0;
                 refocusTimer.start();
             }
+        }
+        // A model republish outside any gesture replaces the repeater
+        // delegate while it holds the focus: the dying slider reports
+        // itself, and the same retry walk re-grants the focus to the
+        // fresh delegate (the reviewer's finding — a refresh killed
+        // the focused fan slider).
+        function receiveSliderFocus(object, kind) {
+            tuningSliderObject = object;
+            tuningSliderKind = kind;
+            refocusTimer.attempts = 0;
+            refocusTimer.start();
         }
         // The watchdog (the security re-review's sink latch): every
         // press re-arms it; a cancelled gesture never re-arms, so the
@@ -899,6 +929,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenFanItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         LedsSection {
@@ -909,6 +940,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenLedItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         PwmSection {
@@ -919,6 +951,7 @@ Component {
                             freezeRepeaters: root.tuningSliderPressed
                             frozenItems: root.frozenPwmOutputItems
                             interactionSink: root.receiveSliderInteraction
+                            focusSink: root.receiveSliderFocus
                         }
 
                         PowerSection {

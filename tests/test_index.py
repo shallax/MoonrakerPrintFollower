@@ -1,13 +1,19 @@
+import gzip
 import os
 import pathlib
 import random
 import re
 import tempfile
 import threading
+import time
 import unittest
+from array import array
+from unittest.mock import patch
 
+from plugins import ArcGeometry
 from plugins.MoonrakerProtocol import RemoteFileIdentity
 from plugins.GCodeIndex import (
+    LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,
     build_index_from_file,
@@ -318,6 +324,37 @@ G1 X5 Y0 Z0.2
             self.assertEqual(tuple(loaded.pauses), (0,))
             self.assertEqual([list(v) for v in loaded.motion_offsets], [list(v) for v in index.motion_offsets])
             self.assertEqual([list(v) for v in loaded.motion_x], [list(v) for v in index.motion_x])
+            self.assertEqual(loaded.layer_motion_counts, index.layer_motion_counts)
+
+    def test_compact_cache_carries_counts_for_evicted_layers(self):
+        # A compact save writes the arrays in their EVICTED state, but
+        # the eviction-proof counts ride beside them: a restored index
+        # resolves a far layer's total before its first re-hydration.
+        data = (b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
+                b";LAYER:2\nG1 X4 Y4 Z0.6\n;LAYER:3\nG1 X5 Y5 Z0.8\n;LAYER:4\nG1 X6 Y6 Z1.0\n")
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            path = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(path, compact=True)
+            for layer in range(4):
+                self.assertTrue(hydrate_layer_from_file(index, path, layer))
+            self.assertEqual(index.hydrated_layers, {2, 3})
+            self.assertEqual(index.motion_count(0), 2)
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
+            with tempfile.TemporaryDirectory() as directory:
+                cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
+                cache.save(identity, index)
+                loaded = cache.load(identity)
+                self.assertIsNotNone(loaded)
+                self.assertEqual(loaded.motion_count(0), 2)
+                # The count is the walk's metadata: born correct at
+                # build and carried by the save. Only the GEOMETRY
+                # stays unknown until hydration.
+                self.assertEqual(loaded.motion_count(4), 1)
+                self.assertEqual(loaded.hydrated_layers, {2, 3})
+        finally:
+            os.remove(path)
 
     def test_compact_index_hydrates_only_requested_layer(self):
         data = b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
@@ -328,13 +365,15 @@ G1 X5 Y0 Z0.2
             index = build_index_from_file(path, compact=True)
             self.assertTrue(index.compact)
             self.assertEqual(index.hydrated_layers, set())
-            self.assertEqual(index.motion_count(0), 0)
+            # The count is known at build; hydration delivers the
+            # geometry alone.
+            self.assertEqual(index.motion_count(0), 2)
             fraction, method = index.file_fraction(0, index.ranges[0][0] + 1)
             self.assertEqual(method, "byte position")
             self.assertTrue(hydrate_layer_from_file(index, path, 0))
             self.assertEqual(index.hydrated_layers, {0})
             self.assertEqual(index.motion_count(0), 2)
-            self.assertEqual(index.motion_count(1), 0)
+            self.assertEqual(index.motion_count(1), 1)
         finally:
             os.remove(path)
 
@@ -352,11 +391,13 @@ G1 X5 Y0 Z0.2
             for layer in range(4):
                 self.assertTrue(hydrate_layer_from_file(index, path, layer))
             self.assertEqual(index.hydrated_layers, {2, 3})
-            self.assertEqual(index.motion_count(0), 0)
+            # Eviction wipes the motion arrays but never the counts: a
+            # seek to an evicted layer still resolves its total.
+            self.assertEqual(index.motion_count(0), 2)
             self.assertEqual(index.motion_count(3), 1)
             self.assertTrue(hydrate_layer_from_file(index, path, 4))
             self.assertEqual(index.hydrated_layers, {3, 4})
-            self.assertEqual(index.motion_count(2), 0)
+            self.assertEqual(index.motion_count(2), 1)
             self.assertEqual(index.motion_count(4), 1)
         finally:
             os.remove(path)
@@ -381,8 +422,13 @@ G1 X5 Y0 Z0.2
             # A stray hydration of an old layer cannot evict the window
             # around the followed layer.
             self.assertTrue(hydrate_layer_from_file(index, path, 0, keep_anchor=2))
-            self.assertEqual(index.hydrated_layers, {1, 2, 3})
-            self.assertEqual(index.motion_count(0), 0)
+            # The live window survives the stray hydration, and the
+            # freshly hydrated layer keeps its own ±1 window until the
+            # next hydrate (the background pass's prepare window —
+            # bounded at the three windows' union).
+            self.assertEqual(index.hydrated_layers, {0, 1, 2, 3})
+            # The stray hydration's count persists.
+            self.assertEqual(index.motion_count(0), 2)
         finally:
             os.remove(path)
 
@@ -410,7 +456,8 @@ G1 X5 Y0 Z0.2
             index.followed_layer = 4
             self.assertTrue(hydrate_layer_from_file(index, path, 5))
             self.assertEqual(index.hydrated_layers, {3, 4, 5})
-            self.assertEqual(index.motion_count(2), 0)
+            # Evicted with its arrays, but the recorded count persists.
+            self.assertEqual(index.motion_count(2), 1)
         finally:
             os.remove(path)
 
@@ -455,18 +502,101 @@ G1 X5 Y0 Z0.2
                 self.assertIsNotNone(loaded)
                 self.assertTrue(loaded.compact)
                 self.assertEqual(loaded.hydrated_layers, {1})
-                self.assertEqual(loaded.motion_count(0), 0)
+                self.assertEqual(loaded.motion_count(0), 1)
                 self.assertEqual(loaded.motion_count(1), 1)
         finally:
             os.remove(path)
 
+    def test_a_uuid_regeneration_never_invalidates_a_valid_cache(self):
+        # The review's UUID-policy finding: Moonraker rolls a fresh
+        # uuid per metadata extraction, and the loader must not
+        # reject an otherwise-valid entry over it — the stable key
+        # already keys on size/modified.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-old")
+            cache.save(identity, index)
+            reextracted = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-fresh")
+            self.assertIsNotNone(cache.load(reextracted),
+                                 "the fresh extraction uuid invalidated the cache")
+            # A genuinely different file still refuses.
+            other = RemoteFileIdentity("a.gcode", len(data) + 1, 100.0, "uuid-fresh")
+            self.assertIsNone(cache.load(other),
+                              "a different size read the old cache")
+
+    def test_a_weak_identity_with_a_fresh_uuid_never_restores(self):
+        # The review's weak-metadata rule: filename + size alone (no
+        # reliable modified timestamp) with a CHANGED uuid marks a
+        # re-extraction whose content may have changed — the stale
+        # entry is refused rather than trusted. With a reliable
+        # timestamp the uuid difference means nothing, and a
+        # genuinely different mtime still refuses.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            weak = RemoteFileIdentity("a.gcode", len(data), 0.0, "u1")
+            cache.save(weak, index)
+            self.assertIsNotNone(cache.load(weak),
+                                 "the weak identity never cached")
+            rolled = RemoteFileIdentity("a.gcode", len(data), 0.0, "u2")
+            self.assertIsNone(cache.load(rolled),
+                              "a rolled uuid restored under weak metadata")
+            strong = RemoteFileIdentity("a.gcode", len(data), 100.0, "u2")
+            self.assertIsNone(cache.load(strong),
+                              "a different mtime read the weak entry")
+            cache.save(strong, index)
+            self.assertIsNotNone(cache.load(RemoteFileIdentity(
+                "a.gcode", len(data), 100.0, "u3")),
+                "a rolled uuid refused the strong identity")
+
+    def test_an_oversized_index_survives_its_own_prune(self):
+        # The review's oversized-entry finding: a single index larger
+        # than the whole budget must not be written and then
+        # immediately evicted — the just-written entry is protected.
+        data = b";LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 40000
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_bytes=1024, max_entries=1)
+            identity = RemoteFileIdentity("big.gcode", len(data), 100.0, "uuid-1")
+            cache.save(identity, index)
+            loaded = cache.load(identity)
+            self.assertIsNotNone(loaded,
+                                 "the oversized index evicted itself after the write")
+
+    def test_two_machine_namespaces_never_collide(self):
+        # The review's two-printer test: the SAME remote identity (the
+        # same filename, size and modified) under two machine
+        # directories — each printer's cache is its own.
+        data = b";LAYER:0\nG1 X1 Y1 Z0.2\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache_a = PersistentIndexCache(os.path.join(directory, "a"))
+            cache_b = PersistentIndexCache(os.path.join(directory, "b"))
+            identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
+            cache_a.save(identity, index)
+            cache_b.save(identity, index)
+            self.assertNotEqual(os.path.dirname(cache_a._path(identity)),
+                                os.path.dirname(cache_b._path(identity)),
+                                "the two machines share one directory")
+            self.assertIsNotNone(cache_a.load(identity))
+            self.assertIsNotNone(cache_b.load(identity))
+
     def test_persistent_cache_rejects_wrong_identity(self):
+        # The new UUID policy (the review's finding): the same
+        # filename/size/modified with ANY uuid is the same content —
+        # the load succeeds. A genuinely different size refuses.
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)
         with tempfile.TemporaryDirectory() as directory:
             cache = PersistentIndexCache(directory)
             cache.save(RemoteFileIdentity("a", len(data), 1, "u1"), index)
-            self.assertIsNone(cache.load(RemoteFileIdentity("a", len(data), 1, "u2")))
+            self.assertIsNotNone(cache.load(RemoteFileIdentity("a", len(data), 1, "u2")),
+                                 "a fresh uuid refused the same content")
+            self.assertIsNone(cache.load(RemoteFileIdentity("a", len(data) + 1, 1, "u1")),
+                              "a different size read the cache")
 
     def test_persistent_cache_rejects_truncation(self):
         data = b";LAYER:0\nG1 X1\nG1 X2\n"
@@ -482,6 +612,128 @@ G1 X5 Y0 Z0.2
                 handle.write(raw[: max(1, len(raw)//2)])
             self.assertIsNone(cache.load(identity))
 
+    def test_the_explicit_keep_survives_ambiguous_mtimes(self):
+        # The review's prune-protection finding: the protection rides
+        # the EXPLICIT keep path, never an mtime guess — equal (or
+        # deliberately backwards) mtimes must not evict the written
+        # entry merely because the ordering is ambiguous.
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=1)
+            cache.save(RemoteFileIdentity("a.gcode", len(data), 1.0, "u1"), index)
+            first = cache._path(RemoteFileIdentity("a.gcode", len(data), 1.0, "u1"))
+            # A rival print folder whose mtime EQUALS the just-written
+            # entry's, and one that is NEWER.
+            rival = os.path.join(directory, "p-rival")
+            os.makedirs(rival, exist_ok=True)
+            rival_file = os.path.join(rival, "index.mpfi.gz")
+            with open(rival_file, "wb") as handle:
+                handle.write(b"\x00" * 64)
+            os.utime(first, (1000.0, 1000.0))
+            os.utime(rival_file, (1000.0, 1000.0))  # the ambiguous tie
+            cache.prune(keep=first)
+            self.assertTrue(os.path.exists(first),
+                            "the keep lost to an equal-mtime rival")
+            # A NEWER rival must not unseat the keep either.
+            os.makedirs(rival, exist_ok=True)
+            with open(rival_file, "wb") as handle:
+                handle.write(b"\x00" * 64)
+            os.utime(rival_file, (2000.0, 2000.0))
+            cache.prune(keep=first)
+            self.assertTrue(os.path.exists(first),
+                            "the keep lost to a newer rival")
+
+    def test_prune_evicts_oldest_first_until_the_retained_set_fits(self):
+        # The review's true-LRU semantics: the walk goes OLDEST first
+        # — the small old print goes BEFORE the crossing-sized middle
+        # one, and the eviction stops once the retained set (the
+        # newest) fits the budget. Never the packing that keeps an
+        # older item merely because it fits better.
+        big = b";LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 30000
+        small = b";LAYER:0\nG1 X1\n"
+        index_big = build_index_from_bytes(big)
+        index_small = build_index_from_bytes(small)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=100)
+            # Written oldest -> newest (the write order stamps the
+            # recency): the small print is the oldest.
+            old_identity = RemoteFileIdentity("old-small.gcode", len(small), 1.0, "u1")
+            mid_identity = RemoteFileIdentity("mid.gcode", len(big), 2.0, "u2")
+            new_identity = RemoteFileIdentity("new.gcode", len(big), 3.0, "u3")
+            cache.save(old_identity, index_small)
+            cache.save(mid_identity, index_big)
+            cache.save(new_identity, index_big)
+            folders = {key: os.path.dirname(cache._path(identity))
+                       for key, identity in (("old", old_identity),
+                                             ("mid", mid_identity),
+                                             ("new", new_identity))}
+            sizes = {key: sum(os.path.getsize(os.path.join(root, name))
+                              for root, _dirs, names in os.walk(folder)
+                              for name in names if name.endswith(".mpfi.gz"))
+                     for key, folder in folders.items()}
+            # The budget fits the newest big print alone: the oldest
+            # goes first, then the crossing-sized middle — exactly
+            # the two non-newest entries.
+            cache.max_bytes = sizes["new"] + sizes["old"]
+            cache.prune()
+            self.assertTrue(os.path.exists(folders["new"]),
+                            "the newest print was evicted")
+            self.assertFalse(os.path.exists(folders["mid"]),
+                             "the middle print survived")
+            self.assertFalse(os.path.exists(folders["old"]),
+                             "the oldest print survived the LRU walk")
+            self.assertIsNotNone(cache.load(new_identity))
+            self.assertIsNone(cache.load(mid_identity),
+                              "the evicted print still reads")
+            self.assertIsNone(cache.load(old_identity),
+                              "the evicted print still reads")
+
+    def test_prune_honours_both_budgets_with_a_protected_entry(self):
+        # The review's interaction case: the entry-count and the
+        # byte budget apply SIMULTANEOUSLY around a protected entry —
+        # the survivors are the protected item plus the most recent
+        # unprotected entries the count permits, and the oldest
+        # unprotected folders go first.
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=2)
+            # Written oldest -> newest: d (oldest), c, b, a (newest,
+            # the protected just-written entry).
+            d_identity = RemoteFileIdentity("d.gcode", len(data), 1.0, "u1")
+            c_identity = RemoteFileIdentity("c.gcode", len(data), 2.0, "u2")
+            b_identity = RemoteFileIdentity("b.gcode", len(data), 3.0, "u3")
+            a_identity = RemoteFileIdentity("a.gcode", len(data), 4.0, "u4")
+            for identity in (d_identity, c_identity, b_identity):
+                cache.save(identity, index)
+            # The paths are captured BEFORE the final save's own
+            # prune runs (_path would re-create a folder after its
+            # eviction).
+            folders = {key: os.path.dirname(cache._path(identity))
+                       for key, identity in (("a", a_identity),
+                                             ("b", b_identity),
+                                             ("c", c_identity),
+                                             ("d", d_identity))}
+            cache.save(a_identity, index)  # the protected newest entry
+            # The count bound alone forces the two OLDEST unprotected
+            # folders out; the protected newest entry survives.
+            cache.prune(keep=folders["a"])
+            # The surviving measure is the FOLDER'S FILE: `_path`
+            # re-creates an evicted folder as an empty shell, and the
+            # walk (correctly) skips empty shells — a folder with no
+            # file holds no entry.
+            def entry_exists(key):
+                return os.path.exists(os.path.join(folders[key], "index.mpfi.gz"))
+            self.assertTrue(entry_exists("a"),
+                            "the protected entry was evicted")
+            self.assertTrue(entry_exists("b"),
+                            "the most recent unprotected entry was evicted")
+            self.assertFalse(entry_exists("c"),
+                             "an over-count older entry survived")
+            self.assertFalse(entry_exists("d"),
+                             "the oldest entry survived the count bound")
+
     def test_cache_prunes_entry_count(self):
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)
@@ -489,7 +741,9 @@ G1 X5 Y0 Z0.2
             cache = PersistentIndexCache(directory, max_entries=2)
             for i in range(4):
                 cache.save(RemoteFileIdentity(f"{i}.gcode", len(data), float(i), f"u{i}"), index)
-            self.assertLessEqual(len([n for n in os.listdir(directory) if n.endswith('.mpfi.gz')]), 2)
+            blobs = [name for _root, _dirs, names in os.walk(directory)
+                     for name in names if name.endswith('.mpfi.gz')]
+            self.assertLessEqual(len(blobs), 2)
 
     def test_cura_orca_prusa_and_variable_layer_fixtures(self):
         cura = build_index_from_file(str(FIXTURES / "cura.gcode"), compact=False)
@@ -582,7 +836,11 @@ G00 X2 Y2 Z0.2
         self.assertLessEqual(dense.layer_count(), _MAX_LAYER_BLOCKS)
         bomb = build_index_from_bytes(b";LAYER:0\n" + b"G1 X1\n" * (_MAX_MOTIONS_PER_LAYER + 5_000)
                                       + b";LAYER:1\nG1 X2\n")
-        self.assertLessEqual(bomb.motion_count(0), _MAX_MOTIONS_PER_LAYER)
+        # The STRUCTURE stays bounded: the motion arrays truncate at
+        # the cap. The count is one int and stays honest — it drives
+        # the scrub slider's real total.
+        self.assertEqual(len(bomb.motion_offsets[0]), _MAX_MOTIONS_PER_LAYER)
+        self.assertEqual(bomb.motion_count(0), _MAX_MOTIONS_PER_LAYER + 5_000)
 
     def test_cache_rejects_same_uuid_with_changed_size_or_modified(self):
         data = b";LAYER:0\nG1 X1\n"
@@ -594,7 +852,267 @@ G00 X2 Y2 Z0.2
             self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "path-uuid")))
             self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 200, 1.0, "path-uuid")))
             self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 2.0, "path-uuid")))
-            self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")))
+            self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")),
+                                 "a fresh extraction uuid refused the same content")
+
+    def _scan_gcode(self, layers: int = 40, moves: int = 400) -> bytes:
+        lines = [b";HEADER\n"]
+        for layer in range(layers):
+            lines.append(f";LAYER:{layer}\n".encode())
+            for move in range(moves):
+                lines.append(
+                    f"G1 X{move * 0.1:.3f} Y{layer * 0.2:.3f} Z{layer * 0.2:.3f} E{move * 0.01:.4f}\n".encode())
+        return b"".join(lines)
+
+    def _scan_beats(self, data: bytes):
+        """The build scan's gate asks, progress emissions and line count
+        for *data*, with the real yield still running."""
+        import plugins.GCodeIndex as module
+        lines = data.count(b"\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "scan.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            asks = []
+            emissions = []
+            real_yield = module.passive_yield
+            real_emit = module._emit_progress
+
+            def recorded_yield(now, last):
+                asks.append(now)
+                return real_yield(now, last)
+
+            def recorded_emit(handle, progress):
+                emissions.append(progress)
+                return real_emit(handle, progress)
+
+            with patch.object(module, "passive_yield", recorded_yield), \
+                    patch.object(module, "_emit_progress", recorded_emit):
+                index = build_index_from_file(path, progress=lambda _f: None)
+        self.assertEqual(index.layer_count(), 40, "the scan did not read the fixture")
+        return len(asks), len(emissions), lines
+
+    def test_the_scan_reports_progress_on_a_coarser_beat_than_its_hand_back(self):
+        # The build's hand-back and its progress readout were ONE beat
+        # before the split, which is what let the coarser of the two
+        # interests set the hand-back period. They are two beats now,
+        # and the split is the contract: the readout carries the
+        # worker's byte-offset fraction up to the UI, so it is the
+        # COARSER of the two — a readout on the hand-back's beat would
+        # put a queued signal per 64 lines onto the GUI thread the
+        # fine beat exists to keep free. The asserts are on the counts,
+        # which are deterministic; the wall-clock cadence they exist to
+        # serve is evidence, and a bound on gaps per unit of time would
+        # pin the machine's load rather than the loop's shape.
+        asks, emissions, lines = self._scan_beats(self._scan_gcode())
+        self.assertGreaterEqual(emissions, 1, "the progress readout never fired")
+        self.assertLessEqual(
+            emissions, lines // 1024 + 1,
+            "the progress readout fired %d times over %d lines — it "
+            "inherited the hand-back's beat" % (emissions, lines))
+        self.assertGreaterEqual(
+            asks, emissions * 4,
+            "the scan asked its hand-back gate %d times and reported "
+            "progress %d times — the two beats have merged"
+            % (asks, emissions))
+
+    def test_the_scans_hand_back_stays_out_of_the_per_line_path(self):
+        # The other edge of the split: the hand-back's beat must be fine
+        # enough that the wall-clock gate governs it, but not so fine
+        # that the loop pays a clock call per line. The scan's floor is
+        # pinned with the hydration walk's in the plate suite; this is
+        # the ceiling that keeps a future starvation report from being
+        # answered by asking the gate on every line of a 300k-line
+        # layer.
+        asks, _emissions, lines = self._scan_beats(self._scan_gcode())
+        self.assertLessEqual(
+            asks, lines // 32,
+            "the scan asked its gate %d times over %d lines — the clock "
+            "call has entered the per-line path" % (asks, lines))
+
+
+class _GatedStream:
+    """The save's gzip handle, parked at its first written byte.
+
+    Every write goes to the real handle, but the FIRST one hands
+    control to the case's watcher and waits (bounded) for its verdict
+    before the byte lands: the watcher sees the save from inside its
+    encode, at a named instant, instead of whenever a stopwatch
+    happened to look.
+
+    The context protocol mirrors GzipFile's: the handle closes when the
+    save's ``with`` block leaves.
+    """
+
+    def __init__(self, handle, at_first_write):
+        self._handle = handle
+        self._at_first_write = at_first_write
+        self._opened = False
+
+    def write(self, data):
+        if not self._opened:
+            self._opened = True
+            self._at_first_write()
+        return self._handle.write(data)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._handle.close()
+
+
+class SaveHoldTests(unittest.TestCase):
+    """The save's lock hold is the SNAPSHOT, never the encode.
+
+    The GUI thread takes index.cache_lock to read the plate — the
+    layers, the split, the progress and the followed layer's own writes
+    all come through it — so a hold across the gzip of a whole print's
+    motion data stalls the thread that draws the UI, for as long as the
+    dataset takes to compress.
+
+    Both cases below drive a REAL save and look at the lock from
+    another thread at the one instant that decides it: the first byte
+    of the encode. The verdict is a boundary, not a duration, so it
+    reads the same on an idle runner and on a busy one.
+    """
+
+    @staticmethod
+    def _dense_index(layers=120, motions=400):
+        """The scan's output shape, at the size an encode has to move."""
+        index = LayerMotionIndex()
+        for layer in range(layers):
+            index.ranges.append((layer * motions * 32, (layer + 1) * motions * 32))
+            index.motion_offsets.append(array("Q", range(layer, layer + motions)))
+            index.motion_x.append(array("f", (m * 0.05 for m in range(motions))))
+            index.motion_y.append(array("f", ((m * 7) % 180 for m in range(motions))))
+            index.motion_z.append(array("f", (layer * 0.2 for _ in range(motions))))
+            index.layer_start_positions.append((0.0, 0.0, layer * 0.2))
+            index.layer_start_absolute.append(True)
+            index.layer_start_units.append(1.0)
+            index.layer_elapsed_times.append(float(layer) * 12.0)
+            index.motion_arcs.append({})
+            index.layer_start_arc_plane.append(ArcGeometry.PLANE_XY)
+            index.layer_motion_counts.append(motions)
+        return index
+
+    @staticmethod
+    def _blob(cache, identity):
+        with gzip.open(cache._path(identity), "rb") as handle:
+            return handle.read()
+
+    @staticmethod
+    def _gated_save(cache, identity, index, encode_started, proceed):
+        """Save for real, gated at the encode's first byte.
+
+        ``encode_started`` says the encode has begun; ``proceed`` is the
+        case's own verdict that it may continue, and its absence is
+        bounded so a failing case still finishes.
+        """
+        real_open = gzip.open
+
+        def at_first_write():
+            encode_started.set()
+            proceed.wait(2.0)
+
+        def gate(path, *args, **kwargs):
+            return _GatedStream(real_open(path, *args, **kwargs), at_first_write)
+
+        with patch("plugins.GCodeIndex.gzip.open", gate):
+            worker = threading.Thread(target=cache.save, args=(identity, index))
+            worker.start()
+            worker.join(10.0)
+        return worker
+
+    def test_the_encode_does_not_hold_the_cache_lock(self):
+        index = self._dense_index()
+        payload = sum(len(a) * 20 for a in index.motion_offsets)
+        identity = RemoteFileIdentity("dense.gcode", payload, 100.0, "uuid-1")
+        encode_started = threading.Event()
+        verdict = threading.Event()
+        read = {}
+
+        def gui_read():
+            # The GUI side, in the shape of the service's own read: the
+            # progress face takes this lock to ask the index for a
+            # layer's motion total.
+            if not encode_started.wait(5.0):
+                return
+            started = time.monotonic()
+            acquired = index.cache_lock.acquire(timeout=1.0)
+            read["waited"] = time.monotonic() - started
+            read["acquired"] = acquired
+            if acquired:
+                try:
+                    index.motion_count(0)
+                finally:
+                    index.cache_lock.release()
+            verdict.set()
+
+        reader = threading.Thread(target=gui_read)
+        reader.start()
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_bytes=64 * 1024 * 1024, max_entries=4)
+            worker = self._gated_save(cache, identity, index, encode_started, verdict)
+            reader.join(10.0)
+            self.assertFalse(worker.is_alive(), "the save never finished")
+            self.assertIsNotNone(cache.load(identity), "the gated save wrote no index")
+        self.assertIn("acquired", read, "the save never reached its encode")
+        self.assertTrue(read["acquired"],
+                        "the encode holds the cache lock: the GUI thread's plate "
+                        "read waited %.0f ms for it" % (read["waited"] * 1000))
+        # The margin says "taken at once", not "taken within a budget":
+        # the acquisition above is uncontended once the encode is
+        # outside the hold, and the pre-fix code never returns at all.
+        self.assertLess(read["waited"], 0.05,
+                        "the GUI thread waited %.1f ms for a lock a running "
+                        "encode should not hold" % (read["waited"] * 1000))
+
+    def test_a_hydration_during_the_encode_never_reaches_the_blob(self):
+        # The trap the narrow hold has to answer: a compact index's
+        # layers are filled in under this same lock by the background
+        # pass, so an encode that read the LIVE arrays would publish a
+        # layer the header's own counts disagree with. A blob is one
+        # consistent view or it is not a blob.
+        data = b"G90\n;LAYER:0\n" + b"G1 X1 Y1 Z0.2\n" * 8 + b";LAYER:1\nG1 X2 Y2 Z0.4\n"
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            source = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(source, compact=True)
+            self.assertEqual([len(a) for a in index.motion_offsets], [0, 0])
+            identity = RemoteFileIdentity("compact.gcode", len(data), 100.0, "uuid-1")
+            with tempfile.TemporaryDirectory() as directory:
+                cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
+                cache.save(identity, index)
+                snapshot_state = self._blob(cache, identity)
+                encode_started = threading.Event()
+                hydrated = threading.Event()
+
+                def hydrate_midway():
+                    if not encode_started.wait(5.0):
+                        return
+                    hydrate_layer_from_file(index, source, 0)
+                    hydrated.set()
+
+                hydrator = threading.Thread(target=hydrate_midway)
+                hydrator.start()
+                self._gated_save(cache, identity, index, encode_started, hydrated)
+                hydrator.join(10.0)
+                self.assertFalse(hydrator.is_alive(), "the hydration never finished")
+                self.assertEqual([len(a) for a in index.motion_offsets], [8, 0],
+                                 "the hydration did not land in the index")
+                self.assertEqual(self._blob(cache, identity), snapshot_state,
+                                 "the blob took up state that changed after the snapshot")
+                loaded = cache.load(identity)
+                self.assertIsNotNone(loaded)
+                # The saved view is the pre-hydration one: the compact
+                # save writes the evicted state, and the counts that ride
+                # beside it still know the layer's real total.
+                self.assertEqual([len(a) for a in loaded.motion_offsets], [0, 0])
+                self.assertEqual(loaded.motion_count(0), 8)
+        finally:
+            os.remove(source)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Qt-independent, immutable physical-print observations shared by all consumers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from typing import Mapping, Optional, Sequence
 
@@ -56,10 +56,52 @@ class PrintSnapshot:
     # The slicer's total filament length (mm) from the file metadata:
     # the Print-job section shows "used / remaining" against it.
     filament_total: Optional[float] = None
+    # The follower face's prepared polylines (the 4.6.0 plate): the
+    # prev/current/next bundle with the printed/unprinted split, built
+    # by the coordinator from the index — None without a live view.
+    plate_progress: Optional[dict] = None
+    # The popover's own view while the follower is DETACHED: the frozen
+    # anchor's bundle with the scrubbed split. None while attached (the
+    # live payload above serves both surfaces). The mini reads only
+    # plate_progress, so it never detaches with the popover (the live
+    # request).
+    plate_manual_progress: Optional[dict] = None
+    # The index's layer count: the layer slider's range, and the clamp
+    # that refuses a stale manual anchor from an earlier file. 0 without
+    # a view.
+    plate_layer_count: int = 0
+    # The background optimisation's progress (the job bar's band): the
+    # share of layers the prepared store holds, None without a view.
+    plate_pass_fraction: Optional[float] = None
+    # The coordinator's cheap lookup/publication-side call around
+    # plate_progress(), in milliseconds. Expensive prepared read/decode/
+    # hydrate work happens asynchronously in GCodeIndexService and is NOT
+    # represented by this number.
+    plate_lookup_ms: Optional[float] = None
+    # Legacy construction compatibility only. New code never publishes
+    # this as a decode metric.
+    plate_decode_ms: Optional[float] = None
+    # The current layer's printed objects: the executed motions'
+    # polygon visits, read back from the layer's start (the live
+    # ruling: the DEFINE order is not the print order everywhere).
+    plate_visited: frozenset = field(default_factory=frozenset)
 
     @property
     def active(self) -> bool:
         return self.observation is not None and self.observation.state in {"printing", "paused"}
+
+
+# Sources whose layer number is the parser's own read-ahead: Klipper runs
+# SET_PRINT_STATS_INFO as it READS it, and virtual_sdcard's byte offset is a
+# READ offset — both with seconds of the previous layer's moves still queued.
+# Neither is evidence that the layer has physically started.
+_PARSER_LAYER_SOURCES = frozenset({
+    "Moonraker current_layer", "G-code mapped current_layer", "G-code file position",
+})
+# How far a parser claim may lead the nozzle's own height before the two are
+# read as disagreement about WHICH FILE (a stale Cura scene) rather than as
+# read-ahead. Past it the claim wins: the height table is the suspect one.
+_MAX_LAYER_SKEW = 4
 
 
 class LayerResolver:
@@ -68,6 +110,11 @@ class LayerResolver:
     Exact G-code layer mapping/byte ranges precede geometry/metadata fallbacks.
     Z-only samples must advance extrusion, preventing Z-hop from changing layer.
     Geometry may supply a denominator but never clamps the physical observation.
+    A parser-side claim is held at the layer the nozzle's own live Z has
+    reached: the parser reads ahead of the move queue, so its claim names the
+    layer the print is about to print, and every consumer of the layer index
+    (the plate's anchor and its boundary refinement included) would otherwise
+    act on a layer the nozzle has not entered.
     """
     def __init__(self):
         self.reset()
@@ -93,8 +140,60 @@ class LayerResolver:
         except (TypeError, ValueError, OverflowError):
             return None
 
+    def _nozzle_layer(self, nozzle, heights: Sequence[float], metadata: Mapping, config):
+        """The layer the nozzle's own Z has physically reached, or None.
+
+        The live position is the only signal the resolver reads that cannot
+        lead the move queue, so it is the one check on a parser-side claim.
+        A layer claims the nozzle within HALF the span to the next layer's
+        start: a layer's Z is commanded once, at its start, so the nozzle
+        holds that exact height for the layer's whole life, and the half-span
+        is what keeps a systematic offset (a raft, a squished first layer)
+        from reading one layer low. None when no live position arrived or the
+        heights cannot answer: a nozzle above the model (a pause lift), below
+        the first layer's start, or without a usable step.
+        """
+        if not nozzle or len(nozzle) < 3:
+            return None
+        z = self._number(nozzle[2])
+        if z is None:
+            return None
+        tolerance = self._number(config.z_tolerance) or 0.0
+        # TWO entries are the minimum that can answer: with one there is
+        # no heights[n + 1] to form a step, so the walk below can only
+        # ever return 0 or None. It read a nozzle at z=5.35 as "a lift
+        # above the model" and answered None for a print on layer 103,
+        # leaving the parser's read-ahead claim as the only signal (the
+        # live report: the layer jumped at a transition, with Cura's
+        # scene unloaded so its height table held a single entry).
+        # Falling through reaches the metadata's own step below.
+        if len(heights) > 1:
+            # The heights are the sliced layer starts in order; walking down
+            # from the top costs the layers still AHEAD of the nozzle rather
+            # than every layer already printed.
+            if z > (self._number(heights[-1]) or 0.0) + tolerance:
+                return None  # a lift above the model is not a layer
+            for n in range(len(heights) - 1, -1, -1):
+                height = self._number(heights[n])
+                if height is None or height <= 0:
+                    continue
+                following = self._number(heights[n + 1]) if n + 1 < len(heights) else None
+                half = (following - height) / 2.0 \
+                    if following is not None and following > height else 0.0
+                if height <= z + max(tolerance, half):
+                    return n
+            return None
+        step = self._number(metadata.get("layer_height")) or self._step
+        first = self._number(metadata.get("first_layer_height")) or step
+        if not step or step <= 0 or first is None or z < first - tolerance:
+            return None
+        total_height = self._number(metadata.get("object_height"))
+        if total_height and total_height > 0 and z > total_height + tolerance:
+            return None
+        return max(0, int((z - first + step / 2.0) / step + 1e-6))
+
     def resolve(self, status: Mapping, config, index=None, metadata: Optional[Mapping] = None,
-                heights: Sequence[float] = ()) -> PhysicalLayer:
+                heights: Sequence[float] = (), nozzle: Optional[Sequence[float]] = None) -> PhysicalLayer:
         stats = status.get("print_stats") or {}
         stats = stats if isinstance(stats, Mapping) else {}
         info = stats.get("info") or {}
@@ -133,6 +232,18 @@ class LayerResolver:
                 layer = index.layer_at(position)
                 if layer is not None:
                     source = "G-code file position"
+        if layer is not None and source in _PARSER_LAYER_SOURCES:
+            # The claim above runs ahead of the nozzle by the move queue's
+            # lookahead, so the layer the print is ABOUT to print is reported
+            # as the layer it is ON. Callers act on the index immediately —
+            # the plate anchors to it and refines its boundary against that
+            # layer's geometry — so the hold has to happen here, before any
+            # consumer sees it. A lead past the skew bound is not read-ahead
+            # but a height table from another file: the claim keeps it.
+            reached = self._nozzle_layer(nozzle, heights, metadata, config)
+            if reached is not None and reached < layer <= reached + _MAX_LAYER_SKEW:
+                layer = reached
+                source = "nozzle Z (claim held)"
 
         position = move.get("gcode_position") or ()
         sd_progress = self._number(sd.get("progress"))

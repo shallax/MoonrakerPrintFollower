@@ -9,10 +9,13 @@ state the model reads in production rather than by hand-stuffing its
 internals.
 
 Leftovers, with reasons:
-  - 935: the published window's swap-back. Both thresholds are clamped
+  - 1533: the published window's swap-back. Both thresholds are clamped
     into the same mesh window and the clamp is monotone, so
     setBedMeshThresholds cannot hand the publish an inverted pair; the
     line guards a state nothing constructs.
+  - 3404: the navigation demand's hard-key guard. _nav_key_hard returns
+    None only for a None key, and _schedule_navigation has already
+    returned on that key two lines earlier, so the guard cannot fire.
   - 1890 (openMigrationBackupFolder): the body opens the config folder in
     the desktop's file manager. The container has no such handler, so the
     slot is driven with QDesktopServices.openUrl replaced by a recorder —
@@ -100,7 +103,7 @@ class MonitorModelCase(unittest.TestCase):
 
     def persistence(self):
         """The production facade over a scratch settings/state pair."""
-        root = tempfile.mkdtemp(prefix="mpf-model-", dir=SCRATCH if os.path.isdir(SCRATCH) else None)
+        root = tempfile.mkdtemp(prefix="mpfxtest-model-", dir=SCRATCH if os.path.isdir(SCRATCH) else None)
         return self.qt.load("PluginPersistence").PluginPersistence(
             settings_path=os.path.join(root, "settings.json"),
             state_global_path=os.path.join(root, "state.json"),
@@ -271,7 +274,7 @@ class LocaleAndHydrationTests(MonitorModelCase):
         # _write_state is the module-level name older callers import; it
         # writes the document to the file it names, merging into it.
         module = self.qt.load("MoonrakerMonitorModel")
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-state-"), "sections.json")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-state-"), "sections.json")
         pathlib.Path(path).write_text(json.dumps({"foreign": 1}), encoding="utf-8")
         with patch.object(module, "_sections_path", lambda: path):
             module._write_state({"sections": {"console": False}})
@@ -285,7 +288,7 @@ class StoreWiringTests(MonitorModelCase):
 
     def test_the_config_only_store_persists_the_panel_state(self):
         module = self.qt.load("MoonrakerMonitorModel")
-        path = os.path.join(tempfile.mkdtemp(prefix="mpf-store-"), "state.json")
+        path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-store-"), "state.json")
         self.model = self.build(state_store=module.StateStore(path))
         self.model.setControlsCollapsed(True)
         self.model.setJogDistance(42.0)
@@ -307,7 +310,7 @@ class StoreWiringTests(MonitorModelCase):
         self.model = self.build()
         # A parent path that is a FILE can never hold the document:
         # the save fails and the note reaches the console.
-        blocker = os.path.join(tempfile.mkdtemp(prefix="mpf-blocker-"), "blocker")
+        blocker = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-blocker-"), "blocker")
         with open(blocker, "w", encoding="utf-8") as handle:
             handle.write("not a directory")
         self.model._store._path = os.path.join(blocker, "state.json")
@@ -347,7 +350,11 @@ class StoreWiringTests(MonitorModelCase):
             self.model.openMigrationBackupFolder()
         self.assertEqual(len(opened), 1)
         from UM.Resources import Resources
-        self.assertEqual(opened[0].toLocalFile(), Resources.getConfigStoragePath())
+        # QUrl.toLocalFile() spells a local file with '/' on every
+        # platform; the storage path carries the platform's own
+        # separators and case, so the two are compared as paths.
+        self.assertEqual(os.path.normcase(os.path.normpath(opened[0].toLocalFile())),
+                         os.path.normcase(os.path.normpath(Resources.getConfigStoragePath())))
 
 
 class PublishBranchTests(MonitorModelCase):
@@ -576,6 +583,21 @@ class PrintConfirmTests(MonitorModelCase):
         self.model._request_file_download = None
         self.model.fileDownload("prints/part.gcode")
         self.assertEqual(requested, ["prints/part.gcode"])
+
+    def test_download_progress_publishes_and_cancel_delegates(self):
+        progress = [None]
+        cancelled = []
+        self.model = self.build(request_download_progress=lambda: progress[0],
+                                cancel_file_download=lambda: cancelled.append(True))
+        self.assertEqual(self.value("fileDownloadProgress"), "")
+        progress[0] = {"name": "part.gcode", "percent": 42}
+        self.model._publish()
+        self.assertEqual(self.value("fileDownloadProgress"), {"name": "part.gcode", "percent": 42})
+        self.model.fileDownloadCancel()
+        self.assertEqual(cancelled, [True])
+        self.model._cancel_file_download = None
+        self.model.fileDownloadCancel()
+        self.assertEqual(cancelled, [True])
 
     def test_clearing_the_walk_error_republishes(self):
         self.model = self.build()
@@ -937,3 +959,996 @@ class ActionTailTests(MonitorModelCase):
         self.assertEqual(self.model._toolhead._absolute_coordinates, False)
         self.model.setPositionMode(True)
         self.assertEqual(self.model._toolhead._absolute_coordinates, True)
+
+
+class ChartCadenceTests(MonitorModelCase):
+    """The chart feeds from its own 1 s clock, decoupled from the
+    auxiliary delivery slider (the live report: a fast slider setting
+    fed the history at push rate and the count cap trimmed the
+    advertised 30-minute window to minutes)."""
+
+    def test_a_tick_feeds_one_sample_on_the_fixed_clock(self):
+        self.model = self.build()
+        self.assertEqual(self.model._chart_timer.interval(), 1000)
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        before = len(self.model._history.series("extruder"))
+        self.model._on_chart_tick()
+        self.assertEqual(len(self.model._history.series("extruder")), before + 1)
+
+    def test_auxiliary_arrivals_no_longer_feed_the_history(self):
+        self.model = self.build()
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        count = len(self.model._history.series("extruder"))
+        self.observe(auxiliary={"extruder": {"temperature": 205.0}})
+        self.observe(auxiliary={"extruder": {"temperature": 210.0}})
+        self.assertEqual(len(self.model._history.series("extruder")), count)
+
+    def test_a_tick_never_bridges_a_disconnected_snapshot(self):
+        self.model = self.build()
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        self.model._on_chart_tick()
+        self.client.stop(reset_session=False)
+        count = len(self.model._history.series("extruder"))
+        self.model._on_chart_tick()
+        self.assertEqual(len(self.model._history.series("extruder")), count)
+
+
+class PlatePayloadTests(MonitorModelCase):
+    """The plate payload: the visited (passed) state from the print
+    snapshot and the geometry/exclusion merge."""
+
+    def test_the_plate_payload_reads_visited_from_the_print_snapshot(self):
+        # The green-printed fix: the visited set comes from the PRINT
+        # snapshot — reading it from the monitor snapshot made passed
+        # always false (the live report: no green outlines, ever).
+        self.model = self.build()
+        self.model._data._update(auxiliary={"exclude_object": {
+            "objects": [
+                {"name": "PART_A", "center": [10.0, 20.0],
+                 "polygon": [[5.0, 15.0], [5.0, 25.0], [15.0, 25.0], [15.0, 15.0]]},
+                {"name": "PART_B", "center": [40.0, 40.0],
+                 "polygon": [[35.0, 35.0], [35.0, 45.0], [45.0, 45.0], [45.0, 35.0]]},
+            ],
+            "excluded_objects": [],
+            "current_object": "PART_B",
+        }})
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_visited=frozenset({"PART_A"}))
+        self.model._publish()
+        rows = {row["name"]: row for row in self.model._values["plateObjects"]["objects"]}
+        self.assertTrue(rows["PART_A"]["passed"], "the visited object did not read as passed")
+        self.assertFalse(rows["PART_B"]["passed"], "the current object read as passed")
+        # The layer transition: a fresh print snapshot without the
+        # visited set clears every passed flag.
+        self.print_state = self.qt.load("PrintState").PrintSnapshot()
+        self.model._publish()
+        rows = {row["name"]: row for row in self.model._values["plateObjects"]["objects"]}
+        self.assertFalse(rows["PART_A"]["passed"], "the transition kept the stale passed flag")
+
+
+    def test_the_plate_payload_merges_geometry_and_state(self):
+        self.model = self.build()
+        self.model._data._update(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [10.0, 20.0],
+                         "polygon": [[5.0, 15.0], [5.0, 25.0], [15.0, 25.0], [15.0, 15.0]]}],
+            "excluded_objects": ["PART_A"],
+            "current_object": None,
+        }})
+        self.model._publish()
+        plate = self.model._values["plateObjects"]
+        self.assertEqual(plate["excludedCount"], 1)
+        row = plate["objects"][0]
+        self.assertEqual(row["center"], [10.0, 20.0])
+        self.assertTrue(row["excluded"])
+
+
+class QueuedObjectGestureTests(MonitorModelCase):
+    """The object gestures ride the one-shot lane: a click while another
+    command is in flight is QUEUED, so the plate predicate the click
+    checked has to be revalidated when the queue drains, and so does
+    the print the click was made on."""
+
+    def plate(self, objects, excluded=(), state="printing"):
+        """Land a plate with the state its gesture gate reads.
+        exclude_object rides the core lane."""
+        self.connect({"print_stats": {"filename": "part.gcode", "state": state},
+                      "exclude_object": {
+                          "objects": [{"name": name, "center": [0.0, 0.0], "polygon": []} for name in objects],
+                          "excluded_objects": list(excluded), "current_object": None}})
+
+    def hold_the_lane(self):
+        """A mid-print one-shot in flight: babystepping is the
+        legitimate mid-print command, and it is what the object click
+        then queues behind."""
+        self.model.adjustZOffset(0.05)
+        self.qt.events(10)
+        self.assertTrue(self.model.actionBusy)
+
+    def scripts(self):
+        return [request.options["body"]["script"] for request in self.sent("printer/gcode/script")]
+
+    def job(self, filename="part.gcode", size=100, serial=1):
+        """The identity the gestures bind to: the coordinator's job key,
+        whose serial is what a same-name restart bumps."""
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            job_key=(filename, size, serial))
+
+    def next_print(self, key, objects=("PART_A",)):
+        """The next print with its plate already landed — the same-named
+        objects included, so nothing about the plate's shape can refuse
+        a queued entry and only the identity can."""
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(job_key=key)
+        self.connect({"print_stats": {"filename": key[0], "state": "printing"},
+                      "exclude_object": {
+                          "objects": [{"name": name, "center": [0.0, 0.0], "polygon": []} for name in objects],
+                          "excluded_objects": [], "current_object": None}})
+        self.qt.events(10)
+
+    def test_a_queued_exclusion_is_revalidated_against_the_plate(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        # The plate moved while the entry waited: another client
+        # excluded the name.
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.ack("printer/gcode/script")  # the nudge completes; the pump runs
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: 'PART_A' is already excluded")
+
+    def test_a_queued_restore_is_revalidated_against_the_plate(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.hold_the_lane()
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Restore PART_A queued")
+        # The exclusion was lifted under the entry (a print restart
+        # without it): RESET on an included name would be refused now.
+        self.plate(["PART_A"])
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Restore PART_A cancelled: 'PART_A' is not excluded")
+
+    def test_a_queued_exclusion_is_revalidated_against_the_print_state(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        # The print ended while the entry waited (the lane was still
+        # holding the nudge, so nothing pumped yet).
+        self.connect({"print_stats": {"state": "standby"}})
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: No print is running")
+
+    def test_a_dropped_queued_gesture_does_not_hold_the_next_one(self):
+        # The dropped entry's latch dies with it: the retry after the
+        # obstacle cleared is not read as a gesture already in flight.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.connect({"print_stats": {"state": "standby"}})
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.plate(["PART_A"])  # the print resumed
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+
+    def test_a_confirmed_exclusion_releases_the_latch(self):
+        # The end-to-end half of the latch contract: the printer's own
+        # status landing is the confirmation, and the lane idle again
+        # is all the next gesture must wait for.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.plate(["PART_A"])
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.scripts().count('EXCLUDE_OBJECT NAME="PART_A"'), 2)
+
+    def test_a_queued_exclusion_never_crosses_to_the_next_print(self):
+        # The click bound to the print it was made on (the filename
+        # alone cannot carry that: the next print's plate holds the
+        # same object NAMES). The old print's queued script must never
+        # reach the wire after the switch.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.next_print(("other.gcode", 200, 2))
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: the print changed since the click")
+
+    def test_a_same_name_restart_is_a_different_print(self):
+        # A restart of the SAME file reuses the name and the size: only
+        # the job key's serial tells the two prints apart, and the old
+        # print's queued exclusion must not land on the restarted one.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.next_print(("part.gcode", 100, 2))
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Exclude PART_A cancelled: the print changed since the click")
+
+    def test_a_job_boundary_releases_the_in_flight_latch(self):
+        # A pending latch claims a gesture on ONE print: the next
+        # print's own identical gesture must not read as the old one's
+        # still in flight for the rest of the ceiling.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.next_print(("other.gcode", 200, 2))
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Exclude PART_A queued")
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertEqual(self.scripts().count('EXCLUDE_OBJECT NAME="PART_A"'), 2)
+
+    def test_a_queued_restore_never_crosses_to_the_next_print(self):
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.job("part.gcode", 100, 1)
+        self.hold_the_lane()
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertEqual(self.model.actionStatus, "Restore PART_A queued")
+        # The restarted print's plate excludes the same-named object:
+        # the plate predicate alone would send the old print's RESET.
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(job_key=("part.gcode", 100, 2))
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {
+                          "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+                          "excluded_objects": ["PART_A"], "current_object": None}})
+        self.qt.events(10)
+        self.ack("printer/gcode/script")
+        self.qt.events(20)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus,
+                         "Restore PART_A cancelled: the print changed since the click")
+
+    def test_a_present_but_empty_core_plate_outweighs_the_stale_auxiliary(self):
+        # The core lane owns the plate and reports it as naming no
+        # objects: that IS this print's plate. The auxiliary copy is
+        # the last print's, and it must not make a name clickable —
+        # the exclusion would go to a printer that has no such object.
+        self.model = self.model_now()
+        self.plate(["PART_A"])
+        self.observe(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+            "excluded_objects": [], "current_object": None}})
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {"objects": []}})
+        self.qt.events(10)
+        self.model.excludeObject("PART_A")
+        self.qt.events(10)
+        self.assertNotIn('EXCLUDE_OBJECT NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus, "Exclude refused: 'PART_A' is not on the plate")
+
+    def test_a_present_but_empty_core_plate_refuses_the_stale_restore(self):
+        # The mirror case: the stale copy still says the name is
+        # excluded, the core lane says nothing is — a RESET for it
+        # would be refused by the printer it actually reaches.
+        self.model = self.model_now()
+        self.plate(["PART_A"], excluded=["PART_A"])
+        self.observe(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [0.0, 0.0], "polygon": []}],
+            "excluded_objects": ["PART_A"], "current_object": None}})
+        self.connect({"print_stats": {"filename": "part.gcode", "state": "printing"},
+                      "exclude_object": {"objects": [], "excluded_objects": [], "current_object": None}})
+        self.qt.events(10)
+        self.model.restoreObject("PART_A")
+        self.qt.events(10)
+        self.assertNotIn('EXCLUDE_OBJECT RESET=1 NAME="PART_A"', self.scripts())
+        self.assertEqual(self.model.actionStatus, "Restore refused: 'PART_A' is not excluded")
+
+
+class PlateSplitPublicationTests(MonitorModelCase):
+    """The follower face's boundary: the service's refined count crosses
+    to the face as the bare number it is."""
+
+    def test_the_refined_split_publishes_as_a_number(self):
+        # The face colours to plateSplit, so the count must arrive as a
+        # number — the layers publish separately, with the service's
+        # memoised identity.
+        self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_progress={"layers": {"current": {"classes": {}}}, "split": 7,
+                            "method": "motion index", "anchor": 2})
+        self.model._publish()
+        self.assertEqual(self.value("plateSplit"), 7)
+        self.assertEqual(self.value("plateProgressAnchor"), 2)
+        self.assertTrue(self.value("plateProgressAvailable"))
+
+    def test_an_unbuilt_plate_publishes_no_split(self):
+        # No index is no boundary: the face ghosts rather than colouring
+        # to a count from another poll.
+        self.model = self.build()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot()
+        self.model._publish()
+        self.assertIsNone(self.value("plateSplit"))
+
+
+class ModuleCoercionSlotTests(MonitorModelCase):
+    """The coercions the follower's slots lean on: an unparseable stored
+    or reported value must never reach the published numbers."""
+
+    def test_an_unparseable_anchor_and_scale_fall_back(self):
+        module = self.qt.load("MoonrakerMonitorModel")
+        self.assertEqual(module._coerce_anchor(None), -1)
+        self.assertEqual(module._coerce_anchor("junk"), -1)
+        self.assertEqual(module._coerce_anchor("7"), 7, "a stored digit is a layer")
+        view = module._follower_view_state({"lineScale": "junk", "showNext": "yes"})
+        self.assertEqual(view["lineScale"], 0.7, "an unparseable stroke fell through")
+        self.assertTrue(view["showNext"], "a non-bool flag must keep its default")
+
+    def test_a_snapshot_without_layer_info_reads_no_layer(self):
+        # The read is optional all the way down: a state frame that
+        # carries no layer info answers None rather than raising.
+        self.model = self.build()
+        self.assertIsNone(self.model._layer_index(SimpleNamespace()))
+        self.assertIsNone(self.model._layer_index(SimpleNamespace(layer=None)))
+        self.assertEqual(
+            self.model._layer_index(SimpleNamespace(layer=SimpleNamespace(index=4))), 4)
+
+
+class FollowerViewSlotTests(MonitorModelCase):
+    """The follower's view toggles, the pop-over gates and the stream
+    switch: a repeat is a no-op — no document write, no publish."""
+
+    def counters(self):
+        """The two side effects these setters are gated on: the state
+        document's rewrite and the publish. Both still run — the count is
+        what the gate's absence is read from."""
+        self.saves, self.publishes = [], []
+
+        def counted(record, original):
+            def call(*args, **kwargs):
+                record.append(1)
+                return original(*args, **kwargs)
+            return call
+
+        for entry in (patch.object(self.model, "_save_state",
+                                   counted(self.saves, self.model._save_state)),
+                      patch.object(self.model, "_publish",
+                                   counted(self.publishes, self.model._publish))):
+            entry.start()
+            self.addCleanup(entry.stop)
+
+    def test_a_repeated_toggle_neither_saves_nor_publishes(self):
+        self.model = self.build()
+        self.counters()
+        # The defaults ARE the first values: the repeat path runs first.
+        self.model.setFollowerShowPrevious(True)
+        self.model.setFollowerShowNext(True)
+        self.model.setFollowerShowBase(True)
+        self.model.setFollowerShowTravels(False)
+        self.model.setFollowerLineScale(0.7)
+        self.assertEqual((self.saves, self.publishes), ([], []),
+                         "a repeat rewrote the document or republished")
+        self.model.setFollowerShowPrevious(False)
+        self.model.setFollowerShowNext(False)
+        self.model.setFollowerShowBase(False)
+        self.model.setFollowerShowTravels(True)
+        self.assertEqual((len(self.saves), len(self.publishes)), (4, 4),
+                         "a real change did not save and publish")
+        self.assertFalse(self.model.followerShowPrevious)
+        self.assertFalse(self.model.followerShowNext)
+        self.assertFalse(self.model.followerShowBase)
+        self.assertTrue(self.model.followerShowTravels)
+
+    def test_the_line_scale_clamps_into_the_control_range(self):
+        self.model = self.build()
+        self.model.setFollowerLineScale(3.0)
+        self.assertEqual(self.model.followerLineScale, 2.0)
+        self.model.setFollowerLineScale(0.1)
+        self.assertEqual(self.model.followerLineScale, 0.5)
+        self.model.setFollowerLineScale("junk")
+        self.assertEqual(self.model.followerLineScale, 0.5,
+                         "an unparseable stroke moved the published scale")
+
+    def test_the_popover_gates_only_publish_on_a_real_change(self):
+        self.model = self.build()
+        self.counters()
+        self.model.setChartOpen(False)
+        self.model.setFollowerPopoverOpen(False)
+        self.model.setFollowerInteracting(False)
+        self.model.setPickerPopoverOpen(False)
+        self.assertEqual(self.publishes, [], "a repeat gate republished")
+        self.model.setChartOpen(True)
+        self.model.setFollowerInteracting(True)
+        self.model.setPickerPopoverOpen(True)
+        self.assertEqual(len(self.publishes), 3, "a real gate change did not publish")
+        self.assertTrue(self.model._chart_open)
+        self.assertTrue(self.model._follower_interacting)
+        self.assertTrue(self.model._picker_popover_open)
+
+    def test_the_stream_switch_suspends_and_resumes_the_pane(self):
+        self.model = self.build()
+        self.counters()
+        self.model.setWebcamStreamEnabled(True)
+        self.assertEqual(self.publishes, [], "a repeat switch republished")
+        self.model.setWebcamStreamEnabled(False)
+        self.assertFalse(self.value("webcamStreamEnabled"))
+        nonce = self.model._camera_refresh_nonce
+        self.model.setWebcamStreamEnabled(True)
+        self.assertTrue(self.value("webcamStreamEnabled"))
+        self.assertEqual(self.model._camera_refresh_nonce, nonce + 1,
+                         "resuming the stream did not request a fresh one")
+
+    def test_the_connection_and_watchdog_guards_stand_down_with_the_stream_off(self):
+        self.model = self.build()
+        self.model.setWebcamStreamEnabled(False)
+        nonce = self.model._camera_refresh_nonce
+        # No stream to reload and none to recover: both paths stand
+        # down rather than bumping the nonce or retrying a dead camera.
+        self.model._on_connection_state("yes")
+        self.assertEqual(self.model._camera_refresh_nonce, nonce)
+        self.model._on_stream_failed()
+        self.assertEqual(self.model._camera_refresh_nonce, nonce)
+
+    def test_refresh_webcams_stands_down_with_the_stream_off(self):
+        self.model = self.build()
+        self.model.setWebcamStreamEnabled(False)
+        requests = len(self.transport.requests)
+        self.model.refreshWebcams()
+        self.assertEqual(len(self.transport.requests), requests,
+                         "a disabled stream still fetched the webcam list")
+
+    def test_the_pane_diagnostics_run_without_a_visible_pane(self):
+        # The QML pane's cold-start trace hooks: callable with no pane
+        # attached, and the ids stay process-unique for the tracing.
+        self.model = self.build()
+        self.model.cameraFirstFrameRendered()
+        first = self.model.cameraPaneInstanceId()
+        second = self.model.cameraPaneInstanceId()
+        self.assertIsInstance(first, int)
+        self.assertEqual(second, first + 1, "the pane ids left the shared sequence")
+        self.model.cameraPaneTrace(first, "applyCamera")
+
+
+class FollowerSeekSlotTests(MonitorModelCase):
+    """The seek slots' refusals: junk, out-of-range and repeat values
+    never reach the coordinator's anchor and split seams."""
+
+    def anchors(self):
+        self.anchors, self.splits = [], []
+        self.model = self.build(request_plate_anchor=self.anchors.append,
+                                request_plate_split=self.splits.append)
+        return self.model
+
+    def test_a_junk_or_negative_seek_never_reaches_the_coordinator(self):
+        model = self.anchors()
+        model.setFollowerLayerAnchor("junk")
+        model.setFollowerLayerAnchor(None)
+        model.setFollowerLayerAnchor(-1)
+        model.setFollowerLayerProgress("junk")
+        self.assertEqual((self.anchors, self.splits), ([], []),
+                         "a refused seek still reached the coordinator")
+
+    def test_a_repeated_seek_republishes_without_moving_the_coordinator(self):
+        model = self.anchors()
+        model.setFollowerLayerAnchor(3)
+        self.assertEqual(model.followerLayerAnchor, 3)
+        self.assertEqual((self.anchors, self.splits), ([3], [-1]))
+        # The same seek again: the face still needs the publish (it may
+        # have rebuilt), but the coordinator is not asked twice.
+        model.setFollowerLayerAnchor(3)
+        self.assertEqual((self.anchors, self.splits), ([3], [-1]))
+
+    def test_a_progress_scrub_refuses_an_unknown_live_layer(self):
+        model = self.anchors()
+        # Attached with no layer the print stands on: the scrub cannot
+        # freeze anything, so nothing moves.
+        self.assertLess(self.value("plateProgressAnchor"), 0)
+        model.setFollowerLayerProgress(5)
+        self.assertEqual((self.anchors, self.splits), ([], []))
+        # Detached on a frozen split: the repeat is a republish only. The
+        # flag is set directly — the detach's own publish re-attaches
+        # against the fresh (job-less) snapshot.
+        model._follower_attached = False
+        frozen = min(5, model._values.get("plateLayerMotionCount", 0) or 0)
+        model._follower_layer_split = frozen
+        model.setFollowerLayerProgress(frozen)
+        self.assertEqual(self.splits, [], "a repeated scrub re-asked for the same split")
+
+
+class SurfaceDemandSlotTests(MonitorModelCase):
+    """The follower surface's own seams: the staged view/plot slots, the
+    demand scheduler's skips and the navigation commit's guards."""
+
+    def surface(self, name="popover", width=400, height=300):
+        surface = self.model_now()._plate_surfaces[name]
+        surface.view = {"width": width, "height": height, "scale": 1.0,
+                        "lineScale": 0.7, "dpr": 1.0, "compact": False}
+        # The renderer reads the flat bed bounds directly: a plot
+        # without bedXMin/bedYMax raised mid-stroke and left a live
+        # painter on a dying frame (the reviewer's finding).
+        surface.plot = {"offsetX": 0.0, "offsetY": 0.0, "sx": 1.0, "sy": 1.0,
+                        "bedXMin": 0.0, "bedYMax": 300.0}
+        return surface
+
+    def wrapper(self, surface, layer, motions=20, payload=None):
+        wrapped = self.qt.load("PlateQt").PlateLayer(
+            payload if payload is not None else {"motions": motions, "classes": {}})
+        surface.layers[layer] = wrapped
+        return wrapped
+
+    def test_the_navigation_key_shape_is_what_its_derived_keys_assume(self):
+        # The derived keys read the built key by POSITION: _nav_key_hard
+        # neutralises index 3 (the split), the zoom's coalescing rule
+        # reads the trailing slot — and _nav_key_zoom's length guard
+        # degrades to the WHOLE key when the shape drifts, which reads
+        # as "every demand moved the zoom" and stops the warm raster
+        # re-baking at all (it did, once: the constant sat one above the
+        # built length and the coalescing rule fired for every demand).
+        # So pin the shape against the constant the guard reads.
+        module = self.qt.load("MoonrakerMonitorModel")
+        model = self.model_now()
+        model.setFollowerAttached(False)
+        surface = self.surface()
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
+                           "split": 40}
+        key = model._navigation_key(surface)
+        self.assertEqual(len(key), module._NAV_KEY_FIELDS,
+                         "the built key drifted from the guarded shape")
+        self.assertEqual(key[3], 40, "the split left its slot")
+        self.assertEqual(key[-1], 1.0, "the zoom left the trailing slot")
+        # A split-only drift: invisible to the hard key AND to the
+        # coalescing rule — the demand keeps its follow window.
+        surface.desired["split"] = 80
+        split_moved = model._navigation_key(surface)
+        self.assertEqual(model._nav_key_hard(split_moved),
+                         model._nav_key_hard(key))
+        self.assertEqual(model._nav_key_zoom(split_moved),
+                         model._nav_key_zoom(key))
+        # A zoom drift: hard (a stale-zoom raster must never be
+        # promoted as compatible — the exact scene serves the gesture)
+        # and the ONLY thing the coalescing rule reacts to.
+        surface.view["scale"] = 2.0
+        zoomed = model._navigation_key(surface)
+        self.assertNotEqual(model._nav_key_hard(zoomed),
+                            model._nav_key_hard(key))
+        self.assertNotEqual(model._nav_key_zoom(zoomed),
+                            model._nav_key_zoom(key))
+        # A synthetic ticket (a test's own short tuple) reads as the
+        # whole key, so it can never make the rule fire spuriously.
+        self.assertEqual(model._nav_key_zoom(("a", "b")), ("a", "b"))
+        self.assertIsNone(model._nav_key_zoom(None))
+
+    @staticmethod
+    def local_url(path):
+        from PyQt6.QtCore import QUrl
+        return QUrl.fromLocalFile(path).toString()
+
+    def test_the_view_and_plot_slots_ignore_an_unknown_surface(self):
+        self.model = self.build()
+        popover = self.model._plate_surfaces["popover"]
+        self.model.setFollowerView("ghost-popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
+        self.model.setFollowerPlot("ghost-popover", 0.0, 0.0, 1.0, 1.0, 0.0, 0.0)
+        self.assertIsNone(popover.stage["view"])
+        self.assertIsNone(popover.stage["plot"])
+
+    def test_a_settled_burst_with_nothing_staged_flushes_nothing(self):
+        # The queued zero-tick flush may find its stage already drained:
+        # it must leave the surface's context alone.
+        surface = self.surface()
+        generation = surface.generation
+        self.model._flush_surface_context(surface)
+        self.assertEqual(surface.generation, generation)
+
+    def test_the_gesture_bake_stands_down_when_detached(self):
+        self.model = self.build()
+        self.model.setFollowerAttached(False)
+        self.model.setFollowerGestureBake()
+        surface = self.model._plate_surfaces["popover"]
+        self.assertIsNone(surface.nav["job"], "a detached bake scheduled a navigation job")
+        # The mini never carries the interaction raster: the hook is
+        # popover-only even when the press arrives from another pane.
+        self.model._nav_gesture_bake("mini")
+        self.assertIsNone(self.model._plate_surfaces["mini"].nav["job"])
+
+    def test_the_window_guards_answer_an_empty_placeholder(self):
+        self.model = self.build()
+        # An unknown surface has no window, and a non-integer anchor
+        # (the QML's undefined slider) lands on the first layer rather
+        # than poisoning the desired state.
+        self.assertEqual(
+            self.model._qt_window("ghost-popover", {"current": 1}, 3), {})
+        surface = self.surface()
+        window = self.model._qt_window(
+            surface, {"prev": None, "current": None, "next": None}, None)
+        self.assertEqual(window, {"prev": None, "current": None, "next": None})
+        self.assertEqual(surface.anchor, 0)
+
+    def test_the_navigation_backing_yields_to_the_memory_budget(self):
+        # The interaction raster's 4x backing is bounded by the safe
+        # single-buffer share: a surface big enough to blow it renders
+        # at a reduced backing instead of risking the double-buffered
+        # peak, and a surface with no geometry keeps the full 4x.
+        self.model = self.build()
+        surface = self.surface()
+        surface.view = {"width": 0, "height": 0}
+        self.assertEqual(self.model._navigation_backing(surface), 4.0)
+        surface.view = {"width": 2200, "height": 2200}
+        with self.assertLogs("MoonrakerPrintFollower", level="WARNING") as captured:
+            backing = self.model._navigation_backing(surface)
+        self.assertLess(backing, 4.0)
+        self.assertGreaterEqual(backing, 1.0)
+        self.assertTrue(any("backing reduced" in line for line in captured.output))
+
+    def test_the_wake_arm_without_a_window_is_inert(self):
+        # The scheduler arms only a stamped window: a surface whose
+        # throttle never stamped must not leave a wake behind.
+        surface = self.surface()
+        self.assertIsNone(surface.nav["wake_at"])
+        self.model._nav_arm_wake(surface)
+        self.assertIsNone(surface.nav["wake_at"])
+
+    def test_a_navigation_render_cancelled_mid_flight_publishes_nothing(self):
+        # A supersede that lands while the worker is painting: the
+        # terminal arrives without a picture, the ready slot keeps the
+        # previous raster and the identical demand latches (no retry
+        # loop against a demand that moved).
+        surface = self.surface()
+        self.model.setFollowerAttached(False)
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
+        module = self.qt.load("MoonrakerMonitorModel")
+        from PyQt6.QtGui import QImage
+
+        def superseded(window, plot, view, split=None, cancel=None, **kwargs):
+            # The picture is painted and THEN found superseded: the
+            # cancel lands between the render and the publication.
+            if cancel is not None:
+                cancel.set()
+            return QImage(4, 4, QImage.Format.Format_RGB32)
+
+        with patch.object(module, "render_navigation_layer", superseded):
+            self.model._schedule_navigation(surface)
+            from PyQt6.QtCore import QThreadPool
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.qt.events(20)
+        self.assertEqual(surface.nav["url"], "", "a cancelled render published a raster")
+        self.assertIsNone(surface.nav["job"])
+        self.assertIsInstance(surface.nav["failed"], tuple,
+                              "the render raised instead of cancelling")
+
+    def test_the_scheduler_skips_a_layer_without_a_wrapper(self):
+        # The demand names the current layer, but the payload for it
+        # never landed: the dispatch skips it instead of rendering it.
+        surface = self.surface()
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
+        self.model._schedule_surface(surface)
+        self.assertEqual(surface.render_count, {})
+        self.assertIsNone(surface.job)
+
+    def test_the_prefix_demand_answers_its_two_refusals(self):
+        surface = self.surface()
+        wrapped = self.wrapper(surface, 6, motions=10)
+        # A split at or past the layer's end is the whole layer: the
+        # base renders, never a prefix.
+        self.assertFalse(self.model._prefix_wanted(surface, 6, 12))
+        self.assertTrue(self.model._prefix_wanted(surface, 6, 4),
+                        "an unrendered prefix was not demanded")
+        # A prefix whose own split reads invalid is no prefix at all.
+        from PyQt6.QtGui import QImage
+        wrapped.set_prefix(QImage(2, 2, QImage.Format.Format_RGB32),
+                           self.local_url("/tmp/mpf/prefix.png"), -1, ("key",))
+        wrapped.set_expected_key(("key",))
+        self.assertTrue(self.model._prefix_wanted(surface, 6, 4))
+
+    def test_the_dispatch_rechecks_the_prefix_under_the_queue(self):
+        # The queue is composed from one reading of _prefix_wanted and
+        # the dispatch re-reads it, so a wrapper whose prefix turns
+        # unusable while the queue is built starts no prefix render.
+        surface = self.surface()
+        self.wrapper(surface, 6, motions=10)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
+                           "split": 4}
+        answers = []
+
+        def first_only(_model, _surface, _layer, split):
+            answers.append(split)
+            return len(answers) == 1
+
+        with patch.object(type(self.model), "_prefix_wanted", first_only):
+            self.model._schedule_surface(surface)
+        self.assertEqual(len(answers), 2, "the dispatch did not re-read the prefix verdict")
+        self.assertEqual(surface.job["kind"], "full",
+                         "the prefix the re-check refused still reached the renderer")
+        from PyQt6.QtCore import QThreadPool
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.qt.events(20)
+
+    def test_an_obsolete_job_without_a_demand_is_cancelled(self):
+        surface = self.surface()
+        import threading
+        cancel = threading.Event()
+        surface.job = {"layer": 6, "token": 1, "generation": 0, "epoch": 0,
+                       "serial": 1, "state": "running", "cancel": cancel}
+        surface.desired = None
+        self.model._cancel_obsolete_job(surface)
+        self.assertTrue(cancel.is_set(), "a demand-less job kept rendering")
+
+    def test_the_seek_trace_ignores_a_stage_outside_a_seek(self):
+        # Trace enabled but no seek entry yet: the stage is dropped
+        # rather than timestamped from the process start.
+        self.model = self.build()
+        self.model._seek_trace_enabled = True
+        self.model._trace("T6 payload obtained", {"surface": "popover"})
+        self.assertEqual(self.model._seek_trace, [])
+
+    def test_the_navigation_commit_refuses_a_dead_surface_and_a_foreign_kind(self):
+        surface = self.surface()
+        self.model._nav_committed(("nav", None, self.local_url("/tmp/mpf/n.png"), ("k",)),
+                                  ("ghost-popover", 0, 0, 0, ("k",), "nav", None, 0, 1))
+        self.model._nav_committed(("full", None), ("popover", 0, 0, 0, ("k",), "full", None, 0, 1))
+        self.assertEqual(surface.nav["url"], "", "a foreign ticket promoted a raster")
+
+    def test_a_committed_navigation_raster_survives_its_retired_file(self):
+        # The double buffer's replacement: the ready URL is promoted
+        # atomically and the retired buffer is unlinked — a retirement
+        # that cannot be unlinked must not undo the promotion.
+        surface = self.surface()
+        self.model.setFollowerAttached(False)
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
+        key = self.model._navigation_key(surface)
+        surface.job_epoch = 0
+        surface.nav["serial"] = 4
+        surface.nav["job"] = {"key": key, "cancel": self.cancelled_event(),
+                              "epoch": 0, "serial": 4, "backing": 4.0}
+        retired = tempfile.mkdtemp(prefix="mpfxtest-retired-")
+        surface.nav["url"] = self.local_url(retired)
+        url = self.local_url(os.path.join(tempfile.mkdtemp(prefix="mpfxtest-nav-"), "nav.png"))
+        self.model._nav_committed(("nav", None, url, key),
+                                  ("popover", -1, 0, 0, key, "nav", None, 0, 4))
+        self.assertEqual(surface.nav["url"], url)
+        self.assertEqual(surface.nav["key"], key)
+        self.assertTrue(os.path.isdir(retired), "the promotion removed the live retiree")
+
+    def test_a_superseded_navigation_raster_survives_a_live_gesture(self):
+        # A camera gesture presents its ENTRY raster for the gesture's
+        # whole life, so a bake committing mid-gesture must not unlink
+        # the file the face is showing — and the supersede's unlink
+        # keys off the surface's CURRENT url, which that bake has just
+        # moved on. The hold is explicit and clears with the gesture,
+        # so a released file is still collected.
+        surface = self.surface()
+        self.model.setFollowerAttached(False)
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
+                           "split": None}
+        key = self.model._navigation_key(surface)
+        surface.job_epoch = 0
+        surface.nav["serial"] = 4
+        surface.nav["job"] = {"key": key, "cancel": self.cancelled_event(),
+                              "epoch": 0, "serial": 4, "backing": 4.0}
+        # Inside the cache directory, so the prune is a real test of
+        # the hold rather than of a directory it never scans.
+        held = os.path.join(self.model._raster_cache_dir, "held-nav.png")
+        pathlib.Path(held).write_bytes(b"held")
+        surface.nav["url"] = self.local_url(held)
+        self.model.setFollowerGestureRaster(surface.nav["url"])
+
+        url = self.local_url(os.path.join(tempfile.mkdtemp(prefix="mpfxtest-nav-"),
+                                          "nav.png"))
+        self.model._nav_committed(("nav", None, url, key),
+                                  ("popover", -1, 0, 0, key, "nav", None, 0, 4))
+        self.assertTrue(os.path.exists(held),
+                        "the supersede unlinked the gesture's own picture")
+        self.model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(held),
+                        "the prune collected the gesture's own picture")
+        # The gesture ends: the hold releases and the next prune takes
+        # the file, so nothing accumulates behind the gesture.
+        self.model.setFollowerGestureRaster("")
+        self.model._prune_raster_cache(keep=0)
+        self.assertFalse(os.path.exists(held),
+                         "the hold outlived the gesture that made it")
+
+    def test_the_hold_report_is_silent_until_the_seek_trace_asks(self):
+        # The barrier's hold report is a diagnostic, so it is gated by
+        # the seek trace's own switch: a healthy gesture must not fill
+        # the log, and the report has to reach it once asked for.
+        module = self.qt.load("MoonrakerMonitorModel")
+        self.model = self.build()
+        self.model._seek_trace_enabled = False
+        with patch.object(module, "Logger") as logger:
+            self.model.followerHoldReport("held split=1")
+        logger.log.assert_not_called()
+        self.model._seek_trace_enabled = True
+        with patch.object(module, "Logger") as logger:
+            self.model.followerHoldReport("held split=1")
+        logger.log.assert_called_once()
+        self.model._seek_trace_enabled = False
+
+    @staticmethod
+    def cancelled_event():
+        import threading
+        return threading.Event()
+
+    def test_a_commit_for_a_vanished_surface_and_layer_is_accounted(self):
+        surface = self.surface("mini")
+        self.wrapper(surface, 7)
+        from PyQt6.QtGui import QImage
+        image = QImage(2, 2, QImage.Format.Format_RGB32)
+        images = ("full", image, self.local_url("/tmp/mpf/a-c.png"),
+                  image, self.local_url("/tmp/mpf/a-b.png"),
+                  image, self.local_url("/tmp/mpf/a-t.png"))
+        # A worker that outlived its surface's retirement: the start is
+        # counted nowhere and the completion never touches another
+        # surface's scheduler.
+        self.model._raster_started(("ghost-popover", 7, 5, 3, None, "full", None, 2, 9))
+        self.assertEqual(surface.stats["started"], 0)
+        self.model._raster_committed(images, ("ghost-popover", 7, 5, 3, ("k",), "full", None, 2, 9))
+        # The active job whose layer the demand has since left: the
+        # picture lands on the wrapper but never counts as committed.
+        surface.generation = 3
+        surface.job_epoch = 2
+        surface.tokens[7] = 5
+        surface.job = {"layer": 7, "token": 5, "generation": 3, "epoch": 2,
+                       "serial": 9, "state": "running", "cancel": self.cancelled_event()}
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
+        self.model._raster_committed(images, ("mini", 7, 5, 3, ("k",), "full", None, 2, 9))
+        self.assertEqual(surface.stats["discarded"], 1)
+        self.assertEqual(surface.stats["committed"], 0)
+
+    def test_a_dead_bridge_drops_the_job_before_it_starts(self):
+        # The owner's deleteLater can land before a queued job starts:
+        # the job's first emit then raises, and the worker must drop it
+        # rather than abort the pool thread.
+        surface = self.surface()
+        self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
+
+        class DeadSignal:
+            @staticmethod
+            def emit(*args):
+                raise RuntimeError("wrapped C/C++ object of type RasterBridge has been deleted")
+
+        self.model._raster_bridge = SimpleNamespace(started=DeadSignal(), done=DeadSignal())
+        self.model._schedule_surface(surface)
+        from PyQt6.QtCore import QThreadPool
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.qt.events(20)
+        self.assertEqual(surface.stats["started"], 0)
+        self.assertEqual(surface.stats["committed"], 0)
+
+    def test_a_discarded_jobs_files_are_swept(self):
+        # The sweep must swallow a path that is gone or cannot be
+        # unlinked: the picture is already discarded either way.
+        directory = tempfile.mkdtemp(prefix="mpfxtest-sweep-")
+        url = self.local_url(directory)
+        self.model = self.build()
+        self.model._unlink_asset_files(())
+        self.model._unlink_asset_files(("full", None, url, None, url, None, url))
+        self.model._unlink_asset_files(("prefix", None, url))
+        self.assertTrue(os.path.isdir(directory), "the sweep removed a live directory")
+
+
+class SurfaceLifecycleTests(MonitorModelCase):
+    """The model's own teardown and accounting: the pin release at
+    destruction, the raster directory's sweep and the memory story."""
+
+    def test_the_destruction_paths_release_every_wrapper_pin(self):
+        released = []
+        stub = SimpleNamespace(unpin_decoded=released.append,
+                               packed_bytes=lambda: 0,
+                               decoded_resident_bytes=lambda: 0,
+                               pinned_decoded_bytes=lambda: 0)
+        self.model = self.build(index_service=stub)
+        surface = self.model._plate_surfaces["popover"]
+        for layer in (4, 5):
+            surface.layers[layer] = self.qt.load("PlateQt").PlateLayer({"motions": 1, "classes": {}})
+        # The follower's service outlives the model: its death hands the
+        # decoded payloads back rather than pinning them forever.
+        self.model._release_all_pins()
+        self.assertEqual(sorted(released), [4, 5])
+
+    def test_a_model_without_the_service_releases_nothing(self):
+        # The harness and the tests mount without an index service.
+        self.model = self.build()
+        surface = self.model._plate_surfaces["popover"]
+        surface.layers[4] = self.qt.load("PlateQt").PlateLayer({"motions": 1, "classes": {}})
+        self.model._unpin_surface(surface)
+        self.model._release_all_pins()
+
+    def test_the_instance_sweeps_its_own_raster_directory(self):
+        self.model = self.build()
+        directory = self.model._raster_cache_dir
+        pathlib.Path(directory, "leftover.png").write_bytes(b"leftover")
+        self.model._cleanup_raster_dir()
+        self.assertFalse(os.path.exists(directory))
+        # An un-removable directory must not raise out of the model's
+        # own destruction.
+        with patch.object(self.model, "_raster_cache_dir", directory):
+            with patch("shutil.rmtree", side_effect=OSError("no removal")):
+                self.model._cleanup_raster_dir()
+
+    def test_the_memory_accounting_survives_a_hostile_directory(self):
+        self.model = self.build()
+        pathlib.Path(self.model._raster_cache_dir, "kept.png").write_bytes(b"kept")
+        self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 1)
+        # A directory that cannot be listed reads as empty, and a file
+        # that cannot be stat'ed is skipped rather than raised.
+        with patch("os.stat", side_effect=OSError("no stat")):
+            self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 0)
+        with patch("os.listdir", side_effect=OSError("no listing")):
+            self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 0)
+
+    def test_the_prune_survives_a_hostile_directory(self):
+        self.model = self.build()
+        stale = os.path.join(self.model._raster_cache_dir, "r-stale.png")
+        pathlib.Path(stale).write_bytes(b"stale")
+        with patch("os.stat", side_effect=OSError("no stat")):
+            self.model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(stale), "an unstat'able file was unlinked")
+        with patch("os.unlink", side_effect=OSError("no unlink")):
+            self.model._prune_raster_cache(keep=0)
+        self.assertTrue(os.path.exists(stale))
+        with patch("os.listdir", side_effect=OSError("no listing")):
+            self.model._prune_raster_cache(keep=0)
+        os.unlink(stale)
+
+    def test_a_closed_picker_keeps_the_last_plate_payload(self):
+        # The plate map is required nowhere while the picker is closed
+        # and the section collapsed: the previous payload is carried
+        # untouched rather than rebuilt per poll.
+        self.model = self.build()
+        self.model._data._update(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [10.0, 20.0],
+                         "polygon": [[5.0, 15.0], [5.0, 25.0], [15.0, 25.0], [15.0, 15.0]]}],
+            "excluded_objects": [], "current_object": None}})
+        self.model._publish()
+        published = self.model._values["plateObjects"]
+        self.assertEqual(len(published["objects"]), 1)
+        self.model.setSectionExpanded("plate", False)
+        self.model._publish()
+        self.assertIs(self.model._values["plateObjects"], published,
+                      "the closed picker rebuilt the plate payload")
+        self.assertTrue(self.model._values["plateHasObjects"])
+
+    def test_an_unparseable_layer_count_publishes_zero(self):
+        self.model = self.build()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(plate_layer_count="junk")
+        self.model._publish()
+        self.assertEqual(self.value("plateLayerCount"), 0,
+                         "an unparseable layer count reached the slider's range")

@@ -123,7 +123,7 @@ if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
         if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
             docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
         else
-            docker build -q -t mpf-cura-harness "$root/tools/harness"
+            "$root/tools/build_image.sh" mpf-cura-harness "$root/tools/harness"
         fi
     fi
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -187,6 +187,117 @@ else
     MPF_QML_IMPORT_PATH=""
 fi
 
+# Cura's own log and every boot's stdout/stderr are evidence, and the run
+# that dies is the run that most needs them kept: they are copied into the
+# run's evidence directory, which is the tree the gate and CI already
+# collect. Called from the EXIT trap, so a run killed by a dead boot leaves
+# them behind as well. It never fails the run - a log that is not there is
+# reported, not turned into an exit code.
+harvest_logs() {
+    _run_dir="${RUN_DIR:-}"
+    if [ -z "$_run_dir" ]; then
+        echo "ui_test: no run directory was resolved yet - nothing to harvest" >&2
+        return 0
+    fi
+    if [ "${MODE:-scenario}" = "real" ]; then
+        # A real run's evidence is deleted on purpose: the seeded profile
+        # holds the real host and key, and neither may outlive the session.
+        # Keeping a log here would put them back on disk.
+        echo "ui_test: real mode - the logs go off disk with the rest of the run's evidence" >&2
+        return 0
+    fi
+    mkdir -p "$_run_dir" 2>/dev/null || true
+    _kept=0
+    # The launch's own stdout/stderr, one file per boot (the first-install
+    # and migration legs keep their first boot aside as cura_run_boot1.log).
+    for _f in "$WORK_DIR"/cura_run*.log; do
+        [ -f "$_f" ] || continue
+        if cp "$_f" "$_run_dir/$(basename "$_f")" 2>/dev/null; then
+            _kept=$((_kept + 1))
+        else
+            echo "ui_test: could not copy $(basename "$_f") into the run dir" >&2
+        fi
+    done
+    harvest_cura_log "$_run_dir"
+    echo "ui_test: logs kept with this run: $_kept file(s) in $_run_dir"
+    return 0
+}
+
+# Cura's OWN log is a different file from the launch's streams, and its path
+# is not fixed across the versions this harness sweeps (5.7 and up): the
+# storage root carries a version segment that moves with the Cura version,
+# one tree can hold more than one of them (the seed is carried over to the
+# version under test), the root spelling is not guaranteed either, and
+# FileLogger rotates - so cura.log.1 is a real file. All of that is
+# discovered by searching the bases the launch itself sets (XDG_DATA_HOME,
+# HOME) rather than written down here. Each log is named after the version
+# directory it came from, so a sweep that finds several cannot flatten them
+# onto one name; the version this run resolved also lands under the plain
+# cura.log, a root that answers is logged, and "there is none" is reported
+# as a finding rather than swallowed. The kept count is the caller's _kept.
+harvest_cura_log() {
+    _dest_dir="$1"
+    _list="$_dest_dir/.cura-log-harvest.list"
+    if ! : > "$_list" 2>/dev/null; then
+        echo "ui_test: cannot write in $_dest_dir - Cura's own log is not harvested" >&2
+        return 0
+    fi
+    # SEED_VER is the version segment the harness resolved for this run
+    # (set where the seed tree is prepared and reused here rather than
+    # guessed); a run that died before that line falls back to the same
+    # derivation made from CURA_VERSION.
+    _ver="${SEED_VER:-}"
+    [ -n "$_ver" ] || _ver="${CURA_VERSION%.*}"
+    _bases="$WORK_DIR/xdg $WORK_DIR/fakehome/.local/share"
+    for _base in $_bases; do
+        if [ -d "$_base" ]; then
+            echo "ui_test: searching $_base (version segment for this run: ${_ver:-unknown})"
+        else
+            echo "ui_test: $_base is absent"
+        fi
+    done
+    for _base in $_bases; do
+        [ -d "$_base" ] || continue
+        # Depth 5 covers <root>/<version>/cura.log as well as any deeper
+        # root spelling. The run directory is excluded so a second harvest
+        # cannot pick up the first one's copies.
+        find "$_base" -maxdepth 5 -type f -name 'cura.log*' ! -path "$_dest_dir/*" -print 2>/dev/null |
+            sort >> "$_list"
+    done
+    _n=0
+    while IFS= read -r _log; do
+        [ -f "$_log" ] || continue
+        _seg="$(basename "$(dirname "$_log")")"
+        case "$_seg" in
+            [0-9]*.[0-9]*) : ;;
+            *) _seg="unversioned" ;;
+        esac
+        # '' for cura.log, '.1' for cura.log.1 - the rotation is kept.
+        _suffix="${_log##*/cura.log}"
+        _dest="$_dest_dir/cura-$_seg.log$_suffix"
+        _n=$((_n + 1))
+        if [ -e "$_dest" ]; then
+            _dest="$_dest_dir/cura-$_seg-$_n.log$_suffix"
+        fi
+        if cp "$_log" "$_dest" 2>/dev/null; then
+            echo "ui_test: Cura's own log harvested: $_log -> $_dest"
+            _kept=$((_kept + 1))
+            if [ -n "$_ver" ] && [ "$_seg" = "$_ver" ] && [ -z "$_suffix" ] &&
+               [ ! -e "$_dest_dir/cura.log" ]; then
+                if cp "$_log" "$_dest_dir/cura.log" 2>/dev/null; then
+                    echo "ui_test: this run's version ($_ver) is also kept as cura.log (the first log found for it)"
+                fi
+            fi
+        else
+            echo "ui_test: could not copy $_log into the run dir" >&2
+        fi
+    done < "$_list"
+    rm -f "$_list"
+    if [ "$_n" = 0 ]; then
+        echo "ui_test: FINDING: no Cura log (cura.log.1 included) under $_bases - every version directory and root spelling was searched to depth 5, so a run that died before Cura's loggers started has none" >&2
+    fi
+}
+
 # Nothing outlives a run: Cura, its video ffmpeg and the simulator die
 # with the run (the container runs docker-init, which reaps the
 # zombies). The brackets keep pkill from matching its own command line.
@@ -195,6 +306,9 @@ cleanup() {
         'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; \
          pkill -9 -f "ffmpe[g]" 2>/dev/null; \
          pkill -9 -f "simulator_serve[.]py" 2>/dev/null; true' || true
+    # After the kill, so what is kept is the run's last words rather than
+    # whatever happened to be flushed mid-boot.
+    harvest_logs
     if [ "${MODE:-scenario}" = "real" ]; then
         # The seeded profile holds the real host and key at runtime:
         # a real run's debris must not outlive the run (the key
@@ -343,6 +457,24 @@ SEED_VER="${CURA_VERSION%.*}"
 if [ "$SEED_VER" != "5.13" ]; then
     cp -r "$WORK_DIR"/xdg/config/cura/5.13 "$WORK_DIR"/xdg/config/cura/"$SEED_VER"
     cp -r "$WORK_DIR"/xdg/cura/5.13 "$WORK_DIR"/xdg/cura/"$SEED_VER"
+    # The machine fixture is version-stamped, and Cura REJECTS a container
+    # whose setting_version is not the build's own: it logs "outdated. Its
+    # setting version is 27 but it should be 23" and the machine disappears,
+    # which takes every scenario with it. The 5.13 fixture is what gets
+    # copied, so the stamp has to be rewritten from the build actually being
+    # run - exactly what both native harness scripts do. Only setting_version
+    # moves across 5.7-5.13; the stack and instance versions do not.
+    TARGET_SET_VER="$(sed -n 's/^ *SettingVersion *= *\([0-9][0-9]*\).*/\1/p' \
+        "$CURA_ROOT/cura/CuraApplication.py" 2>/dev/null | head -1)"
+    if [ -z "$TARGET_SET_VER" ]; then
+        echo "ui_test: could not read SettingVersion from $CURA_ROOT/cura/CuraApplication.py, so the carried-over seed cannot be stamped for $CURA_VERSION - refusing to boot a seed Cura is guaranteed to reject"
+        exit 1
+    fi
+    # Only the data root carries setting_version; cura.cfg lives in the
+    # config root and its stamps are the preferences format, not this one.
+    find "$WORK_DIR"/xdg/cura/"$SEED_VER" -name '*.cfg' -exec \
+        sed -i "s/^[[:space:]]*setting_version[[:space:]]*=.*/setting_version = $TARGET_SET_VER/" {} +
+    echo "seed carried over to $SEED_VER with setting_version=$TARGET_SET_VER (read from the installed build)"
     # The carry-over copy lands with the same 755 modes (cp -r); the
     # cross-uid chmod above must cover it too.
     chmod -R 777 "$WORK_DIR"/xdg/config/cura/"$SEED_VER" "$WORK_DIR"/xdg/cura/"$SEED_VER"
@@ -394,6 +526,9 @@ cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 # boot's view, the tree the boot actually sees ends up world-writable.
 docker exec "$CONTAINER" chmod -R 777 "$(container_path "$WORK_DIR"/xdg)"
 cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
+# The runner's platform dispatch rides beside it (the staged runner is
+# imported from this directory), so the flat copy keeps working.
+cp "$root/tests/harness/native_host.py" "$WORK_DIR"/native_host.py
 cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py
@@ -603,7 +738,7 @@ case "$MODE" in
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
-            python3 /tmp/mpf/harness_runner.py discover
+            python3 -u /tmp/mpf/harness_runner.py discover
         ;;
     firstinstall)
         # One xdg tree, two boots. The seed is clean (the mode's
@@ -618,7 +753,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py firstinstall1 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py firstinstall1 || RUNNER_RC=$?
         # The first boot's log survives the second launch (which
         # truncates cura_run.log) — the log scan covers both boots.
         cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
@@ -636,7 +771,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
         ;;
     migration)
         # One xdg tree, two boots, seeded PRE-migration: boot 1 runs
@@ -652,7 +787,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py migration1 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py migration1 || RUNNER_RC=$?
         # The first boot's log survives the second launch (which
         # truncates cura_run.log) — the log scan covers both boots.
         cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
@@ -676,7 +811,7 @@ case "$MODE" in
             HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
             HARNESS_BOOT1_DOC="$BOOT1_DOC" \
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-            python3 /tmp/mpf/harness_runner.py migration2 || RUNNER_RC=$?
+            python3 -u /tmp/mpf/harness_runner.py migration2 || RUNNER_RC=$?
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         launch_cura
@@ -691,13 +826,13 @@ case "$MODE" in
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
                 REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
+                python3 -u /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         else
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
+                python3 -u /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         fi
         ;;
 esac

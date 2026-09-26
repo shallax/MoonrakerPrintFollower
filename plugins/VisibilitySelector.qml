@@ -25,8 +25,8 @@ Row {
         onClicked: {
             selectorRoot.toggled();
             selectorCheck.checkState = Qt.binding(function () {
-                    return selectorRoot.visibleCount === 0 ? Qt.Unchecked : (selectorRoot.visibleCount === selectorRoot.total ? Qt.Checked : Qt.PartiallyChecked);
-                });
+                return selectorRoot.visibleCount === 0 ? Qt.Unchecked : (selectorRoot.visibleCount === selectorRoot.total ? Qt.Checked : Qt.PartiallyChecked);
+            });
         }
     }
 }

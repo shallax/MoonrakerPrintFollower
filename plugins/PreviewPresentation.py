@@ -14,6 +14,8 @@ class PreviewPresentation(QObject):
     printPauseRequested = pyqtSignal()
     removePauseRequested = pyqtSignal(int)
     clearPausesRequested = pyqtSignal()
+    replaceConfirmed = pyqtSignal()
+    replaceCancelled = pyqtSignal()
     bedMeshVisibilityRequested = pyqtSignal(bool)
     bedMeshThresholdsRequested = pyqtSignal(float, float)
     bedMeshExaggerationRequested = pyqtSignal(float)
@@ -107,6 +109,15 @@ class PreviewPresentation(QObject):
             except RuntimeError: pass
             for name, value in self._values.items():
                 if name == "gateVisible": continue
+                if name == "replacePromptVisible":
+                    # The prompt is a Popup, and a Popup renders in the
+                    # WINDOW's overlay: it escapes whatever hidden
+                    # ancestor holds its card, so both hostings would
+                    # put one up at once (measured: two identical
+                    # dialogs, overlapping, on the same screen). Only
+                    # the card the model considers current may ask —
+                    # the same term the gates above use, one level in.
+                    value = bool(value) and (not panel_up if overlay else panel_up)
                 try: control.setProperty(name, value)
                 except RuntimeError: pass
 
@@ -138,6 +149,8 @@ class PreviewPresentation(QObject):
             ("printPauseRequested", self.printPauseRequested.emit),
             ("removePauseAtLayerRequested", self.removePauseRequested.emit),
             ("clearPauseAtLayersRequested", self.clearPausesRequested.emit),
+            ("replaceConfirmed", self.replaceConfirmed.emit),
+            ("replaceCancelled", self.replaceCancelled.emit),
             ("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit),
             ("bedMeshThresholdsRequested", self.bedMeshThresholdsRequested.emit),
             ("bedMeshExaggerationRequested", self.bedMeshExaggerationRequested.emit),
