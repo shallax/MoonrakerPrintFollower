@@ -3253,9 +3253,10 @@ Component {
                         Layout.fillHeight: true
                         Layout.minimumHeight: 200 * screenScaleFactor
                         printerModel: root.printer
+                        scrubVector: root.printer != null ? root.printer.plateScrubVector : null
                         progress: root.printer != null ? ({
                                 "available": root.printer.plateProgressAvailable,
-                                "scrubVector": root.printer.plateScrubVector,
+                                "scrubVector": progressFace.scrubVector,
                                 "reason": root.printer.plateProgressReason,
                                 "layers": root.printer.plateLayers,
                                 "split": root.printer.plateSplit,

@@ -17,6 +17,9 @@ Item {
     clip: true
 
     property var printerModel: null
+    // Keep static geometry in its own binding; split notifications must
+    // never fetch and convert the complete Python QVariant again.
+    property var scrubVector: null
     property var progress: null   // the model's plateProgress payload
     property var dot: null
     property bool compact: false

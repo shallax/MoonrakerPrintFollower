@@ -42,6 +42,7 @@ ColumnLayout {
                 anchors.fill: parent
                 compact: true
                 printerModel: root.printerModel
+                scrubVector: root.printerModel != null ? root.printerModel.plateLiveScrubVector : null
                 // The mini's own render feed: its rasters bake the
                 // compact boost and the thumbnail's view state (the
                 // popover's feeder never reaches this face).
@@ -66,7 +67,7 @@ ColumnLayout {
                         "available": root.printerModel.plateLiveAvailable,
                         "reason": "",
                         "layers": root.printerModel.plateLiveLayers,
-                        "scrubVector": root.printerModel.plateLiveScrubVector,
+                        "scrubVector": progressMini.scrubVector,
                         "split": root.printerModel.plateLiveSplit,
                         "anchor": root.printerModel.plateLiveAnchor,
                         "method": "motion index"

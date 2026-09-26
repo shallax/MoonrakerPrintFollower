@@ -452,6 +452,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     peripheralsChanged = pyqtSignal()
     plateObjectsChanged = pyqtSignal()
     plateProgressChanged = pyqtSignal()
+    plateScrubVectorChanged = pyqtSignal()
+    plateLiveScrubVectorChanged = pyqtSignal()
     powerDevicesChanged = pyqtSignal()
     systemChanged = pyqtSignal()
     endstopsChanged = pyqtSignal()
@@ -527,9 +529,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                  "pauseAtLayerScheduled", "pauseAtLayerSummary", "pauseAtLayerItems",
                                  "pauseAtLayerUnavailableText", "pauseAtLayerHasBaked",
                                  "pauseAtLayerHasClearable")),
-        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateScrubVector", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
+        ("plateScrubVectorChanged", ("plateScrubVector",)),
+        ("plateLiveScrubVectorChanged", ("plateLiveScrubVector",)),
+        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
                                   "plateLayerCount", "plateLayerMotionCount",
-                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
+                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable",
                                   "plateNavigationData", "plateNavigationSplit",
                                   "plateNavigationBacking", "plateSceneEpoch")),
         ("powerDevicesChanged", ("powerDevices",)),
@@ -1797,8 +1801,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
     monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
     platePassFraction = value_property(float, "platePassFraction", monitorChanged, -1.0)
-    plateScrubVector = value_property(QVariant, "plateScrubVector", plateProgressChanged, None)
-    plateLiveScrubVector = value_property(QVariant, "plateLiveScrubVector", plateProgressChanged, None)
+    plateScrubVector = value_property(QVariant, "plateScrubVector", plateScrubVectorChanged, None)
+    plateLiveScrubVector = value_property(QVariant, "plateLiveScrubVector", plateLiveScrubVectorChanged, None)
     # The interaction scene's READY flattened full-bed raster URL
     # (camera-independent; the pan/zoom presentation transforms
     # never re-render it).

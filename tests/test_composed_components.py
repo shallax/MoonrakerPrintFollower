@@ -868,6 +868,17 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertLess(names.index("followerViewChanged"),
                         names.index("plateProgressChanged"))
 
+    def test_static_geometry_has_independent_notify_signals(self):
+        model = self.monitor()
+        groups = dict(model._SIGNAL_KEYS)
+        for property_name, signal_name in (
+                ("plateScrubVector", "plateScrubVectorChanged"),
+                ("plateLiveScrubVector", "plateLiveScrubVectorChanged")):
+            prop = model.metaObject().property(model.metaObject().indexOfProperty(property_name))
+            self.assertEqual(bytes(prop.notifySignal().name()).decode(), signal_name)
+            self.assertEqual(groups[signal_name], (property_name,))
+            self.assertNotIn(property_name, groups["plateProgressChanged"])
+
     def test_a_manual_seek_lands_its_window_while_the_full_pass_runs(self):
         # The live report: the layer slider's seek stuck on "Loading
         # layer…" once the full prepared cache's pass existed — the

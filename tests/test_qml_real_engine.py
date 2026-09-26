@@ -3194,6 +3194,7 @@ if QT_AVAILABLE:
         plateDotChanged = pyqtSignal()
         plateObjectsChanged = pyqtSignal()
         plateLayersChanged = pyqtSignal()
+        plateScrubVectorChanged = pyqtSignal()
         # The follower's own publish groups, mirroring the model's
         # _SIGNAL_KEYS: the anchor rides the plate group, the follow
         # state and the option ride the view group.
@@ -3211,6 +3212,7 @@ if QT_AVAILABLE:
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._scrub = None
+            self.scrub_reads = 0
             self._navigation = ""
             # Zero is the whole layer — what the property's absence
             # stood for before it existed, so a fixture that never sets
@@ -3262,16 +3264,17 @@ if QT_AVAILABLE:
             self._layers = layers
             self.plateLayersChanged.emit()
 
-        @pyqtProperty("QVariant", notify=plateLayersChanged)
+        @pyqtProperty("QVariant", notify=plateScrubVectorChanged)
         def plateScrubVector(self):
             # The production partial state publishes the scrub
             # vector beside the PlateLayer window — the face's
             # _scrubVector reads it here.
+            self.scrub_reads += 1
             return self._scrub
 
         def setScrub(self, scrub):
             self._scrub = scrub
-            self.plateLayersChanged.emit()
+            self.plateScrubVectorChanged.emit()
 
         @pyqtProperty(str, notify=plateLayersChanged)
         def plateNavigationData(self):
@@ -10202,6 +10205,24 @@ class PlateFaceRenderTests(RealEngineTestCase):
         faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
         self.assertEqual(len(faces), 1)
         return monitor, window, faces[0]
+
+    def test_popover_retains_geometry_across_split_and_raster_updates(self):
+        monitor, window, face = self._follower_popover()
+        printer = self._printer
+        printer.setScrub(self.PAYLOAD["layers"]["current"])
+        self.pump(30)
+        reads = printer.scrub_reads
+        for split in (3, 5, 7, 9):
+            printer._split = split
+            printer.plateSplitChanged.emit()
+            printer.plateProgressChanged.emit()
+            printer.plateLayersChanged.emit()
+            self.pump(10)
+        self.assertEqual(printer.scrub_reads, reads,
+                         "volatile progress fetched the full Python geometry again")
+        printer.setScrub(dict(self.PAYLOAD["layers"]["current"], motions=22))
+        self.pump(10)
+        self.assertGreater(printer.scrub_reads, reads)
 
     def _fill_zoom(self, face, plot):
         """A zoom whose bed overfills the face on both axes: the pan

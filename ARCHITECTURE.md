@@ -732,6 +732,10 @@ the warm-to-exact barrier. Failed PNG decoding or publication invokes a complete
 vector producer; ordinary full native scenes do not convert their geometry to
 QVariant. The exact scene stays renderable beneath the opaque warm picture so
 Qt can deliver its Canvas textures throughout camera gestures.
+Partial-layer scrub geometry has a dedicated notification for each surface.
+Each face retains it in a separate QML binding, so split advances and raster
+delivery rebuild the small progress object without converting the full Python
+geometry to JavaScript again. Geometry replacement still invalidates that binding.
 An obsolete Canvas upload remains accounted for across a world change. The
 preparing composition covers its buffer while the current paint is queued;
 the old bitmap cannot remain visible merely because its upload has not yet
