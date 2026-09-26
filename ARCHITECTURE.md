@@ -68,6 +68,7 @@ private follower state to either integration.
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
+| `PlateSplitTracker.py` | Pure live-plate boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |

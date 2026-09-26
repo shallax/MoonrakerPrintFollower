@@ -1176,7 +1176,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertEqual(splits[0], 950, "the fill moved before the evidence landed")
         self.assertLess(splits[-1], 53, "the fill stayed stranded on the later pass")
         self.assertGreater(splits[-1], 49, "the fill lost the head's own stroke")
-        self.assertEqual(self.service._split_floor, splits[-1])
+        self.assertEqual(self.service._split_tracker.floor, splits[-1])
         # ...and tracks the nozzle from there, on the pass it is on.
         self.assertEqual(
             self.service.plate_progress(0, 90, (60.0, 0.0, 0.2))["split"], 60)
@@ -1246,10 +1246,10 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertEqual(self.service.plate_progress(0, 50, (15.0, 0.0, 0.2))["split"], 15)
         for _poll in range(2):
             self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
-            self.assertEqual(self.service._split_floor, 15,
+            self.assertEqual(self.service._split_tracker.floor, 15,
                              "the floor stepped back before the third below-floor verdict")
         self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
-        self.assertEqual(self.service._split_floor, 6, "the overshoot lock never released")
+        self.assertEqual(self.service._split_tracker.floor, 6, "the overshoot lock never released")
         # Resumed: the truth is the floor now, and the fill follows the
         # nozzle forward from it again.
         self.assertEqual(self.service.plate_progress(0, 50, (12.0, 0.0, 0.2))["split"], 12)
@@ -1260,10 +1260,10 @@ class PlateSplitRefinementTests(unittest.TestCase):
         # repeated geometry cannot win the match and overshoot the fill.
         self._bind_payload(motions=6000)
         self.assertEqual(self.service.plate_progress(0, 50, (1000.0, 0.0, 0.2))["split"], 1000)
-        self.assertEqual(self.service._split_advance_max, 512,
+        self.assertEqual(self.service._split_tracker.advance_max, 512,
                          "the floor-less first poll measured an advance")
         self.assertEqual(self.service.plate_progress(0, 50, (2900.0, 0.0, 0.2))["split"], 2900)
-        self.assertEqual(self.service._split_advance_max, 1900,
+        self.assertEqual(self.service._split_tracker.advance_max, 1900,
                          "the observed advance never widened the next window")
 
     def test_a_layer_without_a_motion_count_reads_unavailable(self):
@@ -1355,7 +1355,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
             self.assertGreaterEqual(
                 split, truth - 1, "the fill lost the head's own stroke")
             self.assertLessEqual(
-                self.service._split_floor, truth, "the floor locked ahead of the head")
+                self.service._split_tracker.floor, truth, "the floor locked ahead of the head")
 
     def test_the_fill_never_walks_back_across_a_repeated_pass(self):
         # The nozzle finishes pass 0 and starts pass 1 on the same
@@ -1409,7 +1409,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
             split = self._poll(truth, lead=40)
             self.assertLessEqual(split, truth + 1, "the payload search painted ahead")
             self.assertGreaterEqual(split, truth - 1, "the payload search lost the head")
-        floor = self.service._split_floor
+        floor = self.service._split_tracker.floor
         # The hydration lands: the arrays are what the split rides from
         # here, and the floor is the continuity between the two halves.
         index.motion_offsets[0] = hydrated
@@ -1469,7 +1469,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
                 self.assertEqual(split, stranded,
                                  "the floor stepped back before the third sample")
         self.assertEqual(split, 14, "the fill stayed stranded on the later pass")
-        self.assertEqual(self.service._split_floor, 14)
+        self.assertEqual(self.service._split_tracker.floor, 14)
         # The head keeps printing: the fill follows it from the truth,
         # unhaunted by the pass the stale sample claimed.
         self.assertEqual(self._poll(8.0, lead=1200, live=(50.0, 2.8, 0.2)), 16)

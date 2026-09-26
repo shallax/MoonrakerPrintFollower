@@ -31,6 +31,7 @@ from .PlateProgress import (
     prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
+from .PlateSplitTracker import PlateSplitTracker
 from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
 
 
@@ -399,11 +400,7 @@ class GCodeIndexService(QObject):
         # The boundary already painted for a (file, layer) — the floor
         # the next poll's refinement may not fall below — and the last
         # one a LIVE position established, None while there is none.
-        self._split_floor = None
-        self._split_refined = None
-        self._split_floor_key = None
-        self._split_advance_max = 512
-        self._split_stall_polls = 0
+        self._split_tracker = PlateSplitTracker()
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -535,11 +532,7 @@ class GCodeIndexService(QObject):
         self._plate_layers_memos = {}
         self._manual_anchor = None
         self._manual_split = None
-        self._split_floor = None
-        self._split_refined = None
-        self._split_floor_key = None
-        self._split_advance_max = 512
-        self._split_stall_polls = 0
+        self._split_tracker.reset()
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -808,163 +801,39 @@ class GCodeIndexService(QObject):
             coarse = _split_index(index, anchor, file_position)
             if coarse is None:
                 return None
-            # A layer ADVANCE — the anchor moving on by one inside the
-            # same job — is the one poll the geometric search cannot be
-            # trusted on. The nozzle has only just arrived, so it has
-            # printed nothing on this layer, while the parser's read
-            # position is already ahead of it: the first observation
-            # searches a window spanning the whole layer and a
-            # coincidental match on repeated geometry wins it. That is
-            # the reported jump at the start of a new layer.
-            previous = self._split_floor_key
-            advanced = (
-                previous is not None
-                and previous[0] == self._view.job_key
-                and anchor == previous[1] + 1
-            )
-            if (self._view.job_key, anchor) != self._split_floor_key:
-                self._split_floor_key = (self._view.job_key, anchor)
-                self._split_floor = None
-                self._split_refined = None
-                self._split_advance_max = 512
-                self._split_stall_polls = 0
-            floor = self._split_floor
+            # Resolve geometry in the index; the pure tracker is the ONLY
+            # owner of accepted progress, continuity and overshoot evidence.
+            tracker = self._split_tracker
+            advanced = tracker.begin(self._view.job_key, anchor)
+            floor = tracker.floor
             refined = None
-            # The refinement is taken UNCLAMPED and floored only for
-            # publication. refined_split raises its result to the
-            # floor, so asking it for a floored value made the
-            # overshoot-lock below unreachable on the hydrated path
-            # (the normal path): `refined < floor` could never hold,
-            # and a floor that overshot could never step back for the
-            # layer's whole life — the fill stayed ahead of the
-            # nozzle, and the backward delivery it demanded closed
-            # the split gate, which holds the warm raster.
-            refined_truth = None
+            raw = None
             if live_position is not None:
-                # The accepted floor is handed over as the search's
-                # CONTINUITY anchor while the answer comes back
-                # unclamped: the resolution of a repeated-geometry tie
-                # needs to know where the boundary already is, and the
-                # overshoot test needs to see a value the clamp would
-                # have raised. The two were one argument; separating
-                # them is what lets a below-floor truth be inspected
-                # without the displayed boundary ever falling.
-                refined_truth, _method = index.refined_split(
+                # The index uses the previous boundary as a search anchor,
+                # but deliberately returns the UNCLAMPED geometric match.
+                # The tracker must see behind-floor evidence to recover an
+                # erroneously advanced boundary on repeated toolpaths.
+                raw, _method = index.refined_split(
                     anchor, file_position, live_position,
                     minimum_split=None, floor_split=floor,
-                    stall=self._split_stall_polls)
-                refined = refined_truth if floor is None or refined_truth is None \
-                    else max(refined_truth, floor)
-                # The unhydrated layer's honest split: the index arrays
-                # are empty until the file hydration lands, and the
-                # byte-fraction seed is NOT proportional to motion
-                # (the live report: the fill drifted, regions reading
-                # far slower or faster than the toolhead). The same
-                # bounded live-position search runs over the payload
-                # geometry the plate already displays, so the split
-                # pins to the physical toolhead instead of the byte
-                # estimate.
+                    stall=tracker.stall_polls)
+                refined = raw if floor is None or raw is None \
+                    else max(raw, floor)
                 if refined is None:
                     offsets = index.motion_offsets[anchor] \
                         if anchor < len(index.motion_offsets) else ()
                     if not len(offsets):
-                        # The floor's freshness bounds the ahead side:
-                        # a floor refined LAST poll means the nozzle is
-                        # within one poll's worth of motion past it —
-                        # the adaptive advance cap keeps repeated
-                        # geometry (an adjacent infill line) from
-                        # winning the match and overshooting the fill.
-                        fresh = floor is not None \
-                            and self._split_refined == floor
+                        # Compact layers search the prepared payload's geometry;
+                        # they use the same boundary policy as hydrated layers.
                         refined = self._refine_over_payload(
                             memo[1].get("current"), coarse, live_position,
-                            floor,
-                            ahead=self._split_advance_max * 2
-                            if fresh else 4096,
-                            stall=self._split_stall_polls)
-                        # This path returns UNCLAMPED by design (the
-                        # correction reads it unfloored), so it is the
-                        # same truth the stall test compares — without
-                        # this the test read None here and the lock
-                        # could never fire on an unhydrated layer.
-                        refined_truth = refined
-                        if refined is not None and floor is not None \
-                                and refined > floor:
-                            self._split_advance_max = max(
-                                self._split_advance_max, refined - floor)
-            if advanced and floor is None:
-                # The newly entered layer's first observation: the
-                # honest value is ZERO — nothing has printed on it yet
-                # — so the search's answer is discarded and the block
-                # below publishes it. One poll later an accepted
-                # boundary exists and the search runs against the
-                # tight behind_reach window, so this initialises the
-                # layer rather than capping its advance.
-                refined = None
-                refined_truth = None
-            if refined is None:
-                # The layer's FIRST boundary must be a live-position
-                # refinement, never the coarse: the byte fraction can
-                # read ahead of the nozzle, and the floor would lock
-                # that overshoot in for the layer's whole life (the
-                # live report: fine for a few seconds, then the fill
-                # jumped ahead at the crossing and waited). With live
-                # telemetry the honest first value is zero — nothing
-                # has printed on the new layer yet — until the wide
-                # first search lands. A machine that reports no live
-                # position keeps the coarse — it is all that machine
-                # has — with the floor guarding it against walking
-                # back, never against the coarse's own advance (else
-                # the fill stalls on the first poll's boundary for the
-                # layer's whole life). Once a physical boundary has
-                # been observed for this layer, hold it.
-                if self._split_refined is not None and floor is not None:
-                    split = floor
-                elif live_position is None:
-                    split = coarse if floor is None else max(floor, coarse)
-                else:
-                    split = 0 if floor is None else floor
-            else:
-                self._split_refined = refined
-                split = refined
-            # The stall counter: every poll that did NOT confirm the
-            # floor — a match at or below it, or no match at all —
-            # counts toward the next search's window expansion. A poll
-            # that confirmed an advance past the floor resets it, and a
-            # machine reporting no live position never counts: it has
-            # no refinement to be suspicious of.
-            #
-            # A refusal has to count. A floor that ran far ahead leaves
-            # the nozzle's own geometry outside the search window, so
-            # the refinement returns NOTHING rather than a below-floor
-            # match, and a counter that only counted below-floor
-            # matches could never grow the window that would reach it —
-            # the fill waited for the nozzle to catch up for the rest of
-            # the layer.
-            #
-            # THREE consecutive unconfirmed polls are the overshoot
-            # lock's evidence: the live position sits ON geometry behind
-            # the floor, the nozzle is genuinely there, and the
-            # monotonic floor must step back to the truth (the live
-            # replay: the refinement found the truth at distance 0 below
-            # an overshot floor every poll — the long stall, then the
-            # snap back to life).
-            corrected = False
-            if floor is None or live_position is None \
-                    or (refined_truth is not None and refined_truth > floor):
-                self._split_stall_polls = 0
-            else:
-                self._split_stall_polls += 1
-                if self._split_stall_polls >= 3 and refined_truth is not None \
-                        and refined_truth < floor:
-                    split = refined_truth
-                    self._split_refined = refined_truth
-                    corrected = True
-            if corrected:
-                self._split_floor = split
-            else:
-                self._split_floor = split if floor is None else max(floor, split)
-            return split
+                            floor, ahead=tracker.payload_ahead_window,
+                            stall=tracker.stall_polls)
+                        raw = refined
+                        tracker.observe_payload_advance(refined)
+            return tracker.accept(
+                coarse, refined, raw, live_position is not None,
+                advanced=advanced)
 
     @staticmethod
     def _refine_over_payload(payload, coarse, live_position, floor=None,
@@ -1631,11 +1500,7 @@ class GCodeIndexService(QObject):
         self._manual_anchor = None
         self._manual_anchor_calls = 0
         self._manual_anchor_changes = 0
-        self._split_floor = None
-        self._split_refined = None
-        self._split_floor_key = None
-        self._split_advance_max = 512
-        self._split_stall_polls = 0
+        self._split_tracker.reset()
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
