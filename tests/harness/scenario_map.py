@@ -348,6 +348,7 @@ PREFIX_RULES = [
     ("key", "plateDot", "b11"),
     ("key", "plateLayers", "b11"),
     ("key", "plateSplit", "b11"),
+    ("key", "plateSceneEpoch", "b11"),
     ("key", "plateProgressAnchor", "b11"),
     ("key", "plateProgressAvailable", "b11"),
     ("key", "plateProgressReason", "b11"),

@@ -1941,7 +1941,13 @@ Item {
             // texture is the second half of the same bake, and the
             // canvas is the only producer holding the travels' ink
             // while it decodes.
-            opacity: _exactFullStanding() || (root._progressWorldKey !== "" && root._vectorWorldShown !== root._progressWorldEpoch) ? 0 : 1
+            // Never make a new world's Canvas invisible while waiting for its
+            // FIRST painted receipt. In Qt's threaded Canvas, a culled
+            // paint surface may not deliver onPainted at opacity zero:
+            // waiting for that receipt to show it is a circular wait.
+            // The warm raster fronts interactions; the renderer's epoch
+            // still refuses obsolete coverage at delivery.
+            opacity: _exactFullStanding() ? 0 : 1
             onPainted: {
                 // A delivered texture is authoritative ONLY when one
                 // paint from this world can be unambiguously identified.
