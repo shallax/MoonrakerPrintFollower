@@ -54,6 +54,9 @@ class PrintCoordinator(QObject):
         self._plate_memo = PlateProjectionMemo()
         self._snapshot = PrintSnapshot()
         self._status = {}
+        # The frame the current snapshot was built from: _publish composes
+        # its text from this pair, never from the newest frame.
+        self._frame = {}
         self._detail = "Not connected"
         self._gate_logged = None
         self._phase_logged = None
@@ -190,6 +193,17 @@ class PrintCoordinator(QObject):
         if self._closed or self._processing: return
         self._processing = True
         try:
+            # ONE telemetry frame for the whole refresh: the layer, the file
+            # position, the live position, the payload and the published
+            # values must all be the same print at the same instant.
+            # observe() is called re-entrantly from the client's signal and
+            # only its REFRESH is guarded, so a frame landing mid-flight
+            # would otherwise swap self._status under the reads below and
+            # mix two instants — a new layer with the old position — into
+            # one snapshot. The observation is pinned with it: it is an
+            # immutable value object, one per observed frame.
+            status = self._status if isinstance(self._status, dict) else {}
+            observation = self._jobs.observation
             # The request flags age out against the snapshot's own
             # print state — a standby printer never sends the frame
             # that would settle them (the stuck "Resolving…" report).
@@ -227,7 +241,7 @@ class PrintCoordinator(QObject):
                 # for real when the toolpath goes away.
                 if self._preview.state.attached:
                     self._preview.attach(False)
-            filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+            filename = str((status.get("print_stats") or {}).get("filename") or "")
             job = self._files.job_key
             # The view is the index's evidence for the CURRENT print —
             # both the view's key and the files service's job can be
@@ -236,7 +250,7 @@ class PrintCoordinator(QObject):
             # any preview load, because the two stale keys agreed with
             # each other). Compare against the print's own filename.
             view = index_view_for_print(self._index.view, filename)
-            plate_view = self._plate_source_view(view)
+            plate_view = self._plate_source_view(view, status)
             plate_available = plate_view is not None
             # The downloaded file's OWN header is the authoritative
             # filament total; Moonraker's parse of it (the metadata
@@ -253,9 +267,21 @@ class PrintCoordinator(QObject):
             # the slicer estimate without any gcode download. The
             # fallback serves ONLY the payload whose identity matches
             # the current job — never the previous print's values.
-            status_stats = (self._status.get("print_stats") or {}) if isinstance(self._status, dict) else {}
+            status_stats = status.get("print_stats") or {}
             metadata = self._files.metadata or self._mr_metadata_for(str(status_stats.get("filename") or ""), job)
-            physical = self._layers.resolve(self._status, config, view, metadata, self._cura.heights)
+            # The toolhead's PHYSICAL position, in the G-code's own
+            # coordinates, computed ONCE from this frame: the layer resolver
+            # corroborates the parser's layer claim against the nozzle's own
+            # Z with it, and the plate split refines the dispatcher's
+            # position with it, exactly as the Preview's follower does (the
+            # same helper, the same space). Both now read the same frame, so
+            # a layer can never be paired with a position from an earlier
+            # one. Absent telemetry is None, and neither consumer then
+            # treats a parser-side value as physical.
+            live_position = live_position_in_gcode_space(
+                status.get("motion_report") or {}, status.get("gcode_move") or {})
+            physical = self._layers.resolve(status, config, view, metadata, self._cura.heights,
+                                            live_position)
             self._next_pause.track(physical.index)
             try:
                 estimate = float(metadata.get("estimated_time") or 0)
@@ -268,7 +294,7 @@ class PrintCoordinator(QObject):
             # inside the layer branch left that read unbound. Missing
             # or non-numeric is None, which each consumer skips: a real
             # 0 is a position, never an absence.
-            sdcard = self._status.get("virtual_sdcard") if isinstance(self._status, dict) else None
+            sdcard = status.get("virtual_sdcard")
             try:
                 position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
             except (TypeError, ValueError):
@@ -281,17 +307,7 @@ class PrintCoordinator(QObject):
                 Logger.log("w", "plate position: virtualSdcard=%r "
                                "statusKeys=%s",
                            list(sdcard.keys()) if isinstance(sdcard, Mapping) else None,
-                           sorted(self._status.keys()) if isinstance(self._status, dict) else None)
-            # The toolhead's PHYSICAL position, in the G-code's own
-            # coordinates: the plate split refines the dispatcher's
-            # position with it, exactly as the Preview's follower does
-            # (the same helper, the same space), so the painted fill
-            # cannot run ahead of the nozzle. Absent telemetry is None,
-            # and the split then reads the coarse anchor as it always did.
-            live_position = (
-                live_position_in_gcode_space(
-                    self._status.get("motion_report") or {}, self._status.get("gcode_move") or {})
-                if isinstance(self._status, dict) else None)
+                           sorted(status.keys()))
             # The job boundary's refusal: while the printer still
             # reports the byte offset the finished print left standing,
             # this frame is that print's — its offset opened the
@@ -377,8 +393,7 @@ class PrintCoordinator(QObject):
                 # uses — the raw polygon may arrive flat or paired,
                 # and the point-in-polygon test needs pairs (the
                 # green-printed report: the raw rows never matched).
-                exclude_status = (self._status.get("exclude_object") or {}) \
-                    if isinstance(self._status, dict) else {}
+                exclude_status = status.get("exclude_object") or {}
                 # Memoised per job: a poll that only moved the position
                 # or advanced the clock re-delivers the same definition,
                 # and re-walking every ring here runs O(vertices) of
@@ -388,7 +403,11 @@ class PrintCoordinator(QObject):
                 if visited is not None and plate_progress_payload.get("split") is not None:
                     plate_visited = visited(physical.index,
                                             plate_progress_payload["split"], exclude_rows)
-            self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
+            # The frame is stored WITH the snapshot it produced: _publish()
+            # and the signal-driven publishes compose their text from this
+            # pair, so the pair can never be two different polls.
+            self._frame = status
+            self._snapshot = PrintSnapshot(job, observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
                 download_fraction=self._files.download_fraction,
@@ -411,15 +430,15 @@ class PrintCoordinator(QObject):
                 self._maybe_fetch_mr_metadata(filename, job)
             if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:
                 self._layer_trace_at = time.monotonic()
-                info = (self._status.get("print_stats") or {}).get("info") or {}
-                gpos = (self._status.get("gcode_move") or {}).get("gcode_position") or ()
+                info = (status.get("print_stats") or {}).get("info") or {}
+                gpos = (status.get("gcode_move") or {}).get("gcode_position") or ()
                 mr_meta = self._mr_metadata_for(filename, job)
                 Logger.log("i",
                     "layer trace: raw_current=%s total=%s state=%s z=%s e=%s progress=%s one_based=%s z_fallback=%s mr_meta=%s mr_meta_keys=%s files_meta=%s heights_n=%s deltas=%s ascent=%.3f z_layer=%s -> layer=%s source=%s",
                     info.get("current_layer"), info.get("total_layer"),
-                    (self._status.get("print_stats") or {}).get("state"),
+                    (status.get("print_stats") or {}).get("state"),
                     gpos[2] if len(gpos) >= 3 else None, gpos[3] if len(gpos) >= 4 else None,
-                    (self._status.get("virtual_sdcard") or {}).get("progress"),
+                    (status.get("virtual_sdcard") or {}).get("progress"),
                     config.moonraker_layer_is_one_based, config.z_fallback,
                     bool(mr_meta), sorted(mr_meta) if mr_meta else [],
                     bool(self._files.metadata),
@@ -429,7 +448,7 @@ class PrintCoordinator(QObject):
             # The coordinator owns the mesh observation; the Monitor reads the
             # presenter's snapshot but never writes it. The presenter's
             # fingerprint guard makes the per-poll update cheap.
-            self._bed_mesh.update(parse_bed_mesh(self._status.get("bed_mesh")))
+            self._bed_mesh.update(parse_bed_mesh(status.get("bed_mesh")))
             self._cura.watch(config.enabled)
             if self._snapshot.active:
                 # The metadata and index serve the Preview, which needs the
@@ -455,7 +474,7 @@ class PrintCoordinator(QObject):
                 current = self._snapshot.layer.index
                 if isinstance(current, int):
                     self._index.set_followed_layer(current)
-                self._detail, hydration = self._preview.observe(self._snapshot, self._status, config, view)
+                self._detail, hydration = self._preview.observe(self._snapshot, status, config, view)
                 for layer in hydration: self._index.request_hydration(layer)
                 # The plate's own demand: the follower hydrates the
                 # window even when the preview is detached (the
@@ -477,7 +496,7 @@ class PrintCoordinator(QObject):
             self._preview.update_eta(self._snapshot, view)
             self._snapshot = replace(self._snapshot,
                 layer_eta=self._preview.remaining_end(view, self._snapshot.estimated_time))
-            self._publish()
+            self._publish(status)
         finally:
             self._processing = False
 
@@ -612,6 +631,7 @@ class PrintCoordinator(QObject):
             self._header_total_mm = None
             self._header_total_path = ""
             self._status = {}
+            self._frame = {}
             self._preview_block = None
             self._jobs.reset()
             self._layers.reset()
@@ -663,7 +683,7 @@ class PrintCoordinator(QObject):
         if was_attached and self._cura.has_toolpath:
             self._preview.attach(True)
 
-    def _plate_source_view(self, view):
+    def _plate_source_view(self, view, status):
         """The index view the follower's plate may read. The follower
         must NOT depend on the preview's toolpath (the live ruling) —
         the monitor-only index (Improve ETA) builds without a preview
@@ -673,12 +693,15 @@ class PrintCoordinator(QObject):
 
         One derivation, shared by the full refresh and the pass's
         progress tick: the bar and the payload can never end up reading
-        different files' indexes."""
+        different files' indexes. The caller hands over the frame it is
+        working from — the gate names a FILE, so reading it from a
+        different frame than the resolution it guards would accept a
+        view for the print the frame is not about."""
         if view is not None: return view
         index_view = self._index.view
         if index_view is None: return None
         if not index_view.job_key: return index_view
-        filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+        filename = str((status.get("print_stats") or {}).get("filename") or "")
         return index_view if index_view.job_key[0] == filename else None
 
     def _index_changed(self):
@@ -697,7 +720,8 @@ class PrintCoordinator(QObject):
         refresh's stale copy would end an hourglass whose load is
         still running."""
         if self._closed or self._processing: return
-        filename = str((self._status.get("print_stats") or {}).get("filename") or "")
+        status = self._status if isinstance(self._status, dict) else {}
+        filename = str((status.get("print_stats") or {}).get("filename") or "")
         view = index_view_for_print(self._index.view, filename)
         indexing = self._index.phase == "indexing"
         self._snapshot = replace(
@@ -706,7 +730,7 @@ class PrintCoordinator(QObject):
             indexing=indexing,
             index_fraction=self._index.progress if indexing else None,
             plate_pass_fraction=(self._index.plate_pass_fraction()
-                                 if self._plate_source_view(view) is not None else None))
+                                 if self._plate_source_view(view, status) is not None else None))
         self._publish()
 
     def _position_changed(self):
@@ -932,7 +956,7 @@ class PrintCoordinator(QObject):
         self._pause_block = block
         return block
 
-    def _publish(self):
+    def _publish(self, status=None):
         if self._closed: return
         config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
         compact = status_text(
@@ -1031,8 +1055,12 @@ class PrintCoordinator(QObject):
                 time.monotonic() - self._preview_block[1] > self.PREVIEW_BLOCK_STALE_S,
             # The strip's middle-slot ETA: the print remaining/finish
             # (the Monitor's own pair, composed) — the selected-layer
-            # line stays in its slot untouched.
-            "previewEtaText": preview_eta_text(self._status or {}, self._snapshot),
+            # line stays in its slot untouched. The frame is the one the
+            # snapshot was built from (the refresh hands its own over):
+            # the state, the duration and the progress that compose this
+            # text describe the same instant as the estimate beside them.
+            "previewEtaText": preview_eta_text(
+                status if status is not None else (self._frame or {}), self._snapshot),
         })
 
     def close(self):

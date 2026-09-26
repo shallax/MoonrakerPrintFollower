@@ -1181,6 +1181,94 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertIsNone(parts.index.plate_lives[-1])
         self.assertEqual(parts.index.plate_positions[-1], 4500)
 
+    def test_the_plate_anchor_waits_for_the_nozzle_at_a_layer_change(self):
+        # The live transition, end to end: the printer reports the layer it
+        # has just READ (the parser runs ahead of the move queue, and
+        # SET_PRINT_STATS_INFO executes as it is read), the byte offset
+        # past the marker, and its own commanded Z — while the nozzle is
+        # still physically finishing the PREVIOUS layer. Anchoring the
+        # plate to the claimed layer refines the new layer's boundary
+        # against the nozzle's place on the old one: a fraction of a layer
+        # with nothing printed, held by the service's monotonic floor. The
+        # anchor follows the nozzle's own Z instead.
+        parts = self._printing(self._make())
+        parts.cura.heights = [0.2, 0.4]
+        parts.index.view = _view(ranges=((0, 1000), (1000, 2000)))
+        transition = _status(
+            "printing",
+            virtual_sdcard={"file_position": 1000, "file_size": 100000, "progress": 0.5},
+            # The parser's own gcode position is already on layer 1's
+            # plane (0.4); only motion_report cannot lead.
+            gcode_move={"gcode_position": [9.0, 0.0, 0.4, 12.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [9.0, 0.0, 0.2, 0.0]})
+        transition["print_stats"]["info"] = {"current_layer": 2, "total_layer": 6}
+        parts.client.statusReceived.emit(transition)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 0)
+        self.assertEqual(parts.index.plate_anchors[-1], 0)
+        self.assertEqual(parts.index.plate_lives[-1], (9.0, 0.0, 0.2))
+        # The nozzle rises to the new layer's plane: the same claim now
+        # anchors, with no extra poll and nothing latched per layer.
+        arrived = _status(
+            "printing",
+            virtual_sdcard={"file_position": 1100, "file_size": 100000, "progress": 0.55},
+            gcode_move={"gcode_position": [1.0, 0.0, 0.4, 13.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [1.0, 0.0, 0.4, 0.0]})
+        arrived["print_stats"]["info"] = {"current_layer": 2, "total_layer": 6}
+        parts.client.statusReceived.emit(arrived)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 1)
+        self.assertEqual(parts.index.plate_anchors[-1], 1)
+
+    def test_a_frame_arriving_mid_refresh_cannot_split_the_snapshot(self):
+        # A frame really can land while refresh() is mid-flight: observe()
+        # is called re-entrantly from the client's signal, and the pass it
+        # then starts is not the guarded one (it clears the flag its own
+        # nested call set, not the outer refresh's). The emit below
+        # therefore arrives between the plate's call and the snapshot it
+        # belongs to, and the pass it starts runs to completion inside the
+        # one in flight. Before the fix every read after that point — the
+        # observation, the mesh, the Preview's frame, the published text —
+        # came from the NEW frame while the anchor, the file position and
+        # the nozzle place came from the old one: one snapshot of two
+        # instants, whose layer and position were never true together, and
+        # a published ETA describing a frame the snapshot did not come
+        # from. Each pass now resolves from the frame it started on.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        late = _status("paused", filename="cube.gcode", print_duration=200.0,
+                       virtual_sdcard={"file_position": 90000, "file_size": 100000,
+                                       "progress": 0.9},
+                       gcode_move={"gcode_position": [140.0, 140.0, 9.0, 500.0],
+                                   "absolute_coordinates": True},
+                       motion_report={"live_position": [140.0, 140.0, 9.0, 0.0]})
+        late["print_stats"]["info"] = {"current_layer": 60, "total_layer": 100}
+        calls = []
+        real = parts.index.plate_progress
+
+        def reentrant(anchor, file_position=None, live_position=None):
+            calls.append((anchor, file_position, live_position))
+            if len(calls) == 1:
+                parts.client.statusReceived.emit(late)
+            return real(anchor, file_position, live_position)
+
+        parts.index.plate_progress = reentrant
+        parts.coordinator.refresh()
+        # Two passes: the one in flight, then the one the late frame
+        # started. Each is anchored, positioned and refined from ONE
+        # frame — never layer 4 with the late frame's 90000.
+        self.assertEqual(calls, [(4, 4500, (10.0, 10.0, 1.2)),
+                                 (59, 90000, (140.0, 140.0, 9.0))])
+        # And the refresh that was in flight lands on its OWN frame's
+        # observation rather than the late one's, so the snapshot's layer
+        # and its byte offset describe the same instant.
+        snapshot = parts.coordinator.snapshot
+        self.assertEqual(snapshot.layer.index, 4)
+        self.assertEqual(snapshot.observation.file_position, 4500)
+        self.assertEqual(snapshot.observation.state, "printing")
+        self.assertNotEqual(parts.presentation.published[-1]["previewEtaText"], "Paused",
+                            "the published text describes the frame the snapshot came from")
+
     def test_no_plate_path_raises_across_the_position_variants(self):
         # Every combination the unbound-position defect could reach,
         # replayed on one coordinator: each poll completes and
