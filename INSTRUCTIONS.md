@@ -34,6 +34,8 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   committed screenshots, i.e. what CI checks), `make lint` (structure,
   qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
   (stdlib suite on the host, the real-Qt suite in the container),
+  `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
+  test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
   (qmlformat in the container), `make coverage` (plugins/ report,
   the gcov gate), `make snapshot_package` (build + verify + copy to
@@ -43,6 +45,18 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   The targets are thin
   wrappers over the `tools/*.sh` scripts, which remain the single
   source of truth.
+- **To run a subset of the tests, use `make test_files`, never one
+  `unittest` invocation naming several files.** A single
+  `python3 -m unittest tests.a tests.b tests.c` runs those files
+  SERIALLY inside one process — that is where the minutes go — and the
+  real-Qt files cannot share a process in any case: `test_qml_real_engine`
+  owns its `QGuiApplication` and skips whenever one already exists.
+  `tools/run_some.sh` applies the same per-file fan-out
+  `tools/run_tests.sh` already uses for the whole discovery, scoped to
+  the files a change actually touches — one process per file, `JOBS`
+  (default 8) at a time, one log and one verdict line per file, and a
+  non-zero exit if ANY file fails. It never reports a pass for an empty
+  list.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
