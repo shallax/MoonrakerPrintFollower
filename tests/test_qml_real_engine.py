@@ -5364,9 +5364,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertTrue(world)
 
         def deliver(receipt, paints=1):
-            face.setProperty("_paintPrepared", receipt)
-            face.setProperty("_paintEventsSinceDelivery", paints)
-            face.setProperty("_progressPaintInFlight", True)
+            face.setProperty("_canvasTransaction", {
+                "epoch": face.property("_progressWorldEpoch"),
+                "world": face.property("_progressWorldKey"),
+                "inFlight": True, "pending": False, "count": paints,
+                "first": receipt, "last": receipt, "consensus": paints == 1})
             result = QMetaObject.invokeMethod(
                 face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant))
             self.assertIsInstance(result, bool)
@@ -5380,12 +5382,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
                          "an earlier layer's callback certified this one")
         self.assertNotEqual(face.property("_vectorCoversShown"), 10)
 
-        face.setProperty("_progressPaintQueued", False)
         self.assertFalse(deliver(correct, paints=2),
                          "two paints collapsed into one ambiguous texture")
         self.assertNotEqual(face.property("_vectorCoversShown"), 10)
 
-        face.setProperty("_progressPaintQueued", False)
         self.assertTrue(deliver(correct), "a matching delivery was refused")
         self.assertEqual(face.property("_vectorCoversShown"), 10)
         self.assertEqual(face.property("_vectorSplitShown"), 18)
@@ -5412,11 +5412,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
         world = face.property("_progressWorldKey")
         receipt = {"epoch": epoch, "world": world, "valid": True,
                    "from": 0, "split": 8}
-        face.setProperty("_paintFirst", receipt)
-        face.setProperty("_paintPrepared", dict(receipt))
-        face.setProperty("_paintConsistent", True)
-        face.setProperty("_paintEventsSinceDelivery", 2)
-        face.setProperty("_progressPaintInFlight", True)
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 2, "first": receipt,
+            "last": dict(receipt), "consensus": True})
         self.assertTrue(QMetaObject.invokeMethod(
             face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
         self.assertEqual(face.property("_vectorCoversShown"), 0)
@@ -5431,25 +5430,32 @@ class PlateFaceRenderTests(RealEngineTestCase):
         old = {"epoch": epoch, "world": world, "valid": True,
                "from": 0, "split": 8}
         current = dict(old, **{"from": 5, "split": 10})
-        face.setProperty("_paintFirst", old)
-        face.setProperty("_paintPrepared", current)
-        face.setProperty("_paintConsistent", False)
-        face.setProperty("_paintEventsSinceDelivery", 2)
-        face.setProperty("_progressPaintInFlight", True)
+        face.setProperty("_canvasTransaction", {
+            "epoch": epoch, "world": world, "inFlight": True,
+            "pending": False, "count": 2, "first": old,
+            "last": current, "consensus": False})
         self.assertFalse(QMetaObject.invokeMethod(
             face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
-        self.assertTrue(face.property("_progressPaintQueued"))
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertTrue(state["pending"])
 
     def test_exact_canvas_coalesces_progress_while_one_paint_is_in_flight(self):
         from PyQt6.QtCore import QMetaObject
         monitor, window, face, baseline = self._mount_empty()
-        face.setProperty("_progressPaintInFlight", True)
-        face.setProperty("_progressPaintQueued", False)
+        face.setProperty("_canvasTransaction", {
+            "epoch": face.property("_progressWorldEpoch"),
+            "world": face.property("_progressWorldKey"),
+            "inFlight": True, "pending": False, "count": 0,
+            "first": None, "last": None, "consensus": False})
         QMetaObject.invokeMethod(face, "_requestProgressPaint")
         QMetaObject.invokeMethod(face, "_requestProgressPaint")
-        self.assertTrue(face.property("_progressPaintQueued"),
-                        "rapid live polls did not coalesce")
-        self.assertTrue(face.property("_progressPaintInFlight"))
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertTrue(state["pending"], "rapid live polls did not coalesce")
+        self.assertTrue(state["inFlight"])
 
     def test_a_delivery_does_not_reenter_canvas_paint_in_its_own_turn(self):
         # Qt may render extra canvas windows during a resize. An
@@ -5458,13 +5464,18 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # and starve the GUI/camera under repeated invalidation.
         from PyQt6.QtCore import QMetaObject
         monitor, window, face, baseline = self._mount_empty()
-        face.setProperty("_progressPaintInFlight", False)
-        face.setProperty("_progressPaintQueued", True)
+        face.setProperty("_canvasTransaction", {
+            "epoch": face.property("_progressWorldEpoch"),
+            "world": face.property("_progressWorldKey"),
+            "inFlight": False, "pending": True, "count": 0,
+            "first": None, "last": None, "consensus": False})
         QMetaObject.invokeMethod(face, "_flushProgressPaint")
-        self.assertFalse(
-            face.property("_progressPaintInFlight"),
-            "onPainted synchronously initiated its replacement paint")
-        self.assertTrue(face.property("_progressPaintQueued"),
+        state = face.property("_canvasTransaction")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        self.assertFalse(state["inFlight"],
+                         "onPainted synchronously initiated its replacement paint")
+        self.assertTrue(state["pending"],
                         "the retry was consumed before the next event turn")
 
     _PARITY_ORIENTATIONS = {
