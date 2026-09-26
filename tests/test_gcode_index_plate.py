@@ -78,6 +78,22 @@ def _codes(names):
     return {name: code + 2 for code, name in enumerate(names)}
 
 
+class _HeldClock:
+    """A monotonic() the test moves by hand. The batch budget is
+    wall-clock, and real seconds are the one input a shared runner
+    cannot hold still — serving the service's own clock from here
+    makes a timing contract exact instead of load-dependent."""
+
+    def __init__(self, start=1000.0):
+        self.now = start
+
+    def monotonic(self):
+        return self.now
+
+    def spend(self, seconds):
+        self.now += seconds
+
+
 # The passive-yield pins' numbers: the production gate hands the
 # interpreter back every 6 ms, and the heartbeat asks every 10 ms. A
 # gap past the bound means the worker stopped yielding, and the UI
@@ -3196,6 +3212,11 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         # the layer with no other source sends it to the file, and a
         # file that cannot serve that layer leaves the frontier ON it
         # rather than publishing a hole for it.
+        #
+        # The clock is held throughout: which source each layer is read
+        # from is the policy under test, and it must not also need the
+        # walk to fit inside 120 ms of a shared runner's real time. The
+        # budget's own boundary is pinned by the two tests below.
         self._compact_view(4, hydrated=(0,))
         self.service._full_cache.set(1, self._payload(1), 40)
         writer = self.store.open_for_write("print-key", 4)
@@ -3204,16 +3225,69 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.service._prepared_open(self.files.identity)
         self.assertEqual(self.service._prepared_table[2][0], 2, "the refusal never loaded")
         captured = self._capture_submit()
-        self.service._advance()
-        self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
-        self.assertIsNotNone(captured[0][2], "the pass walked to the file with no lease")
-        frontier, encoded, uncacheable = captured[0][1]()
+        module = self.qt.load("GCodeIndexService")
+        with patch.object(module, "time", _HeldClock()):
+            self.service._advance()
+            self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
+            self.assertIsNotNone(captured[0][2], "the pass walked to the file with no lease")
+            frontier, encoded, uncacheable = captured[0][1]()
         self.assertEqual(frontier, 3, "the pass walked past a layer it could not read")
         self.assertEqual(uncacheable, {2}, "the resolved refusal was re-walked")
         self.assertIn(0, encoded, "the hydrated layer was never prepared")
         table = self.service._prepared_writer["table"]
         self.assertEqual(table[1][0], self.state_cached,
                          "the RAM-packed layer never rode into the rebuild")
+
+    def test_a_queued_pass_spends_its_budget_from_its_own_execution(self):
+        # The budget belongs to the WALK, not to the queue. Spent from
+        # the submission, a batch the pool served late arrived with its
+        # whole slice already gone and returned the frontier it was
+        # handed — the load-dependent 0 != 3 on the source-selection
+        # pin. The delay is injected through the clock rather than
+        # slept, so the claim is about where the budget starts and
+        # never about how busy the runner was.
+        self._compact_view(4, hydrated=(0,))
+        self.service._full_cache.set(1, self._payload(1), 40)
+        writer = self.store.open_for_write("print-key", 4)
+        self.store.append_uncacheable(writer, 2)
+        self.store.finish_write(writer)
+        self.service._prepared_open(self.files.identity)
+        captured = self._capture_submit()
+        module = self.qt.load("GCodeIndexService")
+        clock = _HeldClock()
+        with patch.object(module, "time", clock):
+            self.service._advance()
+            self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
+            clock.spend(module._FULL_PREP_BATCH_S * 1.25)
+            frontier, _encoded, _uncacheable = captured[0][1]()
+        self.assertEqual(frontier, 3,
+                         "a queued pass spent its queue delay as its budget")
+
+    def test_a_spent_budget_still_cuts_the_walk(self):
+        # The other half of the same contract: the budget still ENDS the
+        # walk. Starting it where the batch runs must not make a batch
+        # unbounded, or a demand's task would queue behind a whole pass.
+        # The slice is spent inside the first layer's own preparation,
+        # so the cut lands on an exact frontier rather than on whatever
+        # the runner's clock did meanwhile.
+        module = self.qt.load("GCodeIndexService")
+        self._compact_view(2000, hydrated=range(2000))
+        self.service._prepared_open(self.files.identity)
+        captured = self._capture_submit()
+        clock = _HeldClock()
+        real_prepare = module._prepare_layer
+
+        def spend_the_slice(index, layer, should_yield=None):
+            payload = real_prepare(index, layer, should_yield)
+            clock.spend(module._FULL_PREP_BATCH_S)
+            return payload
+
+        with patch.object(module, "time", clock):
+            self.service._advance()
+            self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
+            with patch.object(module, "_prepare_layer", spend_the_slice):
+                frontier, _encoded, _uncacheable = captured[0][1]()
+        self.assertEqual(frontier, 1, "the walk ran on past a spent budget")
 
     def test_a_restore_reraises_the_followers_window(self):
         # A demand that races the restore is dropped at the view-None

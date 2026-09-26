@@ -91,6 +91,10 @@ _DECODED_CHARGE_FLOOR = 4 * 1024
 # so every batch boundary is a tick; the listeners only redraw a bar,
 # and 4 Hz keeps it moving without making the signal the new cost.
 _PROGRESS_MIN_INTERVAL = 0.25
+# The background pass's slice, and the worker's OWN bound: it is
+# measured from the execution, never from the submission, so a pool
+# queue delay is not the batch's to spend.
+_FULL_PREP_BATCH_S = 0.12
 
 
 def _decoded_charge(raw=None, payload=None) -> int:
@@ -1911,7 +1915,6 @@ class GCodeIndexService(QObject):
             # never queues long behind the pass, and the loop YIELDS
             # the moment a demand appears (the worker checks the
             # demand set between layers — the owner fills it).
-            deadline = time.monotonic() + 0.12
             prepared_read = self._prepared_read
             prepared_table = self._prepared_table
             # The incremental writer opens whenever a pass must walk
@@ -1942,6 +1945,12 @@ class GCodeIndexService(QObject):
                 encoded = {}
                 uncacheable = set()
                 frontier = start
+                # The budget starts HERE, where the batch actually runs.
+                # Measured from the submission it also spent the pool's
+                # queue delay, and a busy machine expired the slice
+                # before the first layer — the walk then reported the
+                # frontier it was handed, never the one it reached.
+                deadline = time.monotonic() + _FULL_PREP_BATCH_S
                 yield_at = time.monotonic()
 
                 def demand_pending():
