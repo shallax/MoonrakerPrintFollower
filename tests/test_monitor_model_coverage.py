@@ -1543,6 +1543,48 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.layers[layer] = wrapped
         return wrapped
 
+    def test_exact_scene_identity_changes_only_with_print_and_layer(self):
+        # The QML Canvas must not treat an A-B-A seek or a new print
+        # with the same layer/motion count as the old texture's world.
+        # A split-only poll must NOT invalidate its incremental tail.
+        from dataclasses import replace
+        model = self.model_now()
+        payload = {"motions": 20, "classes": {},
+                   "travels": [], "travelStarts": [], "travelEnds": []}
+        layers = {"current": payload, "prev": None, "next": None}
+        model.setFollowerPopoverOpen(True)
+        model._follower_attached = True
+        self.print_state = replace(self.print_state, job_key=("job-a",),
+                                   plate_progress={"layers": layers,
+                                                   "anchor": 0, "split": 3,
+                                                   "motionTotal": 20})
+        with patch.object(model, "_schedule_surface"), patch.object(
+                model, "_schedule_navigation"):
+            model._publish()
+            first = self.value("plateSceneEpoch")
+            self.assertTrue(first)
+            self.print_state = replace(
+                self.print_state,
+                plate_progress={"layers": layers, "anchor": 0,
+                                "split": 7, "motionTotal": 20})
+            model._publish()
+            self.assertEqual(self.value("plateSceneEpoch"), first,
+                             "live nozzle progress invalidated the whole scene")
+
+            self.print_state = replace(
+                self.print_state,
+                plate_progress={"layers": layers, "anchor": 1,
+                                "split": 3, "motionTotal": 20})
+            model._publish()
+            second = self.value("plateSceneEpoch")
+            self.assertNotEqual(first, second,
+                                "a new layer inherited the old Canvas picture")
+
+            self.print_state = replace(self.print_state, job_key=("job-b",))
+            model._publish()
+            self.assertNotEqual(self.value("plateSceneEpoch"), second,
+                                "a new print reused the last print's layer bitmap")
+
     def test_the_navigation_key_shape_is_what_its_derived_keys_assume(self):
         # The derived keys read the built key by POSITION: _nav_key_hard
         # neutralises index 3 (the split), the zoom's coalescing rule
