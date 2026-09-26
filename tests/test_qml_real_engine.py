@@ -5534,6 +5534,94 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._wait_red(window, face, want=True)
         return monitor, window, face, payload
 
+    def test_a_prefix_that_never_loads_releases_the_wheel_hold(self):
+        # The exit barrier's failed-load escape. A prefix whose image
+        # source does not exist can never reach Ready, so a barrier
+        # that waits only on the model side can never pass: the warm
+        # raster held the picture, and because an interaction freezes
+        # the model's publications, the fresh prefix the barrier was
+        # waiting for sat behind the very hold waiting for it. A
+        # wheel-only gesture has no release to break that cycle, so
+        # the face stayed on the warm raster for good (the live
+        # report). Nothing but the wheel may end it here.
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        points = [[20.0 + motion * 10.0, 125.0, float(motion)]
+                  for motion in range(21)]
+        payload = {
+            "classes": {"WALL-OUTER": [points]},
+            "travels": [], "travelStarts": [], "travelEnds": [],
+            "motions": 21,
+        }
+        layer = self._native_layer(payload, face, prefix_split=10)
+        plot_value = face.property("plot")
+        if hasattr(plot_value, "toVariant"):
+            plot_value = plot_value.toVariant()
+        plot = {"offsetX": float(plot_value["bed"]["offsetX"]),
+                "offsetY": float(plot_value["bed"]["offsetY"]),
+                "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
+                "bedXMin": float(plot_value["bed"]["bedXMin"]),
+                "bedYMax": float(plot_value["bed"]["bedYMax"])}
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineScale": 8.0, "compact": False,
+                "panX": 0.0, "panY": 0.0, "backing": 4.0,
+                "bedWidth": 250.0, "bedDepth": 250.0}
+        from plugins.PlateQt import (png_file, render_layer_prefix,
+                                     render_navigation_layer)
+        nav = render_navigation_layer(
+            {"prev": None, "next": None, "current": payload}, plot, view,
+            split=18)
+        self._printer.setNavigation(png_file(
+            nav, "/tmp/mpf/raster-probe",
+            "nav-wedge-%d" % time.monotonic_ns()))
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(18)
+        self._wait_red(window, face, want=True)
+        # The model's prefix is rendered and valid; its URL is the
+        # part that is missing, so the scene-graph Image can never
+        # reach Ready however long the barrier waits.
+        prefix = render_layer_prefix(payload, plot, view, 10)
+        layer.set_prefix(
+            prefix, "file:///tmp/mpf/raster-probe/missing-%d.png"
+            % time.monotonic_ns(), 10, "fixture-key")
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self.pump(20)
+
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+        self._printer.calls.clear()
+
+        def wheel(cx, cy, delta):
+            # QTest's QWindow-level mouseWheel is unavailable in this
+            # Qt build — post the real event, as the drag tests do.
+            scene = face.mapToItem(window.contentItem(), QPointF(cx, cy))
+            event = QWheelEvent(
+                QPointF(scene),
+                QPointF(window.mapToGlobal(QPoint(int(scene.x()),
+                                                  int(scene.y())))),
+                QPoint(0, 0), QPoint(0, delta),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+
+        wheel(int(face.width() / 2), int(face.height() / 2), 120)
+        self._pump_ms(30)
+        self.assertTrue(face.property("_interactionActive"),
+                        "the wheel never entered the interaction")
+        # No release is ever sent and the prefix never loads: whatever
+        # the barrier's verdict, the hold has to release by itself.
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline and face.property("_interactionActive"):
+            self._pump_ms(30)
+        self.assertFalse(
+            face.property("_interactionActive"),
+            "a prefix that can never load held the warm raster for good")
+        self.assertIn(
+            ("interacting", False), self._printer.calls,
+            "the hold released without resuming the model's publications")
+
     def test_a_camera_gesture_leaves_the_hidden_mapping_canvas_alone(self):
         # The mapping canvas IS the gesture's own picture input: the pan
         # and the zoom are baked into its paint, so every camera step
