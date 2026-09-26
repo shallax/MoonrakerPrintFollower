@@ -1292,7 +1292,20 @@ Item {
     }
 
     function _flushProgressPaint() {
-        if (root._progressPaintQueued) {
+        // painted() is a render-thread completion callback, not a
+        // licence to spin another paint synchronously in the same
+        // delivery turn. Qt may issue extra paints on window changes:
+        // an ambiguous receipt retries once on the NEXT event turn.
+        if (root._progressPaintQueued && !root._progressPaintInFlight) {
+            Qt.callLater(root._wakeProgressPaint);
+        }
+    }
+
+    function _wakeProgressPaint() {
+        // A later progress poll may already have started the newest
+        // paint. Check again so this deferred wake never manufactures
+        // an extra texture upload for an already serviced demand.
+        if (root._progressPaintQueued && !root._progressPaintInFlight) {
             root._requestProgressPaint();
         }
     }

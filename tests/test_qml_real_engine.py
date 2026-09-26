@@ -5412,6 +5412,23 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         "rapid live polls did not coalesce")
         self.assertTrue(face.property("_progressPaintInFlight"))
 
+    def test_a_delivery_does_not_reenter_canvas_paint_in_its_own_turn(self):
+        # Qt may render extra canvas windows during a resize. An
+        # ambiguous single-flight receipt must schedule one later
+        # retry, not spin requestPaint() synchronously from onPainted
+        # and starve the GUI/camera under repeated invalidation.
+        from PyQt6.QtCore import QMetaObject
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("_progressPaintInFlight", False)
+        face.setProperty("_progressPaintQueued", True)
+        self.assertTrue(
+            QMetaObject.invokeMethod(face, "_flushProgressPaint"))
+        self.assertFalse(
+            face.property("_progressPaintInFlight"),
+            "onPainted synchronously initiated its replacement paint")
+        self.assertTrue(face.property("_progressPaintQueued"),
+                        "the retry was consumed before the next event turn")
+
     _PARITY_ORIENTATIONS = {
         # The prefix boundary sits at motion 9 (bed position 110 or
         # its orientation's equivalent): the seam probes bracket it.
