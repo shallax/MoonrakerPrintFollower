@@ -130,6 +130,90 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   that (running real Cura under a virtual display) was considered and
   deliberately rejected: the cost and fragility are not worth it.
 
+## Windows development
+
+Windows has no POSIX shell on PATH and no pinned dev container, so
+every procedure has a native implementation under `tools/windows`,
+driven by the OS switch at the top of the `Makefile`. The target names,
+the arguments and the meaning are the same on both legs; only the
+implementation differs, and the tool versions are pinned to the
+container's so a verdict here means what it means there.
+
+Getting started (once per machine):
+
+1. Install GNU make: `winget install ezwinports.make` (user scope, no
+   elevation). Git for Windows is worth having beside it — the harness
+   path pins and the `sh`-based helper tests find `sh` in
+   `C:\Program Files\Git\usr\bin` (`MPF_SH` overrides the lookup) and
+   skip with a reason when no shell exists.
+2. Run `make dev_install`. It creates `.venv` with the pinned
+   toolchain and prints a parity table against the container:
+
+   | component | container (Ubuntu 26.04 image) |
+   | --- | --- |
+   | Python | 3.14.3 (installed per-user if missing — no PATH change, no elevation) |
+   | PyQt6 / Qt | 6.11.0 / 6.11.2 |
+   | qmlformat | 6.10.2 (from the PySide6 wheel; `qt6-declarative-dev-tools` on Linux) |
+   | ruff | 0.16.6 |
+   | shellcheck / hadolint / gitleaks / actionlint | 0.11.0 / 2.12.0 / 8.30.1 / 1.7.12 |
+   | fonts | DejaVu 2.37, the offscreen platform's font directory |
+
+   The linters land in `.venv/tools/bin` and the fonts in `.venv/fonts`;
+   both are gitignored, and `make lint` always prefers them. Anything
+   the machine already has at a different version is reported as
+   `DIFFERS` rather than adopted silently.
+3. `make lint`, `make run_tests`, `make test_files FILES="…"`,
+   `make package` — the same commands as everywhere else. `JOBS` (or
+   `--jobs`) sizes the one-process-per-file fan-out; the default is the
+   machine's core count, capped at 32.
+
+What differs on this leg, and why:
+
+- **The committed screenshots stay container-canonical.**
+  `make generate_screenshots` renders `dist/screenshots` for a look;
+  it does not copy into `screenshots/`, because the CI sync job
+  compares against renders made with the container's pinned fonts.
+  `make verify_captures` (two runs, byte-compared) does work natively.
+- **`make ui_test` / `make ui_release_gate` have no container leg.**
+  The real-Cura work on Windows is the harness the repo already
+  carries: `tools/native_harness.ps1` stages Cura, the plugin and the
+  driver, then `tests/harness/runner.py` drives them (see TESTING.md).
+  It launches a desktop app, so it is deliberately not a recipe a
+  stray `make all` can reach; run it directly:
+
+      powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
+          -CuraVersion 5.13.0 -Scenario suite
+      # then, with the env file it prints:
+      . "$env:TEMP\mpf-native\harness_env.ps1"
+      .venv\Scripts\python.exe tests\harness\runner.py suite
+
+- **`make dev_up`, `dev_down` and `docker_exec` do not exist here** —
+  they exist to manage the container that this leg replaces. They say
+  so and exit non-zero rather than pretending.
+- **`actionlint` runs with `-shellcheck=`,** because the Windows
+  shellcheck binary deadlocks the pipe actionlint feeds it (reproduced
+  on this leg: the lint hangs with the pinned shellcheck on PATH and
+  returns in a second without it). `tools/*.sh` are still linted —
+  by shellcheck itself, in the step before.
+- **Every child process gets stdin from /dev/null,** so a tool that
+  decides to prompt fails the gate instead of hanging it.
+
+Line endings: `.gitattributes` pins `* text=auto eol=lf`, and the
+build is byte-sensitive (the curapackage is compared file for file,
+and `qmlformat` reads a carriage return as file CONTENT, so a CRLF
+tree fails the format gate on all 52 QML files). A clone made before
+that file landed, or one with `core.autocrlf=true`, should be
+normalised once:
+
+    git config core.autocrlf false
+    git add --renormalize .
+    git checkout -- .        # re-materialises the working tree as LF
+
+The implementation is `tools/windows/dev.py` — run it directly
+(`.venv\Scripts\python.exe tools\windows\dev.py <command>`) when a
+step needs its own options; `make help` lists the procedures and the
+module docstring lists the commands.
+
 ## Repo hygiene — the standing rule on addresses
 
 No real machine addresses go into the git repo (the rule,

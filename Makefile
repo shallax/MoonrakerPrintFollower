@@ -4,6 +4,22 @@
 # these targets are thin wrappers so every procedure has one memorable
 # command: `make build`, `make run_tests`, `make generate_screenshots`.
 
+# --- the platform switch --------------------------------------------------
+# POSIX hosts run the procedures as tools/*.sh, the container legs
+# included. Windows has no POSIX shell on PATH and no pinned container,
+# so the same procedures have a native implementation under
+# tools/windows (INSTRUCTIONS.md, "Windows development"): every target
+# keeps its name, its arguments and its meaning on both legs.
+ifeq ($(OS),Windows_NT)
+LEG := windows
+# The venv `make dev_install` creates; a bare python is the fallback
+# before it has run.
+PYTHON ?= $(if $(wildcard .venv/Scripts/python.exe),.venv/Scripts/python.exe,python)
+DEV := $(PYTHON) tools/windows/dev.py
+else
+LEG := posix
+endif
+
 ARGS ?=
 
 .PHONY: help all build gates lint run_tests generate_screenshots verify_captures package \
@@ -47,12 +63,25 @@ help:
 all: build lint run_tests verify_captures package snapshot_package
 
 build: gates
+ifeq ($(LEG),windows)
+	@echo "build: captures are fresh under dist/screenshots; the committed copies"
+	@echo "       are canonical only from the pinned container, so they are not"
+	@echo "       refreshed here (INSTRUCTIONS.md, Windows development)."
+else
 	./tools/refresh_screenshots.sh
+endif
 
 gates:
+ifeq ($(LEG),windows)
+	$(DEV) gates
+else
 	./tools/docker_gates.sh
+endif
 
 lint:
+ifeq ($(LEG),windows)
+	$(DEV) lint
+else
 	./tools/docker_dev.sh sh -c "python3 -m compileall -q plugins tools tests \
 	    && python3 tools/check_qml.py plugins \
 	    && python3 tools/check_qml_engine.py \
@@ -62,38 +91,71 @@ lint:
 	    && hadolint Dockerfile \
 	    && sh tools/check_workflows.sh \
 	    && gitleaks detect --no-git --no-banner --redact"
+endif
 
 run_tests:
+ifeq ($(LEG),windows)
+	$(DEV) test
+else
 	./tools/run_tests.sh
+endif
 
+ifeq ($(LEG),windows)
+test_files:
+	@if not defined FILES (echo usage: make test_files FILES="tests.test_monitor tests.test_index" & exit /b 2)
+	$(DEV) test $(foreach file,$(FILES),--file $(file))
+else
 test_files:
 	@test -n "$(FILES)" || { \
 	    echo 'usage: make test_files FILES="tests.test_monitor tests.test_index"'; \
 	    exit 2; }
 	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) tools/run_some.sh $(FILES)"
+endif
 
 dev_install:
+ifeq ($(LEG),windows)
+	$(DEV) bootstrap
+else
 	./tools/install_dev.sh
+endif
 
 generate_screenshots:
+ifeq ($(LEG),windows)
+	$(DEV) captures
+	@echo "generate_screenshots: dist/screenshots only - the committed copies"
+	@echo "       come from the pinned container (INSTRUCTIONS.md)."
+else
 	./tools/refresh_screenshots.sh
+endif
 
 verify_captures:
+ifeq ($(LEG),windows)
+	$(DEV) determinism
+else
 	./tools/verify_capture_determinism.sh
+endif
 
 package:
+ifeq ($(LEG),windows)
+	$(DEV) package
+else
 	# The two artifacts are independent: build them side by side
 	# (the 2026-09-18 parallelism ruling), then verify both.
 	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
+endif
 
 # The built package is SCP'd to the Cura machine after every push: a
 # verified curapackage at a fixed path, rebuilt from the current
 # checkout (make package above builds and verifies both artifacts
 # first).
 snapshot_package: package
+ifeq ($(LEG),windows)
+	$(DEV) snapshot
+else
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
+endif
 
 # The FAST iteration path for the snapshot loop (the 2026-09-10
 # ruling, amended the same day): lint + the full test suite + a
@@ -103,19 +165,42 @@ snapshot_package: package
 # any commit or push.
 snapshot_quick:
 	$(MAKE) -j2 lint run_tests
+ifeq ($(LEG),windows)
+	$(DEV) snapshot
+else
 	$(MAKE) package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 	@echo "wrote /tmp/mpf.curapackage"
+endif
 
 format:
+ifeq ($(LEG),windows)
+	$(DEV) format
+else
 	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml plugins/theme/*.qml
+endif
 
 coverage:
+ifeq ($(LEG),windows)
+	$(DEV) coverage
+else
 	COVERAGE=1 JOBS=$(JOBS) ./tools/run_tests.sh
+endif
 
 install_hooks:
+ifeq ($(LEG),windows)
+	$(DEV) hooks
+else
 	./tools/install_hooks.sh
+endif
 
+ifeq ($(LEG),windows)
+# Docker is not part of the Windows leg: the procedures run natively.
+dev_up dev_down docker_exec:
+	@echo "$@: the Windows leg runs natively - there is no container to manage."
+	@echo "       Use make lint / run_tests / test_files / gates / dev_install."
+	@exit /b 1
+else
 dev_up:
 	docker run -d --name mpf-dev --user "$$(id -u):$$(id -g)" -v "$$(git rev-parse --show-toplevel)":/work moonraker-print-follower-dev sleep infinity
 
@@ -124,12 +209,30 @@ dev_down:
 
 docker_exec:
 	./tools/docker_dev.sh $(ARGS)
+endif
 
 clean:
+ifeq ($(LEG),windows)
+	$(DEV) clean
+else
 	find . -name "__pycache__" -type d -not -path "./.git/*" -prune -exec rm -rf {} +
 	find . -name "*~" -not -path "./.git/*" -delete
 	rm -rf dist
+endif
 
+ifeq ($(LEG),windows)
+# The real-Cura UI harness has a Windows leg of its own already
+# (tools/native_harness.ps1 stages Cura, the plugin and the driver;
+# tests/harness/runner.py drives them). It needs a desktop session and
+# touches a Cura install, so it is NOT wired into a recipe that a
+# stray `make all` could reach — the sequence is in INSTRUCTIONS.md,
+# "Windows development".
+ui_test ui_release_gate:
+	@echo "$@: no container on this leg — run the native harness instead:"
+	@echo "  powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 -CuraVersion 5.13.0 -Scenario suite"
+	@echo "  then drive tests/harness/runner.py with the printed harness_env.ps1"
+	@exit /b 1
+else
 ui_test: package  # the harness stages dist — it must be the current tree, never a stale build
 	./tools/ui_test.sh
 
@@ -139,3 +242,4 @@ ui_test: package  # the harness stages dist — it must be the current tree, nev
 # tools/harness_release.sh (TESTING.md §5).
 ui_release_gate:
 	./tools/harness_release.sh
+endif
