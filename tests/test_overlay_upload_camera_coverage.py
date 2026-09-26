@@ -1060,8 +1060,18 @@ class CameraBridgeTests(unittest.TestCase):
         return socket
 
     def _pump(self, condition, iterations=400):
+        # The bridge releases an accepted socket with deleteLater(), and
+        # Qt 6's processEvents() does NOT deliver a deferred delete:
+        # measured, 50 pumps leave the object alive while
+        # sendPostedEvents(None, DeferredDelete) destroys it. A pin that
+        # asserts the socket is GONE must therefore deliver the deletion
+        # itself, or it passes only when some unrelated turn happens to
+        # do it — this suite's Windows-only flake, green and red on the
+        # same commit.
+        from PyQt6.QtCore import QCoreApplication, QEvent
         for _ in range(iterations):
             self.qt.events(10)
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             if condition():
                 return True
         return False
