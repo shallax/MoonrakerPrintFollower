@@ -23,6 +23,9 @@ function newWorld(s,epoch,world) {
     // callback that will never arrive. A paint that actually ran still owns
     // its upload slot until delivery, and must remain accounted for.
     next.inFlight=s.inFlight && s.count>0;
+    next.count=s.count;
+    next.first=s.first;
+    next.last=s.last;
     next.pending=true;        // next world must paint after that delivery
     return next;
 }

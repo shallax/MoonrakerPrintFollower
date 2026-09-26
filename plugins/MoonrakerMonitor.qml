@@ -3192,7 +3192,11 @@ Component {
                 }
                 function commitProgressSeek() {
                     if (root.printer != null) {
-                        root.printer.setFollowerLayerProgress(layerProgressSlider.selectedValue());
+                        var total = root.printer.plateLayerMotionCount;
+                        var selected = layerProgressSlider.selectedValue();
+                        if (total >= 1000)
+                            selected = Math.round(Math.round(selected / total * 1000) * total / 1000);
+                        root.printer.setFollowerLayerProgress(selected);
                     }
                 }
                 // On the component root with the other slider functions: a
@@ -3615,12 +3619,8 @@ Component {
                             Layout.fillWidth: true
                             from: 0
                             to: Math.max(0, root.printer != null ? root.printer.plateLayerMotionCount : 0)
-                            // The keyboard nudge steps a PERCENT of the
-                            // layer (a single motion over tens of
-                            // thousands is invisible — the live report);
-                            // the pointer keeps the full 1-motion
-                            // granularity.
-                            stepSize: layerProgressSlider.activeFocus ? Math.max(1, Math.round((root.printer != null ? root.printer.plateLayerMotionCount : 0) / 100)) : 1
+                            // One tenth of a percent, bounded by one motion.
+                            stepSize: Math.max(1, to / 1000)
                             enabled: root.printer != null && root.printer.plateProgressAvailable && root.printer.plateLayerMotionCount > 0
                             // The scrub commits on every drag tick — the
                             // fill tracks the thumb at frame rate (the
@@ -3656,8 +3656,8 @@ Component {
                                 if (total <= 0 || split == null || isNaN(split) || isNaN(total)) {
                                     return "—";
                                 }
-                                var pct = Math.round(Math.max(0, split) / total * 100);
-                                return isNaN(pct) ? "—" : pct + "%";
+                                var pct = Math.max(0, split) / total * 100;
+                                return isNaN(pct) ? "—" : pct.toFixed(1) + "%";
                             }
                         }
                     }

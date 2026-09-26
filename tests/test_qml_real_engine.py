@@ -5103,7 +5103,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         image, previous, face, window) == 0:
                     return image
                 previous = image if ready else None
-            self.fail("reverse scrub never delivered a stable prefix/tail composition")
+            state = face.property("_canvasTransaction")
+            if hasattr(state, "toVariant"):
+                state = state.toVariant()
+            self.fail("reverse scrub never delivered a stable prefix/tail composition: %s; transaction=%r" % (
+                QMetaObject.invokeMethod(face, "_holdTerms", Q_RETURN_ARG(QVariant)), state))
 
         seek_to(target)
         direct = settled_grab()
@@ -6881,29 +6885,138 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(120)
         self._wait_red(window, face, want=True)
+        previous_split = 120
         for target in (160, 240):
             prefix, url = self._prefix_for(payload, face, target, "dense-multi")
             layer.set_prefix(prefix, url, target, "fixture-key")
             self._printer.setSplit(target)
             deadline = time.monotonic() + 3.0
-            interior = 20.0 + (target - 40) * 0.6
+            interior = 20.0 + (target - 5) * 0.6
             while time.monotonic() < deadline:
                 grab = window.grabWindow()
                 # The PREVIOUS committed history (well inside the old
                 # boundary) must stand on every frame.
                 self.assertTrue(self._red_in_band(grab, face, window, plot,
-                                                  20.0 + (target - 80) * 0.6,
+                                                  20.0 + (previous_split - 20) * 0.6,
                                                   125.0),
                                 "a frame lost the committed history at %d" % target)
-                if self._red_in_band(grab, face, window, plot,
-                                     interior, 125.0):
+                if face.property("_vectorSplitShown") == target and self._red_in_band(
+                        grab, face, window, plot, interior, 125.0):
                     break
                 self._pump_ms(20)
             self._pump_ms(60)
+            self.assertEqual(face.property("_vectorSplitShown"), target,
+                             "the refresh never delivered the requested interval")
+            previous_split = target
 
         self.assertEqual([message for message in _APPLICATION["messages"][self._message_start:]
                           if "Binding loop" in message], [],
                          "composition ownership formed a QML binding cycle")
+
+    def test_reverse_checkpoint_handover_never_presents_less_than_the_requested_split(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face, prefix_split=200)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(220)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 220 and time.monotonic() < deadline:
+            self._pump_ms(20)
+        self.assertEqual(face.property("_vectorSplitShown"), 220)
+        prefix, url = self._prefix_for(payload, face, 150, "reverse-checkpoint")
+        layer.set_prefix(prefix, url, 150, "fixture-key")
+        self._printer.setSplit(160)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            image = window.grabWindow()
+            self.assertTrue(self._red_in_band(image, face, window, plot,
+                                              20 + 155 * 0.6, 125),
+                            "a checkpoint presented below the requested progress")
+            if face.property("_vectorSplitShown") == 160:
+                break
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 160)
+
+    def test_pending_native_prefix_holds_the_frame_without_a_full_history_qml_walk(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        layer = self._native_layer(payload, face, prefix_split=100)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(120)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 120 and time.monotonic() < deadline:
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 120)
+        layer.set_prefix_pending(True)
+        self._printer.setSplit(160)
+        self._pump_ms(100)
+        self.assertEqual(face.property("_vectorSplitShown"), 120,
+                         "the standing frame was withdrawn while native work was pending")
+        self.assertEqual(face.property("_lastSplit"), 120,
+                         "QML walked history while a native prefix was on its way")
+        layer.set_prefix_pending(False)
+        deadline = time.monotonic() + 3
+        while face.property("_vectorSplitShown") != 160 and time.monotonic() < deadline:
+            self._pump_ms(10)
+        self.assertEqual(face.property("_vectorSplitShown"), 160,
+                         "worker completion never woke the coalesced painter")
+
+    def test_zero_to_forward_with_a_delayed_prefix_never_flickers_or_overshoots(self):
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("lineScale", 8.0)
+        self.pump(10)
+        payload = self._stroke_payload()
+        plot = self._bed_plot(face)
+        layer = self._native_layer(payload, face)
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": layer, "next": None})
+        self._printer.setSplit(0)
+        self._pump_ms(100)
+        prefix, url = self._prefix_for(payload, face, 100, "zero-forward")
+        url = self._slow_raster(url, "zero-forward", factor=6)
+        layer.set_prefix(prefix, url, 100, "fixture-key")
+        self._printer.setSplit(160)
+        seen = False
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            image = window.grabWindow()
+            complete = self._red_in_band(image, face, window, plot, 20 + 155 * 0.6, 125)
+            if seen:
+                self.assertTrue(complete, "a complete frame lost history during the prefix handover")
+            seen = seen or complete
+            self.assertFalse(self._red_in_band(image, face, window, plot, 20 + 200 * 0.6, 125),
+                             "a forward scrub overshot the requested split")
+            self._pump_ms(10)
+        self.assertTrue(seen, "the requested frame never arrived")
+
+    def test_the_standing_grid_survives_zero_and_forward_preparation(self):
+        monitor, window, face, baseline = self._mount_empty()
+        self.pump(20)
+        baseline = window.grabWindow()
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+        samples = []
+        for y in range(5, 100, 2):
+            for x in range(5, 100, 2):
+                px, py = int(origin.x()) + x, int(origin.y()) + y
+                colour = baseline.pixelColor(px, py)
+                if 50 < colour.red() < 200 and abs(colour.red() - colour.green()) < 3:
+                    samples.append((px, py, baseline.pixel(px, py)))
+        self.assertGreater(len(samples), 5, "the baseline never drew a grid")
+        for split in (0, 1, 3, 0, 5):
+            self._printer.setSplit(split)
+            face.setProperty("_deliveredComposition", None)
+            for _ in range(3):
+                image = window.grabWindow()
+                self.assertTrue(all(image.pixel(x, y) == pixel for x, y, pixel in samples),
+                                "the preparation cover hid the standing grid")
+                self._pump_ms(10)
 
     def test_a_backward_scrub_to_zero_clears_all_printed_geometry(self):
         # The 0% state owns NOTHING printed: the prefix hides, the

@@ -525,6 +525,51 @@ class NativeRasterTransportTests(unittest.TestCase):
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class NativeLayerFallbackTests(unittest.TestCase):
+    def test_prefix_worker_wait_has_a_notify_and_view_changes_retire_it(self):
+        layer = PlateLayer({"motions": 1000})
+        notices = []
+        layer.rasterReady.connect(lambda: notices.append(True))
+        layer.set_prefix_pending(True)
+        self.assertTrue(layer.prefixPending)
+        layer.set_prefix_pending(True)
+        self.assertEqual(len(notices), 1)
+        layer.set_prefix_pending(False)
+        self.assertFalse(layer.prefixPending)
+        layer.set_prefix_pending(True)
+        layer.set_expected_key("new view")
+        self.assertFalse(layer.prefixPending)
+
+    def test_rewind_archive_selects_only_an_earlier_same_view_file_and_retires(self):
+        layer = PlateLayer({"motions": 1000})
+        layer.set_expected_key("view")
+        layer._rewind_files = {p: "file:///p-%d.png" % p for p in range(50, 1000, 50)}
+        self.assertEqual(layer.prefix_file_seed("view", 749), ("file:///p-700.png", 700))
+        self.assertEqual(layer.prefix_file_seed("view", 49), ("", 0))
+        self.assertEqual(layer.prefix_file_seed("other", 749), ("", 0))
+        self.assertEqual(len(layer.prefix_references()), 19)
+        self.assertEqual(layer.memory_bytes(), 0)
+        cancelled = threading.Event()
+        layer._rewind_cancel = cancelled
+        layer._rewind_ticket = ("work",)
+        layer.set_expected_key("other")
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(layer.prefix_references(), [])
+        self.assertIsNone(layer._rewind_ticket)
+
+    def test_background_budget_yields_and_can_cancel_during_its_wait(self):
+        from unittest.mock import Mock, patch
+        from plugins.PlateQt import _CheckpointBudget
+        cancel = Mock()
+        cancel.is_set.return_value = False
+        with patch("plugins.PlateQt.time.monotonic", side_effect=[0, 0.001, 0.009, 0.02]):
+            budget = _CheckpointBudget(cancel)
+            self.assertFalse(budget.is_set())
+            cancel.wait.assert_not_called()
+            self.assertFalse(budget.is_set())
+            cancel.wait.assert_called_once_with(0.008)
+        cancel.is_set.return_value = True
+        self.assertTrue(budget.is_set())
+
     def test_backward_checkpoint_reuses_only_an_earlier_matching_view(self):
         from PyQt6.QtGui import QImage
         from plugins.PlateQt import PlateLayer

@@ -757,7 +757,30 @@ interval. Each wrapper keeps at most four checkpoints and 16 MiB of cached
 pixels; these bytes participate in the existing surface memory accounting.
 View changes clear the checkpoints, scene changes replace the wrapper, and
 checkpoint URLs join the asset reference set. A later checkpoint never seeds
-a backward target. A cold seek still needs a fresh native prefix.
+a backward target. Once the normal current/ghost renders are hot, a lower
+priority background worker writes independent prefixes at 5% intervals to PNG
+files. This archive belongs only to the popover's current layer and is cleared
+on layer, view, print and surface retirement. Checkpoints do not delay the
+layer's normal render or publish QML updates as they are generated. Only one
+checkpoint image is built at a time; the archive holds URLs rather than decoded
+pixels. Reverse workers decode the nearest earlier file and extend at most 5%
+of the layer, retaining the existing four-image/16 MiB decoded cache limit.
+An unfinished archive or failed PNG falls back to ordinary native rendering.
+Generation starts after a short idle delay, uses the pool's lower queue priority
+and yields between geometry chunks. The worker's planned filenames are pinned
+until completion so ordinary cache sweeps cannot delete an unfinished archive.
+
+During split changes the last complete composition remains presented until its
+replacement delivers, including backward scrubs. Intermediate prefix anchors
+never present alone below the requested split. Static scene changes still
+invalidate incompatible geometry. The standing grid rises above the preparation
+cover while that geometry retires, keeping the grid visible through zero and
+partial transitions. Implicit Canvas paints coalesce while an actual upload is
+outstanding; a rejected delivery forces a fresh bitmap rather than a no-op retry.
+While a native prefix worker or its Image decode is pending, QML keeps the
+standing composition and coalesces progress instead of walking full history as
+a temporary fallback. Completion wakes the painter; failed transport still
+uses the complete vector recovery path.
 
 Pause observations preserve the accepted split without collecting backward
 correction evidence from the macro's parked head. Resuming keeps that floor

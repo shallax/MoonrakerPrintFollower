@@ -778,6 +778,16 @@ Item {
         return ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split).from;
     }
 
+    function _prefixPreparationPending() {
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        return layer != null && (layer.prefixPending === true || (_prefixModelReady() && !root._prefixStatusReady && !root._prefixStatusFailed));
+    }
+    readonly property bool _prefixPreparation: _prefixPreparationPending()
+    on_PrefixPreparationChanged: {
+        if (!root._prefixPreparation)
+            _requestProgressPaint();
+    }
+
     function _paintPending(ctx) {
         // The base marks the unprinted suffix of a PARTIAL layer: a 0%
         // layer draws nothing (nothing has printed — no boundary to
@@ -1260,6 +1270,8 @@ Item {
         root._canvasTransaction = result.state;
         if (hadPaint)
             root._deliveredComposition = result.accepted ? result.receipt : null;
+        if (hadPaint && !result.accepted)
+            root._progressDirty = true;
         if (result.accepted && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
             // Capture the delivered asset before the next model publish
             // can replace its URL. A deferred binding evaluation is too
@@ -1281,6 +1293,10 @@ Item {
     }
 
     function _wakeProgressPaint() {
+        // Keep the standing frame while a worker/decode can supply the
+        // prefix; a full-history QML fallback here would stall the drag.
+        if (_prefixPreparationPending())
+            return;
         if (!ExactComposition.needsPaint(root._canvasTransaction) || !progressCanvas.available)
             return;
         if (_progressPaintSatisfied()) {
@@ -1516,6 +1532,8 @@ Item {
     PlateCanvas {
         id: mapping
         anchors.fill: parent
+        // Reuse the standing grid above the stale-geometry cover.
+        z: preparingCover.visible ? 1 : 0
         // Opacity, never visibility: hiding a Canvas discards its
         // buffer and the show rebuilds it (the live report — the
         // loading flash churned the grid on every seek). An opaque
@@ -1527,7 +1545,7 @@ Item {
         // live report: a separately-painted grid panned at its own
         // pace).
         opacity: root.available() && !root._interactionActive ? 1.0 : 0.0
-        enabled: root.available()
+        enabled: false // The face's gesture surface owns pointer input.
         printerModel: root.printerModel
         plate: null
         viewScale: root.viewScale
@@ -1837,6 +1855,16 @@ Item {
                 root._flushProgressPaint();
             }
             onPaint: {
+                // Implicit Qt paints must not mutate a bitmap whose upload
+                // still owns the delivery slot. Coalesce into the next paint.
+                if (root._canvasTransaction.count > 0) {
+                    root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
+                    return;
+                }
+                if (_prefixPreparationPending()) {
+                    root._canvasTransaction = ExactComposition.enqueue(ExactComposition.unchanged(root._canvasTransaction));
+                    return;
+                }
                 // An unchanged bitmap may produce no painted() signal.
                 // Its standing receipt is already proof; do not strand a
                 // queue slot waiting for a texture upload Qt can omit.
@@ -2049,6 +2077,7 @@ Item {
     // complete owner exists. Camera gestures front this with the warm
     // picture, so exact preparation never interrupts their presentation.
     Rectangle {
+        id: preparingCover
         objectName: "moonrakerPlatePreparingCover"
         anchors.fill: parent
         color: UM.Theme.getColor("main_background")

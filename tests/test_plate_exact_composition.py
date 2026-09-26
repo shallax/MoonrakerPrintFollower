@@ -68,6 +68,26 @@ class ExactCompositionPolicyTests(unittest.TestCase):
             return {waiting:next.inFlight,start:request(next).start};
         })()"""), {"waiting": False, "start": True})
 
+    def test_scene_change_keeps_the_real_upload_accounted_until_delivery(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var t=painted(request(empty(1,'A')).state,
+                {epoch:1,world:'A',valid:true,from:0,split:18});
+            var next=newWorld(t,2,'B');
+            return {count:next.count,waiting:next.inFlight,
+                    accepted:delivered(next,2,'B').accepted};
+        })()"""), {"count": 1, "waiting": True, "accepted": False})
+
+    def test_scrubs_hold_the_last_complete_picture_until_the_target_is_ready(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var p={full:false,fullReady:false,epoch:1,world:'A',split:20,
+                receipt:{valid:true,epoch:1,world:'A',from:0,split:18},
+                splitOk:false,currentPrefix:{ready:false},retainedPrefix:{ready:false},
+                heldFull:false,inkless:false};
+            var forward=presentation(p);p.split=10;
+            var backward=presentation(p);p.heldFull=true;
+            return [forward.kind,forward.ready,backward.kind,presentation(p).kind];
+        })()"""), ["canvas", False, "canvas", "canvas"])
+
     def test_no_op_paint_cannot_retire_an_actual_upload(self):
         self.assertEqual(self.evaluate("""(function () {
             var t=request(empty(1,'A')).state;

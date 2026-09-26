@@ -1543,6 +1543,59 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.layers[layer] = wrapped
         return wrapped
 
+    def test_five_percent_archive_is_background_only_bounded_and_current_layer_owned(self):
+        import threading
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QImage
+        surface = self.surface()
+        self.qt.events(50)
+        layer = self.wrapper(surface, 6, motions=1000)
+        key = surface.render_key()
+        layer.set_expected_key(key)
+        image = QImage(2, 2, QImage.Format.Format_RGB32)
+        layer.set_raster(image, key, "file:///unused.png")
+        surface.anchor = 6
+        surface.desired = {"current": 6, "ghosts": {}, "split": None}
+        module = self.qt.load("MoonrakerMonitorModel")
+        render, threads = module.render_layer_prefix, []
+        def counted(*args, **kwargs):
+            threads.append(threading.get_ident())
+            return render(*args, **kwargs)
+        with patch.object(module, "render_layer_prefix", counted), patch.object(self.model, "_publish") as publish:
+            self.model._schedule_surface(surface)
+            self.assertIsNone(surface.job)
+            self.assertEqual(threads, [], "layer entry ran checkpoint geometry synchronously")
+            ticket = layer._rewind_ticket
+            self.model._schedule_surface(surface)
+            self.assertEqual(layer._rewind_ticket, ticket)
+            deadline = time.monotonic() + 5
+            while not layer._rewind_files and time.monotonic() < deadline:
+                self.qt.events(20)
+            publish.assert_not_called()
+        self.assertEqual(set(layer._rewind_files), set(range(50, 1000, 50)))
+        self.assertEqual(len(threads), 19)
+        self.assertNotIn(threading.get_ident(), threads)
+        paths = [QUrl(url).toLocalFile() for url in layer._rewind_files.values()]
+        self.assertTrue(all(os.path.isfile(path) for path in paths))
+        self.assertEqual(layer.memory_bytes(), image.sizeInBytes())
+        with patch.object(self.model, "_schedule_surface"), patch.object(self.model, "_schedule_navigation"):
+            self.model._qt_window(surface, {"current": {"motions": 1000, "classes": {}}}, 7)
+        self.assertEqual(layer._rewind_files, {})
+        self.assertTrue(all(not os.path.exists(path) for path in paths))
+
+    def test_late_checkpoint_completion_cannot_repopulate_a_retired_layer(self):
+        surface = self.surface()
+        layer = self.wrapper(surface, 6)
+        surface.desired = {"current": 6, "ghosts": {}, "split": None}
+        ticket = ("popover", 6, 0, 0, surface.render_key(), "checkpoints", None, 0, 42)
+        layer._rewind_ticket = ticket
+        path = pathlib.Path(self.model._raster_cache_dir) / "late-checkpoint.png"
+        path.write_bytes(b"retired")
+        layer.clear_prefix_checkpoints()
+        self.model._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
+        self.assertFalse(path.exists())
+        self.assertEqual(layer._rewind_files, {})
+
     def test_exact_scene_identity_changes_only_with_print_and_layer(self):
         # The QML Canvas must not treat an A-B-A seek or a new print
         # with the same layer/motion count as the old texture's world.

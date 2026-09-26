@@ -546,19 +546,10 @@ jobs:
         run: ./tools/verify_capture_determinism.sh
 
       - name: Reject stale committed screenshots
-        # Every generated PNG must match its committed copy byte for byte;
-        # extra hand-captured files (e.g. a real 3-D Preview shot) are
-        # allowed and never checked.
+        # Native and emulated CPUs round a few SVG antialias pixels
+        # differently. Same-host determinism above remains byte-exact.
         run: |
-          stale=0
-          for generated in dist/screenshots/*.png; do
-            name="$(basename "$generated")"
-            if ! cmp -s "screenshots/$name" "$generated"; then
-              echo "::error::$name is stale: regenerate inside the dev container (./tools/docker_gates.sh) and commit the PNGs"
-              stale=1
-            fi
-          done
-          exit "$stale"
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh python3 tools/compare_screenshots.py screenshots dist/screenshots
 
       - name: Preserve failed screenshot comparisons
         if: failure()

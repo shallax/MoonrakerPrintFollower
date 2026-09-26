@@ -13,7 +13,7 @@ from copy import deepcopy
 from PyQt6.QtCore import QLocale, QThreadPool, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from UM.Logger import Logger
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QImage
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
 
@@ -49,7 +49,7 @@ def _british_spelling() -> bool:
 
 from .MonitorCamera import MonitorCamera
 from .PlateQt import (
-    PlateLayer, RasterBridge, _RasterJob, _PLATE_TRAVEL_VISUAL_RATIO,
+    PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _PLATE_TRAVEL_VISUAL_RATIO,
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer,
 )
@@ -3318,6 +3318,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not isinstance(anchor, int):
             anchor = 0
         if surface.anchor != anchor:
+            self._clear_surface_checkpoints(surface)
             surface.anchor = anchor
             surface.anchor_epoch += 1
         current = self._qt_layer(surface, layers.get("current"), anchor)
@@ -3460,6 +3461,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                            "generation": generation, "state": "submitted",
                            "cancel": cancel, "epoch": epoch, "serial": serial,
                            "kind": kind, "split": prefix_split}
+            if kind == "prefix":
+                wrapped.set_prefix_pending(True)
             ticket = (surface.name, layer, token, generation, key, kind,
                       prefix_split, epoch, serial)
             payload = wrapped._payload
@@ -3473,10 +3476,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # this render would stroke the new view over old-scale
             # pixels (the out-of-scale ghost).
             previous_image, previous_boundary = wrapped.prefix_seed(key, prefix_split if kind == "prefix" else 0)
-            if previous_image is None:
+            previous_file, file_boundary = wrapped.prefix_file_seed(key, prefix_split if kind == "prefix" else 0)
+            if previous_file and file_boundary > previous_boundary:
+                previous_image, previous_boundary = None, file_boundary
+            else:
+                previous_file = ""
+            if previous_image is None and not previous_file:
                 previous_image = getattr(wrapped, "_prefix", None)
                 previous_boundary = wrapped.prefixSplit
-            if getattr(wrapped, "_prefix_key", None) != key:
+            if not previous_file and getattr(wrapped, "_prefix_key", None) != key:
                 previous_image = None
                 previous_boundary = 0
 
@@ -3487,6 +3495,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                       directory=self._raster_cache_dir,
                       bridge=self._raster_bridge,
                       previous_image=previous_image,
+                      previous_file=previous_file,
                       previous_boundary=previous_boundary):
                 # Every job ends in exactly ONE terminal emit: the
                 # success payload, a cancelled marker, or a failure
@@ -3505,6 +3514,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     stem = "r-%s-e%d-%d-g%d-s%d" % (
                         surface.name, epoch, layer, generation, serial)
                     if kind == "prefix":
+                        if previous_file:
+                            previous_image = QImage(QUrl(previous_file).toLocalFile())
                         image = render_layer_prefix(
                             payload, plot, view, prefix_split, cancel=cancel,
                             previous=previous_image,
@@ -3528,6 +3539,66 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     emit(("failed", str(exc)))
             QThreadPool.globalInstance().start(_RasterJob(build))
             return
+        self._schedule_rewind_checkpoints(surface)
+
+    def _schedule_rewind_checkpoints(self, surface):
+        if surface.name != "popover" or surface.desired is None:
+            return
+        layer = surface.desired["current"]
+        wrapped = surface.layers.get(layer)
+        if wrapped is None or wrapped.motions < 20 or wrapped._rewind_ticket is not None:
+            return
+        surface.render_serial += 1
+        ticket = (surface.name, layer, 0, surface.generation, surface.render_key(),
+                  "checkpoints", None, surface.job_epoch, surface.render_serial)
+        cancel = threading.Event()
+        wrapped._rewind_ticket, wrapped._rewind_cancel = ticket, cancel
+        payload, plot, view = wrapped._payload, dict(surface.plot), dict(surface.view)
+        motions = wrapped.motions
+        directory, bridge = self._raster_cache_dir, self._raster_bridge
+        boundaries = sorted({int(motions * i / 20) for i in range(1, 20)})
+        stems = {p: "rewind-%s-e%d-s%d-p%d" % (surface.name, ticket[7], ticket[8], p)
+                 for p in boundaries}
+        wrapped._rewind_pending = [QUrl.fromLocalFile(os.path.join(directory, stem + ".png")).toString()
+                                  for stem in stems.values()]
+
+        def build():
+            assets = []
+            budget = _CheckpointBudget(cancel)
+            try:
+                # Independent prefixes preserve stroke joins and class ordering.
+                for boundary in boundaries:
+                    if cancel.is_set():
+                        break
+                    image = render_layer_prefix(payload, plot, view, boundary, cancel=budget)
+                    if cancel.is_set():
+                        break
+                    url = png_file(image, directory, stems[boundary])
+                    if not url:
+                        break
+                    assets.append((boundary, url))
+            except Exception as exc:
+                logging.getLogger("MoonrakerPrintFollower").warning(
+                    "rewind checkpoint worker failed: %s", exc)
+            finally:
+                if cancel.is_set():
+                    for _boundary, url in assets:
+                        try:
+                            os.unlink(QUrl(url).toLocalFile())
+                        except OSError:
+                            pass
+                    assets = []
+                _bridge_emit(bridge, "done", ("checkpoints", assets), ticket)
+        QTimer.singleShot(150, lambda: None if cancel.is_set() else
+                          QThreadPool.globalInstance().start(_RasterJob(build), -1))
+
+    def _clear_surface_checkpoints(self, surface):
+        files = []
+        for wrapped in surface.layers.values():
+            files.extend(wrapped._rewind_files.values())
+            wrapped.clear_prefix_checkpoints()
+        for url in files:
+            self._unlink_asset_files(("prefix", None, url, 0))
 
     def _navigation_backing(self, surface):
         """The interaction raster's backing: 400% of the 100%-fit
@@ -3906,7 +3977,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not isinstance(images, tuple) or not images:
             return
         referenced = self._referenced_raster_files()
-        if images[0] == "full":
+        if images[0] == "checkpoints":
+            for boundary, url in images[1]:
+                self._unlink_asset_files(("prefix", None, url, boundary))
+        elif images[0] == "full":
             for url in images[2], images[4], images[6]:
                 if not url or not url.startswith("file://"):
                     continue
@@ -4088,6 +4162,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._index_service is None:
             return
         for surface in self._plate_surfaces.values():
+            self._clear_surface_checkpoints(surface)
             self._unpin_surface(surface)
 
     def _retire_surface(self, surface):
@@ -4096,6 +4171,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         desired state goes, and the next publish rebuilds it from
         the payload. The hot rasters stay cached — only the
         no-longer-needed work stops."""
+        self._clear_surface_checkpoints(surface)
         if surface.job is not None:
             surface.job["cancel"].set()
             surface.stats["superseded"] += 1
@@ -4220,8 +4296,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # job slot and counters never see these tickets.
             self._nav_committed(images, ticket)
             return
+        if kind == "checkpoints":
+            wrapped = surface.layers.get(layer)
+            if wrapped is None or wrapped._rewind_ticket != ticket \
+                    or key != wrapped._expected_key or surface.desired is None \
+                    or layer != surface.desired["current"]:
+                self._unlink_asset_files(images)
+                return
+            wrapped._rewind_files = dict(images[1])
+            wrapped._rewind_pending = []
+            wrapped._rewind_cancel = None
+            self._prune_raster_cache()
+            return
         exact_job = self._raster_job_matches(
             surface.job, layer, token, generation, epoch, serial)
+        if exact_job and kind == "prefix" and layer in surface.layers:
+            surface.layers[layer].set_prefix_pending(False)
         # The terminal kinds arrive without rendered assets: a
         # cancelled job stops where it was told, a failed one
         # reports the exception.
@@ -4372,6 +4462,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The retained wrappers' rasters read invalid at the new key
         #  but STAY cached — only the
         # visible window re-rasters.
+        self._clear_surface_checkpoints(surface)
         for wrapped in surface.layers.values():
             wrapped.set_expected_key(key)
         self._trace("T12 context committed", {"surface": surface.name,
@@ -4487,6 +4578,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._plate_job_epoch += 1
             for surface in self._plate_surfaces.values():
                 surface.job_epoch = self._plate_job_epoch
+                self._clear_surface_checkpoints(surface)
                 if surface.job is not None:
                     surface.job["cancel"].set()
                 self._unpin_surface(surface)

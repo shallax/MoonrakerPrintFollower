@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from collections import OrderedDict
 from contextlib import contextmanager
 from itertools import count
@@ -62,6 +63,21 @@ _PLATE_TRAVEL_VISUAL_RATIO = 0.7
 # TypeError crashed Cura through its handler).
 _NULL_IMAGE = QImage()
 _LAYER_IDENTITIES = count(1)
+
+
+class _CheckpointBudget:
+    """Give interactive rendering time between background geometry chunks."""
+    def __init__(self, cancel):
+        self.cancel = cancel
+        self.deadline = time.monotonic() + 0.008
+
+    def is_set(self):
+        if self.cancel.is_set():
+            return True
+        if time.monotonic() >= self.deadline:
+            self.cancel.wait(0.008)
+            self.deadline = time.monotonic() + 0.008
+        return self.cancel.is_set()
 
 
 def png_file(image: QImage, directory: str, name: str) -> str:
@@ -167,12 +183,26 @@ class PlateLayer(QObject):
         self._base_key = None
         self._travel_key = None
         self._prefix_key = None
+        self._prefix_pending = False
         self._prefix_checkpoints = OrderedDict()
+        self._rewind_files = {}
+        self._rewind_pending = []
+        self._rewind_ticket = None
+        self._rewind_cancel = None
         self._expected_key = None
 
     @pyqtProperty(int, constant=True)
     def motions(self) -> int:
         return int(self._payload.get("motions") or 0)
+
+    @pyqtProperty(bool, notify=rasterReady)
+    def prefixPending(self):
+        return self._prefix_pending
+
+    def set_prefix_pending(self, pending):
+        if self._prefix_pending != pending:
+            self._prefix_pending = pending
+            self.rasterReady.emit()
 
     @pyqtProperty(str, constant=True)
     def sceneIdentity(self) -> str:
@@ -300,8 +330,25 @@ class PlateLayer(QObject):
         with the coloured raster."""
         if self._expected_key != key:
             self._expected_key = key
-            self._prefix_checkpoints.clear()
+            self._prefix_pending = False
+            self.clear_prefix_checkpoints()
             self.rasterReady.emit()
+
+    def clear_prefix_checkpoints(self):
+        if self._rewind_cancel is not None:
+            self._rewind_cancel.set()
+        self._rewind_cancel = None
+        self._rewind_ticket = None
+        self._rewind_files.clear()
+        self._rewind_pending.clear()
+        self._prefix_checkpoints.clear()
+
+    def prefix_file_seed(self, key, split):
+        if key != self._expected_key:
+            return "", 0
+        boundaries = [p for p in self._rewind_files if p <= split]
+        boundary = max(boundaries) if boundaries else 0
+        return self._rewind_files.get(boundary, ""), boundary
 
     def set_raster(self, image: QImage, key, data: str = None) -> None:
         self._raster = image
@@ -361,7 +408,8 @@ class PlateLayer(QObject):
         return True
 
     def prefix_references(self):
-        return [entry[1] for entry in self._prefix_checkpoints.values()]
+        return ([entry[1] for entry in self._prefix_checkpoints.values()]
+                + list(self._rewind_files.values()) + self._rewind_pending)
 
     def memory_bytes(self) -> int:
         """The wrapper's pixel bytes, including bounded prefix checkpoints.
