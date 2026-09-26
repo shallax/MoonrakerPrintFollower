@@ -923,7 +923,14 @@ if model is not None:
     result["pauseAtLayerCanToggle"] = bool(model.pauseAtLayerCanToggle)
     result["pauseAtLayerScheduled"] = bool(model.pauseAtLayerScheduled)
     result["pauseAtLayerSummary"] = str(model.pauseAtLayerSummary)
-    result["pauseAtLayerItems"] = len(model.pauseAtLayerItems or [])
+    # The model publishes this one wrapped in a QVariant. QML unwraps
+    # that transparently; Python cannot, so len() raised TypeError and
+    # took the WHOLE probe down with it -- the step then read an error
+    # reply on every poll and failed forever, on all three platforms.
+    try:
+        result["pauseAtLayerItems"] = len(model.pauseAtLayerItems or [])
+    except TypeError:
+        result["pauseAtLayerItems"] = None
     result["pauseAtLayerUnavailableText"] = str(model.pauseAtLayerUnavailableText)
     result["pauseAtLayerHasBaked"] = bool(model.pauseAtLayerHasBaked)
     result["pauseAtLayerHasClearable"] = bool(model.pauseAtLayerHasClearable)
