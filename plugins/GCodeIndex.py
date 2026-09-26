@@ -194,8 +194,78 @@ _TYPE_OTHER = 1
 _MARKER_SNIFF_BYTES = 262144
 # How far below the monotonic floor the refinement search may start, in
 # motions. Generous enough to cover a parser-chunk lead and any earlier
-# floor overshoot; the monotonic clamp is applied to the result.
+# floor overshoot; the monotonic clamp is applied to the result. A
+# boundary that consecutive polls fail to confirm widens the reach — a
+# fixed one leaves an overshoot larger than it permanently uncorrectable,
+# because the nozzle's own geometry never re-enters the window.
 FLOOR_LOOKBACK = 256
+# How far behind the coarse file position a layer's FIRST observation may
+# look, in motions. Without an accepted boundary the parser's own lead is
+# the only handle on where the head is, and a read burst can put it many
+# hundreds of motions ahead of the nozzle — past the ordinary lag window
+# entirely. The search then sees only motions the head has not reached,
+# and on repeated geometry picks whichever later pass shares its XY. Such
+# a match seeds the floor above the head and every later poll confirms it,
+# so the fill cannot recover. The bound mirrors the payload fallback's own
+# first-decode window.
+FIRST_SEARCH_LOOKBACK = 8192
+# How near a rival candidate must be to count as the SAME physical place.
+# A repeated toolpath, a shared seam vertex or a retraced stroke puts the
+# nozzle's coordinate on more than one motion of one layer, and the two
+# distances then differ only by float noise — square units, so 1.02 is a
+# ~1% distance tolerance.
+_CANDIDATE_TIE = 1.02
+
+
+def better_candidate(distance_sq, motion, best_distance_sq, best_motion, floor):
+    """Resolve a search candidate against the best found so far.
+
+    Strictly closer geometry always wins. A near TIE — one physical place
+    reached by more than one motion, which is what repeated geometry looks
+    like — is resolved by the boundary the search already trusts instead
+    of by scan order: the candidate AT OR ABOVE ``floor``, and among those
+    the smallest. A stroke the nozzle has not reached must never win a tie
+    merely for lying inside the window, and an earlier pass the nozzle has
+    already left must never win one either — it clamps the boundary below
+    the paint and stalls the fill. When every tied candidate is below the
+    floor, the largest wins: the one closest behind it is the overshoot
+    lock's evidence that the floor itself has run ahead of the nozzle.
+
+    ``floor`` is the accepted motion count, or None on a layer's first
+    observation, where the earliest tied candidate is the honest choice —
+    the dispatcher leads the nozzle, so an earlier pass is likelier than a
+    later one and neither carries any evidence to prefer.
+
+    Returns the surviving (distance_sq, motion) pair.
+    """
+    if best_motion is None or distance_sq < best_distance_sq:
+        return distance_sq, motion
+    if distance_sq > best_distance_sq * _CANDIDATE_TIE:
+        return best_distance_sq, best_motion
+    new_ok = floor is None or motion >= floor
+    old_ok = floor is None or best_motion >= floor
+    if new_ok != old_ok:
+        return (distance_sq, motion) if new_ok else (best_distance_sq, best_motion)
+    if new_ok:
+        if motion < best_motion:
+            return distance_sq, motion
+    elif motion > best_motion:
+        return distance_sq, motion
+    return best_distance_sq, best_motion
+
+
+def behind_reach(stall: int) -> int:
+    """How far below the accepted boundary one search may look, in
+    motions. The base reach covers a parser chunk plus a small overshoot;
+    consecutive polls that failed to confirm the boundary widen it in
+    steps, so a floor that ran far ahead still gets to see the geometry
+    the nozzle is actually on. Without the ladder the correction can never
+    fire and the fill waits for the nozzle to catch up."""
+    if stall >= 4:
+        return FLOOR_LOOKBACK * 128
+    if stall >= 2:
+        return FLOOR_LOOKBACK * 16
+    return FLOOR_LOOKBACK
 # The fraction-to-motion-count projection's tolerance. A boundary held
 # in COUNT units round-trips through the fraction as a division and can
 # land a hair under its own integer (1/3 * 3 == 0.9999999999999999);
@@ -320,6 +390,8 @@ class LayerMotionIndex:
         ahead_window: int = 8,
         max_distance_mm: float = 3.0,
         minimum_fraction: Optional[float] = None,
+        floor_motion: Optional[int] = None,
+        stall: int = 0,
     ) -> Tuple[float, str]:
         """Estimate physical progress using Moonraker's live tool position.
 
@@ -331,6 +403,16 @@ class LayerMotionIndex:
         monotonic floor is never inflated by the parser-position fraction;
         on the first observation of a layer there is nothing to hold and the
         parser-position fraction is the only estimate available.
+
+        ``floor_motion`` is the boundary the caller has already accepted,
+        and it does two jobs the returned value must not be confused with.
+        It resolves a near tie between candidates at the same physical
+        place (see ``better_candidate``), and it bounds how far behind
+        itself the search reaches, widening with ``stall`` — the count of
+        consecutive polls that failed to confirm it. ``minimum_fraction``
+        is the separate, optional clamp on the RETURNED value; a caller
+        that wants the unclamped truth reads it unfloored and floors only
+        for publication.
         """
 
         base_fraction, base_method = self.file_fraction(layer, file_position)
@@ -340,6 +422,16 @@ class LayerMotionIndex:
                 floor_fraction = max(0.0, min(1.0, float(minimum_fraction)))
             except (TypeError, ValueError):
                 floor_fraction = None
+        accepted: Optional[int] = None
+        if floor_motion is not None:
+            try:
+                accepted = max(0, int(floor_motion))
+            except (TypeError, ValueError):
+                accepted = None
+        try:
+            stall = max(0, int(stall))
+        except (TypeError, ValueError):
+            stall = 0
 
         def with_floor(fraction: float, method: str) -> Tuple[float, str]:
             if floor_fraction is not None and fraction < floor_fraction:
@@ -358,6 +450,11 @@ class LayerMotionIndex:
         n = len(offsets)
         if n == 0 or len(xs) != n or len(ys) != n or len(zs) != n:
             return with_floor(base_fraction, base_method)
+        if accepted is None and floor_fraction is not None:
+            # A caller naming only the clamp is naming its accepted
+            # boundary too — the two were one argument until the
+            # overshoot lock needed them apart.
+            accepted = max(0, min(n, int(math.floor(floor_fraction * n))))
 
         try:
             px, py, pz = float(live_position[0]), float(live_position[1]), float(live_position[2])
@@ -365,15 +462,25 @@ class LayerMotionIndex:
             return with_floor(base_fraction, base_method)
 
         coarse_completed = bisect_right(offsets, int(file_position))
-        lo = max(0, coarse_completed - max(1, int(lag_window)) - 1)
-        if floor_fraction is not None:
+        if accepted is None:
+            # The first observation of a layer: reach back far enough that
+            # the geometry under the head is in the window at all, whatever
+            # the parser's lead. A bare lag_window lets the search pick a
+            # later pass of repeated geometry, which seeds the floor above
+            # the head — the one place a wrong answer cannot be corrected
+            # from, because every later poll confirms it.
+            lo = max(0, coarse_completed - max(max(1, int(lag_window)),
+                                               FIRST_SEARCH_LOOKBACK) - 1)
+        else:
             # Live XYZ can match more than one place on a closed/repeated toolpath.
             # The monotonic clamp is applied to the *result* below, which is what
             # prevents rewind; the search may dip a bounded distance below the
             # floor so an inflated floor sample can never exclude the true
             # segment (which previously cascaded into permanent coarse fallback).
-            floor_completed = max(0, min(n, int(math.floor(floor_fraction * n))))
-            lo = max(lo, max(0, floor_completed - FLOOR_LOOKBACK - 1))
+            # The accepted boundary is the anchor here, not the parser: a read
+            # burst puts the coarse position past the nozzle, and a lower bound
+            # derived from it excludes the geometry the head is actually on.
+            lo = max(0, accepted - behind_reach(stall) - 1)
         hi = min(n - 1, coarse_completed + max(0, int(ahead_window)))
         if hi < lo:
             return with_floor(base_fraction, base_method)
@@ -403,9 +510,9 @@ class LayerMotionIndex:
                 hit = ArcGeometry.closest(arc, (ax, ay, az), (bx, by, bz), (px, py, pz))
                 if hit is not None:
                     distance, t = hit
-                    if distance * distance < best_distance_sq:
-                        best_distance_sq = distance * distance
-                        best_completed = i + t
+                    best_distance_sq, best_completed = better_candidate(
+                        distance * distance, i + t, best_distance_sq,
+                        best_completed, accepted)
                     continue
             dx, dy, dz = bx - ax, by - ay, bz - az
             length_sq = dx * dx + dy * dy + dz * dz
@@ -418,9 +525,8 @@ class LayerMotionIndex:
                 qx, qy, qz = ax + t * dx, ay + t * dy, az + t * dz
             ddx, ddy, ddz = px - qx, py - qy, pz - qz
             distance_sq = ddx * ddx + ddy * ddy + ddz * ddz
-            if distance_sq < best_distance_sq:
-                best_distance_sq = distance_sq
-                best_completed = i + t
+            best_distance_sq, best_completed = better_candidate(
+                distance_sq, i + t, best_distance_sq, best_completed, accepted)
 
         if best_completed is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
             # The live position is off-model (Z-lift, off-path movement) or
@@ -443,6 +549,7 @@ class LayerMotionIndex:
         live_position: Optional[Sequence[float]],
         *,
         minimum_split: Optional[int] = None,
+        floor_split: Optional[int] = None,
         **kwargs,
     ) -> Tuple[Optional[int], str]:
         """The follower's printed/unprinted boundary from the live tool
@@ -463,6 +570,14 @@ class LayerMotionIndex:
         coarse boundary. The refinement corrects a boundary; it never
         invents one. ``minimum_split`` is the boundary already painted,
         and no result ever falls below it.
+
+        ``floor_split`` is the boundary the caller has ACCEPTED, which is
+        what the search resolves ties against and how far behind itself
+        it reaches. It defaults to ``minimum_split``; a caller that wants
+        the honest truth reads with ``minimum_split=None`` — no clamp on
+        the answer — while still naming its accepted boundary here, so
+        the search keeps the continuity it needs to reject a repeated
+        stroke instead of losing it with the clamp.
         """
         n = self.motion_count(layer)
         if n <= 0:
@@ -473,8 +588,10 @@ class LayerMotionIndex:
                 floor_fraction = max(0.0, min(1.0, max(0, int(minimum_split)) / n))
             except (TypeError, ValueError):
                 floor_fraction = None
+        accepted = floor_split if floor_split is not None else minimum_split
         fraction, method = self.refined_fraction(
-            layer, file_position, live_position, minimum_fraction=floor_fraction, **kwargs
+            layer, file_position, live_position, minimum_fraction=floor_fraction,
+            floor_motion=accepted, **kwargs
         )
         if not (method.startswith("live position") or method.startswith("held")):
             # The coarse estimate (the parser's own position) or a

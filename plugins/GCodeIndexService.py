@@ -17,6 +17,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from .GCodeIndex import (
     HydrationYield,
     LayerMotionIndex,
+    better_candidate,
     build_index_from_file,
     hydrate_layer_from_file,
     passive_yield,
@@ -826,9 +827,18 @@ class GCodeIndexService(QObject):
             # the split gate, which holds the warm raster.
             refined_truth = None
             if live_position is not None:
+                # The accepted floor is handed over as the search's
+                # CONTINUITY anchor while the answer comes back
+                # unclamped: the resolution of a repeated-geometry tie
+                # needs to know where the boundary already is, and the
+                # overshoot test needs to see a value the clamp would
+                # have raised. The two were one argument; separating
+                # them is what lets a below-floor truth be inspected
+                # without the displayed boundary ever falling.
                 refined_truth, _method = index.refined_split(
                     anchor, file_position, live_position,
-                    minimum_split=None)
+                    minimum_split=None, floor_split=floor,
+                    stall=self._split_stall_polls)
                 refined = refined_truth if floor is None or refined_truth is None \
                     else max(refined_truth, floor)
                 # The unhydrated layer's honest split: the index arrays
@@ -893,27 +903,39 @@ class GCodeIndexService(QObject):
             else:
                 self._split_refined = refined
                 split = refined
-            # The stall counter: a result at or below the floor counts
-            # consecutive polls the floor did not advance — the next
-            # search's window expands with it. THREE consecutive
-            # below-floor matches are the overshoot-lock's evidence:
-            # the live position sits ON geometry behind the floor,
-            # the nozzle is genuinely there, and the monotonic floor
-            # must step back to the truth instead of stalling the
-            # fill until the nozzle catches up (the live replay: the
-            # refinement found the truth at distance 0 below an
-            # overshot floor every poll — the long stall, then the
+            # The stall counter: every poll that did NOT confirm the
+            # floor — a match at or below it, or no match at all —
+            # counts toward the next search's window expansion. A poll
+            # that confirmed an advance past the floor resets it, and a
+            # machine reporting no live position never counts: it has
+            # no refinement to be suspicious of.
+            #
+            # A refusal has to count. A floor that ran far ahead leaves
+            # the nozzle's own geometry outside the search window, so
+            # the refinement returns NOTHING rather than a below-floor
+            # match, and a counter that only counted below-floor
+            # matches could never grow the window that would reach it —
+            # the fill waited for the nozzle to catch up for the rest of
+            # the layer.
+            #
+            # THREE consecutive unconfirmed polls are the overshoot
+            # lock's evidence: the live position sits ON geometry behind
+            # the floor, the nozzle is genuinely there, and the
+            # monotonic floor must step back to the truth (the live
+            # replay: the refinement found the truth at distance 0 below
+            # an overshot floor every poll — the long stall, then the
             # snap back to life).
             corrected = False
-            if refined_truth is not None and floor is not None \
-                    and refined_truth <= floor:
+            if floor is None or live_position is None \
+                    or (refined_truth is not None and refined_truth > floor):
+                self._split_stall_polls = 0
+            else:
                 self._split_stall_polls += 1
-                if self._split_stall_polls >= 3 and refined_truth < floor:
+                if self._split_stall_polls >= 3 and refined_truth is not None \
+                        and refined_truth < floor:
                     split = refined_truth
                     self._split_refined = refined_truth
                     corrected = True
-            else:
-                self._split_stall_polls = 0
             if corrected:
                 self._split_floor = split
             else:
@@ -981,34 +1003,14 @@ class GCodeIndexService(QObject):
         best_motion = None
 
         def offer(distance_sq, motion):
-            # The shared candidate comparison: strict distance wins,
-            # near-ties resolve to the pass the nozzle is on (see the
-            # comment below).
+            # The shared candidate comparison (the hydrated search runs
+            # the same one): strict distance wins, a near tie resolves
+            # by the floor instead of by scan order — the pass the
+            # nozzle is on, never a future pass that merely lies inside
+            # the window and never an earlier one that stalls the fill.
             nonlocal best_distance_sq, best_motion
-            if distance_sq < best_distance_sq:
-                best_distance_sq = distance_sq
-                best_motion = motion
-            elif best_motion is not None \
-                    and distance_sq <= best_distance_sq * 1.02:
-                # The pass-seam tie: repeated toolpaths share
-                # positions across passes, so the live position ties
-                # its own pass with the earlier and the future ones.
-                # The nozzle is on the pass AT OR ABOVE the floor —
-                # prefer the SMALLEST such motion. An earlier pass
-                # clamps to the floor and stalls the fill for
-                # seconds until the tie breaks (the live log: 28 s
-                # stuck, then a +591 catch-up jump); a future pass
-                # paints ahead.
-                new_ok = floor is None or motion >= floor
-                old_ok = floor is None or best_motion >= floor
-                if new_ok and not old_ok:
-                    best_motion = motion
-                elif new_ok == old_ok and new_ok \
-                        and motion < best_motion:
-                    best_motion = motion
-                elif new_ok == old_ok and not new_ok \
-                        and motion > best_motion:
-                    best_motion = motion
+            best_distance_sq, best_motion = better_candidate(
+                distance_sq, motion, best_distance_sq, best_motion, floor)
 
         for lo, hi in windows:
             for segments in (payload.get("classes") or {}).values():

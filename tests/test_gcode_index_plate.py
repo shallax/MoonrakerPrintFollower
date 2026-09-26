@@ -35,6 +35,7 @@ from __future__ import annotations
 from array import array
 import gzip
 import json
+import math
 import os
 import shutil
 import struct
@@ -76,6 +77,45 @@ def _write_gcode(data):
 def _codes(names):
     """The code each vocabulary entry takes: _TYPE_NONE, _TYPE_OTHER, then names."""
     return {name: code + 2 for code, name in enumerate(names)}
+
+
+_LINES_PER_PASS = 12
+
+
+def _repeated_layer_gcode(passes, drift=0.0, lines=_LINES_PER_PASS, length=100.0,
+                          dy=0.4):
+    """One layer whose serpentine toolpath is drawn *passes* times.
+
+    With ``drift`` 0 every XY is visited once per pass — the repeated
+    infill and retraced skin the live report came from — so the
+    toolhead's own coordinate cannot say which pass it is on. A small
+    ``drift`` slides each pass sideways, which is what a nozzle that
+    stops exactly on a stroke is then able to tell apart.
+    """
+    out = ["M82", "G90", "G28", "G92 E0", ";LAYER:0", ";TYPE:INFILL", "G1 Z0.200"]
+    extruded = 0.0
+    for printed in range(passes):
+        for line in range(lines):
+            y = line * dy + printed * drift
+            first, last = (0.0, length) if line % 2 == 0 else (length, 0.0)
+            extruded += 0.5
+            out.append("G1 X%.3f Y%.3f E%.3f" % (first, y, extruded))
+            extruded += 0.5
+            out.append("G1 X%.3f Y%.3f E%.3f" % (last, y, extruded))
+    return ("\n".join(out) + "\n").encode("ascii")
+
+
+def _nozzle_at(index, layer, motion):
+    """Where the toolhead physically is with *motion* (fractional) of the
+    layer's motion chain behind it: the point interpolated along that
+    motion, from the layer's opening position."""
+    xs, ys, zs = index.motion_x[layer], index.motion_y[layer], index.motion_z[layer]
+    whole = max(0, min(int(math.floor(motion)), len(xs) - 1))
+    along = motion - whole
+    start = index.layer_start_positions[layer] if whole == 0 \
+        else (xs[whole - 1], ys[whole - 1], zs[whole - 1])
+    end = (xs[whole], ys[whole], zs[whole])
+    return tuple(a + along * (b - a) for a, b in zip(start, end, strict=True))
 
 
 class _HeldClock:
@@ -1062,6 +1102,79 @@ class PlateSplitRefinementTests(unittest.TestCase):
         index.motion_offsets = [array("Q")]
         return index
 
+    @staticmethod
+    def _run(first, count, y, x0=0.0):
+        """One drawn run: *count* vertices at height *y* stepping along x
+        from *x0*, the motion index of vertex i being *first* + i — the
+        payload's own triple."""
+        return [[x0 + index, y, float(first + index)] for index in range(count)]
+
+    def _bind_runs(self, runs, motions):
+        """An unhydrated layer whose payload draws *runs*: the arrays are
+        empty until the hydration lands, so the payload's geometry is the
+        only toolpath the split can be measured against."""
+        index = make_index(layers=1, motions=motions)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._decoded_lru[0] = {
+            "classes": {"INFILL": list(runs)}, "travels": [],
+            "travelStarts": [], "travelEnds": [], "motions": motions}
+        index.layer_motion_counts = [motions]
+        index.motion_offsets = [array("Q")]
+        return index
+
+    def test_a_late_floor_reaches_back_to_the_nozzle_after_a_wrong_match(self):
+        # An off-path hop whose XY lands on a LATER pass's stroke is a
+        # genuine match at distance zero, and the floor moves there while
+        # the head never went anywhere. Well short of it now lies the
+        # geometry the nozzle is actually on, and the search never looks
+        # below the floor: every poll REFUSES. A refusal has to count as
+        # an unconfirmed poll — a counter that resets on it can never
+        # widen the window that would reach the nozzle, and the fill sits
+        # hundreds of motions ahead of the head for the layer's life.
+        self._bind_runs([self._run(0, 100, 0.0), self._run(900, 100, 40.0)],
+                        motions=4000)
+        # 90/100 of the layer's byte range is motion 3600 of 4000: the
+        # dispatcher reading far past a nozzle that is 50 motions in.
+        self.assertEqual(
+            self.service.plate_progress(0, 90, (50.0, 0.0, 0.2))["split"], 50)
+        for _hop in range(2):
+            self.assertEqual(
+                self.service.plate_progress(0, 90, (50.0, 40.0, 0.2))["split"], 950,
+                "the hop was not matched where it landed")
+        # Back on its own stroke, every poll now REFUSES: the window
+        # hangs off the wrong floor, so the geometry under the nozzle is
+        # outside it and the search finds nothing at all rather than a
+        # below-floor match. The displayed boundary holds the wrong pass
+        # until the expansion reaches the head, then steps back onto it.
+        splits = [self.service.plate_progress(0, 90, (50.5 + poll, 0.0, 0.2))["split"]
+                  for poll in range(3)]
+        self.assertEqual(splits[0], 950, "the fill moved before the evidence landed")
+        self.assertLess(splits[-1], 53, "the fill stayed stranded on the later pass")
+        self.assertGreater(splits[-1], 49, "the fill lost the head's own stroke")
+        self.assertEqual(self.service._split_floor, splits[-1])
+        # ...and tracks the nozzle from there, on the pass it is on.
+        self.assertEqual(
+            self.service.plate_progress(0, 90, (60.0, 0.0, 0.2))["split"], 60)
+
+    def test_an_unhydrated_layer_holds_the_nozzles_own_pass(self):
+        # The same repeated toolpath with the arrays still empty: the
+        # payload's geometry is all the search has, and the pass the
+        # nozzle is on is the one the tie resolves to — the vertex order
+        # the painter happened to emit is not evidence of anything. Once
+        # the boundary has cleared the first pass, the fill follows the
+        # nozzle into the second instead of painting the first again.
+        self._bind_runs([self._run(0, 200, 0.0), self._run(200, 200, 0.0)],
+                        motions=400)
+        self.assertEqual(
+            self.service.plate_progress(0, 90, (199.0, 0.0, 0.2))["split"], 199)
+        painted = 199
+        for x, expected in ((5.0, 205), (6.0, 206), (10.0, 210), (11.0, 211)):
+            split = self.service.plate_progress(0, 90, (x, 0.0, 0.2))["split"]
+            self.assertEqual(split, expected,
+                             "the fill resolved to the pass already printed")
+            self.assertGreaterEqual(split, painted)
+            painted = split
+
     def test_the_unhydrated_layer_splits_on_its_payload_geometry(self):
         # The arrays are empty until the hydration lands, and the byte
         # fraction that stands in for them is NOT proportional to motion
@@ -1145,6 +1258,196 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertIsNone(payload["split"])
         self.assertEqual(payload, {"layers": {}, "split": None, "method": "unavailable",
                                    "motionTotal": 0, "anchor": 0, "refusal": ""})
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
+class RepeatedGeometrySplitTests(unittest.TestCase):
+    """A layer that visits the same toolpath more than once.
+
+    Every XY the nozzle crosses is a motion of every pass, so the live
+    position on its own cannot say which pass the head is on. The
+    boundary must land on the stroke the nozzle is PRINTING: a later
+    pass paints strokes the head has not reached and locks the fill
+    ahead of it, and an earlier one clamps the fill below paint the
+    plate has already drawn — the rewind the live report showed.
+
+    The geometry is a real serpentine parsed by the real builder, walked
+    by a simulated nozzle: the poll drives ``plate_progress`` exactly as
+    the coordinator does, with the dispatcher's read point wherever the
+    scenario puts it.
+    """
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Files(QObject):
+            changed = pyqtSignal()
+
+        self.files = Files()
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        module = self.qt.load("GCodeIndexService")
+        self.service = module.GCodeIndexService(self.files, object())
+        self.addCleanup(self.service.close)
+        self.job = ("repeated.gcode", 100, 1)
+        self.service.bind(self.job)
+
+    def _bind(self, passes=6, drift=0.0):
+        """The hydrated layer: the real builder's arrays in the hot
+        presentation cache, the plate's own anchor past the live layer's
+        digest, exactly as the worker commits them."""
+        index = build_index_from_bytes(_repeated_layer_gcode(passes, drift))
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        from plugins.PlateProgress import prepare_layer
+        self.service._decoded_lru[0] = prepare_layer(index, 0)
+        self.index = index
+        self.offsets = list(index.motion_offsets[0])
+        self.count = index.motion_count(0)
+        return self.count
+
+    def _poll(self, truth, lead, live=None):
+        """One observe: the dispatcher reads at *truth* + *lead* motions,
+        the nozzle is at *truth* unless the scenario says otherwise."""
+        position = self.offsets[max(0, min(self.count - 1, int(truth) + lead))]
+        if live is None:
+            live = _nozzle_at(self.index, 0, truth)
+        return self.service.plate_progress(0, position, live)["split"]
+
+    def test_a_read_burst_does_not_seed_the_floor_above_the_nozzle(self):
+        # A chunk read after a stutter puts the dispatcher's read point
+        # many hundreds of motions past the nozzle — well beyond the
+        # window the search used to keep around it. Only motions the head
+        # has not reached are left in that window, and on this layer the
+        # nearest of them shares the head's XY: the fill painted the
+        # later pass, and because that value was then the floor, every
+        # later poll agreed with it and the fill never came back.
+        self._bind(passes=60)
+        for truth in (10.0, 13.5, 17.0, 20.5, 24.0):
+            split = self._poll(truth, lead=1200)
+            self.assertLessEqual(
+                split, truth + 1, "the fill painted a stroke the head has not reached")
+            self.assertGreaterEqual(
+                split, truth - 1, "the fill lost the head's own stroke")
+            self.assertLessEqual(
+                self.service._split_floor, truth, "the floor locked ahead of the head")
+
+    def test_the_fill_never_walks_back_across_a_repeated_pass(self):
+        # The nozzle finishes pass 0 and starts pass 1 on the same
+        # coordinates. Resolving that tie to the earlier pass pulls the
+        # boundary back under paint the plate already drew, and the
+        # overshoot lock then commits the rewind: the fill visibly jumps
+        # backwards every few polls, at the print's own pace. Nothing
+        # may be repainted and no stroke ahead of the head may be drawn.
+        self._bind(passes=6)
+        painted = 0
+        truth = 18.0
+        while truth <= 30.0:
+            split = self._poll(truth, lead=40)
+            self.assertGreaterEqual(
+                split, painted, "the fill walked back at motion %s" % truth)
+            self.assertLessEqual(
+                split, truth + 1, "the fill painted a stroke the head has not reached")
+            painted = split
+            truth += 1.5
+        self.assertGreaterEqual(painted, 29, "the fill stopped following the head")
+        # Adversarial ordering: the status feed hands the same sample
+        # twice, then one from before the boundary (a re-applied G-code
+        # offset moves the reported position back without the nozzle
+        # moving). Repeated geometry ties either way, and no tie may walk
+        # the fill back under paint the plate already drew.
+        self.assertGreaterEqual(self._poll(30.0, lead=40), painted)
+        stale = self._poll(18.0, lead=40)
+        self.assertGreaterEqual(stale, painted, "a stale sample rewound the fill")
+        self.assertLessEqual(stale, painted + 2 * _LINES_PER_PASS,
+                             "a stale sample painted far ahead of the head")
+
+    def test_a_hydration_landing_mid_layer_keeps_the_fill_on_its_own_pass(self):
+        # The layer's first polls land before its arrays arrive: the
+        # payload's geometry is the only toolpath the search has, so the
+        # boundary the payload search accepts is the floor the hydrated
+        # search inherits. The delivery is asynchronous — the arrays land
+        # whenever the worker gets to them — and it is not a new layer:
+        # the fill must not jump, blank or lose the pass it was on.
+        index = build_index_from_bytes(_repeated_layer_gcode(passes=6))
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+            self.job, index)
+        from plugins.PlateProgress import prepare_layer
+        self.service._decoded_lru[0] = prepare_layer(index, 0)
+        self.index = index
+        self.count = index.motion_count(0)
+        self.offsets = list(index.motion_offsets[0])
+        hydrated = array(index.motion_offsets[0].typecode,
+                         index.motion_offsets[0])
+        index.motion_offsets[0] = array("Q")
+        for truth in (10.0, 14.0, 18.0):
+            split = self._poll(truth, lead=40)
+            self.assertLessEqual(split, truth + 1, "the payload search painted ahead")
+            self.assertGreaterEqual(split, truth - 1, "the payload search lost the head")
+        floor = self.service._split_floor
+        # The hydration lands: the arrays are what the split rides from
+        # here, and the floor is the continuity between the two halves.
+        index.motion_offsets[0] = hydrated
+        for truth in (19.5, 21.0, 22.5):
+            position = self.offsets[int(truth) + 40]
+            payload = self.service.plate_progress(
+                0, position, _nozzle_at(index, 0, truth))
+            self.assertIsNotNone(payload["layers"]["current"],
+                                 "the hydration blanked the layer")
+            split = payload["split"]
+            self.assertGreaterEqual(split, floor, "the fill jumped back at the handover")
+            self.assertLessEqual(split, truth + 1, "the hydrated search painted ahead")
+            self.assertGreaterEqual(split, truth - 1, "the hydrated search lost the head")
+            floor = split
+
+    def test_an_off_path_travel_then_resumption_holds_the_nozzles_own_pass(self):
+        # A park, a probe, a cross-plate travel: the nozzle is off the
+        # extrusion geometry and nothing is printing, so the boundary
+        # holds. Resumed, the head is back on its own pass — the stroke a
+        # later pass also visits must not claim the fill, and the stroke
+        # already passed must not take it back.
+        self._bind(passes=60)
+        self.assertEqual(self._poll(20.0, lead=1200), 20)
+        for _park in range(2):
+            self.assertEqual(
+                self._poll(20.0, lead=1200, live=(140.0, 140.0, 10.0)), 20,
+                "an off-path park moved the boundary")
+        for truth in (21.0, 22.0, 23.0):
+            split = self._poll(truth, lead=1200)
+            self.assertLessEqual(split, truth + 1)
+            self.assertGreaterEqual(split, truth - 1)
+
+    def test_a_stale_live_sample_does_not_strand_the_fill(self):
+        # The nozzle is reported where it is not — a stale position, a
+        # re-applied homing origin — standing on a stroke a later pass
+        # owns. That match is genuine, it is the nearest geometry by a
+        # wide margin, and the floor moves there hundreds of motions
+        # ahead of the head. What must not happen is what the live
+        # report showed: the head's own stroke is then outside the
+        # search's window, the refinement returns NOTHING poll after
+        # poll, and a search that only widens its window on a below-floor
+        # MATCH never reaches the geometry the nozzle is standing on. The
+        # fill stays stranded ahead of the head for the layer's life.
+        # Three reliable samples on the truth step the floor back to it.
+        self._bind(passes=60, drift=4.0)
+        # Line 3's stroke: motion 8 of pass 0, and the same stroke 32 mm
+        # up at motion 8 of pass 8. Lines 0-9 of each pass are unique to
+        # it — the drift is two and a half line spacings — so neither
+        # sample is a tie.
+        self.assertEqual(self._poll(8.0, lead=1200, live=(50.0, 1.2, 0.2)), 8)
+        stranded = self._poll(8.0, lead=1200, live=(50.0, 33.2, 0.2))
+        self.assertEqual(stranded, 8 * 2 * _LINES_PER_PASS + 8,
+                         "the stale sample was not matched where it landed")
+        for poll in range(3):
+            split = self._poll(8.0, lead=1200, live=(50.0, 1.6 + 0.4 * poll, 0.2))
+            if poll < 2:
+                self.assertEqual(split, stranded,
+                                 "the floor stepped back before the third sample")
+        self.assertEqual(split, 14, "the fill stayed stranded on the later pass")
+        self.assertEqual(self.service._split_floor, 14)
+        # The head keeps printing: the fill follows it from the truth,
+        # unhaunted by the pass the stale sample claimed.
+        self.assertEqual(self._poll(8.0, lead=1200, live=(50.0, 2.8, 0.2)), 16)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
