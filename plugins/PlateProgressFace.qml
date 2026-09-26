@@ -2322,11 +2322,7 @@ Item {
                         root._paintConsistent = nextReceipt.valid;
                     } else {
                         var first = root._paintFirst;
-                        root._paintConsistent = root._paintConsistent && first != null
-                            && nextReceipt.valid && first.epoch === nextReceipt.epoch
-                            && first.world === nextReceipt.world
-                            && first.from === nextReceipt.from
-                            && first.split === nextReceipt.split;
+                        root._paintConsistent = root._paintConsistent && first != null && nextReceipt.valid && first.epoch === nextReceipt.epoch && first.world === nextReceipt.world && first.from === nextReceipt.from && first.split === nextReceipt.split;
                     }
                     root._paintPrepared = nextReceipt;
                 }
