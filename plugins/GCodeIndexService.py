@@ -808,6 +808,20 @@ class GCodeIndexService(QObject):
             coarse = _split_index(index, anchor, file_position)
             if coarse is None:
                 return None
+            # A layer ADVANCE — the anchor moving on by one inside the
+            # same job — is the one poll the geometric search cannot be
+            # trusted on. The nozzle has only just arrived, so it has
+            # printed nothing on this layer, while the parser's read
+            # position is already ahead of it: the first observation
+            # searches a window spanning the whole layer and a
+            # coincidental match on repeated geometry wins it. That is
+            # the reported jump at the start of a new layer.
+            previous = self._split_floor_key
+            advanced = (
+                previous is not None
+                and previous[0] == self._view.job_key
+                and anchor == previous[1] + 1
+            )
             if (self._view.job_key, anchor) != self._split_floor_key:
                 self._split_floor_key = (self._view.job_key, anchor)
                 self._split_floor = None
@@ -878,6 +892,16 @@ class GCodeIndexService(QObject):
                                 and refined > floor:
                             self._split_advance_max = max(
                                 self._split_advance_max, refined - floor)
+            if advanced and floor is None:
+                # The newly entered layer's first observation: the
+                # honest value is ZERO — nothing has printed on it yet
+                # — so the search's answer is discarded and the block
+                # below publishes it. One poll later an accepted
+                # boundary exists and the search runs against the
+                # tight behind_reach window, so this initialises the
+                # layer rather than capping its advance.
+                refined = None
+                refined_truth = None
             if refined is None:
                 # The layer's FIRST boundary must be a live-position
                 # refinement, never the coarse: the byte fraction can

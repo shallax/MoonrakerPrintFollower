@@ -1066,9 +1066,34 @@ class PlateSplitRefinementTests(unittest.TestCase):
         self.assertEqual(
             self.service.plate_progress(1, offsets[19], (5.0, 0.0, 0.2))["split"], 6)
         # Another layer's count is another layer's boundary: layer 2
-        # starts its own, unfloored by layer 1's paint.
+        # starts its own, unfloored by layer 1's paint. The poll that
+        # ENTERS a layer reads zero — nothing has printed on it yet —
+        # and the poll after it refines from the boundary that entry
+        # set, so the reset costs one poll and never inherits the
+        # previous layer's paint.
+        self.assertEqual(
+            self.service.plate_progress(2, offsets[19], (2.0, 0.0, 0.2))["split"], 0)
         self.assertEqual(
             self.service.plate_progress(2, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
+
+    def test_entering_a_layer_never_publishes_a_future_match(self):
+        # The live report: the fill jumped at the START of a new layer and
+        # rewound once the truth caught up. The nozzle has just arrived and
+        # has printed nothing on the layer, while the parser's read position
+        # is already past it — so the entry poll's search window spans the
+        # whole layer and a coincidental XY match anywhere in it won. The
+        # head over x=5 reaches layer 1's own geometry, and reading that as
+        # the boundary is the jump.
+        offsets = self._bind(layers=3)
+        self.assertEqual(
+            self.service.plate_progress(0, offsets[19], (5.0, 0.0, 0.2))["split"], 6)
+        entry = self.service.plate_progress(1, offsets[19], (5.0, 0.0, 0.2))
+        self.assertEqual(entry["split"], 0,
+                         "entering a layer published a match from its future")
+        # And the entry is an INITIALISATION, not a cap: the next poll
+        # refines to the head's real place with no lag behind it.
+        self.assertEqual(
+            self.service.plate_progress(1, offsets[19], (2.0, 0.0, 0.2))["split"], 3)
 
     def test_the_boundary_resets_with_the_print(self):
         offsets = self._bind()
