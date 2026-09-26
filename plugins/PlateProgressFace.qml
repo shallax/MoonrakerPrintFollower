@@ -239,7 +239,7 @@ Item {
                 // never releases, so nothing else can complete it
                 // once the camera has settled.
                 if (!zoomAnimator.running && root._progressDirty) {
-                    progressCanvas.requestPaint();
+                    _requestProgressPaint();
                 }
                 // The camera has settled, so the hold no longer needs
                 // the model to stand still: release the publication
@@ -468,7 +468,7 @@ Item {
         // advance NOW so the picture jumps to the current print
         // position the moment the pan ends (the live request).
         if (root._interactionActive) {
-            progressCanvas.requestPaint();
+            _requestProgressPaint();
         }
         // The release resumes the model's publications too — the
         // settle has usually done it already; this covers a release
@@ -616,7 +616,7 @@ Item {
             if (_prefixUsable() && !_partialPrefixReady()) {
                 return false;
             }
-            if (!_prefixUsable() && !(root._textureReady && root._vectorCoversFrom === 0 && root._lastSplit === split)) {
+            if (!_prefixUsable() && !(root._splitGate() && root._vectorCoversShown === 0)) {
                 return false;
             }
             if (_partialBase() && _baseOf(current) && _imageHolds(pendingBaseImage)) {
@@ -726,7 +726,7 @@ Item {
         // picture must stand through that beat; nothing to paint
         // needs no beat).
         if (!_prefixModelReady()) {
-            return root._textureReady && root._vectorCoversShown === 0 && root._lastSplit === root.progress.split && !root._prefixShowHold;
+            return root._splitGate() && root._vectorCoversShown === 0 && !root._prefixShowHold;
         }
         if (root._vectorCoversFrom === -1 && _vectorInkless()) {
             return true;
@@ -748,10 +748,13 @@ Item {
         // checkpoint's stale picture (the lag-behind-the-toolhead
         // report). A backward move falls back to the exact gate.
         var split = root.progress != null ? root.progress.split : null;
-        if (root.attached && split != null && root._lastSplit >= 0) {
-            return split >= root._lastSplit;
+        if (!root._textureReady || root._vectorWorldShown !== root._progressWorldEpoch) {
+            return false;
         }
-        return root._lastSplit === split;
+        if (root.attached && split != null && root._vectorSplitShown >= 0) {
+            return split >= root._vectorSplitShown;
+        }
+        return root._vectorSplitShown === split;
     }
 
     function _compositionReady() {
@@ -802,7 +805,7 @@ Item {
         // bitmap painted at an older split is missing every motion
         // the demand has passed since, and the attached follow's
         // monotonic gate would admit it.
-        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversShown === 0 && root._prefixWasShown && root._lastSplit === root.progress.split) || root._vectorCoversShown === layer.prefixSplit);
+        var delivered = root._textureReady && root._splitGate() && ((root._vectorCoversShown === 0 && root._prefixWasShown && root._vectorSplitShown === root.progress.split) || root._vectorCoversShown === layer.prefixSplit);
         return delivered || (root._vectorCoversFrom === -1 && _vectorInkless());
     }
 
@@ -1133,16 +1136,18 @@ Item {
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
     property bool _textureReady: false
-    // The coverage of every paint the renderer has not delivered yet.
-    // A delivery hands the scene the bitmap of ONE paint, and under
-    // load the painter runs ahead of the renderer: naming the
-    // painter's CURRENT coverage at a delivery claimed a trimmed
-    // bitmap while the scene still held an older, full-interval one,
-    // and the live prefix stacked its raster over it — the seam's
-    // doubled ink, and a layer change's prefix admitted over the
-    // previous layer's bitmap. The queue is consumed WHOLE at the
-    // delivery, because a sync coalesces a burst into one texture.
-    property var _paintCovers: []
+    // Only one exact Canvas paint is in flight. Later progress polls
+    // coalesce into a single latest demand, and delivery is accepted
+    // only for the current static scene incarnation.
+    property bool _progressPaintInFlight: false
+    property bool _progressPaintQueued: false
+    property int _paintEventsSinceDelivery: 0
+    property var _paintPrepared: null
+    property string _progressWorldKey: ""
+    property string _progressLayerKey: ""
+    property int _progressWorldEpoch: 0
+    property int _vectorSplitShown: -1
+    property int _vectorWorldShown: -1
     // The hold's expiry waits one frame past the painted delivery:
     // the threaded canvas's scene texture commits in the sync AFTER
     // the painted signal, and a hide in the same sync would leave
@@ -1227,13 +1232,78 @@ Item {
         return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _baseOf(layers.current) ? 1 : 0, progress != null && progress.split != null ? progress.split : -1, root.showBase ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
+    function _worldKeyOf() {
+        var p = root.progress;
+        var layer = p != null && p.layers != null ? p.layers.current : null;
+        return [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, _motionsOf(layer), _viewKey(), root.showTravels ? 1 : 0, root.available() ? 1 : 0].join("|");
+    }
+
+    function _adoptProgressWorld() {
+        var p = root.progress;
+        var layerKey = [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1].join("|");
+        var key = _worldKeyOf();
+        if (key === root._progressWorldKey) {
+            return false;
+        }
+        var layerChanged = layerKey !== root._progressLayerKey;
+        root._progressLayerKey = layerKey;
+        root._progressWorldKey = key;
+        root._progressWorldEpoch += 1;
+        root._textureReady = false;
+        root._vectorCoversShown = -2;
+        root._vectorSplitShown = -1;
+        root._vectorWorldShown = -1;
+        root._progressDirty = true;
+        if (layerChanged) {
+            _retireRetained();
+            root._prefixWasShown = false;
+            root._fullRasterSeen = false;
+            root._heldFullSource = "";
+        }
+        return true;
+    }
+
+    function _requestProgressPaint() {
+        if (root._progressPaintInFlight) {
+            root._progressPaintQueued = true;
+            return;
+        }
+        root._progressPaintInFlight = true;
+        root._progressPaintQueued = false;
+        progressCanvas.requestPaint();
+    }
+
+    function _deliverProgressPaint() {
+        var receipt = root._paintPrepared;
+        var matches = root._paintEventsSinceDelivery === 1 && receipt != null && receipt.epoch === root._progressWorldEpoch && receipt.world === _worldKeyOf() && receipt.valid;
+        root._paintPrepared = null;
+        root._paintEventsSinceDelivery = 0;
+        root._progressPaintInFlight = false;
+        if (matches) {
+            root._vectorCoversShown = receipt.from;
+            root._vectorSplitShown = receipt.split;
+            root._vectorWorldShown = receipt.epoch;
+            root._textureReady = true;
+        } else {
+            root._textureReady = false;
+            root._progressPaintQueued = true;
+        }
+        return matches;
+    }
+
+    function _flushProgressPaint() {
+        if (root._progressPaintQueued) {
+            root._requestProgressPaint();
+        }
+    }
+
     function _progressKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
         // The raster, travel and PREFIX arrivals ride the key too:
         // the prefix's landing must reset the stack so the canvas
         // redraws only the tail beyond it.
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null && progress.sceneEpoch !== undefined ? progress.sceneEpoch : ""), (progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _holdPrefixThroughRepaint() {
@@ -1253,7 +1323,7 @@ Item {
             holdExpiryTimer.stop();
             root._prefixHold = true;
             if (!root._interactionActive) {
-                progressCanvas.requestPaint();
+                _requestProgressPaint();
             }
         }
     }
@@ -1263,6 +1333,7 @@ Item {
         // anchor change; the ghost Images bind themselves and need
         // no repaint gating. A canvas whose key still matches keeps
         // its image (the raster-reuse ruling above).
+        _adoptProgressWorld();
         var pendingKey = _pendingKeyOf();
         if (pendingKey !== root._pendingKey) {
             root._pendingKey = pendingKey;
@@ -1281,8 +1352,7 @@ Item {
             // hold, and the new layer's prefix would be admitted over
             // the old layer's picture (the reported jump straight to
             // the new prefix's boundary).
-            root._paintCovers = [];
-            progressCanvas.requestPaint();
+            _requestProgressPaint();
             _holdPrefixThroughRepaint();
         }
         // A mid-gesture ZOOM re-bakes the carried tail at the new
@@ -1295,7 +1365,9 @@ Item {
     }
 
     onProgressChanged: {
+        _adoptProgressWorld();
         if (root.progress == null || root.progress.layers == null) {
+            _requestProgressPaint();
             root._lastSplit = -1;
             root._anchor = -1;
             root._prefixHold = false;
@@ -1355,7 +1427,7 @@ Item {
                 root._progressDirty = true;
             } else {
                 root._progressKey = progressKey;
-                progressCanvas.requestPaint();
+                _requestProgressPaint();
             }
         }
         // The prefix's model-side validity may flip WITHOUT a key
@@ -1428,7 +1500,7 @@ Item {
             // interaction would stick on the warm raster. The camera
             // has settled, so nothing is left to jank; the delivery's
             // re-check rides the release path's own panExitCheck.
-            progressCanvas.requestPaint();
+            _requestProgressPaint();
             panExitCheck.restart();
         }
     }
@@ -1440,6 +1512,7 @@ Item {
         }
     }
     onShowTravelsChanged: {
+        _adoptProgressWorld();
         // The travels join the accumulated progress: a flip repaints
         // the progress canvas (its key carries the flag).
         var key = _progressKeyOf();
@@ -1455,8 +1528,7 @@ Item {
             // hold, and the new layer's prefix would be admitted over
             // the old layer's picture (the reported jump straight to
             // the new prefix's boundary).
-            root._paintCovers = [];
-            progressCanvas.requestPaint();
+            _requestProgressPaint();
             _holdPrefixThroughRepaint();
         }
     }
@@ -1656,7 +1728,7 @@ Item {
             onStatusChanged: {
                 root._rasterStatusReady = status === Image.Ready;
                 root._rasterStatusFailed = status === Image.Error;
-                progressCanvas.requestPaint();
+                _requestProgressPaint();
             }
             onVisibleChanged: {
                 // The entry's hold needs no handler: the standing
@@ -1782,7 +1854,7 @@ Item {
                     // vs 21 at lineScale 0.7). The repaint is FORCED
                     // here: the show can land after the key's paint
                     // already consumed itself.
-                    progressCanvas.requestPaint();
+                    _requestProgressPaint();
                 } else if (root._prefixWasShown && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.current.prefixValid === false && _leavingFull()) {
                     // The invalidation hold keeps the standing picture
                     // while the canvas repaints the full interval. The
@@ -1792,7 +1864,7 @@ Item {
                     // (the stale-zoom report's standing bake).
                     holdExpiryTimer.stop();
                     root._prefixHold = true;
-                    progressCanvas.requestPaint();
+                    _requestProgressPaint();
                 } else if (!root._prefixApplies()) {
                     // The hide is terminal (a full layer, a sub-prefix
                     // split, a layer change): the hold ends. The shown
@@ -1803,7 +1875,7 @@ Item {
             onStatusChanged: {
                 root._prefixStatusReady = status === Image.Ready;
                 root._prefixStatusFailed = status === Image.Error;
-                progressCanvas.requestPaint();
+                _requestProgressPaint();
                 if (status === Image.Ready && source !== "" && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root._partialPrefixReady()) {
                     // The handover freeze: the pixels that JUST
                     // uploaded become the retained previous — but
@@ -1869,22 +1941,14 @@ Item {
             // texture is the second half of the same bake, and the
             // canvas is the only producer holding the travels' ink
             // while it decodes.
-            opacity: _exactFullStanding() ? 0 : 1
+            opacity: _exactFullStanding() || (root._progressWorldKey !== "" && root._vectorWorldShown !== root._progressWorldEpoch) ? 0 : 1
             onPainted: {
-                // The paint's bitmap is delivered: its coverage record
-                // now describes the scene's committed texture. A held
-                // prefix over a delivered FULL bitmap can finally
-                // relinquesh — one frame later, after the scene pulls
-                // the texture (the expiry timer's beat).
-                // The record names the paint the renderer actually
-                // pulled: the oldest entry still undelivered. The
-                // queue is also drained by the world reset — a layer
-                // or view change repaints the canvas, and entries left
-                // from the previous world's paints would publish a
-                // coverage the new bitmap does not have, admitting the
-                // new layer's prefix over the old layer's picture.
-                root._vectorCoversShown = root._paintCovers.length > 0 ? root._paintCovers.shift() : root._vectorCoversFrom;
-                root._textureReady = true;
+                // A delivered texture is authoritative ONLY when one
+                // paint from this world can be unambiguously identified.
+                if (!root._deliverProgressPaint()) {
+                    root._flushProgressPaint();
+                    return;
+                }
                 if (root._entryPaintArmedHold) {
                     // The entry's delivery: the handover beat starts
                     // here — the full picture stands until one frame
@@ -1917,7 +1981,7 @@ Item {
                 // the trim feeds). Request it here, one paint after
                 // the delivery that completed the picture.
                 if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
-                    progressCanvas.requestPaint();
+                    _requestProgressPaint();
                 }
                 // The shown record's set edge, the publish cycle's own
                 // other half: the delivery that readied the prefix's
@@ -1929,298 +1993,302 @@ Item {
                     root._prefixWasShown = true;
                     root._prefixShownViewKey = _viewKey();
                 }
+                root._flushProgressPaint();
             }
             onPaint: {
-                var ctx = getContext("2d");
-                // This paint's delivery is queued before the paint knows
-                // whether it rebuilds the bitmap: a paint that returns
-                // early leaves the buffer as the last one's, so its
-                // delivery must name the same coverage. The assignment
-                // below rewrites the entry when this paint does rebuild
-                // it. The cap drops the oldest if no delivery ever
-                // comes, so the queue cannot grow without bound.
-                if (root._paintCovers.length >= 8) {
-                    root._paintCovers.shift();
-                }
-                root._paintCovers.push(root._vectorCoversFrom);
-                // The full state's HOLD: the model says the raster owns
-                // the picture, but its texture is still decoding, so
-                // the accumulated ink stands rather than blanking the
-                // printed history for the decode's length. A new
-                // layer's world never reaches here (its reset dropped
-                // the accumulation), nor does another view's: the
-                // standing ink was baked for the view it was painted
-                // at, and a pan holds nothing. The mirror ends the
-                // hold in the same beat the texture lands.
-                if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
-                    return;
-                }
-                // The settled single-owner trim is a REFINEMENT of an
-                // already presentation-complete picture (the full
-                // bitmap under the prefix, or the settled tail beside
-                // it — both invisible overlap): its repaint must not
-                // withdraw the standing readiness — the seek's ready
-                // commit waits for no trim, and a withdrawn flag hides
-                // the prefix, whose re-show requests yet another
-                // repaint (the settle's endless paint loop).
-                var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && _prefixFrom() > 0 && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === _prefixFrom());
-                // The committed texture is now one paint behind — the
-                // painted signal re-arms the confirmation when the
-                // bitmap is delivered.
-                if (!trimOnly) {
-                    root._textureReady = false;
-                }
-                // A paint begun while the 100% -> partial hold stands
-                // arms the handover beat for its delivery (the
-                // release must wait one beat after the LAST delivery,
-                // and the show hold's own arming rides this flag —
-                // once the handover is over the predicate is false
-                // and later polls never re-arm it).
-                root._entryPaintArmedHold = _fullPictureStanding() && _leavingFull();
-                if (root._entryPaintArmedHold) {
-                    root._prefixShowHold = true;
-                    holdExpiryTimer.stop();
-                }
-                if (!root.available() || mapping._plot == null) {
-                    // The unavailable surface clears its own ink — the
-                    // old raster must never read through the loading text
-                    // (the live report).
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._vectorCoversFrom = -1;
-                    return;
-                }
-                var layer = root.progress.layers.current;
-                if (layer == null) {
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._vectorCoversFrom = -1;
-                    return;
-                }
-                var split = root.progress.split;
-                // The FULL-layer case: the
-                // PlateLayer's OWN motions are the boundary, and the
-                // scene-graph Images own the picture — scrubVector is
-                // null by design here (a 100% seek, a detached whole
-                // layer), so a full raster hit never depends on the
-                // giant vector. The vector canvas clears so nothing
-                // doubles up.
-                //
-                // The clear waits for the raster's own TEXTURE: the
-                // image's decode is off-thread, so a clear on the
-                // predicate alone withdrew the whole printed history
-                // for the length of the decode (measured: the frame at
-                // the full split was bit-identical to the face with no
-                // raster at all). Until the texture lands the canvas IS
-                // the picture — the vector places the same stroke at
-                // the same row (the invariance sweep) — and the slot's
-                // own onStatusChanged repaints this canvas the moment
-                // it does.
-                if (_exactFullStanding()) {
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = split;
-                    root._paintsSinceReset += 1;
-                    root._vectorCoversFrom = -1;
-                    return;
-                }
-                var current = _scrubVector();
-                if (current == null) {
-                    // A full-state payload carries no vector, so this
-                    // paint can only clear. While the travels' texture
-                    // decodes the standing ink is the picture's other
-                    // half — hold it for the same view it was painted
-                    // at, and let the travels' arrival end the hold.
-                    if (_travelsPending() && _viewKey() === root._accumViewKey) {
+                var paintEpoch = root._progressWorldEpoch;
+                var paintWorld = _worldKeyOf();
+                root._paintEventsSinceDelivery += 1;
+                try {
+                    var ctx = getContext("2d");
+                    // The full state's HOLD: the model says the raster owns
+                    // the picture, but its texture is still decoding, so
+                    // the accumulated ink stands rather than blanking the
+                    // printed history for the decode's length. A new
+                    // layer's world never reaches here (its reset dropped
+                    // the accumulation), nor does another view's: the
+                    // standing ink was baked for the view it was painted
+                    // at, and a pan holds nothing. The mirror ends the
+                    // hold in the same beat the texture lands.
+                    if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
                         return;
                     }
-                    // No vector and no full raster yet (a cold full seek,
-                    // a 0% state): nothing to accumulate.
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._vectorCoversFrom = -1;
-                    return;
+                    // The settled single-owner trim is a REFINEMENT of an
+                    // already presentation-complete picture (the full
+                    // bitmap under the prefix, or the settled tail beside
+                    // it — both invisible overlap): its repaint must not
+                    // withdraw the standing readiness — the seek's ready
+                    // commit waits for no trim, and a withdrawn flag hides
+                    // the prefix, whose re-show requests yet another
+                    // repaint (the settle's endless paint loop).
+                    var trimOnly = root.progress != null && root._textureReady && root._lastSplit === root.progress.split && _prefixFrom() > 0 && (root._vectorCoversFrom === 0 || root._vectorCoversFrom === _prefixFrom());
+                    // The committed texture is now one paint behind — the
+                    // painted signal re-arms the confirmation when the
+                    // bitmap is delivered.
+                    if (!trimOnly) {
+                        root._textureReady = false;
+                    }
+                    // A paint begun while the 100% -> partial hold stands
+                    // arms the handover beat for its delivery (the
+                    // release must wait one beat after the LAST delivery,
+                    // and the show hold's own arming rides this flag —
+                    // once the handover is over the predicate is false
+                    // and later polls never re-arm it).
+                    root._entryPaintArmedHold = _fullPictureStanding() && _leavingFull();
+                    if (root._entryPaintArmedHold) {
+                        root._prefixShowHold = true;
+                        holdExpiryTimer.stop();
+                    }
+                    if (!root.available() || mapping._plot == null) {
+                        // The unavailable surface clears its own ink — the
+                        // old raster must never read through the loading text
+                        // (the live report).
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._vectorCoversFrom = -1;
+                        return;
+                    }
+                    var layer = root.progress.layers.current;
+                    if (layer == null) {
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._vectorCoversFrom = -1;
+                        return;
+                    }
+                    var split = root.progress.split;
+                    // The FULL-layer case: the
+                    // PlateLayer's OWN motions are the boundary, and the
+                    // scene-graph Images own the picture — scrubVector is
+                    // null by design here (a 100% seek, a detached whole
+                    // layer), so a full raster hit never depends on the
+                    // giant vector. The vector canvas clears so nothing
+                    // doubles up.
+                    //
+                    // The clear waits for the raster's own TEXTURE: the
+                    // image's decode is off-thread, so a clear on the
+                    // predicate alone withdrew the whole printed history
+                    // for the length of the decode (measured: the frame at
+                    // the full split was bit-identical to the face with no
+                    // raster at all). Until the texture lands the canvas IS
+                    // the picture — the vector places the same stroke at
+                    // the same row (the invariance sweep) — and the slot's
+                    // own onStatusChanged repaints this canvas the moment
+                    // it does.
+                    if (_exactFullStanding()) {
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = split;
+                        root._paintsSinceReset += 1;
+                        root._vectorCoversFrom = -1;
+                        return;
+                    }
+                    var current = _scrubVector();
+                    if (current == null) {
+                        // A full-state payload carries no vector, so this
+                        // paint can only clear. While the travels' texture
+                        // decodes the standing ink is the picture's other
+                        // half — hold it for the same view it was painted
+                        // at, and let the travels' arrival end the hold.
+                        if (_travelsPending() && _viewKey() === root._accumViewKey) {
+                            return;
+                        }
+                        // No vector and no full raster yet (a cold full seek,
+                        // a 0% state): nothing to accumulate.
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._vectorCoversFrom = -1;
+                        return;
+                    }
+                    if (split == null) {
+                        // No boundary to draw at — a print without a
+                        // position. The layer is its whole base and any
+                        // accumulated fill goes with the split.
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._progressDirty = false;
+                        root._vectorCoversFrom = -1;
+                        return;
+                    }
+                    // A backward split (a restart), a toggle flip, an anchor
+                    // change or a SAME-ANCHOR payload swap clears the image
+                    // (the delta path assumes the bitmap holds the previous
+                    // vector's ink — a swapped source never drew it); the
+                    // accumulation also re-rasters fully on its own cadence
+                    // so it cannot drift. Otherwise the canvas keeps its
+                    // image and only the new delta is stroked on top.
+                    var vectorMotions = _motionsOf(current);
+                    var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
+                    var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
+                    root._vectorSourceMotions = vectorMotions;
+                    root._vectorSourceClasses = vectorClasses;
+                    var prefixFrom = _prefixFrom();
+                    if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions && Math.max(root._lastSplit, root._retainedPrefixSplit) >= split) {
+                        // The stale prefix is being REPLACED (a fresh URL is
+                        // in flight): hold the complete old composition —
+                        // the held prefix plus this bitmap's old tail — until
+                        // the replacement's Image lands and re-triggers the
+                        // paint (the atomic previous -> next handoff — the
+                        // review's reverse-scrub hybrid frame). A repaint
+                        // here would clear the old tail and expose the stale
+                        // prefix alone. The skip precedes the reset below.
+                        root._progressDirty = true;
+                        return;
+                    }
+                    var resetPainted = false;
+                    // The anti-drift re-raster: the accumulated delta bitmap
+                    // fully redraws on its own cadence so it cannot drift.
+                    // With a prefix owning the history the cadence stretches
+                    // wide — every prefix refresh re-establishes the picture
+                    // (the 3% incremental refreshes), and a full re-raster
+                    // mid-drag is the live hitch the forward scrub showed
+                    // (a ~200 ms UI-thread walk every 20 paints on a dense
+                    // layer).
+                    // The anti-drift re-raster: the accumulated delta bitmap
+                    // fully redraws on its own cadence so it cannot drift.
+                    // With a prefix owning the history the cadence stretches
+                    // wide — every prefix refresh re-establishes the picture
+                    // (the 3% incremental refreshes), and a full re-raster
+                    // mid-drag is the live hitch the forward scrub showed
+                    // on a dense layer.
+                    var resetCadence = (root._prefixWasShown || _prefixModelReady()) ? 200 : 20;
+                    // A view change is a re-bake, never a delta: the
+                    // accumulated bitmap holds the old transform's ink, and
+                    // stroking the new transform's delta over it leaves the
+                    // same stroke at two rows. Read here — after the early
+                    // returns that clear the bitmap whole — so a paint that
+                    // skipped the reset still sees the change next time.
+                    var viewRebaked = _viewKey() !== root._accumViewKey;
+                    root._accumViewKey = _viewKey();
+                    if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged || viewRebaked) {
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._progressDirty = false;
+                        root._paintsSinceReset = 0;
+                        resetPainted = true;
+                    }
+                    // The printed portion, coloured in per feature class from
+                    // the last painted split up to the live one (the H3
+                    // floor). The partial scrub keeps the vector delta path;
+                    // a native prefix below shortens the walk to its tail.
+                    var coversBefore = root._vectorCoversFrom;
+                    if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
+                        // The prefix no longer owns the history (loading,
+                        // stale, or invalidated) but the canvas does not hold
+                        // the full picture (nothing painted yet, or only a
+                        // tail): repaint the FULL interval — a partial bitmap
+                        // under a vanished prefix is the live scrub's missing
+                        // history.
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._progressDirty = false;
+                        resetPainted = true;
+                    } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
+                        // The prefix is Ready over the canvas's FULL bitmap (a
+                        // re-show after a scrub through 100% or another layer):
+                        // trim to the prefix's own boundary — the commit lag's
+                        // stale texture is the full bitmap, complete either
+                        // way, and every scrub path settles to the SAME
+                        // composition.
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._progressDirty = false;
+                        resetPainted = true;
+                    } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom !== 0 && root._vectorCoversFrom !== prefixFrom) {
+                        // The boundary-advance transition: the canvas holds
+                        // the OLD tail under the NEW prefix's boundary (the
+                        // readiness gate rejects the hybrid, and the
+                        // Loading-phase full repaint is timing-dependent).
+                        // Repaint the tail from the new boundary — the
+                        // retained picture stands until this delivery
+                        // completes the joint swap.
+                        ctx.reset();
+                        ctx.clearRect(0, 0, width, height);
+                        root._lastSplit = -1;
+                        root._paintsSinceReset = 0;
+                        root._progressDirty = false;
+                        resetPainted = true;
+                    }
+                    // A prefix that has never shown leaves the WHOLE interval
+                    // to the canvas — its first paint must cover from the
+                    // layer's start, not merely from the prefix's boundary.
+                    // The trim above (only ever over a full bitmap) paints
+                    // from the boundary instead.
+                    var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
+                    var fresh = resetPainted || root._lastSplit < 0;
+                    _drawLayer(ctx, current, 1.0, split, false, from);
+                    // The bitmap's coverage below this paint's start: a full
+                    // paint covers from the layer's start, a tail paint
+                    // relies on the prefix for the rest, a delta paint
+                    // extends the existing coverage. A vector with no
+                    // geometry records nothing: an empty bitmap must never
+                    // read as a full one (the prefix would trust a hole).
+                    if (fresh) {
+                        root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
+                    }
+                    // The freeze rides the paint, not only the delivery: a
+                    // bitmap starting exactly at the prefix's boundary is
+                    // the composition formed, and the pixels it was built
+                    // against must be held from HERE. A boundary advance
+                    // published while this paint is in flight would
+                    // otherwise replace the live image's source with a
+                    // still-loading one under an EMPTY record — and the
+                    // interior below the boundary belongs to that record
+                    // the moment the live image blinks. The delivery's own
+                    // freeze (the joint readiness) still covers the paints
+                    // that land before the prefix's upload.
+                    if (from > 0 && from === prefixFrom && layer.prefixData !== undefined && layer.prefixData !== "" && (root._retainedPrefixSource !== layer.prefixData || root._retainedPrefixSplit !== layer.prefixSplit || root._retainedPrefixAnchor !== root.progress.anchor)) {
+                        root._retainedPrefixSource = layer.prefixData;
+                        root._retainedPrefixSplit = layer.prefixSplit;
+                        root._retainedPrefixAnchor = root.progress.anchor;
+                    }
+                    // The travels: the lines only. CURRENT layer only, and
+                    // only where the toolhead has already passed (the live
+                    // rulings). The prefix carries NO travels, so a cleared
+                    // canvas redraws them from the layer's start — the
+                    // travels below the prefix boundary stay visible. The
+                    // accumulated delta path keeps its own start (the
+                    // canvas already holds the printed travels).
+                    if (root.showTravels) {
+                        // The prefix carries NO travels: a cleared canvas
+                        // redraws them from the layer's start, and a NEW
+                        // travel source does too — the delta path alone
+                        // would assume ink the canvas never drew (the
+                        // travels arriving with the prefix already in
+                        // place).
+                        var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
+                        var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
+                        var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
+                        root._travelsSourceMotions = sourceMotions;
+                        root._travelsSourceReady = sourceReady;
+                        var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
+                        _drawTravels(ctx, current.travels, split, travelFrom);
+                    }
+                    root._lastSplit = split;
+                    root._paintsSinceReset += 1;
+                } finally {
+                    // A return that retained the previous bitmap is
+                    // still a paint delivery, with the same coverage.
+                    root._paintPrepared = {
+                        epoch: paintEpoch,
+                        world: paintWorld,
+                        valid: _worldKeyOf() === paintWorld,
+                        from: root._vectorCoversFrom,
+                        split: root._lastSplit
+                    };
                 }
-                if (split == null) {
-                    // No boundary to draw at — a print without a
-                    // position. The layer is its whole base and any
-                    // accumulated fill goes with the split.
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._progressDirty = false;
-                    root._vectorCoversFrom = -1;
-                    return;
-                }
-                // A backward split (a restart), a toggle flip, an anchor
-                // change or a SAME-ANCHOR payload swap clears the image
-                // (the delta path assumes the bitmap holds the previous
-                // vector's ink — a swapped source never drew it); the
-                // accumulation also re-rasters fully on its own cadence
-                // so it cannot drift. Otherwise the canvas keeps its
-                // image and only the new delta is stroked on top.
-                var vectorMotions = _motionsOf(current);
-                var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
-                var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
-                root._vectorSourceMotions = vectorMotions;
-                root._vectorSourceClasses = vectorClasses;
-                var prefixFrom = _prefixFrom();
-                if (prefixFrom <= 0 && split > 0 && (root._prefixWasShown || (root._retainedPrefixSource !== "" && root._retainedPrefixApplies())) && root._vectorCoversFrom !== 0 && layer.prefixData !== undefined && layer.prefixData !== "" && split != null && split < layer.motions && Math.max(root._lastSplit, root._retainedPrefixSplit) >= split) {
-                    // The stale prefix is being REPLACED (a fresh URL is
-                    // in flight): hold the complete old composition —
-                    // the held prefix plus this bitmap's old tail — until
-                    // the replacement's Image lands and re-triggers the
-                    // paint (the atomic previous -> next handoff — the
-                    // review's reverse-scrub hybrid frame). A repaint
-                    // here would clear the old tail and expose the stale
-                    // prefix alone. The skip precedes the reset below.
-                    root._progressDirty = true;
-                    return;
-                }
-                var resetPainted = false;
-                // The anti-drift re-raster: the accumulated delta bitmap
-                // fully redraws on its own cadence so it cannot drift.
-                // With a prefix owning the history the cadence stretches
-                // wide — every prefix refresh re-establishes the picture
-                // (the 3% incremental refreshes), and a full re-raster
-                // mid-drag is the live hitch the forward scrub showed
-                // (a ~200 ms UI-thread walk every 20 paints on a dense
-                // layer).
-                // The anti-drift re-raster: the accumulated delta bitmap
-                // fully redraws on its own cadence so it cannot drift.
-                // With a prefix owning the history the cadence stretches
-                // wide — every prefix refresh re-establishes the picture
-                // (the 3% incremental refreshes), and a full re-raster
-                // mid-drag is the live hitch the forward scrub showed
-                // on a dense layer.
-                var resetCadence = (root._prefixWasShown || _prefixModelReady()) ? 200 : 20;
-                // A view change is a re-bake, never a delta: the
-                // accumulated bitmap holds the old transform's ink, and
-                // stroking the new transform's delta over it leaves the
-                // same stroke at two rows. Read here — after the early
-                // returns that clear the bitmap whole — so a paint that
-                // skipped the reset still sees the change next time.
-                var viewRebaked = _viewKey() !== root._accumViewKey;
-                root._accumViewKey = _viewKey();
-                if (root._progressDirty || split < root._lastSplit || root._paintsSinceReset >= resetCadence || vectorSourceChanged || viewRebaked) {
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._progressDirty = false;
-                    root._paintsSinceReset = 0;
-                    resetPainted = true;
-                }
-                // The printed portion, coloured in per feature class from
-                // the last painted split up to the live one (the H3
-                // floor). The partial scrub keeps the vector delta path;
-                // a native prefix below shortens the walk to its tail.
-                var coversBefore = root._vectorCoversFrom;
-                if (!resetPainted && prefixFrom <= 0 && root._vectorCoversFrom !== 0) {
-                    // The prefix no longer owns the history (loading,
-                    // stale, or invalidated) but the canvas does not hold
-                    // the full picture (nothing painted yet, or only a
-                    // tail): repaint the FULL interval — a partial bitmap
-                    // under a vanished prefix is the live scrub's missing
-                    // history.
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._progressDirty = false;
-                    resetPainted = true;
-                } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom === 0) {
-                    // The prefix is Ready over the canvas's FULL bitmap (a
-                    // re-show after a scrub through 100% or another layer):
-                    // trim to the prefix's own boundary — the commit lag's
-                    // stale texture is the full bitmap, complete either
-                    // way, and every scrub path settles to the SAME
-                    // composition.
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._progressDirty = false;
-                    resetPainted = true;
-                } else if (!resetPainted && prefixFrom > 0 && root._vectorCoversFrom !== 0 && root._vectorCoversFrom !== prefixFrom) {
-                    // The boundary-advance transition: the canvas holds
-                    // the OLD tail under the NEW prefix's boundary (the
-                    // readiness gate rejects the hybrid, and the
-                    // Loading-phase full repaint is timing-dependent).
-                    // Repaint the tail from the new boundary — the
-                    // retained picture stands until this delivery
-                    // completes the joint swap.
-                    ctx.reset();
-                    ctx.clearRect(0, 0, width, height);
-                    root._lastSplit = -1;
-                    root._paintsSinceReset = 0;
-                    root._progressDirty = false;
-                    resetPainted = true;
-                }
-                // A prefix that has never shown leaves the WHOLE interval
-                // to the canvas — its first paint must cover from the
-                // layer's start, not merely from the prefix's boundary.
-                // The trim above (only ever over a full bitmap) paints
-                // from the boundary instead.
-                var from = resetPainted && prefixFrom > 0 && coversBefore === 0 ? prefixFrom : Math.max(root._lastSplit, root._prefixWasShown ? prefixFrom : -1);
-                var fresh = resetPainted || root._lastSplit < 0;
-                _drawLayer(ctx, current, 1.0, split, false, from);
-                // The bitmap's coverage below this paint's start: a full
-                // paint covers from the layer's start, a tail paint
-                // relies on the prefix for the rest, a delta paint
-                // extends the existing coverage. A vector with no
-                // geometry records nothing: an empty bitmap must never
-                // read as a full one (the prefix would trust a hole).
-                if (fresh) {
-                    root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
-                    root._paintCovers[root._paintCovers.length - 1] = root._vectorCoversFrom;
-                }
-                // The freeze rides the paint, not only the delivery: a
-                // bitmap starting exactly at the prefix's boundary is
-                // the composition formed, and the pixels it was built
-                // against must be held from HERE. A boundary advance
-                // published while this paint is in flight would
-                // otherwise replace the live image's source with a
-                // still-loading one under an EMPTY record — and the
-                // interior below the boundary belongs to that record
-                // the moment the live image blinks. The delivery's own
-                // freeze (the joint readiness) still covers the paints
-                // that land before the prefix's upload.
-                if (from > 0 && from === prefixFrom && layer.prefixData !== undefined && layer.prefixData !== "" && (root._retainedPrefixSource !== layer.prefixData || root._retainedPrefixSplit !== layer.prefixSplit || root._retainedPrefixAnchor !== root.progress.anchor)) {
-                    root._retainedPrefixSource = layer.prefixData;
-                    root._retainedPrefixSplit = layer.prefixSplit;
-                    root._retainedPrefixAnchor = root.progress.anchor;
-                }
-                // The travels: the lines only. CURRENT layer only, and
-                // only where the toolhead has already passed (the live
-                // rulings). The prefix carries NO travels, so a cleared
-                // canvas redraws them from the layer's start — the
-                // travels below the prefix boundary stay visible. The
-                // accumulated delta path keeps its own start (the
-                // canvas already holds the printed travels).
-                if (root.showTravels) {
-                    // The prefix carries NO travels: a cleared canvas
-                    // redraws them from the layer's start, and a NEW
-                    // travel source does too — the delta path alone
-                    // would assume ink the canvas never drew (the
-                    // travels arriving with the prefix already in
-                    // place).
-                    var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
-                    var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
-                    var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
-                    root._travelsSourceMotions = sourceMotions;
-                    root._travelsSourceReady = sourceReady;
-                    var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
-                    _drawTravels(ctx, current.travels, split, travelFrom);
-                }
-                root._lastSplit = split;
-                root._paintsSinceReset += 1;
             }
         }
     }
