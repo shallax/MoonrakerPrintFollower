@@ -2230,12 +2230,6 @@ Item {
     }
 
     Canvas {
-        id: carryCanvas                }
-            }
-        }
-    }
-
-    Canvas {
         id: carryCanvas
         // The carried tail (the gesture's frozen picture): the
         // printed lines since the warm raster's split, re-painted
