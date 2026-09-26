@@ -5318,24 +5318,27 @@ class PlateFaceRenderTests(RealEngineTestCase):
         face.setProperty("_textureReady", True)
         face.setProperty("_vectorCoversFrom", 0)
         face.setProperty("_vectorCoversShown", 0)
+        face.setProperty("_vectorWorldShown", face.property("_progressWorldEpoch"))
+        face.setProperty("_vectorSplitShown", 5)
         face.setProperty("_lastSplit", 5)
         self.assertFalse(predicate(),
-                         "an older split's delivery readied the prefix")
-        # The current split's delivery lands — readiness follows.
+                         "an older split's delivered frame readied the prefix")
+        # The painter may have already advanced to 18; only the
+        # DELIVERED receipt can allow the prefix to stand on that bitmap.
         face.setProperty("_lastSplit", 18)
+        self.assertFalse(predicate(),
+                         "the painter's split impersonated delivered pixels")
+        face.setProperty("_vectorSplitShown", 18)
         self.assertTrue(predicate(),
                         "the current delivery never readied the prefix")
 
-    def test_a_delivery_publishes_the_paint_the_scene_actually_pulled(self):
-        # The seam's doubled ink: a delivery published the painter's
-        # CURRENT coverage for a bitmap an EARLIER paint produced, so
-        # the record claimed a trimmed canvas while the scene still
-        # showed the full-interval one and the live prefix stacked its
-        # raster over it (band mass +13%, hundreds of frames under
-        # load). The state needs no load to reach — a grab's own paint
-        # is not delivered by that grab, so "a paint in flight while
-        # the painter has already committed a later coverage" is
-        # planted here and the delivery is read as it lands.
+    def test_a_stale_scene_or_ambiguous_canvas_delivery_cannot_admit_a_prefix(self):
+        # A pure delivery-controller probe through the REAL QML engine.
+        # The backend may publish a new layer while a previous paint
+        # is still in the render thread. Neither the old paint nor
+        # multiple paints collapsed into one delivery is evidence
+        # that the new layer's Canvas texture is presentation-ready.
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
         self.pump(10)
@@ -5350,76 +5353,64 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(18)
-        # The settle's landmark is the face's own show record, not a
-        # beat: the prefix's upload is off-thread, so any budget that
-        # fits one host reads the front gates still shut on another.
-        # The timeout is a hang guard; the assertion is what fails when
-        # the prefix never shows.
         deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and \
-                not face.property("_prefixWasShown"):
+        while time.monotonic() < deadline and not face.property("_prefixWasShown"):
             self._pump_ms(10)
         self.assertTrue(face.property("_prefixWasShown"),
-                        "the settled prefix never showed")
-        self.assertEqual(face.property("_vectorCoversShown"), 10,
-                         "the settled delivery is not the trim")
+                        "the baseline prefix was never presented")
+        epoch = face.property("_progressWorldEpoch")
+        world = face.property("_progressWorldKey")
+        self.assertGreater(epoch, 0)
+        self.assertTrue(world)
 
-        def covers():
-            value = face.property("_paintCovers")
-            if hasattr(value, "toVariant"):
-                value = value.toVariant()
-            return list(value or [])
+        def deliver(receipt, paints=1):
+            face.setProperty("_paintPrepared", receipt)
+            face.setProperty("_paintEventsSinceDelivery", paints)
+            face.setProperty("_progressPaintInFlight", True)
+            result = QMetaObject.invokeMethod(
+                face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant))
+            self.assertIsInstance(result, bool)
+            return result
 
-        # The record each delivery publishes is read AT the delivery:
-        # the drain's first sync carries a burst of paints, and a
-        # sampled read of the face's record then sees only the burst's
-        # last one — the full-interval bitmap's record is published and
-        # consumed inside one event turn.
-        published = []
-        for canvas in [item for item in face.findChildren(QQuickItem)
-                       if item.metaObject().className() == "QQuickCanvasItem"]:
-            canvas.painted.connect(
-                lambda: published.append(face.property("_vectorCoversShown")))
-        # The state under test, planted: the scene holds the
-        # full-interval bitmap and its delivery is still in flight,
-        # while the painter commits the trim on top of it. The settle's
-        # own queue bookkeeping is not that state, so it is set aside
-        # rather than asserted.
-        face.setProperty("_paintCovers", [])
-        face.setProperty("_paintCovers", [0])
-        face.setProperty("_vectorCoversFrom", 0)
-        # The split advance is what makes the canvas dirty, so the grab
-        # below paints — and that paint is undelivered, leaving the
-        # plant's full-interval entry at the head with the paint's own
-        # trim entry behind it.
-        self._printer.setSplit(12)
-        window.grabWindow()
-        self.assertEqual(covers(), [0, 10],
-                         "the forced paint did not leave the full-interval "
-                         "bitmap's record at the head of the undelivered "
-                         "queue (queue %r)" % (covers(),))
-        self.assertEqual(face.property("_vectorCoversFrom"), 10,
-                         "the paint did not commit the trim: the delivered "
-                         "and the painter's records are indistinguishable "
-                         "here (painter %r)"
-                         % (face.property("_vectorCoversFrom"),))
+        correct = {"epoch": epoch, "world": world, "valid": True,
+                   "from": 10, "split": 18}
+        face.setProperty("_textureReady", False)
+        face.setProperty("_vectorCoversShown", -2)
+        self.assertFalse(deliver({**correct, "epoch": epoch - 1}),
+                         "an earlier layer's callback certified this one")
+        self.assertNotEqual(face.property("_vectorCoversShown"), 10)
 
-        # The delivery of a canvas paint rides the renderer's own sync,
-        # so keep rendering until one lands rather than assuming a pump
-        # is enough. The backlog falls one paint per delivery, so the
-        # FIRST delivery after the plant publishes the full-interval
-        # bitmap's own record; a face that names the painter's latest
-        # record instead publishes the trim for the bitmap the scene
-        # holds, and the prefix stacks over it. The wait's timeout is a
-        # hang guard, not a budget: the assertion is what fails when the
-        # head's record is never published.
-        self._wait_until(window, lambda image: 0 in published, timeout=10.0)
-        self.assertIn(0, published,
-                      "the delivery of the full-interval paint never "
-                      "published that paint's own coverage, so the record "
-                      "names a bitmap the scene does not hold and the "
-                      "prefix stacks over the full one (records published: "
-                      "%r)" % (published,))
+        face.setProperty("_progressPaintQueued", False)
+        self.assertFalse(deliver(correct, paints=2),
+                         "two paints collapsed into one ambiguous texture")
+        self.assertNotEqual(face.property("_vectorCoversShown"), 10)
+
+        face.setProperty("_progressPaintQueued", False)
+        self.assertTrue(deliver(correct), "a matching delivery was refused")
+        self.assertEqual(face.property("_vectorCoversShown"), 10)
+        self.assertEqual(face.property("_vectorSplitShown"), 18)
+        self.assertEqual(face.property("_vectorWorldShown"), epoch)
+
+        # Advancing the print or layer incarnation invalidates the
+        # previously delivered bitmap without changing its motion
+        # count or accidentally reusing a previous anchor's bytes.
+        face.setProperty("_progressWorldEpoch", epoch + 1)
+        face.setProperty("_textureReady", False)
+        face.setProperty("_vectorCoversShown", -2)
+        self.assertFalse(deliver(correct),
+                         "the new generation accepted stale Canvas pixels")
+        self.assertEqual(face.property("_vectorCoversShown"), -2)
+
+    def test_exact_canvas_coalesces_progress_while_one_paint_is_in_flight(self):
+        from PyQt6.QtCore import QMetaObject
+        monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("_progressPaintInFlight", True)
+        face.setProperty("_progressPaintQueued", False)
+        QMetaObject.invokeMethod(face, "_requestProgressPaint")
+        QMetaObject.invokeMethod(face, "_requestProgressPaint")
+        self.assertTrue(face.property("_progressPaintQueued"),
+                        "rapid live polls did not coalesce")
+        self.assertTrue(face.property("_progressPaintInFlight"))
 
     _PARITY_ORIENTATIONS = {
         # The prefix boundary sits at motion 9 (bed position 110 or
