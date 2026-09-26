@@ -1784,6 +1784,22 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.assertFalse(os.path.exists(held),
                          "the hold outlived the gesture that made it")
 
+    def test_the_hold_report_is_silent_until_the_seek_trace_asks(self):
+        # The barrier's hold report is a diagnostic, so it is gated by
+        # the seek trace's own switch: a healthy gesture must not fill
+        # the log, and the report has to reach it once asked for.
+        module = self.qt.load("MoonrakerMonitorModel")
+        self.model = self.build()
+        self.model._seek_trace_enabled = False
+        with patch.object(module, "Logger") as logger:
+            self.model.followerHoldReport("held split=1")
+        logger.log.assert_not_called()
+        self.model._seek_trace_enabled = True
+        with patch.object(module, "Logger") as logger:
+            self.model.followerHoldReport("held split=1")
+        logger.log.assert_called_once()
+        self.model._seek_trace_enabled = False
+
     @staticmethod
     def cancelled_event():
         import threading

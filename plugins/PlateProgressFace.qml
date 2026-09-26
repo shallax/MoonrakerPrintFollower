@@ -505,9 +505,9 @@ Item {
             }
             root._interactionActive = true;
             root._holdTicks = 0;
-            // One line per gesture, at the entry: it proves THIS build
-            // carries the report, and it records the state the hold
-            // started from — a stick needs no separate marker.
+            // One line per gesture, at the entry: it records the state
+            // the hold started from, so a stick needs no separate
+            // marker. Gated by the seek trace's switch at the model.
             if (root.printerModel != null) {
                 root.printerModel.followerHoldReport("entered " + _holdTerms());
             }
