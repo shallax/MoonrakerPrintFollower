@@ -5275,8 +5275,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         # Settle on a partial split so the prefix model publishes and
         # the prefix Image uploads — the predicate's own front gates.
+        # The settle's landmark is the face's own shown record, not a
+        # fixed beat: the prefix's upload is off-thread, so any beat
+        # that fits one host reads the front gates still shut on another
+        # and the assertion below fails on the state it was waiting for.
+        # The timeout is a hang guard; this assertion is what fails when
+        # the prefix never shows.
         self._printer.setSplit(18)
-        self._pump_ms(300)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and \
+                not face.property("_prefixWasShown"):
+            self._pump_ms(10)
         self.assertTrue(face.property("_prefixWasShown"),
                         "the settled prefix never showed")
 
@@ -7469,10 +7478,18 @@ class PlateFaceRenderTests(RealEngineTestCase):
         status_of = self._status_probe()
         self._printer.setScrub(None)
         self._printer.setSplit(26)
-        travels_item = None
+        # The bind first, with NO event pass and NO sleep before it: the
+        # flip binds the travels' source synchronously, and the sample
+        # that has to land inside the decode is the FIRST one. An event
+        # pass or a wall-clock sleep here costs tens of milliseconds on
+        # a wide face, and a host whose scene work is slower than its
+        # decode spends the whole window there — the first ruling then
+        # reads Ready and the census has nothing left to judge. The
+        # pump (never the sleep) is the hang guard for the bind itself.
+        travels_item = self._image_with_source(face, "slow-travels")
         deadline = time.monotonic() + 5.0
         while travels_item is None and time.monotonic() < deadline:
-            self._pump_ms(2)
+            self.pump(2)
             travels_item = self._image_with_source(face, "slow-travels")
         self.assertIsNotNone(travels_item,
                              "the travels Image never bound the slow source")
@@ -7485,7 +7502,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         frames = []
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
-            self.pump(5)
+            # No event pass before the FIRST grab either, for the same
+            # reason: the frame the window opens on is the first one the
+            # census can rule, and a pass spends window it cannot see.
+            if frames:
+                self.pump(5)
             image = window.grabWindow()
             # The status AFTER the grab: a texture that has not landed by
             # the read cannot have stood in the picture the grab returned.
