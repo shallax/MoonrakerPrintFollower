@@ -3259,7 +3259,8 @@ Component {
                                 "method": "motion index",
                                 "navigationData": root.printer.plateNavigationData,
                                 "navigationSplit": root.printer.plateNavigationSplit,
-                                "navigationBacking": root.printer.plateNavigationBacking
+                                "navigationBacking": root.printer.plateNavigationBacking,
+                                "sceneEpoch": root.printer.plateSceneEpoch
                             }) : null
                         dot: root.printer != null ? root.printer.plateDot : null
                         // The persisted global view settings (the live

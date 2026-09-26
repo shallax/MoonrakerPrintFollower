@@ -659,3 +659,11 @@ native-checkpoint or render-result publications. After movement settles,
 resume only the latest navigation demand. An exact scene rebuild is allowed
 behind the warm picture throughout the gesture; the presentation controller
 alone decides when a complete frame can replace it.
+
+### Exact scene incarnation
+
+The Monitor publishes a stable print/layer incarnation token alongside the
+volatile printed-motion split. It changes when the print or surface layer
+changes, not on every nozzle poll; consumers must distinguish the static
+scene from within-layer progress. A raster or Canvas completion for a
+previous incarnation must never claim ownership of the current scene.

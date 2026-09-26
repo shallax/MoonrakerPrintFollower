@@ -531,7 +531,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                   "plateLayerCount", "plateLayerMotionCount",
                                   "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable", "plateLiveScrubVector",
                                   "plateNavigationData", "plateNavigationSplit",
-                                  "plateNavigationBacking")),
+                                  "plateNavigationBacking", "plateSceneEpoch")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -1485,6 +1485,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # carried tail paints at the same factor so the two
             # present pixel-equal through one display transform.
             values["plateNavigationBacking"] = surface.nav.get("backing", 4.0)
+            values["plateSceneEpoch"] = "%d:%d" % (surface.job_epoch, surface.anchor_epoch)
             self._schedule_navigation(surface)
         else:
             values["plateLayers"] = self._values.get("plateLayers", {})
@@ -1497,6 +1498,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateNavigationData"] = self._values.get("plateNavigationData", "")
             values["plateNavigationSplit"] = self._values.get("plateNavigationSplit")
             values["plateNavigationBacking"] = self._values.get("plateNavigationBacking", 4.0)
+            values["plateSceneEpoch"] = self._values.get("plateSceneEpoch", "")
         # The mini's own view: the live payload, always (the live
         # request). The section's collapse gates it — a collapsed
         # mini never re-renders.
@@ -1798,6 +1800,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateNavigationData = value_property(str, "plateNavigationData", plateProgressChanged, "")
     plateNavigationSplit = value_property("QVariant", "plateNavigationSplit", plateProgressChanged, None)
     plateNavigationBacking = value_property("QVariant", "plateNavigationBacking", plateProgressChanged, 4.0)
+    plateSceneEpoch = value_property(str, "plateSceneEpoch", plateProgressChanged, "")
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
     filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
