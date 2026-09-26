@@ -1235,24 +1235,39 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
         # decode: a decode that finished inside the interval must leave
         # the frame behind it for the tick, or a fast decode would set
         # the display rate instead of the rate the pane asked for.
-        def ten_ms(frame):
-            time.sleep(0.01)
+        def fast(frame):
             return QImage.fromData(frame)
 
-        self._patch_decode(ten_ms)
-        self.item.setTargetFps(20.0)  # a 50 ms cap
+        self._patch_decode(fast)
+        # The cap is wide on purpose: "inside the interval" has to hold
+        # by construction. A loaded runner stretches a decode past a
+        # narrow cap, and the hand-over that follows is legal by the
+        # cap's own rule — the pin would fail having tested nothing.
+        self.item.setTargetFps(1.0)  # a 1000 ms cap
         self._start()
+        self.assertEqual(self.item._render_timer.interval(), 1000)
         self.item._render_timer.stop()  # every tick from here is by hand
         self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
-        self.item._render()  # handed over; this decode takes 10 ms
+        self.item._render()  # handed over; this decode is a few ms
         # The next frame lands well inside the interval, so it is pending
         # when the decode returns.
         self._reply().deliver(_multipart(_jpeg(40, 30, shade=41)))
+        # A wait, not a sample: an install is all this waits for, and the
+        # count is asserted below where a second one is the failure.
         self.assertTrue(
-            self._drain_until(lambda: self.item._decodes_rendered == 1),
+            self._drain_until(lambda: self.item._decodes_rendered >= 1),
             "the first decode never reached the screen")
-        # 10 ms of the 50 ms cap have passed: 30 ms of draining is long
-        # past a second decode, and the frame must still be pending.
+        # The premise, checked rather than assumed: the decode returned
+        # with the interval still running, which is the case this pin is
+        # about and the case a stalled runner can silently turn into its
+        # opposite.
+        self.assertLess(
+            time.perf_counter() - self.item._last_dispatch_at,
+            self.item._render_timer.interval() / 1000.0,
+            "the completion landed outside the cap: the pin's premise "
+            "(a completion inside the interval) never held")
+        # 30 ms of draining is long past a decode of a few ms, and the
+        # frame must still be pending.
         self._drain(30)
         self.assertEqual(self.item._decodes_rendered, 1,
                          "the completion handed a frame over inside the cap")

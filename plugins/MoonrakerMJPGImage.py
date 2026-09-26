@@ -904,8 +904,13 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         decode that finished inside it waits for the tick, and the
         hand-over spends the current period's allowance so that the tick
         behind it cannot immediately hand another over.
+
+        The ruler is perf_counter: on Windows time.monotonic is the
+        15.625 ms system tick, which is most of a 20 ms interval, and a
+        cap measured with it both refuses hand-overs that were due and
+        grants ones that were not.
         """
-        if time.monotonic() - self._last_dispatch_at < \
+        if time.perf_counter() - self._last_dispatch_at < \
                 self._render_timer.interval() / 1000.0:
             return
         self._dispatch()
@@ -937,7 +942,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._decode_generation += 1
         self._decode_in_flight = self._decode_generation
         self._in_flight_arrival = arrival
-        self._last_dispatch_at = time.monotonic()
+        self._last_dispatch_at = time.perf_counter()
         self._handed_over_since_tick = True
         self._decoder.submit(self._decode_generation, frame)
         self._tick_ms_total += (time.perf_counter() - started) * 1000.0
