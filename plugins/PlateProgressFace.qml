@@ -252,7 +252,7 @@ Item {
                 // rebuilds BEHIND the raster and the barrier still
                 // decides when it may show.
                 if (!zoomAnimator.running && !root.settleTimer.running) {
-                    root._releasePublishFreeze();
+                    root._resumeWarmBakes();
                 }
                 restart();
             }
@@ -473,7 +473,7 @@ Item {
         // The release resumes the model's publications too — the
         // settle has usually done it already; this covers a release
         // that lands before the camera settles.
-        root._releasePublishFreeze();
+        root._resumeWarmBakes();
     }
 
     function _enterInteraction() {
@@ -521,9 +521,8 @@ Item {
             // its backing. The exact scene keeps rebuilding behind
             // the raster (its own canvas, invisible while held).
             carryCanvas.requestPaint();
-            // The freeze: the model holds the picture's publications
-            // while the gesture lives — the RELEASE resumes them (the
-            // live request). The toolhead dot stays exempt.
+            // Defer redundant 4x navigation bakes while moving;
+            // the exact scene and the toolhead remain continuously live.
             if (root.printerModel != null) {
                 root.printerModel.setFollowerInteracting(true);
             }
@@ -558,13 +557,10 @@ Item {
         }
     }
 
-    function _releasePublishFreeze() {
-        // The model's per-poll publications resume while the gesture
-        // still OWNS the picture. Safe because the ENTRY LATCH is what
-        // keeps the presented raster coherent — a fresher raster
-        // landing mid-hold cannot swap it — so the model may breathe
-        // without the picture moving. Idempotent, and every exit path
-        // routes through it.
+    function _resumeWarmBakes() {
+        // Resume only the expensive warm compositor when the camera
+        // settles. Exact-scene publications have remained live behind
+        // the entry-latched raster throughout the gesture.
         if (root.printerModel != null) {
             root.printerModel.setFollowerInteracting(false);
         }
@@ -2813,7 +2809,7 @@ Item {
         // Every exit — the pan release, the zoom snap, the scrub —
         // resumes the model's publications, and releases the file
         // hold so the cache can collect it.
-        root._releasePublishFreeze();
+        root._resumeWarmBakes();
         if (root.printerModel != null) {
             root.printerModel.setFollowerGestureRaster("");
         }

@@ -1393,10 +1393,44 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.model.setChartOpen(True)
         self.model.setFollowerInteracting(True)
         self.model.setPickerPopoverOpen(True)
-        self.assertEqual(len(self.publishes), 3, "a real gate change did not publish")
+        self.assertEqual(len(self.publishes), 2,
+                         "gesture state alone triggered a full model publish")
         self.assertTrue(self.model._chart_open)
         self.assertTrue(self.model._follower_interacting)
         self.assertTrue(self.model._picker_popover_open)
+
+    def test_live_exact_publications_continue_while_the_warm_image_is_latched(self):
+        self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
+        self.model._follower_attached = True
+        self.model.setFollowerInteracting(True)
+        from dataclasses import replace
+        initial = {"layers": {"current": None, "prev": None, "next": None},
+                   "anchor": 2, "split": 12, "motionTotal": 100}
+        self.print_state = replace(self.print_state, plate_progress=initial)
+        with patch.object(self.model, "_qt_window", return_value={}) as window:
+            self.model._publish()
+            self.assertTrue(window.called, "the warm gesture starved exact-scene work")
+        self.assertEqual(self.value("plateSplit"), 12)
+        self.print_state = replace(self.print_state, plate_progress={**initial, "split": 18})
+        with patch.object(self.model, "_qt_window", return_value={}) as window:
+            self.model._publish()
+            self.assertTrue(window.called)
+        self.assertEqual(self.value("plateSplit"), 18,
+                         "the presentation latch froze real printer progress")
+
+    def test_warm_composite_demand_resumes_only_at_settle(self):
+        self.model = self.build()
+        self.model.setFollowerPopoverOpen(True)
+        surface = self.model._plate_surfaces["popover"]
+        surface.plot = {"sx": 1.0}
+        self.model.setFollowerInteracting(True)
+        with patch.object(self.model, "_navigation_key") as key:
+            self.model._schedule_navigation(surface)
+            key.assert_not_called()
+        with patch.object(self.model, "_schedule_navigation") as bake:
+            self.model.setFollowerInteracting(False)
+            bake.assert_called_once_with(surface)
 
     def test_the_stream_switch_suspends_and_resumes_the_pane(self):
         self.model = self.build()

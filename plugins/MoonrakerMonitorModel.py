@@ -1429,7 +1429,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # memo churn costs nothing while nothing renders (the live
         # request). While gated the keys carry the last published
         # objects; opening or expanding resumes the live values.
-        if self._follower_popover_open and not self._follower_interacting:
+        if self._follower_popover_open:
             values["plateLayers"] = (self._qt_window(self._plate_surfaces["popover"],
                                                      popover["layers"], popover.get("anchor"),
                                                      popover.get("method"), popover.get("split"),
@@ -2898,16 +2898,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(bool)
     def setFollowerInteracting(self, interacting):
-        """The face's camera-gesture state: while a pan is live the
-        picture freezes — the per-poll publications (the layers'
-        rasters, the navigation raster) hold their last values, and
-        the RELEASE is the resume trigger (the live request: the
-        pan presents one fixed picture, then catches up)."""
+        """Defer only 4x navigation bakes; NEVER freeze live plate state.
+
+        The face presents its latched entry raster while native exact
+        checkpoints and split telemetry continue publishing behind it.
+        The signal needs no full _publish: it changes no public state.
+        On settle, schedule the latest warm demand once.
+        """
         interacting = bool(interacting)
         if interacting == self._follower_interacting:
             return
         self._follower_interacting = interacting
-        self._publish()
+        if not interacting and self._follower_popover_open:
+            self._schedule_navigation(self._plate_surfaces["popover"])
 
     @pyqtSlot(str)
     def setFollowerGestureRaster(self, url):
@@ -3602,6 +3605,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the camera path, and only for the popover — the mini does
         not carry this feature. A ready URL is what the face can
         switch to INSTANTLY on the first camera input."""
+        # Presentation holds the entry image; the exact scene still
+        # receives every poll. Do not burn 4x composites mid-gesture.
+        if self._follower_interacting:
+            return
         if surface.name != "popover" or surface.nav["job"] is not None \
                 or surface.plot is None:
             return

@@ -650,3 +650,12 @@ check real QML rendering, native nozzle/bed-mesh integration, Cura file-writer
 compatibility, multi-printer interaction and large-file responsiveness. The architecture
 removes the known shared-object migration debt; it cannot guarantee that future Cura
 or Moonraker API changes will never require deliberate boundary changes.
+
+### Live plate camera gestures
+
+The 4x warm raster is an entry-latched presentation buffer. Camera interaction
+may defer new warm composites, but NEVER suppresses live split, layer, exact
+native-checkpoint or render-result publications. After movement settles,
+resume only the latest navigation demand. An exact scene rebuild is allowed
+behind the warm picture throughout the gesture; the presentation controller
+alone decides when a complete frame can replace it.
