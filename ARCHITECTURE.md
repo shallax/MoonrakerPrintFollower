@@ -86,6 +86,7 @@ private follower state to either integration.
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `PlateSceneIdentity.py` | Immutable, named navigation scene keys and split-compatible identity projections used to reject obsolete raster work | Qt, rendering, scheduling |
 | `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |

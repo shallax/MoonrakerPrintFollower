@@ -53,6 +53,7 @@ from .PlateQt import (
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer,
 )
+from .PlateSceneIdentity import NavigationSceneKey, navigation_hard_key, navigation_zoom
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -150,7 +151,7 @@ _NAV_ZOOM_SETTLE_S = 0.12
 # The navigation key's shape: the builder below is the ONE length and
 # the derived keys read slots by position, so the count is named here
 # rather than repeated as a bare number.
-_NAV_KEY_FIELDS = 16
+_NAV_KEY_FIELDS = len(NavigationSceneKey._fields)
 # The attached prefix checkpoint cadence: the native prefix advances
 # at most once per window, snapshotting the latest split — the QML
 # tail accumulates [P, split) cheaply between checkpoints.
@@ -3527,66 +3528,36 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                       desired["ghosts"].get("next")):
             wrapped = surface.layers.get(layer) if layer is not None else None
             window.append(id(wrapped._payload) if wrapped is not None else None)
-        return (surface.name, surface.job_epoch, tuple(window),
-                desired.get("split"),
-                bool(getattr(self, "followerShowPrevious", True)),
-                bool(getattr(self, "followerShowNext", True)),
-                bool(getattr(self, "followerShowBase", True)),
-                bool(getattr(self, "followerShowTravels", False)),
-                round(float(surface.view.get("lineScale") or 0.7), 6),
-                int(surface.view.get("width") or 0),
-                int(surface.view.get("height") or 0),
-                round(float(self.bedMeshMachineWidth or 0.0), 6),
-                round(float(self.bedMeshMachineDepth or 0.0), 6),
-                tuple(sorted((k, round(float(v), 6))
-                             for k, v in (surface.plot or {}).items())),
-                # The DPR rides the key: the render view's stroke floor
-                # presents min(2/dpr, 1) logical px, so a window moving
-                # to another screen changes the baked pixels — and
-                # appending keeps _nav_key_hard's split neutralisation
-                # on index 3 intact.
-                round(min(2.0, max(1.0, float(surface.view.get("dpr") or 1.0))), 6),
-                # The ZOOM APPENDS (the live ruling, and the coalescing
-                # rule reads it by position): the grid is baked at the
-                # width that presents as the canvas's 1 px AT THIS
-                # ZOOM, so a zoom change re-bakes the single flat
-                # raster. The pan stays a presentation transform and
-                # never appears here.
-                round(float(surface.view.get("scale") or 1.0), 6))
+        return NavigationSceneKey(
+            surface=surface.name,
+            job_epoch=surface.job_epoch,
+            payload_ids=tuple(window),
+            split=desired.get("split"),
+            show_previous=bool(getattr(self, "followerShowPrevious", True)),
+            show_next=bool(getattr(self, "followerShowNext", True)),
+            show_base=bool(getattr(self, "followerShowBase", True)),
+            show_travels=bool(getattr(self, "followerShowTravels", False)),
+            line_scale=round(float(surface.view.get("lineScale") or 0.7), 6),
+            width=int(surface.view.get("width") or 0),
+            height=int(surface.view.get("height") or 0),
+            bed_width=round(float(self.bedMeshMachineWidth or 0.0), 6),
+            bed_depth=round(float(self.bedMeshMachineDepth or 0.0), 6),
+            plot=tuple(sorted((k, round(float(v), 6))
+                              for k, v in (surface.plot or {}).items())),
+            # Device ratio changes stroke width; a zoom changes the
+            # adaptive grid width. Both genuinely invalidate the bake.
+            dpr=round(min(2.0, max(1.0, float(
+                surface.view.get("dpr") or 1.0))), 6),
+            zoom=round(float(surface.view.get("scale") or 1.0), 6))
+
 
     @staticmethod
     def _nav_key_hard(key):
-        """The navigation key with the volatile split neutralised:
-        everything that genuinely changes the scene (the window's
-        payloads, the print epoch, the toggles, the style, the
-        dimensions, the zoom, the plot) rides here. The split itself
-        drops — but its None-ness rides on: a raster baked with NO
-        split painted the WHOLE layer as printed, and treating that
-        as compatible with a partial demand stood the complete
-        object as the warm scene for the layer's whole life (the
-        live report: the pan showed the print far ahead of itself).
-        Numeric-vs-numeric drift stays compatible; a None split is a
-        different scene."""
-        if key is None:
-            return None
-        if len(key) <= 3:
-            # A key without a split slot (a synthetic test ticket):
-            # there is no volatile split to neutralise — the whole
-            # key IS the hard key.
-            return key
-        return key[:3] + (key[3] is None,) + key[4:]
+        return navigation_hard_key(key)
 
     @staticmethod
     def _nav_key_zoom(key):
-        """The key's trailing ZOOM slot — the one field that names a
-        presentation level rather than a scene. A key that is not the
-        full shape (a synthetic test ticket) reads as the WHOLE key,
-        so two of them compare equal only when they already are equal
-        and the zoom's coalescing rule can never fire for a demand
-        that moved anything else."""
-        if key is None or len(key) != _NAV_KEY_FIELDS:
-            return key
-        return key[-1]
+        return navigation_zoom(key)
 
     def _nav_arm_wake(self, surface):
         """Arm the attached throttle's expiry wake: when the start-
