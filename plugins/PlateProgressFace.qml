@@ -1038,15 +1038,6 @@ Item {
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
     property bool _textureReady: false
-    // The coverage of every paint the renderer has not delivered yet,
-    // oldest first. A delivery pulls the bitmap of ONE paint, and under
-    // load the painter runs several paints ahead of the renderer's
-    // deliveries: publishing the painter's current record at a delivery
-    // claimed a trimmed bitmap while the scene still pulled an older,
-    // full-interval one, and the live prefix stacked over it (the seam's
-    // doubled ink, hundreds of frames long). The delivered record is the
-    // head of this queue, so what it names is what the scene holds.
-    property var _paintCovers: []
     // The hold's expiry waits one frame past the painted delivery:
     // the threaded canvas's scene texture commits in the sync AFTER
     // the painted signal, and a hide in the same sync would leave
@@ -1751,7 +1742,7 @@ Item {
                 // prefix over a delivered FULL bitmap can finally
                 // relinquesh — one frame later, after the scene pulls
                 // the texture (the expiry timer's beat).
-                root._vectorCoversShown = root._paintCovers.length > 0 ? root._paintCovers.shift() : root._vectorCoversFrom;
+                root._vectorCoversShown = root._vectorCoversFrom;
                 root._textureReady = true;
                 if (root._entryPaintArmedHold) {
                     // The entry's delivery: the handover beat starts
@@ -1783,14 +1774,8 @@ Item {
                 // overlap, and the prefix's own show cannot request
                 // the trim (its visible binding reads the predicate
                 // the trim feeds). Request it here, one paint after
-                // the delivery that completed the picture. The PAINT's
-                // record triggers it, not the delivered one: a paint
-                // that never gets its own painted signal (the renderer
-                // coalesces a burst into one texture) leaves a
-                // delivered record the trim can wait on forever, and
-                // the request is harmless when the bitmap is already
-                // trimmed.
-                if (root._vectorCoversFrom === 0 && _prefixFrom() > 0 && !root._interactionActive) {
+                // the delivery that completed the picture.
+                if (root._vectorCoversShown === 0 && _prefixFrom() > 0 && !root._interactionActive) {
                     progressCanvas.requestPaint();
                 }
                 // The shown record's set edge, the publish cycle's own
@@ -1806,19 +1791,6 @@ Item {
             }
             onPaint: {
                 var ctx = getContext("2d");
-                // This paint's delivery is queued before the paint knows
-                // whether it rebuilds the bitmap: a paint that returns
-                // early (the hold, the dirty skip) leaves the buffer as
-                // the last one's, and its delivery must pull the same
-                // coverage. The assignment below rewrites the entry when
-                // this paint does rebuild it. The cap drops the oldest
-                // entry if a delivery never comes — a queue that only
-                // ever grew would hold the record at an older, heavier
-                // coverage and withhold the prefix for good.
-                if (root._paintCovers.length >= 8) {
-                    root._paintCovers.shift();
-                }
-                root._paintCovers.push(root._vectorCoversFrom);
                 // The full state's HOLD: the model says the raster owns
                 // the picture, but its texture is still decoding, so
                 // the accumulated ink stands rather than blanking the
@@ -2055,7 +2027,6 @@ Item {
                 // read as a full one (the prefix would trust a hole).
                 if (fresh) {
                     root._vectorCoversFrom = vectorClasses !== "" ? (from > 0 ? from : 0) : -1;
-                    root._paintCovers[root._paintCovers.length - 1] = root._vectorCoversFrom;
                 }
                 // The freeze rides the paint, not only the delivery: a
                 // bitmap starting exactly at the prefix's boundary is
