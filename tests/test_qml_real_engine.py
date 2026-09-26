@@ -6585,16 +6585,42 @@ class PlateFaceRenderTests(RealEngineTestCase):
             value = face.property("_view")
             return value.toVariant() if hasattr(value, "toVariant") else value
 
+        def delivered():
+            # The face's own record that the canvas delivered THIS
+            # demand's paint: until it lands, the scene still stands the
+            # previous serving (the composition transaction's own
+            # design), and a loaded host's grabs land inside that
+            # window. Those frames are the old picture held while the
+            # replacement decodes, never the ghost — the ghost is a
+            # DELIVERED composition carrying the old scale's history.
+            return (bool(face.property("_textureReady"))
+                    and face.property("_lastSplit") == 1150)
+
         worst_end = None
         leftmost = None
+        judged = 0
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
             self._pump_ms(50)
-            current = span(window.grabWindow())
+            image = window.grabWindow()
+            # Read AFTER the grab, as the records above are: a delivery
+            # that landed during the grab is what the grab rendered.
+            if not delivered():
+                continue
+            judged += 1
+            current = span(image)
             if current is None:
                 continue
             worst_end = current[1] if worst_end is None else max(worst_end, current[1])
             leftmost = current[0] if leftmost is None else min(leftmost, current[0])
+        # The non-vacuity control: the handover WAS sampled at the
+        # committed view. A census that only ever read the held frames
+        # would clear the mapping below by never having looked at the
+        # picture it is about.
+        self.assertGreater(
+            judged, 0,
+            "no delivered composition was ever sampled: the ghost cannot "
+            "be judged against a picture the canvas never delivered")
         self.assertIsNotNone(worst_end, "the zoomed picture never drew")
         view = current_view()
         committed_end = end_col(77.5, view["scale"], view["panX"])
@@ -6604,7 +6630,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # of it (that would be a lost tail, not a ghost).
         self.assertGreaterEqual(
             float(worst_end), committed_end - 4.0,
-            "no frame of the handover re-rendered the history at the "
+            "no delivered frame re-rendered the history at the "
             "committed view (the furthest ink ends at %s, the committed "
             "view ends at %.1f): the zoomed prefix never re-rendered"
             % (worst_end, committed_end))
@@ -6615,13 +6641,13 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # picture starts tens of pixels right of the committed head.
         self.assertLessEqual(
             float(leftmost), committed_head + 4.0,
-            "a frame of the handover still starts at the OLD view's "
+            "a delivered frame still starts at the OLD view's "
             "mapping (the leftmost ink is at %s, the committed view "
             "starts at %.1f): the out-of-scale ghost"
             % (leftmost, committed_head))
         self.assertLessEqual(
             float(worst_end), committed_end + 4.0,
-            "a frame of the handover still ends at the OLD view's "
+            "a delivered frame still ends at the OLD view's "
             "mapping (the furthest ink is at %s, the committed view "
             "ends at %.1f): the out-of-scale ghost"
             % (worst_end, committed_end))
@@ -7413,7 +7439,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
 
         # The slow source rides the SAME layer the flip completes: the
         # class raster is hot (its texture never leaves) and only the
-        # travels' decode starts on the flip.
+        # travels' decode starts on the flip. The stretch widens the
+        # window the first census sample has to land inside; wider
+        # decodes are past the reader's allocation limit, and a much
+        # longer one only starves the very host the census is measuring.
         layer.set_travels(layer.travelRaster, "fixture-key",
                           self._slow_raster(layer.travelData, "slow-travels"))
         self.assertIsNone(
@@ -7435,14 +7464,22 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertIsNotNone(travels_item,
                              "the travels Image never bound the slow source")
 
+        # The census is ANCHORED at the flip and runs until the travels'
+        # own texture arrives: a fixed count of frames is a fixed budget
+        # of TIME on a host whose grabs are slow, and a loaded one can
+        # read every sample after the decode — passing by never having
+        # looked at the handover it is about.
         frames = []
-        for _ in range(12):
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
             self.pump(5)
             image = window.grabWindow()
             # The status AFTER the grab: a texture that has not landed by
             # the read cannot have stood in the picture the grab returned.
-            frames.append((wall_run(image), travel_run(image),
-                           status_of.statusOf(travels_item)))
+            status = status_of.statusOf(travels_item)
+            frames.append((wall_run(image), travel_run(image), status))
+            if status == 1:  # Image.Ready
+                break
 
         def completed(image):
             wall_run_now, travel_run_now = wall_run(image), travel_run(image)
@@ -7453,8 +7490,19 @@ class PlateFaceRenderTests(RealEngineTestCase):
         after = self._settled_frame(window, face, differs_from=before,
                                     painted=completed)
         wall_after, travel_after = wall_run(after), travel_run(after)
-        self.assertIsNotNone(wall_after, "the walls never painted at the full split")
-        self.assertIsNotNone(travel_after, "the travels never painted at the full split")
+        # The census' own status sequence in the message: a settle that
+        # never completed is either a texture still in flight or a
+        # composition that did not present it, and the two need
+        # different answers.
+        statuses = [frame[2] for frame in frames]
+        self.assertIsNotNone(
+            wall_after,
+            "the walls never painted at the full split (travels' status %r)"
+            % (statuses,))
+        self.assertIsNotNone(
+            travel_after,
+            "the travels never painted at the full split (travels' status %r)"
+            % (statuses,))
 
         # The liveness control: the flip the frames were sampled across
         # really happened — the same view origin, MORE ink. A census
@@ -7933,6 +7981,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
             plot_value = plot_value.toVariant()
         pan = float(plot_value["bed"]["plotWidth"]) * 0.25
         layer = self._native_layer(payload, face, prefix_split=10)
+        # The hold's window IS the raster's decode, and at the face's own
+        # size that decode lasts a few ms — less than the fixed pumps
+        # below cost on a loaded host, which then read the texture
+        # already landed and the hold dismissed. The same PNG at an
+        # integer multiple decodes for hundreds of ms and presents the
+        # same pixels (nearest-neighbour identity).
+        layer.set_raster(layer.raster, "fixture-key",
+                         self._slow_raster(layer.rasterData, "slow-class-hold"))
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(15)
@@ -7948,12 +8004,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
                         "the partial composition never settled: the "
                         "prefix' pixels never came up")
         # The full seek: no scrub vector, and the raster decoding, so
-        # the hold is the only thing that can stand the head.
+        # the hold is the only thing that can stand the head. The
+        # window opens when the raster's source binds and the decode
+        # starts, and the reads below take no event turn after it: the
+        # hold is judged on the camera move alone, never on whatever a
+        # busy host got to in the meantime.
         self._printer.setScrub(None)
         self._printer.setSplit(21)
-        self.pump(30)
-        window.grabWindow()
-        self.pump(30)
+        raster_item = None
+        deadline = time.monotonic() + 5.0
+        while raster_item is None and time.monotonic() < deadline:
+            self._pump_ms(2)
+            raster_item = self._image_with_source(face, "slow-class-hold")
+        self.assertIsNotNone(raster_item,
+                             "the full state never bound a raster to decode")
         self.assertFalse(
             face.property("_rasterStatusReady"),
             "the raster's texture landed before the assertion: the hold is "
@@ -7963,9 +8027,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
             "the entry's hold never stood: the prefix' head was not the "
             "picture while the raster decoded")
         face.setProperty("viewPanX", pan)
-        self.pump(30)
-        window.grabWindow()
-        self.pump(30)
+        self.assertFalse(
+            face.property("_rasterStatusReady"),
+            "the raster's texture landed between the camera move and the "
+            "read: the hold's drop could not be judged")
         self.assertFalse(
             prefix.property("visible"),
             "the hold kept the prefix standing at the previous view while "
