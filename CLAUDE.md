@@ -4,6 +4,11 @@ How changes are made here is documented in `INSTRUCTIONS.md`; the
 architecture is in `ARCHITECTURE.md`; the UI test harness in
 `TESTING.md`. Read `INSTRUCTIONS.md` before making changes.
 
+On Windows, every procedure runs natively through the same `make`
+targets (`tools/windows/dev.py` behind them, no container, no POSIX
+shell): start with `make dev_install`. See `INSTRUCTIONS.md`,
+"Windows development", for the pinned toolchain and the differences.
+
 ## Running a subset of the tests — do this in parallel
 
     make test_files FILES="tests.test_monitor tests.test_index"

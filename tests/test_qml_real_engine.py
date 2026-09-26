@@ -1060,7 +1060,21 @@ class ReExpansionGuardTests(RealEngineTestCase):
         camera = self.camera_pane(monitor)
         info = self.find(monitor, "infoPanel")
         status = self.find(monitor, "statusPanel")
-        self.resize_window(monitor, window, 960, 760)
+        # The landing width is DERIVED: the crossing is a font-metric
+        # boundary, and "965/966" is the CI stack's measurement of it
+        # (this box crosses ~10 px lower, and the status pane's own
+        # crossing sits further down still). What the test is about is
+        # the JUMP — each step below is a jump from the previous
+        # layout, never a gradual crossing — so the width walks down
+        # until the landed layout has folded both panes, and the
+        # assertions then hold the fold, the locks and the camera's
+        # room on that landed layout.
+        width = 960
+        self.resize_window(monitor, window, width, 760)
+        while not (monitor.property("infoAutoCollapsed")
+                   and monitor.property("statusAutoCollapsed")) and width > 560:
+            width -= 40
+            self.resize_window(monitor, window, width, 760)
         self.assertTrue(monitor.property("infoAutoCollapsed"),
                         "the information pane did not fold")
         self.assertTrue(monitor.property("statusAutoCollapsed"),
@@ -2114,12 +2128,26 @@ class CameraFpsControlTests(RealEngineTestCase):
         badge = self.find(pane, "cameraLiveBadge")
         self.assertTrue(chip.property("visible"),
                         "the wide frame must carry both pills")
-        self.resize_window(pane, window, 190, 640)
+        # The narrow width is DERIVED from the pills, not pinned to a
+        # magic window size: the pills' widths are font metrics, so 190
+        # is narrow on one host's fonts and exactly wide enough on
+        # another's — which turned this precondition into a failure
+        # rather than a proof (the Windows leg's fonts, 2026-09-26).
+        # The pills are measured once, while both are whole, and the
+        # frame is then taken down until it is provably narrower than
+        # they are, so the guard holds wherever the suite runs.
+        needed = badge.width() + chip.width() + 3 * chip.property("badgeGap")
+        narrow = 190
+        self.resize_window(pane, window, narrow, 640)
         self._pump_ms(300)
+        while image.width() >= needed and narrow > 96:
+            narrow -= max(8, int(image.width() - needed) + 8)
+            self.resize_window(pane, window, narrow, 640)
+            self._pump_ms(300)
         # The precondition IS the regression pin: a chip that grows
         # (this release added the rate to it) must be reported as
         # no-longer-provable rather than silently passing.
-        self.assertLess(image.width(), badge.width() + chip.width() + 3 * chip.property("badgeGap"),
+        self.assertLess(image.width(), needed,
                         "the narrow mount must actually be too narrow")
         self.assertFalse(chip.property("visible"),
                          "the chip must yield rather than touch the Live badge")
@@ -7699,16 +7727,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # and the move sweeps to the window's left, which the clamp
         # binds (the harness drops moves sent outside the window, so
         # the pointer stays in bounds). The clamp binds each move's
-        # own delta, so that first sweep lands short of the bound:
-        # two sweeps from inside the face drive the pan onto it (the
-        # corner-pan leg's idiom below). A fresh drag attempt
-        # against the bound stays inert.
+        # own delta, so that first sweep lands short of the bound and
+        # sweeps from inside the face drive the pan onto it (the
+        # corner-pan leg's idiom below). The sweep count is a
+        # MEASUREMENT, not the CI stack's two: the soft clamp's bound
+        # follows the face's own width, so a box whose panes lay out a
+        # little differently needs more sweeps to reach it. A fresh
+        # drag attempt against the bound stays inert.
         mouse(QEvent.Type.MouseButtonPress, int(face.width()) - 10, cy,
               Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, 5, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseButtonRelease, 5, cy, Qt.MouseButton.NoButton)
         settle()
-        for _sweep in range(2):
+        bound_pan = face.property("viewPanX")
+        for _sweep in range(10):
             mouse(QEvent.Type.MouseButtonPress, cx, cy,
                   Qt.MouseButton.LeftButton)
             mouse(QEvent.Type.MouseMove, cx - 200, cy,
@@ -7716,7 +7748,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
             mouse(QEvent.Type.MouseButtonRelease, cx - 200, cy,
                   Qt.MouseButton.NoButton)
             settle()
-        bound_pan = face.property("viewPanX")
+            moved_to = face.property("viewPanX")
+            if moved_to == bound_pan:
+                # A sweep that changed nothing is the bound; the pin
+                # below is about the drag that follows it.
+                break
+            bound_pan = moved_to
+        else:
+            self.fail("the pan never reached its soft clamp in ten sweeps")
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx - 200, cy, Qt.MouseButton.LeftButton)
         self._pump_ms(30)
