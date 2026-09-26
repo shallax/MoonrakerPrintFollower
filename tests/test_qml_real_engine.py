@@ -7969,6 +7969,15 @@ class PlateFaceRenderTests(RealEngineTestCase):
             plot_value = plot_value.toVariant()
         pan = float(plot_value["bed"]["plotWidth"]) * 0.25
         layer = self._native_layer(payload, face, prefix_split=10)
+        # The hold's window IS the raster's decode, and at the face's
+        # own size that decode lasts a few ms — less than the fixed
+        # pumps below cost on a loaded host, which then read the
+        # texture already landed and the hold dismissed. The same PNG
+        # at an integer multiple decodes for hundreds of ms and
+        # presents the same pixels (nearest-neighbour identity).
+        layer.set_raster(layer.raster, "fixture-key",
+                         self._slow_raster(layer.rasterData, "slow-view-hold",
+                                           factor=8))
         self._printer.setScrub(payload)
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         self._printer.setSplit(15)
@@ -7982,14 +7991,27 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # texture is still decoding, so the hold is the only thing that
         # could keep the old view's ink on screen.
         self._printer.setSplit(21)
+        self.assertFalse(
+            face.property("_rasterStatusReady"),
+            "the raster's texture landed before the camera move: the hold "
+            "is no longer the picture's owner")
         face.setProperty("viewPanX", pan)
-        self.pump(30)
+        # The split's own paint request is still pending — nothing has
+        # rendered since it was made — so ONE render is the camera
+        # move's first paint, and the read follows it with no event
+        # turn in between. A waited-on read cannot hold this boundary:
+        # the view settle 60 ms behind the pan repaints the new view
+        # too, so a wait passes on the settle's repaint whether or not
+        # the camera move's own paint kept the old view's ink.
         window.grabWindow()
-        self.pump(30)
         self.assertNotEqual(
             face.property("_accumViewKey"), painted,
-            "the canvas never repainted for the new view: the hold kept "
-            "the previous view's ink while the raster decoded")
+            "the camera move's own paint kept the previous view's ink: "
+            "the hold stood on a bitmap baked for another view")
+        self.assertFalse(
+            face.property("_rasterStatusReady"),
+            "the raster's texture landed before the new view's ink: the "
+            "hold's window closed under the read")
 
     def test_a_camera_move_never_holds_the_prefix_at_the_previous_view(self):
         """The prefix hold's boundary, the canvas hold's own pin.
@@ -9493,6 +9515,31 @@ class PlateFaceRenderTests(RealEngineTestCase):
             self.app.removeEventFilter(census)
         return census.ticks
 
+    def _wait_for_a_quiet_driver(self, window, reads=2, milliseconds=300,
+                                 timeout=15.0):
+        """The idle half's precondition: a driver that has gone quiet.
+
+        The mount lays the faces out over several passes, and the pass
+        that resolves a face's width moves the zoom scope parked beside
+        it: the scope's `Behavior on x` then spends 180 ms ticking the
+        app-wide animation driver with no load anywhere. That is the
+        MOUNT settling — its passes land whenever the host's font
+        metrics do, so a census taken a fixed beat after the mount can
+        read it as the idle face's own cost (the 3.10/3.11 legs read 7
+        to 11 ticks that way). Consecutive clean windows are the
+        settling run out; a face that animates while idle owns no clean
+        window at all, and the timeout is a hang stop, not a budget."""
+        clean = 0
+        deadline = time.monotonic() + timeout
+        while clean < reads and time.monotonic() < deadline:
+            if self._driver_ticks(window, milliseconds) == 0:
+                clean += 1
+            else:
+                clean = 0
+        self.assertEqual(
+            clean, reads,
+            "the idle face never stopped ticking the animation driver")
+
     def test_a_mounted_face_animates_only_while_a_load_is_busy(self):
         """The download action's animations hang off ONE model gate.
 
@@ -9507,6 +9554,9 @@ class PlateFaceRenderTests(RealEngineTestCase):
         pinned: idle animates nothing, a busy load still animates."""
         monitor, window, face = self._follower_popover()
         self.pump(60)
+        # The idle half is read from a quiet driver: the mount's own
+        # layout passes tick it while they settle (see the helper).
+        self._wait_for_a_quiet_driver(window)
         printer = self._printer
         self.assertFalse(printer.property("improvingEta"),
                          "the fixture starts with nothing loading")
