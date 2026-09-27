@@ -694,6 +694,15 @@ The Monitor dashboard: printer status, information panes and printer controls.
 Panes collapse to the window edge with a rotated title; each pane's
 sections collapse into an accordion like Cura's own settings.
 
+![Exclude Object Picker](screenshots/10-exclude-object-picker.png)
+
+The Exclude Object Picker shows each object's position and exclusion state.
+
+![Print follower](screenshots/11-print-follower.png)
+
+The print follower renders indexed toolpaths, with layer and progress controls.
+This three-material penguin is generated as deterministic G-code for the capture.
+
 ![Preview panel](screenshots/04-preview-panel.png)
 
 The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.

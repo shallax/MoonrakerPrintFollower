@@ -77,6 +77,12 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   module — never the global one), grabs a fourth scene with the chart
   pop-over open, and asserts the mini-chart region contains painted
   pixels (the requestPaint regression test).
+  It also captures the Exclude Object Picker and Print Follower popovers,
+  cropped to their real cards. `tools/capture_penguin.py` generates a
+  deterministic three-material illustration as G-code; the production
+  indexer and prepared-layer renderer draw those motions. This fixture
+  is for screenshots, not a printer job. Both cards participate in the
+  normal light/dark determinism, contrast and committed-image sync gates.
 - Deterministic captures: the harness freezes EVERY live input the
   scenes render — the formatter's wall clock is patched to a fixed
   instant (`FrozenDatetime`, patching every module object loaded from

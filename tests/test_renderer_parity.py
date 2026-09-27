@@ -294,17 +294,24 @@ class RendererParityTests(_parent.RealEngineTestCase):
             earlier rather than later (the Windows runner's "the grid
             never painted" is the stroke-only wait). A raster that never
             arrives still fails, on its own assertion."""
-            # Require the new pan's delivered frame, then two matching
-            # grabs. A fixed pump or a lone "ink exists" census can accept
-            # a stale/transitional texture on macOS under suite load.
+            # Require delivered landmarks and agreement spanning the normal
+            # 200 ms layout/paint timers. Two adjacent grabs can agree in a
+            # quiet gap between render-thread updates on loaded macOS CI.
+            # Keep the exact 40 px motion assertions below unchanged.
             import time
             deadline = time.monotonic() + timeout
             last = None
+            identical_since = None
             while time.monotonic() < deadline:
                 has_landmarks = stroke_right(image, pan_x) is not None and grid_col(image, pan_x) is not None
                 changed = previous is None or image != previous
                 if has_landmarks and changed and last is not None and image == last:
-                    return image
+                    if identical_since is None:
+                        identical_since = time.monotonic()
+                    if time.monotonic() - identical_since >= 0.5:
+                        return image
+                else:
+                    identical_since = None
                 last = image
                 self.app.processEvents()
                 time.sleep(0.02)
