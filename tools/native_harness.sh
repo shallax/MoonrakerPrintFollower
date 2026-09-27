@@ -572,8 +572,8 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # What GL the guest can reach, printed once per leg: the app's renderer
     # here is Apple's software one, because a VM exposes no GPU to the
     # guest's GL stack. That single fact is what makes Cura's own probe take
-    # the macOS-only 2.x fallback (see `--- 8b ---`), and it is why these
-    # legs capture nothing rather than judging a screen that cannot present.
+    # the macOS-only 2.x fallback (see `--- 8b ---`). Native capture
+    # judges presentation independently of the GL version.
     echo "--- gpu ---"
     sysctl -n kern.hv_vmm_present 2>/dev/null | sed 's/^/hypervisor present: /' || true
     system_profiler SPDisplaysDataType 2>&1 | sed -n '1,20p' || true
@@ -791,6 +791,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         die "the package carried no files/plugins/MoonrakerPrintFollower"
     cp -R "$ROOT/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver" ||
         die "tests/harness/driver could not be staged as HarnessDriver"
+    cp "$ROOT/tests/harness/window_geometry.py" "$PLUGIN_DIR/HarnessDriver/window_geometry.py"
     find "$PLUGIN_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
     [ -f "$PLUGIN_DIR/MoonrakerPrintFollower/plugin.json" ] ||
         die "the staged plugin has no plugin.json"
@@ -1002,11 +1003,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # and this runner's GL is Apple's software renderer, so the boot lands
     # on 2.1 "No profile". Forcing 4.1 back with view/opengl_version_detect
     # = force_modern does NOT fix what that costs here: on this renderer
-    # the window stops presenting either way, and the forced path is the
+    # oversized windows remained stale either way, and the forced path is the
     # one Cura calls "much slower", which measured 3.5x on the layer-view
     # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
-    # The legs therefore run without capture (see tests/harness/runner.py)
-    # and this line is what says which renderer their steps ran on.
+    # The available-desktop bound keeps native presentation live. This
+    # line records the renderer; native capture judges its actual pixels.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
     case "$GL_LINE" in
@@ -1015,7 +1016,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         "")
             note "renderer: unreadable - no OpenGL context line in $CONFIG_DIR/cura.log" ;;
         *)
-            note "renderer: ${GL_LINE##*: } (Cura's macOS software fallback; the legs capture nothing, so this is recorded, not judged)" ;;
+            note "renderer: ${GL_LINE##*: } (Cura macOS software fallback; native presentation is judged separately)" ;;
     esac
 
     # --- 9. keep the window inside the capture area -----------------------
@@ -1155,31 +1156,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         echo "export PLUGIN_VERSION='$PLUGIN_VERSION'"
         echo "export HARNESS_MODE='$RUNNER_MODE'"
         [ -n "$RUNNER_GROUP" ] && echo "export SCENARIO_GROUP='$RUNNER_GROUP'"
-        # This leg captures nothing, and says why in its own evidence.
-        # A CI mac has no GPU — a VM exposes none to the guest's GL
-        # stack — so Cura lands on Apple's software renderer (see
-        # `--- 8b ---`) and on it the window stops presenting partway
-        # through a leg: the stills go byte-identical while the menu bar
-        # and the dock keep ticking, and a real click on Cura's own
-        # stage header changes nothing on screen. Every step assertion
-        # is answered in-process from the QML tree, so the pictures are
-        # the whole of what is lost: the static verdict and the display
-        # guard read them and stand down with them. The heartbeat is NOT
-        # in that set — it makes a frame due by changing an item in the
-        # window's own scene graph and waits for the answer, and it runs
-        # here in both modes. What a missed heartbeat MEANS here is the
-        # other half: with no pictures to read beside it and a renderer
-        # known to present while its pixels stay stale, a miss is
-        # recorded and announced as a report-only diagnostic and no
-        # renderer coverage is claimed for this platform on the strength
-        # of it. A Mac with a real GPU presents normally, which is why
-        # this rides the leg rather than the platform: HARNESS_CAPTURE=on
-        # restores the pictures here — and with them the judged verdict —
-        # for a local look.
-        echo "export HARNESS_CAPTURE='off'"
-        # No apostrophes: this file is SOURCED, and one would close the
-        # quote early and silently truncate the reason.
-        echo "export HARNESS_CAPTURE_REASON='macOS runs without pictures by design. This runner has no GPU, so Cura boots the Apple software renderer and the window stops presenting partway through a leg. The pictures and the static verdict stand down with the recorder; the renderer-liveness heartbeat still runs and a miss is reported by name, but it is a report-only diagnostic here rather than a failure, and it is not renderer coverage. See TESTING.md.'"
+        # The driver fits the complete frame into Qt availableGeometry,
+        # verifies it at boot and each scenario, and guards later bounds.
+        # Keep capture and its liveness/static verdicts enabled by default.
+        printf "export HARNESS_CAPTURE=%q\n" "${HARNESS_CAPTURE:-on}"
+        printf "export HARNESS_CAPTURE_REASON=%q\n" "${HARNESS_CAPTURE_REASON:-}"
     } >"$ENV_FILE"
     mkdir -p "$ARTIFACT_DIR"
     echo

@@ -35,6 +35,7 @@ import time
 # copies it next to the runner) and is the ONE place a host platform is
 # chosen.
 import native_host
+from window_geometry import verified_geometry
 
 DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 # One display geometry (the round-2 contract): the screen SIZE, the
@@ -104,18 +105,11 @@ def record_argv(path, framerate=15):
 # is the one measurement a picture-less leg must keep, because a
 # responsive QML tree is not proof of rendering.
 #
-# The LEG says so, not the platform: tools/native_harness.sh exports
-# HARNESS_CAPTURE=off with its reason for the CI mac, whose runner has
-# no GPU (OpenGL in a macOS guest is software by construction — Apple's
-# paravirtual GPU is Metal-only) and on which the window stops
-# presenting partway through a leg. Measured on
-# gate-group-connection-macos-latest: the stills go byte-identical
-# while the menu bar clock and the dock keep ticking in the same
-# frames, and a real click on Cura's own MonitorStage header (`a9-07`)
-# changes nothing on screen — while all 45 steps pass, because they
-# read the tree. A Mac with a real GPU presents normally, so this is
-# deliberately not a platform default: a local run keeps its pictures,
-# and HARNESS_CAPTURE=on restores them on the CI mac for a look.
+# The leg may explicitly disable capture with HARNESS_CAPTURE=off.
+# Native macOS legs now keep it enabled: the driver fits the full window
+# frame into Qt availableGeometry and guards later bounds. Older oversized
+# windows could answer QML and frameSwapped while desktop pixels stayed stale;
+# a passing heartbeat alone still does not prove native presentation.
 # The recorder's own origin: every step records its offset from this,
 # which is what aligns a step to the second of the recording it ran in.
 # None when nothing is being recorded.
@@ -342,8 +336,10 @@ def ensure_ready(require_aux=True):
         # screen (the pin's own report must match BOTH) — a window
         # larger than the screen used to pass by self-report alone.
         _pin_ok = bool(_pin.get("ok")
-                       and list(_pin.get("size") or ()) == _want
+                       and verified_geometry(_pin, _want)
                        and list(_pin.get("screen") or ()) == _screen)
+        progress(f"boot geometry: requested {_want}, actual {_pin.get('size')}, "
+            f"available {_pin.get('available')}, frame {_pin.get('frame')}, verified={_pin_ok}")
     except Exception:
         _pin_ok = False
     # The model gate: the plugin's per-machine model appears when the
@@ -3479,8 +3475,10 @@ def suite_scenario(spec, step_fn=None):
                 reply = rpc({"id": 1, "cmd": "resize", "w": _want[0], "h": _want[1]},
                             timeout=40)
                 _got = reply.get("size") or []
-                _ok = bool(reply.get("ok")
-                           and [int(_got[0]), int(_got[1])] == _want)
+                _ok = verified_geometry(reply, _want)
+                progress(f"geometry {spec['id']}/start: requested {_want}, actual {_got}, "
+                    f"available {reply.get('available')}, frame {reply.get('frame')}, "
+                    f"watchdog repairs={reply.get('watchdog_repairs', 0)}, verified={_ok}")
             except Exception:
                 _ok = False
                 _got = []

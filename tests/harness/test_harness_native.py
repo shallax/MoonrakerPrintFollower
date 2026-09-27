@@ -23,6 +23,48 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import native_host
+from window_geometry import fit_content_rectangle, verified_geometry
+
+
+class AvailableDesktopTests(unittest.TestCase):
+    def test_frame_and_dock_are_excluded_from_the_content_target(self):
+        self.assertEqual(fit_content_rectangle([1840, 1040], [0, 30, 1920, 972],
+                                               [0, 29, 0, 0], [1040, 624]),
+                         [0, 59, 1840, 943])
+
+    def test_smaller_layout_test_is_preserved_on_an_offset_screen(self):
+        self.assertEqual(fit_content_rectangle([1040, 624], [1920, 30, 1920, 972],
+                                               [0, 29, 0, 0], [1040, 624]),
+                         [1920, 59, 1040, 624])
+
+    def test_desktop_too_small_for_cura_fails_honestly(self):
+        with self.assertRaises(ValueError):
+            fit_content_rectangle([1840, 1040], [0, 30, 1000, 600],
+                                  [0, 29, 0, 0], [1040, 624])
+
+    def fitted_reply(self):
+        return {"ok": True, "fit_available": True, "requested": [1840, 1040],
+                "wanted": [1840, 943], "size": [1840, 943],
+                "available": [0, 30, 1920, 972], "frame": [0, 30, 1840, 972]}
+
+    def test_bounded_size_requires_matching_frame_and_request(self):
+        reply = self.fitted_reply()
+        self.assertTrue(verified_geometry(reply, [1840, 1040]))
+        self.assertFalse(verified_geometry(reply, [1800, 1040]))
+        reply["frame"][1] += 1
+        self.assertFalse(verified_geometry(reply, [1840, 1040]))
+
+    def test_unexpected_size_or_watchdog_failure_does_not_pass(self):
+        reply = self.fitted_reply()
+        reply["size"][1] -= 1
+        self.assertFalse(verified_geometry(reply, [1840, 1040]))
+        reply = self.fitted_reply()
+        reply["watchdog_error"] = "cannot fit the minimum"
+        self.assertFalse(verified_geometry(reply, [1840, 1040]))
+
+    def test_other_platforms_still_require_the_exact_requested_size(self):
+        self.assertTrue(verified_geometry({"ok": True, "size": [1840, 1040]}, [1840, 1040]))
+        self.assertFalse(verified_geometry({"ok": True, "size": [1840, 943]}, [1840, 1040]))
 
 SIZE = "1920x1080"
 DISPLAY = ":99"

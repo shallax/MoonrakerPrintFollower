@@ -634,57 +634,33 @@ SimulationView is the ACTIVE view (the Preview stage click).
   the z14 scenario (the broken start that stays broken, the fired
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
-- **The capture gate — macOS legs run without pictures (2026-09-24).**
-  The CI mac reports Apple Software Renderer. Cura's autodetection
-  declines that renderer's modern context on macOS
-  (`UM/View/GL/OpenGLContext.py`, CURA-6092) and selects OpenGL 2.1.
-  This policy is verified; it does not establish the cause of the
-  presentation fault. The native main window stops updating its
-  desktop pixels partway through a leg. Measured on
-  `gate-group-connection-macos-latest`: the stills go byte-identical
-  while the menu bar clock and the dock keep ticking in the same
-  frames, and `a9-07` — a real click on Cura's own MonitorStage
-  header — changes nothing on screen; all 45 steps pass, because they
-  read the QML tree. Forcing 4.1 core back with
-  `view/opengl_version_detect = force_modern` does not fix it (the
-  window freezes either way) and makes the render-heavy legs far
-  slower — `group-printing` measured 3.5× (2.8 → 9.7 min) against a
-  15-minute budget — so that pin was removed.
-  The macOS legs therefore capture nothing: no recorder, no stills,
-  no static verdict, no display guard. **Every step assertion is
-  untouched** — the steps are answered in-process from the live QML
-  tree and the models, so the pictures are the whole of what a step
-  loses. Liveness is the one reading that goes with them, and it goes
-  as a judged verdict rather than as a check (next bullet). The mode
-  and its reason are recorded in every leg's `evidence.json`
-  (`capture: {mode, reason, judged}`), the gallery says why it has no
-  recording, and the exit path prints `STATIC LEG — not judged`.
-  `HARNESS_CAPTURE=on` restores the pictures — and with them the
-  judged liveness verdict — for a local look at the same leg. The cost
-  is stated plainly: **macOS has no visual-regression detection in CI.**
-  The render assertions that matter (the follower's raster composition,
-  the preview card, the readouts' contrast) run offscreen on Linux,
-  where rendering is deterministic, and a CI mac was never where they
-  lived.
-- **Native presentation diagnosis (2026-09-27).** Explicit diagnostic runs
-  compare desktop captures with the main window's internal Qt grab. The
-  latter shows Monitor while the desktop still shows Prepare, despite
-  increasing frameSwapped counts. Recording off reproduces this too.
-  A separate native Qt window in the same Cura process presents red then
-  blue with ordinary window flags, at small and large sizes, on the same
-  Apple software OpenGL backend. Removing Cura's external GL callback
-  after the fault does not repair it. Resizing the main window to
-  1200×800 does repair presentation, and restoring its requested dimensions
-  leaves Monitor and the webcam updating in both capture modes. Cocoa may
-  constrain the restored height to the available desktop; a large control
-  is therefore not an exact content-size match. The full pre-scenario
-  recovery experiment remains diagnostic, not a replacement for a gate.
-  Cura explicitly sets QSG_RENDER_LOOP=basic during application startup;
-  setting threaded in the launch environment does not test a threaded
-  Cura render loop. These observations narrow the fault to main-window
-  presentation/lifecycle, but do not categorically identify its root cause.
-  Normal macOS gates still disable pictures. frameSwapped and QML-tree
-  success are not evidence that WindowServer presented the right pixels.
+- **Native macOS capture and available desktop bounds (2026-09-27).**
+  Native screenshots and recordings are enabled. The harness fits Cura's
+  complete window frame inside the current screen's Qt `availableGeometry`,
+  including its frame margins. It verifies the resulting size and bounds at
+  boot and before every scenario. A one-second bounds watchdog preserves
+  intentional smaller layout tests and corrects later out-of-bounds changes;
+  corrections and errors are reported with geometry evidence. A desktop
+  smaller than Cura's real minimum fails rather than changing that minimum.
+  Linux and Windows retain their exact requested geometry contract.
+
+  Historically, capture was disabled after macOS recordings remained on
+  Prepare while QML and `frameSwapped` continued answering. Controlled
+  connection runs passed native recording at 1840×900 and failed at
+  1840×1040 on a 1920×1080 desktop. After a resize, Cocoa constrained the
+  latter to 1840×943: the recovery was at a fitted size, not the same
+  oversized size. Repeated Prepare translations, valid Preview layer
+  changes and Monitor updates all present without intermediate resizes at
+  the fitted size. The precise Cocoa/OpenGL presentation defect remains
+  unidentified; the evidence does not establish that software OpenGL alone
+  caused it. Forcing OpenGL 4.1 did not repair it and slowed printing tests.
+
+  `HARNESS_CAPTURE=off` remains an explicit diagnostic override, with its
+  reason recorded in `evidence.json`; it is no longer the native macOS
+  default. Recording-on legs judge native display/static evidence and
+  renderer liveness. An internal frame or heartbeat alone does not prove
+  that WindowServer presented current pixels. These software-rendered CI
+  captures are visual evidence, not a benchmark of a physical Mac's GPU.
 - **The renderer-liveness verdict rides the leg, not the platform
   (2026-09-25, the visual heartbeat).** Every step assertion is
   answered from the QML tree, and a tree keeps answering after the

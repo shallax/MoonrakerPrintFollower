@@ -521,6 +521,7 @@ fi
    -d pkg_stage 'files/plugins/*')
 cp -r "$WORK_DIR"/pkg_stage/files/plugins/MoonrakerPrintFollower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
+cp "$root/tests/harness/window_geometry.py" "$PLUGIN_DIR/HarnessDriver/window_geometry.py"
 # The container's root re-opens the seeded tree as the last staging
 # act: whatever uid skew survives between the host-side chmod and the
 # boot's view, the tree the boot actually sees ends up world-writable.
@@ -529,6 +530,7 @@ cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
 # The runner's platform dispatch rides beside it (the staged runner is
 # imported from this directory), so the flat copy keeps working.
 cp "$root/tests/harness/native_host.py" "$WORK_DIR"/native_host.py
+cp "$root/tests/harness/window_geometry.py" "$WORK_DIR"/window_geometry.py
 cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py

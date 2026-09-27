@@ -236,14 +236,14 @@ class TestingDocPinTests(unittest.TestCase):
             self.assertNotIn(phrase, text, phrase)
 
     def test_the_capture_gate_and_its_cost_are_documented(self):
-        # The macOS legs run without pictures. The document is where a
-        # reader learns an empty mac gallery is by design rather than a
-        # broken harness, and the cost is stated rather than implied —
-        # a caveat that quietly disappears is worse than none.
+        # Native capture is restored with explicit window bounds. Keep
+        # the override and the limit of software-rendered evidence clear.
         text = self._doc()
-        self.assertIn("macOS legs run without pictures", text)
-        self.assertIn("macOS has no visual-regression detection in CI", text)
-        self.assertIn("HARNESS_CAPTURE=on", text)
+        self.assertIn("Native screenshots and recordings are enabled", text)
+        self.assertIn("availableGeometry", text)
+        self.assertIn("bounds watchdog", text)
+        self.assertIn("HARNESS_CAPTURE=off", text)
+        self.assertIn("not a benchmark of a physical Mac", text)
         # The liveness verdict rides the leg rather than the platform, and
         # what a miss MEANS there is documented beside the gate rather
         # than folded into its cost: a judged stall where the leg reads

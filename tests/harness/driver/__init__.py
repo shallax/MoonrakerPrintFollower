@@ -19,6 +19,7 @@ from PyQt6.QtQml import QQmlComponent, qmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
 from PyQt6.QtWidgets import QApplication
 from UM.Application import Application
+from .window_geometry import fit_content_rectangle
 
 # Where the port and the per-run token are published for the runner:
 # ONE variable, because the runner reads them back through it and the
@@ -29,6 +30,35 @@ from UM.Application import Application
 RPC_DIR = os.environ.get("HARNESS_RPC_DIR", "/tmp/mpf")
 PORT_FILE = os.path.join(RPC_DIR, "harness_port.txt")
 TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
+
+
+def _window_target(window, width, height):
+    if QGuiApplication.platformName() != "cocoa" or os.environ.get("HARNESS_FIT_AVAILABLE") == "off":
+        return [0, 0, width, height], None
+    screen = window.screen() or QGuiApplication.primaryScreen()
+    available = list(screen.availableGeometry().getRect())
+    margins = window.frameMargins()
+    minimum = window.minimumSize()
+    target = fit_content_rectangle(
+        [width, height], available,
+        [margins.left(), margins.top(), margins.right(), margins.bottom()],
+        [minimum.width(), minimum.height()])
+    return target, available
+
+
+def _apply_window_target(window, width, height, set_origin=False):
+    target, available = _window_target(window, width, height)
+    if available is not None or set_origin:
+        window.setGeometry(*target)
+    else:
+        window.resize(width, height)
+
+
+def _window_size_evidence(window, width, height):
+    target, available = _window_target(window, width, height)
+    return {"requested": [width, height], "wanted": target[2:],
+            "fit_available": available is not None, "available": available,
+            "frame": list(window.frameGeometry().getRect())}
 
 
 def _ensure_rpc_dir():
@@ -70,6 +100,14 @@ class HarnessServer(QObject):
         self._win_events = []
         self._py_clicks = []
         self._buffers = {}
+        self._geometry_window = None
+        self._geometry_repairs = 0
+        self._geometry_error = None
+        self._geometry_watchdog = QTimer(self)
+        self._geometry_watchdog.setInterval(1000)
+        self._geometry_watchdog.timeout.connect(self._guard_window_geometry)
+        if QGuiApplication.platformName() == "cocoa" and os.environ.get("HARNESS_FIT_AVAILABLE") != "off":
+            self._geometry_watchdog.start()
         _ensure_rpc_dir()
         self._token = _mint_token()
         if not self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
@@ -81,6 +119,22 @@ class HarnessServer(QObject):
         self._poll.setInterval(50)
         self._poll.timeout.connect(self._drain)
         self._poll.start()
+
+    def _guard_window_geometry(self):
+        window = self._geometry_window
+        if window is None:
+            return
+        try:
+            _target, available = _window_target(window, window.width(), window.height())
+            if available is None:
+                return
+            from PyQt6.QtCore import QRect
+            if not QRect(*available).contains(window.frameGeometry()):
+                _apply_window_target(window, window.width(), window.height())
+                self._geometry_repairs += 1
+            self._geometry_error = None
+        except Exception as exc:
+            self._geometry_error = str(exc)
 
     @pyqtSlot()
     def markClicked(self):
@@ -344,11 +398,12 @@ class HarnessServer(QObject):
                                     largest = window
                         if largest is not None and (
                                 largest.width() != w or largest.height() != h):
-                            largest.resize(w, h)
+                            _apply_window_target(largest, w, h)
                         QTimer.singleShot(1000, search)
                         return
                     window = target[0]
-                    window.resize(w, h)
+                    self._geometry_window = window
+                    _apply_window_target(window, w, h)
                     attempts = [0]
 
                     def verify():
@@ -357,7 +412,8 @@ class HarnessServer(QObject):
                         # ACTUALLY took — the old immediate read
                         # returned the pre-resize size on slow boots
                         # (the parallel matrix's gate failures).
-                        if window.width() == w and window.height() == h:
+                        wanted = _window_target(window, w, h)[0][2:]
+                        if [window.width(), window.height()] == wanted:
                             loop.quit()
                             return
                         if attempts[0] >= 30:
@@ -366,7 +422,7 @@ class HarnessServer(QObject):
                             loop.quit()
                             return
                         attempts[0] += 1
-                        window.resize(w, h)
+                        _apply_window_target(window, w, h)
                         QTimer.singleShot(500, verify)
 
                     QTimer.singleShot(1500, verify)
@@ -386,7 +442,9 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True,
                         "title": window.title() or "",
                         "size": (window.width(), window.height()),
-                        "screen": _screen}
+                        "screen": _screen, **_window_size_evidence(window, w, h),
+                        "watchdog_repairs": self._geometry_repairs,
+                        "watchdog_error": self._geometry_error}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "windows":
@@ -541,6 +599,7 @@ class HarnessServer(QObject):
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
                 _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
+                self._geometry_window = window
                 minimum = window.minimumSize()
                 asked = [request.get("w", int(_win[0])),
                          request.get("h", int(_win[1]))]
@@ -553,13 +612,15 @@ class HarnessServer(QObject):
                             "minimum": [minimum.width(), minimum.height()]}
                 got = [0, 0]
                 for _attempt in range(5):
-                    window.setGeometry(0, 0, want[0], want[1])
+                    _apply_window_target(window, want[0], want[1], set_origin=True)
                     time.sleep(0.8)
                     got = [window.width(), window.height()]
-                    if got == want:
+                    if got == _window_target(window, want[0], want[1])[0][2:]:
                         break
                 return {"id": request_id, "ok": True, "size": got,
-                        "wanted": want,
+                        **_window_size_evidence(window, want[0], want[1]),
+                        "watchdog_repairs": self._geometry_repairs,
+                        "watchdog_error": self._geometry_error,
                         "minimum": [minimum.width(), minimum.height()]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
