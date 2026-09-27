@@ -1343,6 +1343,7 @@ $srcPlugin = Join-Path $Staging 'files\plugins\MoonrakerPrintFollower'
 if (-not (Test-Path -LiteralPath $srcPlugin)) { Fail "the package carried no files\plugins\MoonrakerPrintFollower" }
 Copy-Item -LiteralPath $srcPlugin -Destination $PluginDir -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $Root 'tests\harness\driver') -Destination (Join-Path $PluginDir 'HarnessDriver') -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $Root 'tests\harness\window_geometry.py') -Destination (Join-Path $PluginDir 'HarnessDriver\window_geometry.py') -Force
 Get-ChildItem -LiteralPath $PluginDir -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 foreach ($name in 'MoonrakerPrintFollower', 'HarnessDriver') {

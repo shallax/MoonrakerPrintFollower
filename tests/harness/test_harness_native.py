@@ -27,6 +27,16 @@ from window_geometry import fit_content_rectangle, verified_geometry
 
 
 class AvailableDesktopTests(unittest.TestCase):
+    def test_all_platforms_stage_the_drivers_geometry_import(self):
+        tools = HERE.parents[1] / "tools"
+        for name in ("ui_test.sh", "native_harness.sh", "native_harness.ps1"):
+            with self.subTest(platform_script=name):
+                lines = (tools / name).read_text(encoding="utf-8").splitlines()
+                self.assertTrue(any(line.strip().startswith(("cp ", "Copy-Item "))
+                                    and "window_geometry.py" in line
+                                    and "HarnessDriver" in line for line in lines),
+                                "the driver's relative import was not staged")
+
     def test_frame_and_dock_are_excluded_from_the_content_target(self):
         self.assertEqual(fit_content_rectangle([1840, 1040], [0, 30, 1920, 972],
                                                [0, 29, 0, 0], [1040, 624]),
