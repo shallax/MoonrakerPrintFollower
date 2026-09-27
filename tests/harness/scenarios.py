@@ -953,7 +953,16 @@ for item in _walk(window.contentItem()):
 # Configure-round diagnostics: the geometry probe is a gate (its
 # misalignment raise fails the step); the FM click rides the s8
 # track-click precedent (no driver verb aims at the band).
-CONFIGURE_DRAG_PROBE = (
+SCENE_RECT = """def _input_rect(item):
+    # Driver evidence rectangles are desktop-relative. QTest takes window
+    # coordinates; fitting beneath the macOS menu bar exposes this offset.
+    rectangle = self._rect(item)
+    origin = item.window().position()
+    return dict(rectangle, x=rectangle["x"] - origin.x(),
+                y=rectangle["y"] - origin.y())
+"""
+
+CONFIGURE_DRAG_PROBE = SCENE_RECT + (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
     "result = {}\n"
@@ -964,7 +973,7 @@ CONFIGURE_DRAG_PROBE = (
     "    except Exception:\n"
     "        name = \"\"\n"
     "    if name == \"sectionConfigureHandle\" and _effectively_visible(item):\n"
-    "        r = self._rect(item)\n"
+    "        r = _input_rect(item)\n"
     "        if handle is None or r[\"y\"] < handle[1]:\n"
     "            handle = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
     "if handle is None:\n"
@@ -1061,7 +1070,7 @@ CONFIGURE_CROSSTALK_PROBE = (
     "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
-CONFIGURE_DISMISS_PROBE = (
+CONFIGURE_DISMISS_PROBE = SCENE_RECT + (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
     "result = {}\n"
@@ -1076,7 +1085,7 @@ CONFIGURE_DISMISS_PROBE = (
     "        break\n"
     "if card is None:\n"
     "    raise RuntimeError(\"no visible configure pop-over\")\n"
-    "r = self._rect(card)\n"
+    "r = _input_rect(card)\n"
     "# A press on the card's own surface (the title band owns no\n"
     "# control) must not dismiss the card.\n"
     "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
@@ -1120,7 +1129,7 @@ CONFIGURE_TRI_PROBE = (
     "    raise RuntimeError(\"the selector state is \" + str(found) + \", expected \" + str(expected))\n"
     "result")
 
-CONFIGURE_FM_CLICK = (
+CONFIGURE_FM_CLICK = SCENE_RECT + (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
     "result = {}\n"
@@ -1141,7 +1150,7 @@ CONFIGURE_FM_CLICK = (
     "                band = c\n"
     "                break\n"
     "        if band is not None:\n"
-    "            r = self._rect(band)\n"
+    "            r = _input_rect(band)\n"
     "            result[\"band\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
     "            qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
     "                                   Qt.KeyboardModifier.NoModifier,\n"
@@ -1211,7 +1220,7 @@ CONFIGURE_FM_OPEN = (
     "        result[\"error\"] = repr(exc)\n"
     "result")
 
-CONFIGURE_FM_OUTSIDE = (
+CONFIGURE_FM_OUTSIDE = SCENE_RECT + (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
     "result = {}\n"
@@ -1222,7 +1231,7 @@ CONFIGURE_FM_OUTSIDE = (
     "    except Exception:\n"
     "        name = \"\"\n"
     "    if name == \"columnsPopupBackground\" and _effectively_visible(item):\n"
-    "        r = self._rect(item)\n"
+    "        r = _input_rect(item)\n"
     "        bg = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
     "        break\n"
     "if bg is None:\n"

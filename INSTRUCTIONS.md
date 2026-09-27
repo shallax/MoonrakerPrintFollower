@@ -83,6 +83,10 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   indexer and prepared-layer renderer draw those motions. This fixture
   is for screenshots, not a printer job. Both cards participate in the
   normal light/dark determinism, contrast and committed-image sync gates.
+  Native input probes must use window-relative coordinates for QTest;
+  the driver's evidence rectangles are desktop-relative. The macOS
+  available-desktop fit moves the content below the menu/title bars,
+  so assuming a window origin of (0, 0) misses controls and drag handles.
 - Deterministic captures: the harness freezes EVERY live input the
   scenes render — the formatter's wall clock is patched to a fixed
   instant (`FrozenDatetime`, patching every module object loaded from

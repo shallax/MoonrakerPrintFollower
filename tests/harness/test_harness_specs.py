@@ -24,6 +24,19 @@ def _inline_code_values(spec):
 
 
 class HarnessSpecTests(unittest.TestCase):
+    def test_inline_input_rectangles_account_for_a_displaced_window(self):
+        from types import SimpleNamespace
+        for x, y in ((0, 0), (40, 59), (-900, 31)):
+            with self.subTest(origin=(x, y)):
+                origin = SimpleNamespace(x=lambda x=x: x, y=lambda y=y: y)
+                item = SimpleNamespace(window=lambda origin=origin: SimpleNamespace(position=lambda: origin))
+                driver = SimpleNamespace(_rect=lambda item, x=x, y=y: {"x": x + 100, "y": y + 200,
+                                                              "w": 30, "h": 40})
+                namespace = {"self": driver}
+                exec(_scenarios.SCENE_RECT, namespace)
+                self.assertEqual(namespace["_input_rect"](item),
+                                 {"x": 100, "y": 200, "w": 30, "h": 40})
+
     def test_ui_test_holds_one_run_per_container(self):
         # The 2026-09-16 census loss: two ui_test runs sharing one
         # container restage the workdir and kill each other's
