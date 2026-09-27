@@ -2804,6 +2804,28 @@ class CameraFpsControlTests(RealEngineTestCase):
                         Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
             self.pump(20)
 
+    def test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works(self):
+        pane, window, model, _image, _frame = self._fps_pane(700, 700)
+        component = QQmlComponent(self.engine)
+        component.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / "MonitorPopOver.qml")))
+        card = component.create()
+        self.assertIsNotNone(card, "\n".join(error.toString() for error in component.errors()))
+        card.setParentItem(window.contentItem())
+        card.setProperty("height", 300)
+        card.setProperty("contentWidth", 300)
+        card.setX(200)
+        card.setY(200)
+        self.addCleanup(card.deleteLater)
+        self.pump(20)
+        self._rate_drag(window, card, -12, steps=3)
+        self.assertEqual(model.fps_calls, [], "right drag passed through the floating card")
+        self._wheel(window, card, modifiers=Qt.KeyboardModifier.ShiftModifier)
+        self.pump(20)
+        self.assertEqual(model.fps_calls, [], "shift-wheel passed through the floating card")
+        area = self.find(pane, "cameraGestureArea")
+        self._rate_drag(window, area, -12, x_ratio=.1, y_ratio=.5)
+        self.assertEqual(model.fps_calls, [16.0], "the uncovered webcam lost its right drag")
+
     def test_the_right_drag_drives_the_rate_from_anywhere_over_the_picture(self):
         # The live request: the rate must be adjustable by dragging,
         # not only by a shifted wheel — and dragging UP raises it. The

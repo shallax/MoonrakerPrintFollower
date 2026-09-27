@@ -418,6 +418,11 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    "monitorPopoverPointerBarrier": {
+        "reason": "internal input shield; real Qt mouse and wheel delivery is covered by the engine suite",
+        "evidence": "tests/test_qml_real_engine.py: test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works",
+        "date": "2026-09-27", "recheck": "popover input shielding changes",
+    },
     "MoonrakerMonitorModel.acquirePlateAssetOwner": {
         "reason": "internal face lifetime protocol, not a user command",
         "evidence": "tests/test_monitor_model_coverage.py: asset_owners_release_independently_and_cannot_be_resurrected",

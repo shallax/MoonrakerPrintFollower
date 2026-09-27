@@ -35,6 +35,18 @@ Cura.RoundedRectangle {
     // Content lands in the layout below the title row.
     default property alias content: contentColumn.data
 
+    // The floating card owns its whole footprint. Unhandled buttons and
+    // wheels must not reach the webcam's pan/FPS gestures underneath it.
+    MouseArea {
+        objectName: "monitorPopoverPointerBarrier"
+        parent: root
+        anchors.fill: parent
+        acceptedButtons: Qt.AllButtons
+        onWheel: function (wheel) {
+            wheel.accepted = true;
+        }
+    }
+
     ColumnLayout {
         id: column
         anchors.fill: parent
