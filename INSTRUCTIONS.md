@@ -285,6 +285,11 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 - The seek performance budget runs alone after the parallel correctness pool in
   both full and subset runners. Its five-second limit measures implementation
   performance, rather than competition with other test processes.
+- CI coverage and the release workflow also isolate files. The host coverage
+  job uses `tools/run_some.py --coverage-dir <fresh-directory>` and combines its
+  per-worker data; the wall-clock seek benchmark runs without instrumentation.
+  Never restore a single-process Qt discovery in either workflow: another
+  module's application can silently skip the real-engine cases.
 - Tests that need real Qt are guarded with
   `@unittest.skipUnless(QT_AVAILABLE, ...)`. They skip in stdlib-only local
   runs and run in CI, where `ci.yml` installs PyQt6.
@@ -784,6 +789,9 @@ packaging; CI and release artifact builds do the same. Windows package and
 snapshot commands also compile them. For shader-only iteration, run
 `make generate_shaders` (or supply `QSB=/path/to/qsb`). The development
 toolchains install PySide6-Addons 6.10.2, which provides qsb.
+On Linux, install `libegl1` before invoking the wheel's qsb executable;
+it links the Qt graphics runtime even for offline shader compilation. CI
+installs the capture runtime before this build step for that reason.
 `tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
 HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
 Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.

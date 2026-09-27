@@ -6,6 +6,8 @@ application. Shared fixture modules do not start an application at import.
 The default is one process per file. Optional --shards distributes test ids
 round-robin across more processes; use it only for order-independent modules.
 The seek performance budget runs alone after the correctness worker pool.
+--coverage-dir writes one data file per instrumented worker; the wall-clock
+benchmark remains uninstrumented. Combine the files with coverage combine.
 
 Shards are only used when a module has more tests than chunks: sharding a
 four-test file into four processes costs more in interpreter and engine
@@ -37,6 +39,7 @@ TIMED_MODULE = "tests.test_follower_seek_performance"
 # the modules HERE to discover their tests must see the same layout, or a
 # dotted module path resolves for the shards and not for discovery.
 sys.path.insert(0, os.getcwd())
+sys.path.insert(0, str(Path.cwd() / "tests"))
 
 
 def _flatten(suite):
@@ -70,13 +73,21 @@ def shard(ids, count):
 
 def run_shard(job):
     """One process for one chunk. Returns (label, rc, log path, ran)."""
-    label, ids, log_path = job
+    label, ids, log_path, coverage_path = job
     environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(Path.cwd() / "tests"), environment.get("PYTHONPATH", ""))))
     environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+    environment.setdefault("PYTHONFAULTHANDLER", "1")
+    argv = [sys.executable, "-m"]
+    if coverage_path is not None:
+        environment["COVERAGE_FILE"] = str(coverage_path)
+        argv += ["coverage", "run", "-m"]
+    argv += ["unittest", "-v", *ids]
     try:
         with open(log_path, "wb") as log:
             rc = subprocess.call(
-                [sys.executable, "-m", "unittest", *ids],
+                argv,
                 stdout=log, stderr=subprocess.STDOUT, env=environment,
             )
     except OSError as error:
@@ -104,6 +115,8 @@ def main(argv=None):
     parser.add_argument("--shards", type=int,
                         default=int(os.environ.get("SHARDS", "1")),
                         help="chunks per module (default 1 — see below)")
+    parser.add_argument("--coverage-dir", type=Path,
+                        help="write isolated coverage data per worker here; combine after the run")
     args = parser.parse_args(argv)
 
     # The OS names this directory, so it cannot collide: the scratch
@@ -114,7 +127,10 @@ def main(argv=None):
     # without writing must not leave the previous run's log to be read
     # as this run's verdict, so the name is unique by construction and
     # every log under it was written by this run.
+    SCRATCH.mkdir(parents=True, exist_ok=True)
     log_dir = Path(tempfile.mkdtemp(dir=SCRATCH, prefix="run_some."))
+    if args.coverage_dir is not None:
+        args.coverage_dir.mkdir(parents=True, exist_ok=True)
 
     jobs = []
     timed_jobs = []
@@ -132,7 +148,9 @@ def main(argv=None):
         for index, chunk in enumerate(chunks):
             label = module if len(chunks) == 1 else "%s#%d" % (module, index + 1)
             target = timed_jobs if module == TIMED_MODULE else jobs
-            target.append((label, chunk, log_dir / ("%s.log" % label.replace(".", "_"))))
+            coverage_path = (args.coverage_dir / (".coverage.%s" % label)
+                             if args.coverage_dir is not None and module != TIMED_MODULE else None)
+            target.append((label, chunk, log_dir / ("%s.log" % label.replace(".", "_")), coverage_path))
 
     if not jobs and not timed_jobs:
         print("no tests discovered — refusing to report a green run",
@@ -167,6 +185,8 @@ def main(argv=None):
             failed = 1
             for log_path in entry["logs"]:
                 print("  log: %s" % log_path)
+                print("\n".join(Path(log_path).read_text(
+                    encoding="utf-8", errors="replace").splitlines()[-80:]))
         elif short:
             failed = 1
             print("  discovery found %d, the shards ran %d"

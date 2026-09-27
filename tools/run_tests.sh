@@ -142,7 +142,7 @@ run_coverage_container() {
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
         printf '%s\n' $parallel_files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
-        for f in $timed_files; do COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\" || exit; done && \
+        for f in $timed_files; do $PYTHON -m unittest discover -s $tests_dir -p \"\$f\" || exit; done && \
         $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
         $PYTHON -m coverage report --include='plugins/*' --fail-under=95 && \
         $PYTHON -m coverage json -o /tmp/mpf/coverage.json && \

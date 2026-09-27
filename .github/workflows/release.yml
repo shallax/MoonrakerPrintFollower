@@ -66,7 +66,7 @@ jobs:
         run: |
           python -m compileall -q plugins tools tests
           python tools/check_qml.py plugins
-          python -m unittest discover -s tests -p "test_*.py"
+          JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
       - name: Install Qt test runtime (Cura supplies Qt in production)
         run: |
@@ -77,7 +77,7 @@ jobs:
       - name: Run the full suite with the real Qt runtime
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          python -m unittest discover -s tests -p "test_*.py"
+          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
       - name: Build and verify release artifacts
         run: |

@@ -363,7 +363,7 @@ def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool, cov_di
     for name in names:
         job_env = dict(env)
         argv = [python, "-m"]
-        if coverage:
+        if coverage and name != "test_follower_seek_performance.py":
             job_env["COVERAGE_FILE"] = str(cov_dir / ("cov.%s.coverage" % name[:-3]))
             argv += ["coverage", "run", "-m"]
         argv += ["unittest", "discover", "-v", "-s", "tests", "-p", name]

@@ -378,7 +378,18 @@ jobs:
 
       - name: Run the suite under coverage
         run: |
-          QT_QPA_PLATFORM=offscreen coverage run -m unittest discover -s tests -p "test_*.py"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          modules = ["tests." + path.stem for path in sorted(Path("tests").glob("test_*.py"))]
+          destination = str(Path(os.environ["RUNNER_TEMP"]) / "coverage")
+          subprocess.run([sys.executable, "tools/run_some.py", "--jobs", "2",
+                          "--coverage-dir", destination, *modules], check=True)
+          PY
+          coverage combine "$RUNNER_TEMP/coverage"
           coverage report --include="plugins/*" --fail-under=80
           coverage xml --include="plugins/*"
 
@@ -476,6 +487,16 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:8}"
           echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
+      - name: Install capture runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0
+          python -m pip install PyQt6==6.11.0
+
       - name: Compile packaged GPU shaders
         run: |
           python -m pip install PySide6-Addons==6.10.2
@@ -492,16 +513,6 @@ jobs:
 
       - name: Verify Cura Marketplace source ZIP
         run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
-
-      # Shared step: the drop_google_apt_sources anchor defined in the
-      # lint job's steps above.
-      - *drop_google_apt_sources
-
-      - name: Install capture runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0
 
       - name: Capture deterministic screenshots
         run: |
