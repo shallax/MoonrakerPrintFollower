@@ -1374,5 +1374,21 @@ class CaptureGateTests(unittest.TestCase):
 
 
 
+class CensusReadinessTests(unittest.TestCase):
+    def test_census_waits_for_repeaters_and_still_rejects_missing_controls(self):
+        from unittest.mock import patch
+        replies = iter([{"complete": False, "checks": {"power": False}},
+                        {"complete": True, "checks": {"power": True}}])
+        with patch.object(runner, "exec_rpc", side_effect=lambda *a, **k: next(replies)), \
+                patch.object(runner.time, "sleep"):
+            ok, _, detail = runner.suite_step({"op": "census", "budget": 1})
+        self.assertTrue(ok)
+        self.assertIn("power:ok", detail)
+        with patch.object(runner, "exec_rpc", return_value={"complete": False, "checks": {"power": False}}):
+            ok, _, detail = runner.suite_step({"op": "census", "budget": 0})
+        self.assertFalse(ok)
+        self.assertIn("power:MISSING", detail)
+
+
 if __name__ == "__main__":
     unittest.main()

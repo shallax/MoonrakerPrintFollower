@@ -3057,25 +3057,57 @@ class PlateCanvasHitTests(RealEngineTestCase):
         # name: a wrong hit-test must still fail the caller's assertion.
         area = next(child for child in reversed(canvas.childItems())
                     if child.inherits("QQuickMouseArea"))
+        class Delivery(QObject):
+            def __init__(self):
+                super().__init__()
+                self.moves = []
+
+            @pyqtSlot(float, float)
+            def received(self, x, y):
+                # Coordinates can update on entry before positionChanged's
+                # QML handler runs. Observe the signal, not just its inputs;
+                # QML forwards plain coordinates so PyQt never converts the
+                # private QQuickMouseEvent pointer.
+                self.moves.append((x, y))
+
+        delivery = Delivery()
+        from PyQt6.QtQml import QQmlContext
+        context = QQmlContext(self.engine.rootContext())
+        context.setContextProperty("watchedArea", area)
+        context.setContextProperty("delivery", delivery)
+        component = QQmlComponent(self.engine)
+        component.setData(b"import QtQuick 2.15; Connections { target: watchedArea; "
+                          b"function onPositionChanged(mouse) { delivery.received(mouse.x, mouse.y) } }", QUrl())
+        connection = component.create(context)
+        self.assertIsNotNone(connection, qml_error_report(component))
         def delivered_move(point):
+            first = len(delivery.moves)
             QTest.mouseMove(window, point)
             local = area.mapFromScene(QPointF(point))
             deadline = time.monotonic() + 1.5
+            def received():
+                return any(abs(x - local.x()) < 0.75 and abs(y - local.y()) < 0.75
+                           for x, y in delivery.moves[first:])
             while time.monotonic() < deadline:
                 self.app.processEvents()
-                if abs(float(area.property("mouseX")) - local.x()) < 0.75 and abs(float(area.property("mouseY")) - local.y()) < 0.75:
+                if received():
                     break
                 QTest.qWait(10)
-            self.assertLess(abs(float(area.property("mouseX")) - local.x()), 0.75, "hover X was not delivered")
-            self.assertLess(abs(float(area.property("mouseY")) - local.y()), 0.75, "hover Y was not delivered")
+            self.assertTrue(received(), "hover positionChanged was not delivered: %s -> %s" %
+                            (delivery.moves[first:], (local.x(), local.y())))
 
         # Observe the off-point event before submitting the target. Otherwise
         # an old target coordinate can satisfy the waiter while the off-point
         # signal still owns hoveredName; queued native moves then race it.
         off_x = scene_x + (8.0 if scene_x + 8.0 < canvas.width() - 1 else -8.0)
         off_y = scene_y + (8.0 if scene_y + 8.0 < canvas.height() - 1 else -8.0)
-        delivered_move(canvas.mapToScene(QPointF(off_x, off_y)).toPoint())
-        delivered_move(canvas.mapToScene(QPointF(scene_x, scene_y)).toPoint())
+        try:
+            delivered_move(canvas.mapToScene(QPointF(off_x, off_y)).toPoint())
+            delivered_move(canvas.mapToScene(QPointF(scene_x, scene_y)).toPoint())
+        finally:
+            from PyQt6 import sip
+            sip.delete(connection)
+            sip.delete(context)
         return face.property("hoveredName")
 
     def _click_bed(self, window, canvas, face, bed_x, bed_y):

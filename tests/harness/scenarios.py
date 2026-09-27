@@ -1617,7 +1617,11 @@ SCENARIOS = [
          {"op": "sim_set_current_print", "filename": "penguin.gcode"},
          {"op": "click_stage", "stage": "PrepareStage"},
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         # Before indexing, the mini canvas is fully transparent. Its
+         # visible placeholder is the user's opener, not a hidden item.
+         {"op": "click_text", "text": "The follower appears once the print's index is built \u2014 open the pop-over to build it."},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerAttach", "budget": 20},
          {"op": "click_text", "text": "Download and index this print to follow its progress."},
          {"op": "wait_model", "prop": "plateLiveAvailable", "value": True, "budget": 90},
          {"op": "wait_exec", "code": PENGUIN_MONITOR_READ, "contains": '"smooth_gpu": true', "budget": 30},

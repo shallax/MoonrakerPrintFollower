@@ -52,9 +52,13 @@ def playback_sample(rows, fraction):
     at = min(len(rows) - 1, bisect_left(rows, target, key=lambda row: row["at"]))
     row = rows[at]
     previous = rows[at - 1]["at"] if at else 0.0
-    blend = min(1.0, max(0.0, (target - previous) / (row["at"] - previous)))
+    duration = row["at"] - previous
+    blend = min(1.0, max(0.0, (target - previous) / duration))
+    moving = 0 < fraction < 1
     return dict(row, position=[a + (b - a) * blend
-                              for a, b in zip(row["start"], row["end"], strict=True)])
+                              for a, b in zip(row["start"], row["end"], strict=True)],
+                velocity=dist(row["start"][:3], row["end"][:3]) / duration if moving else 0.0,
+                extruder_velocity=(row["end"][3] - row["start"][3]) / duration if moving else 0.0)
 
 
 def make_gcode(layers: int = 40) -> str:

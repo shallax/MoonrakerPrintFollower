@@ -236,7 +236,19 @@ class RendererParityTests(_parent.RealEngineTestCase):
         face.setProperty("viewScale", 4.0)
         face.setProperty("displayScale", 4.0)
         face.setProperty("_interactionActive", True)
-        back = None
+        # Read the theme, not a presumed empty pixel. A panned graduation
+        # crosses any fixed canvas sample: macOS's failure image sampled
+        # #cccccc as background, so the #999999 grid falsely had no ink.
+        from PyQt6.QtQml import QQmlEngine, QQmlExpression
+        from PyQt6.QtGui import QColor
+        expression = QQmlExpression(QQmlEngine.contextForObject(face), face,
+                                   "UM.Theme.getColor('main_background')")
+        colour, undefined = expression.evaluate()
+        self.assertFalse(expression.hasError(), expression.error().toString())
+        self.assertFalse(undefined)
+        background = QColor(colour)
+        self.assertTrue(background.isValid())
+        back = background.rgba()
 
         def grab(pan_x):
             face.setProperty("displayPanX", pan_x)
@@ -245,9 +257,6 @@ class RendererParityTests(_parent.RealEngineTestCase):
             return window.grabWindow()
 
         def inked(image, col, row):
-            nonlocal back
-            if back is None:
-                back = image.pixel(ox + 8, oy + 8)
             px = image.pixel(col, row)
             return max(abs(((px >> s) & 0xFF) - ((back >> s) & 0xFF))
                        for s in (0, 8, 16)) > 60

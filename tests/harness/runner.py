@@ -4184,9 +4184,16 @@ def suite_step(step):
         # real-printer mode can allow it while arbitrary exec stays
         # refused.
         import scenarios as _scenarios
-        reply = exec_rpc(_scenarios.CENSUS_PROBE, raise_on_error=True)
+        # The snapshot and its QML repeaters settle asynchronously, including
+        # auxiliary polls. Honour the advertised budget instead of taking one
+        # observation immediately after the peer changes its data.
+        reply = {}
+        def ready():
+            nonlocal reply
+            reply = exec_rpc(_scenarios.CENSUS_PROBE, raise_on_error=True)
+            return bool(reply.get("complete"))
+        complete = bool(wait_for(ready, float(step.get("budget", 40)), 1.0))
         checks = reply.get("checks", {})
-        complete = bool(reply.get("complete"))
         detail = "; ".join(f"{name}:{'ok' if ok else 'MISSING'}"
                            for name, ok in checks.items())
         return (complete, "the data-render census (every data class renders its control)",

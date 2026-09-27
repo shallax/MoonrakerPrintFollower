@@ -2,6 +2,20 @@
 from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
+    def test_penguin_telemetry_enters_all_three_layers(self):
+        from tests.harness.gcodegen import penguin_playback, playback_sample
+        data, rows = penguin_playback()
+        index = harness.build_index_from_bytes(data)
+        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        best = [0.0, 0.0, 0.0]
+        for tick in range(1, 81):
+            sample = playback_sample(rows, tick / 80)
+            motion = self.service.observe_motion(sample["layer"], sample["offset"],
+                sample["position"][:3], extruding=sample["extruder_velocity"] > 1e-6)
+            best[sample["layer"]] = max(best[sample["layer"]], motion.fraction)
+        for layer, progress in enumerate(best):
+            self.assertGreater(progress, .9, f"layer {layer + 1} never followed: {best}")
+
     def test_partial_motion_projects_only_onto_the_accepted_unfinished_move(self):
         from plugins.GCodeIndex import LayerMotionIndex
         from array import array

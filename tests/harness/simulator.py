@@ -436,6 +436,13 @@ class PrinterState:
                                            progress=row["offset"] / len(self.gcode_bytes))
         self.state["gcode_move"]["gcode_position"] = list(position)
         self.state["motion_report"]["live_position"] = list(position)
+        # Position and velocity describe the same commanded segment. Leaving
+        # the kickoff's zero extrusion velocity here falsely describes every
+        # extrusion as travel and correctly keeps the layer-entry gate shut.
+        acceleration = self._playback_rows[-1]["at"] / self._playback_duration if self._playback_duration else 0.0
+        self.state["motion_report"]["live_velocity"] = row["velocity"] * acceleration
+        self.state["motion_report"]["live_extruder_velocity"] = row["extruder_velocity"] * acceleration
+        self.state["display_status"]["progress"] = self.state["virtual_sdcard"]["progress"]
         self.state.setdefault("toolhead", {})["extruder"] = (
             "extruder" if row["tool"] == 0 else f"extruder{row['tool']}")
 

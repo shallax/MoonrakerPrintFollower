@@ -31,6 +31,16 @@ class PenguinTimelineTests(unittest.TestCase):
         self.assertEqual(playback_sample(rows, -1)["position"], rows[0]["start"])
         self.assertEqual(playback_sample(rows, 2)["position"], rows[-1]["end"])
 
+    def test_velocity_distinguishes_extrusion_travel_and_a_stopped_print(self):
+        rows = [dict(at=1.0, start=[0, 0, 0, 0], end=[10, 0, 0, 1]),
+                dict(at=2.0, start=[10, 0, 0, 1], end=[10, 10, 0, 1])]
+        self.assertEqual(playback_sample(rows, .25)["extruder_velocity"], 1.0)
+        self.assertEqual(playback_sample(rows, .75)["extruder_velocity"], 0.0)
+        self.assertEqual(playback_sample(rows, .75)["velocity"], 10.0)
+        for fraction in (-1, 0, 1, 2):
+            sample = playback_sample(rows, fraction)
+            self.assertEqual((sample["velocity"], sample["extruder_velocity"]), (0, 0))
+
     def test_simulator_finishes_in_twenty_seconds_and_reset_restores_the_file(self):
         try:
             from tests.harness.simulator import PrinterState
