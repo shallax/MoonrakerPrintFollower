@@ -4241,7 +4241,7 @@ def suite_step(step):
         gcode_size = listing["result"]["files"][0]["size"]
         sim_http("/harness/scenario", "POST", {
             "print_stats": {**state["print_stats"], "state": "printing",
-                            "filename": "scenario1.gcode"},
+                            "filename": step.get("filename", "scenario1.gcode")},
             "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
                                "progress": 0.5, "file_size": gcode_size}})
         return True, "the simulator's running job (the real gcode size)", \

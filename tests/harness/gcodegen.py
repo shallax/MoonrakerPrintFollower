@@ -1,6 +1,60 @@
 """The harness's deterministic generated gcode (pure — no tornado),
 shared by the simulator and the unit tests.
 """
+from bisect import bisect_left
+from math import dist
+import re
+
+
+def penguin_playback():
+    """A test-only linear-motion timeline from the README's exact G-code.
+
+    Kept independent of the plugin's indexer so following is tested against
+    telemetry from the file, not answers supplied by the tracker under test.
+    This parser only handles the generator's absolute G0/G1/G92 vocabulary.
+    """
+    try:
+        from tools.capture_penguin import make_gcode as penguin
+    except ModuleNotFoundError:
+        from capture_penguin import make_gcode as penguin
+    data = penguin().encode("ascii")
+    rows = []
+    position = [0.0, 0.0, 0.0, 0.0]
+    layer, tool, offset, clock, feed = -1, 0, 0, 0.0, 6000.0
+    for raw in data.splitlines(keepends=True):
+        line = raw.decode("ascii").strip()
+        offset += len(raw)
+        if line.startswith(";LAYER:"):
+            layer = int(line.partition(":")[2])
+        elif re.fullmatch(r"T\d+", line):
+            tool = int(line[1:])
+        elif line.startswith(("G0 ", "G1 ", "G92 ")):
+            values = {key: float(value) for key, value in re.findall(
+                r"([XYZEF])(-?\d+(?:\.\d+)?)", line)}
+            before = list(position)
+            for axis, key in enumerate("XYZE"):
+                position[axis] = values.get(key, position[axis])
+            feed = values.get("F", feed)
+            if line.startswith("G92") or layer < 0:
+                continue
+            clock += max(0.002, dist(before[:3], position[:3]) / (feed / 60))
+            rows.append({"at": clock, "start": before, "end": list(position),
+                         "layer": layer, "tool": tool, "offset": offset})
+    first = next(i for i, row in enumerate(rows) if row["end"][3] > row["start"][3])
+    before_print = rows[first - 1]["at"] if first else 0.0
+    rows = [dict(row, at=row["at"] - before_print) for row in rows[first:]]
+    return data, rows
+
+
+def playback_sample(rows, fraction):
+    """Interpolate along a commanded segment, never across a corner."""
+    target = min(1.0, max(0.0, fraction)) * rows[-1]["at"]
+    at = min(len(rows) - 1, bisect_left(rows, target, key=lambda row: row["at"]))
+    row = rows[at]
+    previous = rows[at - 1]["at"] if at else 0.0
+    blend = min(1.0, max(0.0, (target - previous) / (row["at"] - previous)))
+    return dict(row, position=[a + (b - a) * blend
+                              for a, b in zip(row["start"], row["end"], strict=True)])
 
 
 def make_gcode(layers: int = 40) -> str:

@@ -1320,6 +1320,36 @@ for item in _walk(window.contentItem()):
         break
 """
 
+PENGUIN_MONITOR_READ = """window = _main_window()
+result = {"smooth_gpu": False, "moving": False, "finished": False}
+for item in _walk(window.contentItem(), depth=96):
+    if item.objectName() == "moonrakerPlateProgressFace" and _effectively_visible(item) and not item.property("compact"):
+        result["smooth_gpu"] = bool(item.property("gpuRendering") and item.property("motionSmoothing") and item.property("attached"))
+        result["motion"] = float(item.property("displayedMotion") or 0)
+        model = item.property("printerModel")
+        if model is not None:
+            result["layer"] = int(model.property("plateProgressAnchor"))
+            result["moving"] = result["smooth_gpu"] and result["motion"] > 0
+            result["finished"] = result["moving"] and result["layer"] == 2
+        break
+"""
+
+PENGUIN_PREVIEW_READ = """from UM.Application import Application
+app = Application.getInstance()
+view = app.getController().getActiveView()
+result = {"ready": False, "moving": False, "finished": False}
+for extension in app.getExtensions():
+    if "MoonrakerPrintFollower" in type(extension).__name__:
+        rt = extension._runtime
+        state = rt.preview._state
+        result["ready"] = bool(state.attached and rt.binding.config.path_smoothing and rt.preview._motion is not None and view is not None and hasattr(view, "getLayerData") and view.getLayerData() is not None and view.getMaxLayers() == 2)
+        result["layer"] = state.expected_layer
+        result["path"] = state.expected_path
+        result["moving"] = bool(result["ready"] and state.expected_path is not None and state.expected_path > 0 and view.getCurrentLayer() == state.expected_layer)
+        result["finished"] = result["moving"] and state.expected_layer == 2
+        break
+"""
+
 SCENARIOS = [
     # ─── transport & connection ───────────────────────────────
     {"id": "a1", "group": "connection", "name": "the ws dot is green only after the first accepted snapshot",
@@ -1569,6 +1599,25 @@ SCENARIOS = [
          # shares its visibility rules is present. Its zoomed half is
          # driven by the Qt suite (test_qml_plate_composition.py).
          {"op": "wait_rect", "objectName": "moonrakerFollowerJump", "absent": True, "budget": 5},
+     ]},
+
+    {"id": "b12", "group": "status",
+     "name": "the smooth GPU follower draws the three-material penguin in twenty seconds",
+     "steps": [
+         {"op": "sim_arm", "arms": {"gcode_fixture": "penguin"}},
+         {"op": "sim_set_current_print", "filename": "penguin.gcode"},
+         {"op": "click_stage", "stage": "PrepareStage"},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "deliver_click", "objectName": "moonrakerPlateProgressFace"},
+         {"op": "click_text", "text": "Download and index this print to follow its progress."},
+         {"op": "wait_model", "prop": "plateLiveAvailable", "value": True, "budget": 90},
+         {"op": "wait_exec", "code": PENGUIN_MONITOR_READ, "contains": '"smooth_gpu": true', "budget": 30},
+         {"op": "sim_arm", "arms": {"gcode_playback_s": 20}},
+         {"op": "wait_seconds", "seconds": 3},
+         {"op": "wait_exec", "code": PENGUIN_MONITOR_READ, "contains": '"moving": true', "budget": 10},
+         {"op": "wait_exec", "code": PENGUIN_MONITOR_READ, "contains": '"finished": true', "budget": 25},
+         {"op": "wait_seconds", "seconds": 7},
+         {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerReadout", "contains": "3 / 3", "budget": 15},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────
@@ -2526,6 +2575,28 @@ SCENARIOS = [
          {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
+     ]},
+
+    {"id": "p8", "group": "preview",
+     "version_skip": {"5.11": "5.11 cannot retain a loaded G-code toolpath in SimulationView; the continuous attached Preview premise requires 5.12+"},
+     "name": "attached Preview smoothly follows the same penguin in twenty seconds",
+     "steps": [
+         {"op": "sim_arm", "arms": {"gcode_fixture": "penguin"}},
+         {"op": "sim_set_current_print", "filename": "penguin.gcode"},
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "click_text", "text": "Load current print"},
+         {"op": "wait_rect", "objectName": "moonrakerReplaceConfirmButton", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerReplaceConfirmButton"},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
+         {"op": "wait_exec", "code": PENGUIN_PREVIEW_READ, "contains": '"ready": true', "budget": 30},
+         {"op": "sim_arm", "arms": {"gcode_playback_s": 20}},
+         {"op": "wait_seconds", "seconds": 3},
+         {"op": "wait_exec", "code": PENGUIN_PREVIEW_READ, "contains": '"moving": true', "budget": 10},
+         {"op": "wait_exec", "code": PENGUIN_PREVIEW_READ, "contains": '"finished": true', "budget": 25},
+         {"op": "wait_seconds", "seconds": 7},
+         {"op": "assert_exec", "code": PENGUIN_PREVIEW_READ, "contains": '"finished": true'},
      ]},
 
     # ─── the smoke set (the release gate's sanity layer) ──────────

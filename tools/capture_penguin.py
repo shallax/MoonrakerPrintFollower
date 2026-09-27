@@ -46,7 +46,8 @@ def make_gcode():
         lines.extend([f";LAYER:{layer}", f"G0 Z{(layer + 1) * 0.2:.3f} F6000",
                       ";TYPE:SKIN"])
         for tool in range(3):
-            lines.extend([f"T{tool}", f"G92 E{extrusion[tool]:.5f}"])
+            lines.extend([f"T{tool}", f"G92 E{extrusion[tool]:.5f}",
+                          ";TYPE:" + ("WALL-OUTER", "WALL-INNER", "SKIN")[tool]])
             for row in range(240):
                 y = 38 + row * 0.7
                 start = None
@@ -65,7 +66,7 @@ def make_gcode():
                             last = (last - 125) * 0.8 + 100
                             bed_y = (y - 121) * 0.8 + 100
                             lines.append(f"G0 X{first:.3f} Y{bed_y:.3f} F6000")
-                            # 0.7 mm width, 0.2 mm height, 1.75 mm filament.
+                            # 0.56 mm width, 0.2 mm height, 1.75 mm filament.
                             extrusion[tool] += abs(last - first) * 0.56 * 0.2 / (math.pi * 0.875 ** 2)
                             lines.append(f"G1 X{last:.3f} Y{bed_y:.3f} E{extrusion[tool]:.5f} F1800")
                         start = None

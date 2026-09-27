@@ -34,9 +34,9 @@ CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", 
 
 
 try:  # The harness stages these files FLAT (simulator_serve imports
-    from .gcodegen import make_gcode  # noqa: F401  # the package form)
+    from .gcodegen import make_gcode, penguin_playback, playback_sample
 except ImportError:
-    from gcodegen import make_gcode  # noqa: F401  # the staged flat form
+    from gcodegen import make_gcode, penguin_playback, playback_sample
 
 
 KICKOFF_STATE: Dict[str, Any] = {
@@ -200,6 +200,10 @@ class PrinterState:
                                "time": time.time()}]
         # The gcode store the file manager walks.
         self.gcode_bytes = make_gcode(40).encode("utf-8")
+        self._playback_rows = []
+        self._playback_duration = 0.0
+        self._playback_elapsed = 0.0
+        self._playback_original = None
         self.files = [
             {"filename": "scenario1.gcode", "modified": time.time() - 3600.0,
              "size": len(self.gcode_bytes), "permissions": "rw",
@@ -293,6 +297,21 @@ class PrinterState:
                 self.presets_value = dict(value)
             elif name == "gcode_stream_ms":
                 self.gcode_stream_ms = max(0, int(value))
+            elif name == "gcode_fixture" and value == "penguin":
+                if self._playback_original is None:
+                    self._playback_original = self.gcode_bytes, self.files
+                self.gcode_bytes, self._playback_rows = penguin_playback()
+                self.files = [dict(self.files[0], filename="penguin.gcode",
+                                   size=len(self.gcode_bytes), modified=self.now(),
+                                   uuid="penguin-capture", estimated_time=900.0)]
+                self.layer_clock_interval_s = 0
+                self.progress_hold = True
+                self._playback_duration = self._playback_elapsed = 0.0
+                self._set_playback_position(0.0)
+            elif name == "gcode_playback_s" and self._playback_rows:
+                self._playback_duration = min(30.0, max(1.0, float(value)))
+                self._playback_elapsed = 0.0
+                self._set_playback_position(0.0)
             elif name == "fail_pause_script":
                 self.fail_pause_script = bool(value)
             elif name == "corrupt_frame_once":
@@ -356,6 +375,11 @@ class PrinterState:
         self.temp_tick_deg_c = 0.0
         self.motion_speed_mm_s = 0.0
         self.motion_e_mm_s = 0.0
+        if self._playback_original is not None:
+            self.gcode_bytes, self.files = self._playback_original
+            self._playback_original = None
+        self._playback_rows = []
+        self._playback_duration = self._playback_elapsed = 0.0
         self.fail_upload = False
         self.accept_pause_without_state = False
         self.clock_skew_ms = 0.0
@@ -403,6 +427,18 @@ class PrinterState:
         # hand-computed stamps.
         return time.time() + self.clock_skew_ms / 1000.0
 
+    def _set_playback_position(self, fraction):
+        row = playback_sample(self._playback_rows, fraction)
+        position = row["position"]
+        self.state["print_stats"]["info"] = {"total_layer": 3, "current_layer": row["layer"] + 1}
+        self.state["virtual_sdcard"].update(file_size=len(self.gcode_bytes),
+                                           file_position=row["offset"],
+                                           progress=row["offset"] / len(self.gcode_bytes))
+        self.state["gcode_move"]["gcode_position"] = list(position)
+        self.state["motion_report"]["live_position"] = list(position)
+        self.state.setdefault("toolhead", {})["extruder"] = (
+            "extruder" if row["tool"] == 0 else f"extruder{row['tool']}")
+
     def push_patch(self) -> Dict[str, Any]:
         """One changed-objects frame, as Moonraker shapes it: only
         the objects whose values moved since the last frame."""
@@ -444,6 +480,11 @@ class PrinterState:
                 motion["live_position"][3] = round(motion["live_position"][3] + self.motion_e_mm_s * step_s, 4)
                 motion["live_velocity"] = self.motion_speed_mm_s
                 motion["live_extruder_velocity"] = self.motion_e_mm_s
+            if self._playback_rows:
+                if self._playback_duration:
+                    self._playback_elapsed += self.push_cadence_ms / 1000.0
+                self._set_playback_position(self._playback_elapsed / self._playback_duration
+                                            if self._playback_duration else 0.0)
         elif stats.get("state") == "error" and self.cold_start:
             # The cold-start error: Klipper refuses below the minimum
             # temperature while Moonraker ramps the heater; once the

@@ -544,6 +544,7 @@ mkdir -p "$WORK_DIR"/harness_tests/tests/harness
 cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
     "$root/tests/harness/gcodegen.py" "$root/tests/test_simulator.py" \
     "$WORK_DIR"/harness_tests/tests/harness/
+cp "$root/tools/capture_penguin.py" "$WORK_DIR"/harness_tests/tests/harness/capture_penguin.py
 
 # The bracket keeps pgrep from matching the exec shell's own command
 # line (which contains the pattern) — without it the guard always

@@ -1,5 +1,17 @@
 # TESTING.md — the real-Cura UI test harness
 
+The `status` group's **b12** plays the README penguin through the GPU
+Print Follower popover; the `preview` group's **p8** follows that same
+G-code in Cura's attached 3D Preview. Each playback takes 20 seconds
+(the simulator caps any requested duration at 30). Byte offsets, layer,
+tool and interpolated positions come from an independent linear-motion
+parser, not the plugin's index or matching results. The scenarios require
+smoothing, attachment, advancing geometry and arrival at layer 3. Their
+normal step screenshots and group videos provide native-screen evidence.
+The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
+exercises its 2D follower. Static README captures deliberately hold a
+complete layer and do not claim to test smoothing.
+
 > **Reconciliation status (2026-09-15, the 4.1.0 release):** this
 > document describes the harness as it IS. Every section below
 > carries its status inline; claims struck or amended in the 4.1.0
