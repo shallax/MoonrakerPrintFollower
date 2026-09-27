@@ -57,6 +57,8 @@ ColumnLayout {
 
             UM.Label {
                 anchors.centerIn: parent
+                width: parent.width
+                wrapMode: Text.WordWrap
                 opacity: root.printerModel == null || root.printerModel.plateObjects.objects.length === 0 ? 1 : 0
                 text: root.printerModel != null && root.printerModel.printActive ? "No objects yet — they appear as the print defines them." : "The plate appears while printing — EXCLUDE_OBJECT data arrives from the slicer."
                 color: UM.Theme.getColor("text_inactive")
