@@ -43,6 +43,7 @@ Item {
             root.printerModel.setFollowerGpuRendering(root.renderSurface, root.gpuRendering);
         }
         if (!root.gpuRendering) {
+            _requestPendingPaint();
             _requestProgressPaint();
         }
     }
@@ -870,6 +871,9 @@ Item {
     }
 
     function _fallbackVector(layer) {
+        // The GPU owns geometry; hidden software recovery must stay lazy.
+        if (root.gpuRendering)
+            return null;
         return layer == null ? null : (layer.classes !== undefined ? layer : layer.fallbackVector);
     }
 
@@ -908,6 +912,8 @@ Item {
     }
 
     function _requestPendingPaint() {
+        if (root.gpuRendering)
+            return;
         var draws = _pendingDraws();
         if (draws || root._pendingStanding) {
             var key = _pendingKeyOf();
@@ -929,6 +935,8 @@ Item {
     }
 
     function _wakeBackgroundPaint() {
+        if (root.gpuRendering)
+            return;
         root._backgroundTransaction = ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, _pendingKeyOf());
         if (!pendingCanvas.available || !ExactComposition.needsPaint(root._backgroundTransaction))
             return;
@@ -956,6 +964,9 @@ Item {
     // published as its own key — the ONLY geometry QML still walks,
     // and only for the within-layer delta .
     function _scrubVector() {
+        // The GPU owns geometry; hidden software recovery must stay lazy.
+        if (root.gpuRendering)
+            return null;
         if (root.progress == null) {
             return null;
         }
@@ -1288,6 +1299,8 @@ Item {
     }
 
     function _requestProgressPaint() {
+        if (root.gpuRendering)
+            return;
         if (_progressPaintSatisfied())
             return;
         root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
@@ -1351,6 +1364,8 @@ Item {
     }
 
     function _wakeProgressPaint() {
+        if (root.gpuRendering)
+            return;
         // Keep the standing frame while a worker/decode can supply the
         // prefix; a full-history QML fallback here would stall the drag.
         if (_prefixPreparationPending())
