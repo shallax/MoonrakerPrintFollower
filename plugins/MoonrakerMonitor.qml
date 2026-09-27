@@ -3209,7 +3209,7 @@ Component {
                         // the worker paints at the screen's physical
                         // resolution and the scene-graph samples down to
                         // the logical face — never an enlarged 1x raster.
-                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)));
+                        root.printer.setFollowerView("popover", progressFace.viewScale, progressFace.lineScale, progressFace.width, progressFace.height, progressFace.compact, progressFace.viewPanX, progressFace.viewPanY, Math.min(2.0, Math.max(1.0, Screen.devicePixelRatio)), progressFace.toolpathWidthPx());
                     }
                 }
 
@@ -3236,6 +3236,10 @@ Component {
                         // per-tick feeds churned the renderer).
                         function onViewSettled() {
                             _feedRenderView();
+                        }
+                        function onManuallyPanned() {
+                            if (root.printer != null)
+                                root.printer.setFollowerKeepCentred(false);
                         }
                         function onPlotChanged() {
                             var plot = progressFace.plot;
@@ -3278,7 +3282,11 @@ Component {
                         // detached (the live request).
                         showBase: root.printer != null ? root.printer.followerShowBase : true
                         showTravels: root.printer != null ? root.printer.followerShowTravels : false
-                        lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
+                        smoothToolpaths: root.printer != null ? root.printer.followerAntialiasing : false
+                        softwareRendering: root.printer != null ? root.printer.followerSoftwareRendering : false
+                        pixelLineWidth: true
+                        keepCentred: root.printer != null && root.printer.followerKeepCentred === true
+                        lineScale: root.printer != null ? root.printer.followerLineScale : 1.0
                         // The follow state (the centred follow is
                         // retired — the per-poll re-pan was too slow).
                         attached: root.printer == null || root.printer.followerAttached
@@ -3337,6 +3345,16 @@ Component {
                                 onToggled: {
                                     if (root.printer != null) {
                                         root.printer.setFollowerShowTravels(checked);
+                                    }
+                                }
+                            }
+                            UM.CheckBox {
+                                visible: progressFace.gpuRendering
+                                text: "Antialiasing"
+                                checked: root.printer != null ? root.printer.followerAntialiasing : false
+                                onToggled: {
+                                    if (root.printer != null) {
+                                        root.printer.setFollowerAntialiasing(checked);
                                     }
                                 }
                             }
@@ -3484,15 +3502,15 @@ Component {
                             fixedWidthMode: true
                             width: 28 * screenScaleFactor
                             text: "−"
-                            enabled: root.printer != null && root.printer.followerLineScale > 0.5
+                            enabled: root.printer != null && root.printer.followerLineScale > 1.0
                             onClicked: {
                                 if (root.printer != null) {
-                                    root.printer.setFollowerLineScale(Math.max(0.5, root.printer.followerLineScale - 0.25));
+                                    root.printer.setFollowerLineScale(Math.max(1.0, root.printer.followerLineScale - 1.0));
                                 }
                             }
                         }
                         UM.Label {
-                            text: (root.printer != null ? root.printer.followerLineScale : 0.7).toFixed(2) + "×"
+                            text: (root.printer != null ? root.printer.followerLineScale : 1.0).toFixed(0) + " px"
                             width: 34 * screenScaleFactor
                             horizontalAlignment: Text.AlignHCenter
                         }
@@ -3501,10 +3519,10 @@ Component {
                             fixedWidthMode: true
                             width: 28 * screenScaleFactor
                             text: "+"
-                            enabled: root.printer != null && root.printer.followerLineScale < 2.0
+                            enabled: root.printer != null && root.printer.followerLineScale < 8.0
                             onClicked: {
                                 if (root.printer != null) {
-                                    root.printer.setFollowerLineScale(Math.min(2.0, root.printer.followerLineScale + 0.25));
+                                    root.printer.setFollowerLineScale(Math.min(8.0, root.printer.followerLineScale + 1.0));
                                 }
                             }
                         }
@@ -3516,6 +3534,17 @@ Component {
                         // retirement emptied their own row — the sliders
                         // below close the gap). The jump hides at 100%
                         // and the attach persists the row.
+                        UM.CheckBox {
+                            objectName: "moonrakerFollowerKeepCentred"
+                            visible: jumpButton.visible
+                            text: "Keep centred"
+                            enabled: progressFace.dotAvailable()
+                            checked: root.printer != null && root.printer.followerKeepCentred === true
+                            onToggled: {
+                                if (root.printer != null)
+                                    root.printer.setFollowerKeepCentred(checked);
+                            }
+                        }
                         Cura.SecondaryButton {
                             id: jumpButton
                             objectName: "moonrakerFollowerJump"

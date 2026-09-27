@@ -31,15 +31,29 @@ Item {
     // live layer, not the frozen one) and the payload arrives with no
     // split, so the layer draws as its whole base.
     property bool attached: true
+    property bool keepCentred: false
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
+    property string renderSurface: "popover"
+    property bool softwareRendering: false
+    readonly property bool gpuRendering: gpuFollower.supported && !root.softwareRendering
+    onGpuRenderingChanged: {
+        if (root.printerModel != null && typeof root.printerModel.setFollowerGpuRendering === "function") {
+            root.printerModel.setFollowerGpuRendering(root.renderSurface, root.gpuRendering);
+        }
+        if (!root.gpuRendering) {
+            _requestProgressPaint();
+        }
+    }
+    property bool smoothToolpaths: false
     property bool showTravels: false  // the travel lines
     // The stroke thickness multiplier (the live request). The 0.7
     // default keeps a dense hatch (the skin's ~0.4 mm pitch)
     // legible as individual lines instead of fusing into a blob
     // (the live report: the renderer's strokes swallowed the
     // diagonals the reference renderers show).
+    property bool pixelLineWidth: false
     property real lineScale: 0.7
     // The toolpath ink's PHYSICAL width: strokes are bed-space
     // geometry, never screen pixels. The nominal is the slicer's
@@ -173,6 +187,8 @@ Item {
     // motions and the same split arithmetic must never re-stand this
     // layer's pixels over that one.
     property var _standingPrefix: null
+    property var _retiredPrefixView: null
+    property var _retiredFullView: null
     readonly property string _retainedPrefixSource: _standingPrefix != null ? _standingPrefix.source : ""
     readonly property int _retainedPrefixSplit: _standingPrefix != null ? _standingPrefix.from : -1
     readonly property int _retainedPrefixAnchor: _standingPrefix != null ? _standingPrefix.anchor : -2
@@ -263,6 +279,7 @@ Item {
     // the exact-render latency, not the other way round), and the
     // raster inputs feed the model at the same settle.
     signal viewSettled
+    signal manuallyPanned
     property alias settleTimer: viewSettleTimer
     Timer {
         id: viewSettleTimer
@@ -489,7 +506,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return layer != null && split != null && layer.prefixValid !== undefined && layer.prefixValid === true && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
+        return layer != null && split != null && layer.prefixValid !== undefined && layer.prefixValid === true && _prefixViewValid(layer.prefixData) && layer.prefixSplit >= 0 && layer.prefixSplit <= split && split < layer.motions;
     }
 
     function _vectorInkless() {
@@ -543,6 +560,11 @@ Item {
     }
 
     function _enterInteraction() {
+        if (root.gpuRendering) {
+            root._interactionActive = true;
+            root._holdTicks = 0;
+            return;
+        }
         // The first camera input: switch the heavy-scene
         // presentation to the warm interaction raster immediately —
         // no synchronous work rides this call. With no ready
@@ -633,6 +655,8 @@ Item {
     }
 
     function _exactReady() {
+        if (root.gpuRendering)
+            return gpuFollower.ready;
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
@@ -660,10 +684,14 @@ Item {
         return _fullRaster() || _presentationDecision().kind === "heldFull";
     }
 
+    function _prefixViewValid(source) {
+        return root._retiredPrefixView == null || root._retiredPrefixView.source !== source || root._retiredPrefixView.view === _viewKey();
+    }
+
     function _prefixCandidate() {
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         return {
-            ready: layer != null && layer.prefixValid === true && root._prefixStatusReady && root._prefixTexture.source === layer.prefixData,
+            ready: layer != null && layer.prefixValid === true && _prefixViewValid(layer.prefixData) && root._prefixStatusReady && root._prefixTexture.source === layer.prefixData,
             from: layer != null && layer.prefixSplit !== undefined ? layer.prefixSplit : -1,
             source: layer != null && layer.prefixData !== undefined ? layer.prefixData : ""
         };
@@ -685,6 +713,7 @@ Item {
                 ready: false
             };
         return ExactComposition.presentation({
+            attached: root.attached,
             full: _fullDemand(),
             fullReady: _exactFullStanding(),
             receipt: root._deliveredComposition,
@@ -707,18 +736,19 @@ Item {
 
     function _capturePresentedAssets() {
         var decision = _presentationDecision();
-        if (decision.kind === "full" && (root._standingFull == null || root._standingFull.world !== _worldKeyOf() || root._standingFull.source !== root.progress.layers.current.rasterData || root._standingFull.travels !== (_travelsShown() ? root.progress.layers.current.travelData : ""))) {
+        if (decision.kind === "full" && (root._retiredFullView == null || root._retiredFullView.source !== root.progress.layers.current.rasterData || root._retiredFullView.view === _viewKey()) && (root._standingFull == null || root._standingFull.world !== _worldKeyOf() || root._standingFull.source !== root.progress.layers.current.rasterData || root._standingFull.travels !== (_travelsShown() ? root.progress.layers.current.travelData : ""))) {
             var layer = root.progress.layers.current;
             root._standingFull = {
                 source: layer.rasterData,
                 travels: _travelsShown() ? layer.travelData : "",
                 anchor: root.progress.anchor,
-                world: _worldKeyOf()
+                world: _worldKeyOf(),
+                view: _viewKey()
             };
         } else if (decision.kind !== "full" && decision.ready) {
             root._standingFull = null;
         }
-        if (decision.prefix === "current" && decision.ready && (root._standingPrefix == null || root._standingPrefix.world !== _worldKeyOf() || root._standingPrefix.source !== _prefixCandidate().source || root._standingPrefix.from !== _prefixCandidate().from)) {
+        if (decision.prefix === "current" && decision.ready && (root._retiredPrefixView == null || root._retiredPrefixView.source !== _prefixCandidate().source || root._retiredPrefixView.view === _viewKey()) && (root._standingPrefix == null || root._standingPrefix.world !== _worldKeyOf() || root._standingPrefix.source !== _prefixCandidate().source || root._standingPrefix.from !== _prefixCandidate().from)) {
             var prefix = _prefixCandidate();
             root._standingPrefix = {
                 source: prefix.source,
@@ -1054,8 +1084,19 @@ Item {
         return true;
     }
 
-    // The centred follow is retired (the live ruling: the per-poll
-    // re-pan was too slow). The one-shot Jump to toolhead stays.
+    function _followToolhead() {
+        if (!root.keepCentred || root.viewScale <= 1.0 || !dotAvailable())
+            return;
+        var pan = _panOnToolhead();
+        if (pan != null && (pan.x !== root.viewPanX || pan.y !== root.viewPanY)) {
+            root.viewPanX = pan.x;
+            root.viewPanY = pan.y;
+            root.displayPanX = pan.x;
+            root.displayPanY = pan.y;
+        }
+    }
+    onDotChanged: _followToolhead()
+    onKeepCentredChanged: _followToolhead()
 
     // The ONE physical stroke-width calculation, shared by the ghost,
     // pending, printed and travel painters: nominal bed mm through
@@ -1064,6 +1105,9 @@ Item {
     // mapping's own contract). Screen-space annotations — the
     // toolhead dot, the travel glyphs, the grid — never read this.
     function toolpathWidthPx() {
+        if (root.pixelLineWidth) {
+            return Math.min(8, Math.max(1, Math.round(root.lineScale)));
+        }
         var plot = mapping._plot;
         if (plot == null) {
             return 0;
@@ -1280,7 +1324,7 @@ Item {
             root._deliveredComposition = result.accepted ? result.receipt : null;
         if (hadPaint && !result.accepted)
             root._progressDirty = true;
-        if (result.accepted && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
+        if (result.accepted && _prefixViewValid(result.receipt.prefixSource) && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
             // Capture the delivered asset before the next model publish
             // can replace its URL. A deferred binding evaluation is too
             // late to acquire the standing picture's file and pixels.
@@ -1298,6 +1342,10 @@ Item {
     }
 
     function _flushProgressPaint() {
+        if (root.gpuRendering) {
+            root._progressDirty = false;
+            return;
+        }
         if (ExactComposition.needsPaint(root._canvasTransaction))
             Qt.callLater(root._wakeProgressPaint);
     }
@@ -1502,7 +1550,7 @@ Item {
         root.settleTimer.restart();
     }
     // Detaching hides the dot (the one-shot jump reads it on demand).
-    onAttachedChanged: {}
+    onAttachedChanged: _followToolhead()
     onCompactChanged: {
         // The product sets compact at construction and never flips
         // it; the repaint keeps the thumbnail honest wherever it is.
@@ -1511,6 +1559,9 @@ Item {
         _retireRetainedView();
     }
     Component.onCompleted: {
+        if (root.printerModel != null && typeof root.printerModel.setFollowerGpuRendering === "function") {
+            root.printerModel.setFollowerGpuRendering(root.renderSurface, root.gpuRendering);
+        }
         _publishView();
         _adoptProgressWorld();
         if (root._assetOwner === 0)
@@ -1541,6 +1592,7 @@ Item {
     // live report — it read and clicked badly).
     PlateCanvas {
         id: mapping
+        visible: !root.gpuRendering
         anchors.fill: parent
         // Reuse the standing grid above the stale-geometry cover.
         z: preparingCover.visible ? 1 : 0
@@ -1563,6 +1615,32 @@ Item {
         viewPanY: root.viewPanY
     }
 
+    GpuFollowerItem {
+        id: gpuFollower
+        anchors.fill: parent
+        z: 0.5
+        smoothToolpaths: root.smoothToolpaths
+        visible: root.gpuRendering && root.available()
+        layers: root.gpuRendering && root.progress != null && root.progress.layers != null ? root.progress.layers : ({})
+        settings: ({
+                plot: mapping._plot,
+                split: root.progress != null ? root.progress.split : null,
+                scale: root._dotScale,
+                panX: root._dotPanX,
+                panY: root._dotPanY,
+                compact: root.compact,
+                gridThin: UM.Theme.getColor("lining"),
+                gridMajor: UM.Theme.getColor("border"),
+                lineWidth: root.toolpathWidthPx(),
+                antialiasing: root.smoothToolpaths,
+                showBase: root.showBase,
+                showPrevious: root.showPrevious,
+                showNext: root.showNext,
+                showTravels: root.showTravels,
+                travelRatio: root.travelVisualRatio
+            })
+    }
+
     // The EXACT scene: everything below — the raster stack and the
     // vector canvases — belongs to one presentation unit. During a
     // camera interaction an opaque warm scene covers this unit while
@@ -1570,6 +1648,7 @@ Item {
     // after every required exact component has delivered.
     Item {
         id: exactScene
+        visible: !root.gpuRendering
         anchors.fill: parent
         opacity: 1.0
 
@@ -2091,7 +2170,7 @@ Item {
         objectName: "moonrakerPlatePreparingCover"
         anchors.fill: parent
         color: UM.Theme.getColor("main_background")
-        visible: root._presentation.kind === "preparing" && !root._presentation.ready
+        visible: root.gpuRendering ? root.available() && !gpuFollower.ready : root._presentation.kind === "preparing" && !root._presentation.ready
     }
 
     // Exact preparation remains a live scene-graph participant. A warm
@@ -2100,7 +2179,7 @@ Item {
     Item {
         id: warmScene
         anchors.fill: parent
-        visible: root._interactionActive
+        visible: !root.gpuRendering && root._interactionActive
         Rectangle {
             anchors.fill: parent
             color: UM.Theme.getColor("main_background")
@@ -2136,7 +2215,7 @@ Item {
             // interaction activated without an entry (the presentation
             // fixtures drive the flag directly) falls back to the live
             // eligible URL.
-            visible: root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
+            visible: !root.gpuRendering && root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
             source: root._interactionActive ? (root._gestureNavSource !== "" ? root._gestureNavSource : navigationData()) : navigationData()
             smooth: true
         }
@@ -2156,7 +2235,7 @@ Item {
             // the default centre origin swings this item's content by
             // size * (1 - displayScale / backing), further than the face
             // is wide, so a zoomed gesture carried no tail at all.
-            visible: root._interactionActive
+            visible: !root.gpuRendering && root._interactionActive
             width: visible ? root.width * root._navBacking() : 0
             height: visible ? root.height * root._navBacking() : 0
             x: visible ? root.displayPanX : 0
@@ -2391,6 +2470,7 @@ Item {
     // dot (the live ruling).
     Rectangle {
         id: toolheadDot
+        z: 1
         objectName: "moonrakerPlateToolheadDot"
         width: 7 * screenScaleFactor
         height: width
@@ -2519,6 +2599,8 @@ Item {
             // boundary-blocked drag never activate it (the review's
             // ruling — no warm-raster transition on inert gestures).
             if (appliedX !== 0.0 || appliedY !== 0.0) {
+                if (root.keepCentred)
+                    root.manuallyPanned();
                 root._enterInteraction();
             }
             // The whole camera (target, display AND the raster's
@@ -2570,6 +2652,7 @@ Item {
     // drag handle; the bottom is the 100% fit.
     Rectangle {
         id: zoomScope
+        z: 5
         objectName: "moonrakerPlateZoomScope"
         visible: root.available() && !root.compact
         // Wide enough for the "800%" label (the live report: the
@@ -2739,6 +2822,12 @@ Item {
     // The full-picture hold's frame is the same class and retires
     // with it.
     function _retireRetainedView() {
+        // A queued capture must not re-label these immutable pixels
+        // with the new view while their replacement is still pending.
+        if (root._standingPrefix != null)
+            root._retiredPrefixView = root._standingPrefix;
+        if (root._standingFull != null)
+            root._retiredFullView = root._standingFull;
         if (root._retainedPrefixSource !== "") {
             _retireRetained();
         }

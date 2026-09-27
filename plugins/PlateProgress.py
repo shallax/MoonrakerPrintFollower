@@ -45,7 +45,10 @@ measurably within the tolerance of the chord that replaces it, so the
 simplification's error is a bound rather than a hope.
 
 The architecture contract forbids the mutable index arrays crossing the
-worker boundary; only these built lists do.
+worker boundary; only the prepared geometry does. Coordinate triples and completed
+polylines are immutable tuples. CPython can untrack these acyclic containers from
+cyclic GC, keeping cold preparation from repeatedly scanning every cached vertex.
+Qt exposes the same arrays to QML and the prepared-file format stays unchanged.
 
 The preparation — the edge walk and the simplification — is a pure
 function of the index and the layer, and it is bounded twice over: the
@@ -517,7 +520,7 @@ def _push(chain: List[List[float]], x: float, y: float, motion: int) -> None:
     last = chain[-1]
     if x == last[0] and y == last[1]:
         return
-    chain.append([x, y, float(motion)])
+    chain.append((x, y, float(motion)))
 
 
 def _record_span(chain: List[List[float]], path: float, started: bool, closed: bool,
@@ -535,9 +538,9 @@ def _record_span(chain: List[List[float]], path: float, started: bool, closed: b
         return
     travels.append(chain)
     if started:
-        start_marks.append(list(chain[0]))
+        start_marks.append(tuple(chain[0]))
     if closed:
-        end_marks.append(list(chain[-1]))
+        end_marks.append(tuple(chain[-1]))
 
 
 def _build(index: LayerMotionIndex, layer: int,
@@ -576,7 +579,7 @@ def _build(index: LayerMotionIndex, layer: int,
             run_name = None
             run_chain = None
             if span_chain is None:
-                span_chain = [[x0, y0, float(motion)]]
+                span_chain = [(x0, y0, float(motion))]
                 span_path = 0.0
                 # A span opening on the layer's first motion while the
                 # head was already travelling began in the previous
@@ -594,7 +597,7 @@ def _build(index: LayerMotionIndex, layer: int,
             # A fresh run: the edge that opens it starts where the head
             # already stood, so the first extrusion after a travel (or
             # after a feature change) draws its whole first move.
-            run_chain = [[x0, y0, float(motion)]]
+            run_chain = [(x0, y0, float(motion))]
             classes.setdefault(name, []).append(run_chain)
             run_name = name
         _push(run_chain, x1, y1, motion)
@@ -695,10 +698,12 @@ def _prepare(index: LayerMotionIndex, layer: int,
     for name, segments in classes.items():
         drawn = [segment for segment in segments if len(segment) >= 2]
         if drawn:
-            prepared[name] = _budgeted(drawn, MAX_POINTS_PER_CLASS, should_yield)
+            prepared[name] = [tuple(segment) for segment in
+                              _budgeted(drawn, MAX_POINTS_PER_CLASS, should_yield)]
     return {
         "classes": prepared,
-        "travels": _budgeted(travels, MAX_TRAVEL_POINTS, should_yield),
+        "travels": [tuple(segment) for segment in
+                    _budgeted(travels, MAX_TRAVEL_POINTS, should_yield)],
         "travelStarts": start_marks,
         "travelEnds": end_marks,
         "motions": len(xs),
@@ -746,7 +751,7 @@ def encode_layer(payload: dict) -> bytes:
     return b"".join(parts)
 
 
-def decode_layer(raw: bytes) -> dict:
+def decode_layer(raw: bytes, checkpoint=None) -> dict:
     """The compact form back into the painter's payload shape."""
     from array import array
     from struct import unpack_from
@@ -755,6 +760,17 @@ def decode_layer(raw: bytes) -> dict:
         return {}
     offset = 4
 
+    def points(flat, count):
+        if checkpoint is None:
+            return [[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
+                    for i in range(count)]
+        result = []
+        for start in range(0, count, 1024):
+            checkpoint()
+            result.extend([[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
+                           for i in range(start, min(start + 1024, count))])
+        return result
+
     def read_triples():
         nonlocal offset
         count, = unpack_from("<i", raw, offset)
@@ -762,8 +778,7 @@ def decode_layer(raw: bytes) -> dict:
         flat = array("f")
         flat.frombytes(raw[offset:offset + count * 12])
         offset += count * 12
-        return [[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
-                for i in range(count)]
+        return points(flat, count)
 
     def read_segments():
         nonlocal offset
@@ -771,13 +786,14 @@ def decode_layer(raw: bytes) -> dict:
         offset += 4
         segments = []
         for _ in range(seg_count):
+            if checkpoint is not None:
+                checkpoint()
             point_count, = unpack_from("<i", raw, offset)
             offset += 4
             flat = array("f")
             flat.frombytes(raw[offset:offset + point_count * 12])
             offset += point_count * 12
-            segments.append([[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
-                             for i in range(point_count)])
+            segments.append(points(flat, point_count))
         return segments
 
     motions, = unpack_from("<i", raw, offset)

@@ -52,3 +52,13 @@ def navigation_zoom(key):
     if isinstance(key, NavigationSceneKey):
         return key.zoom
     return key[-1]
+
+
+def navigation_compatible(stored, demand):
+    """Reuse an older raster only while progress moves forward."""
+    if stored is None or demand is None or navigation_hard_key(stored) != navigation_hard_key(demand):
+        return False
+    if len(stored) <= 3:
+        return True
+    return stored[3] == demand[3] or (stored[3] is not None and demand[3] is not None
+                                     and stored[3] <= demand[3])

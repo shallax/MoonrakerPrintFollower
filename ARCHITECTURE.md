@@ -47,6 +47,13 @@ passes explicit client, configuration and immutable print-state capabilities int
 the single `MoonrakerMonitorModel.py` and the output adapter. It does not expose
 private follower state to either integration.
 
+The output-device plugin retains one asynchronously compiled dashboard component
+per Cura QML engine. It starts after the engine exists and a configured output
+device is selected, creates no controls or camera requests, and releases the
+component on stop or engine replacement. The Monitor shell still constructs its
+dashboard synchronously when opened; the retained compilation removes the cold
+compile wait without changing pane layout or initialization ordering.
+
 ### Ownership map
 
 | Component | Owns | Does not own |
@@ -99,6 +106,7 @@ private follower state to either integration.
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection persistence and the bridge URL rewrite | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener relaying the configured stream with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
+| `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
@@ -294,6 +302,11 @@ the parser-position estimate). Layer transitions are jumped, never animated.
 The physical `path_fraction` that ETA consumes is unchanged, and each
 animated write re-remembers the plugin-written position so the override
 detector cannot mistake the animation for a manual grab.
+
+Compact-layer refinement rejects segment motion ranges outside the search window
+and edges whose bounding boxes cannot improve or tie the current nearest match.
+Its spatial bound includes the existing candidate comparator's tolerance. Search
+windows, travel acceptance and motion tie-breaking remain the same.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -732,6 +745,21 @@ the warm-to-exact barrier. Failed PNG decoding or publication invokes a complete
 vector producer; ordinary full native scenes do not convert their geometry to
 QVariant. The exact scene stays renderable beneath the opaque warm picture so
 Qt can deliver its Canvas textures throughout camera gestures.
+
+While attached, a navigation raster is reusable only when its scene matches and
+its printed boundary does not exceed the live demand. A backward physical
+correction retires future navigation ink and delivered Canvas/prefix compositions;
+in-flight future work cannot promote. Detached scrubbing retains its previous
+complete picture until replacement, preserving that interaction's continuity.
+
+Camera decode uses QImageReader.read on its existing worker to release Python's
+execution lock during native decoding. Periodic ticks and worker completions
+share one dispatch deadline, with a single-shot wake for its remaining interval.
+The mailbox still holds only the latest pending frame, the worker still permits
+one in-flight decode, and stopping or replacing a stream cancels the extra wake.
+The camera requests a framebuffer render target: Qt 6.0-6.8 ignores it, while
+Qt 6.9+ can use accelerated OpenGL painting when the host supports it.
+
 Partial-layer scrub geometry has a dedicated notification for each surface.
 Each face retains it in a separate QML binding, so split advances and raster
 delivery rebuild the small progress object without converting the full Python
@@ -792,3 +820,47 @@ until geometry matches at or beyond it; parked telemetry after RESUME cannot
 erase the layer's already printed history. Pause/resume parser-offset
 rewinds keep the print identity; filename/size changes, an inactive boundary,
 or a reset print duration still establish a new print.
+
+`GpuFollower` is the default OpenGL scene-graph renderer for both follower
+faces. Worker threads prepare immutable, motion-sorted vertex buffers;
+progress selects a prefix by binary search, while pan and zoom update one
+retained transform shared with the themed 10/50 mm grid. Wide strokes use
+constant-size quads with shader-expanded round caps and joins, independent of
+driver line-width support. `GpuStrokeMaterial` owns the material and the packaged
+Qt shader bundles; width and zoom change uniforms rather than rebuilding strokes.
+The selected width is 1–8 logical pixels, independent of zoom. Previous-layer
+ghosts retain class colours and solid strokes; next-layer ghosts use coloured,
+translucent 0.5 mm dashes separated by 0.5 mm gaps. Flat dash ends preserve the gaps.
+The opt-in antialiasing preference persists in the global follower view document
+and selects analytic edge coverage in the fragment shader. It defaults to crisp
+lines, without an offscreen multisampling pass. A layer change replaces the full
+retained node tree, retiring Qt's old batches; ordinary updates retain that tree.
+The toolhead dot stays above it. The persistent Keep centred preference follows
+the attached toolhead when zoomed; manual panning switches it off, zooming does not.
+
+Cold preparation stores immutable coordinate triples and polylines. Unlike nested
+coordinate lists, CPython can remove these acyclic tuples from its cyclic-GC
+traversal, avoiding long interpreter-wide pauses as the prepared cache grows.
+Qt converts the tuples to the same QML arrays and the prepared-file wire format
+is unchanged. No process-wide GC policy is changed.
+
+GPU faces retire CPU raster, navigation and rewind-checkpoint demand. Shared
+prepared geometry is limited to 48 MB, including conservative accounting for
+source payloads retained by its identity keys. While GPU consumers exist, the
+index service expands its decoded budget from 128 to 256 MB and speculatively
+decodes existing local sources two to four layers beyond visible windows.
+Foreground geometry and live motion-array debt outrank this prefetch. Decode
+checkpoints yield the GIL and let newly selected layers interrupt speculation;
+prefetch never requests a file download or hydrates motion arrays. Consumer
+counts preserve the allowance until the last GPU face retires. Pinned active
+layers retain the existing cache policy's explicit exception to the byte bound.
+
+`GpuObjectPicker` shares the scene-graph stroke and grid primitives while
+preserving the object picker palette, halo, hover widths, degraded centre
+circles and pointer handling. It always uses four-sample antialiasing and adds
+no controls. The Diagnostics preference `software_follower_renderer` applies
+to both views; unsupported graphics backends also select the original software
+renderers. Software selection resumes the original raster schedulers and
+decoded-cache budget. The existing native/Canvas composition tests continue
+covering the original software stroke contract, with additional coverage for
+the new pixel-width control.

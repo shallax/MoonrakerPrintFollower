@@ -1146,6 +1146,23 @@ class PlateSplitRefinementTests(unittest.TestCase):
                 self.assertGreater(self.service.plate_progress(
                     1, positions[1], (5.0, 0.0, 0.4))["split"], 0)
 
+    def test_compact_layer_markers_after_the_z_move_do_not_pin_progress_at_zero(self):
+        self._bind(layers=3)
+        index = self.service._view._index
+        positions = [int(offsets[-1]) for offsets in index.motion_offsets]
+        index.layer_start_positions = [(0.0, 0.0, 0.2),
+                                       (0.0, 0.0, 0.4),
+                                       (0.0, 0.0, 0.6)]
+        index.layer_motion_counts = [20] * 3
+        index.motion_offsets = [array("Q") for _ in range(3)]
+        index.motion_z = [array("f") for _ in range(3)]
+        self.assertGreater(self.service.plate_progress(
+            0, positions[0], (5.0, 0.0, 0.2))["split"], 0)
+        self.assertEqual(self.service.plate_progress(
+            1, positions[1], (5.0, 0.0, 0.4))["split"], 0)
+        self.assertGreater(self.service.plate_progress(
+            1, positions[1], (5.0, 0.0, 0.4))["split"], 0)
+
     def test_float_noise_cannot_choose_a_future_repeated_pass(self):
         best = gcode_index.better_candidate(1e-12, 5, float("inf"), None, 4)
         self.assertEqual(gcode_index.better_candidate(0.0, 500, *best, 4)[1], 5)
@@ -1656,6 +1673,15 @@ class PayloadRefinementTests(unittest.TestCase):
                                 [self._row(0.05, 40, 10, x0=-5.0)], motions=200)
         self.assertIsNone(self._refine(payload, 100, (0.0, 0.0, 0.2), floor=100))
 
+    def test_a_fine_skin_pass_cannot_win_over_the_live_travel(self):
+        # The recorded shape transition matched future skin 0.024 mm away
+        # while the nozzle was on a travel. A 0.2 mm margin admitted it.
+        payload = self._payload({"SKIN": [self._row(0.024, 700, 10, x0=-5.0)]},
+                                [self._row(0.00001, 40, 10, x0=-5.0)], motions=1000)
+        self.assertIsNone(self._refine(payload, 100, (0.0, 0.0, 0.5), floor=40))
+        # Once physically on the skin, progress must be accepted again.
+        self.assertIsNotNone(self._refine(payload, 100, (0.0, 0.024, 0.5), floor=40))
+
     def test_a_travel_further_than_the_match_leaves_the_edge_winning(self):
         # The travel's tell is its proximity: a travel a clear margin away
         # says nothing about the nozzle's own pass. The travel channel
@@ -1681,6 +1707,28 @@ class PayloadRefinementTests(unittest.TestCase):
         # the default would have taken.
         self.assertIsNone(self._refine(payload, 10000, (5000.5, 0.5, 0.2),
                                        max_distance_mm=0.1))
+
+    def test_spatial_rejection_keeps_edges_crossing_the_nozzle(self):
+        payload = self._payload({"W": [self._row(1.0, 10, 2, x0=-10, step=20),
+                                      self._row(0.0, 20, 2, x0=-100, step=200)]},
+                                motions=30)
+        self.assertEqual(self._refine(payload, 20, (0.0, 0.0, 0.2)), 20)
+        payload["travels"] = [self._row(0.0, 15, 2, x0=-100, step=200)]
+        payload["classes"]["W"].pop()
+        self.assertIsNone(self._refine(payload, 20, (0.0, 0.0, 0.2)))
+
+    def test_spatial_rejection_preserves_ties_at_the_distance_limit(self):
+        # A slightly more distant but earlier pass wins a near tie.
+        # Its distance is outside the acceptance limit, so the result
+        # must still be refused instead of accepting the other pass.
+        payload = self._payload({"first": [self._row(2.995, 200, 2, x0=-1, step=2)],
+                                 "earlier": [self._row(3.005, 100, 2, x0=-1, step=2)]},
+                                motions=300)
+        self.assertIsNone(self._refine(payload, 200, (0.0, 0.0, 0.2), floor=90))
+        # Near zero, the shared comparator's absolute tolerance applies.
+        payload["classes"]["first"] = [self._row(0.0, 200, 2, x0=-1, step=2)]
+        payload["classes"]["earlier"] = [self._row(0.00009, 100, 2, x0=-1, step=2)]
+        self.assertEqual(self._refine(payload, 200, (0.0, 0.0, 0.2), floor=90), 100)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
@@ -2328,6 +2376,47 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         from plugins.PlateProgress import encode_layer
         return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, float(layer), 1.0]]]},
                              "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})
+
+    def test_gpu_prefetch_only_uses_nearby_existing_sources_once(self):
+        index = self._view(20)
+        index.manual_anchor = 10
+        index.followed_layer = 3
+        self.assertIsNone(self.service._gpu_prefetch_layer(index))
+        with patch.object(self.service, "_advance"):
+            self.service.set_gpu_rendering("popover", True)
+        selected = [self.service._gpu_prefetch_layer(index) for _ in range(14)]
+        candidates = [n for n in selected if n is not None]
+        self.assertEqual(candidates[0], 12)
+        self.assertEqual(len(candidates), len(set(candidates)))
+        self.assertTrue(set(candidates).isdisjoint({2, 3, 4, 9, 10, 11}))
+        self.assertTrue(all(min(abs(n - 3), abs(n - 10)) <= 4 for n in candidates))
+        self.assertIsNone(selected[-1], "a full cache could repeatedly re-decode evicted neighbours")
+        with patch.object(self.service, "_advance"):
+            self.service.set_gpu_rendering("popover", False)
+        self.assertIsNone(self.service._gpu_prefetch_layer(index))
+
+    def test_gpu_speculation_decodes_without_file_or_motion_arrays_and_yields_to_seek(self):
+        index = self._view(8)
+        index.compact = True
+        index.manual_anchor = 3
+        index.followed_layer = 3
+        self.service._full_cache.set(5, self._payload(5), 100)
+        with patch.object(self.service, "_advance"):
+            self.service.set_gpu_rendering("popover", True)
+        work = []
+        module = self.qt.load("GCodeIndexService")
+        with patch.object(self.service, "_prepared_open"), \
+                patch.object(self.service, "_submit", side_effect=lambda kind, task, *args: work.append((kind, task))), \
+                patch.object(self.files, "lease", side_effect=AssertionError("prefetch requested the file")), \
+                patch.object(module, "hydrate_layer_from_file", side_effect=AssertionError("prefetch hydrated motion arrays")):
+            self.service._advance()
+            self.assertEqual(work[0][0], "hydrate")
+            failed, stash = work[0][1]()
+            self.assertEqual(failed, [])
+            self.assertIn(5, stash)
+            self.service._foreground_pending.set()
+            failed, stash = work[0][1]()
+            self.assertEqual((failed, stash), ([], {}), "cancelled speculation latched a decode failure")
 
     def test_a_complete_reopen_takes_the_fast_path(self):
         # : a valid complete cache must not
@@ -3859,6 +3948,22 @@ class DecodedBudgetTests(unittest.TestCase):
         # The real 128 MB bound is unreachable in a unit test: the
         # tests shrink it and drive the same trim paths.
         self.service._decoded_lru.max_bytes = 200
+
+    def test_gpu_budget_survives_one_consumer_closing_and_reverts_for_software(self):
+        with patch.object(self.service, "_advance"):
+            self.service.set_gpu_rendering("mini", True)
+            self.service.set_gpu_rendering("popover", True)
+            self.assertEqual(self.service._decoded_lru.max_bytes, self.module._GPU_DECODED_LRU_MAX_BYTES)
+            self.service.set_gpu_rendering("popover", False)
+            self.assertEqual(self.service._decoded_lru.max_bytes, self.module._GPU_DECODED_LRU_MAX_BYTES)
+            self.service._reset_print_state()
+            self.assertEqual(self.service._decoded_lru.max_bytes, self.module._GPU_DECODED_LRU_MAX_BYTES)
+            # Populate more than the software allowance without actually allocating it.
+            self.service._decoded_lru.set(1, object(), 80 * 1024 * 1024)
+            self.service._decoded_lru.set(2, object(), 80 * 1024 * 1024)
+            self.service.set_gpu_rendering("mini", False)
+            self.assertEqual(self.service._decoded_lru.max_bytes, self.module._DECODED_LRU_MAX_BYTES)
+            self.assertLessEqual(self.service.decoded_resident_bytes(), self.module._DECODED_LRU_MAX_BYTES)
 
     def test_a_pin_keeps_evicted_bytes_charged(self):
         # The mirror seeds the way the commit does in production:

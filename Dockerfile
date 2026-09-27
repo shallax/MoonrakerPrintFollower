@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm /tmp/gitleaks.tar.gz
 
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 ruff==0.16.6 coverage numpy
+    && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PySide6-Addons==6.10.2 ruff==0.16.6 coverage numpy
 
 ENV PATH="/opt/venv/bin:$PATH" \
     QT_QPA_PLATFORM=offscreen
@@ -60,6 +60,7 @@ RUN chmod +x /usr/local/bin/check_qml_format \
     && ln -s /usr/lib/qt6/bin/qmlformat /usr/local/bin/qmlformat
 
 CMD ["sh", "-c", "python3 -m compileall -q plugins tools tests \
+    && python3 tools/build_shaders.py \
     && python3 tools/check_qml.py plugins \
     && check_qml_format plugins/*.qml \
     && ruff check plugins tools tests \

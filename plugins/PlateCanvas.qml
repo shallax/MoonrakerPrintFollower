@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import UM 1.5 as UM
+import MoonrakerPrintFollower 1.0
 import "theme"
 
 // The plate family's shared bed-space canvas (4.6.0): the ONE
@@ -16,6 +17,7 @@ Item {
 
     property var printerModel: null
     property var plate: null          // the model's plateObjects payload
+    readonly property bool gpuRendering: root.plate != null && objectRenderer.supported && !(root.printerModel != null && root.printerModel.followerSoftwareRendering === true)
     property bool compact: false
     // The bed graphic. Always on in the product; a harness that
     // measures a STROKE turns it off so the frame holds only the ink
@@ -270,23 +272,28 @@ Item {
         return bestDist <= radiusPx * radiusPx ? best : "";
     }
 
-    onWidthChanged: plateCanvas.requestPaint()
-    onHeightChanged: plateCanvas.requestPaint()
-    on_PlotChanged: plateCanvas.requestPaint()
+    function _requestPaint() {
+        if (!root.gpuRendering)
+            plateCanvas.requestPaint();
+    }
+    onWidthChanged: _requestPaint()
+    onHeightChanged: _requestPaint()
+    on_PlotChanged: _requestPaint()
     Component.onCompleted: {
         _rebuildHitIndex();
         _publishView();
-        plateCanvas.requestPaint();
+        _requestPaint();
     }
     onPlateChanged: {
         _rebuildHitIndex();
-        plateCanvas.requestPaint();
+        _requestPaint();
     }
-    onHoveredNameChanged: plateCanvas.requestPaint()
+    onHoveredNameChanged: _requestPaint()
+    onGpuRenderingChanged: _requestPaint()
     // The grid flag is a paint input, and this canvas paints into an
     // IMAGE: without the repaint the buffer keeps the last picture it
     // was given, so turning the grid off left it on screen.
-    onShowGridChanged: plateCanvas.requestPaint()
+    onShowGridChanged: _requestPaint()
     // A CAMERA step repaints the mapping only while the canvas is on
     // screen: the progress face switches it out at opacity 0 for the
     // whole gesture (the warm raster presents the grid), and an
@@ -295,7 +302,7 @@ Item {
     // is published either way — the restore repaints through it.
     function _cameraRepaint() {
         if (root.opacity > 0 && root.visible) {
-            plateCanvas.requestPaint();
+            _requestPaint();
         }
     }
 
@@ -303,7 +310,7 @@ Item {
     // repaint of the transform it last published.
     onOpacityChanged: {
         if (root.opacity > 0 && root.visible) {
-            plateCanvas.requestPaint();
+            _requestPaint();
         }
     }
     onViewScaleChanged: {
@@ -324,6 +331,7 @@ Item {
     // handed, never a live QML item.
     Canvas {
         id: plateCanvas
+        visible: !root.gpuRendering
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
@@ -336,6 +344,31 @@ Item {
             // empty one is still a picture the harness may measure.
             root._paints += 1;
         }
+    }
+
+    GpuObjectPicker {
+        id: objectRenderer
+        anchors.fill: parent
+        visible: root.gpuRendering
+        // The picker always antialiases, independently of follower settings.
+        layer.enabled: true
+        layer.samples: 4
+        layer.smooth: true
+        scene: root.gpuRendering ? ({
+                plot: root._plot,
+                objects: root.plate.objects,
+                compact: root.compact,
+                showGrid: root.showGrid,
+                screenScale: screenScaleFactor,
+                hoveredName: root.hoveredName,
+                halo: root.halo,
+                gridThin: UM.Theme.getColor("lining"),
+                gridMajor: UM.Theme.getColor("border"),
+                includedInk: UM.Theme.getColor("text"),
+                currentInk: UM.Theme.getColor("primary"),
+                passedInk: MoonrakerTheme.plateCurrent,
+                excludedInk: MoonrakerTheme.dangerRed
+            }) : ({})
     }
 
     function _paintPlate(ctx) {

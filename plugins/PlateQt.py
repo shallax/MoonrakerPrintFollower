@@ -151,6 +151,33 @@ def _bridge_emit(bridge, signal, *args):
         return False
 
 
+def qml_geometry(payload):
+    """Expose cached immutable polylines as JavaScript arrays for Canvas.
+
+    PyQt transports nested tuples as Python objects rather than QVariant
+    arrays. Only the software renderer needs this copy; GPU workers borrow
+    the original geometry directly.
+    """
+    if payload is None:
+        return None
+    rows = [segment for groups in (payload.get("classes") or {}).values()
+            for segment in groups]
+    rows.extend(payload.get("travels") or ())
+    marks = tuple(payload.get("travelStarts") or ()) + tuple(payload.get("travelEnds") or ())
+    if not any(isinstance(segment, tuple) or
+               (segment and isinstance(segment[0], tuple)) for segment in rows) \
+            and not any(isinstance(point, tuple) for point in marks):
+        return payload
+    def segments(rows):
+        return [[list(point) for point in segment] for segment in rows]
+    return dict(payload,
+                classes={name: segments(rows) for name, rows in
+                         (payload.get("classes") or {}).items()},
+                travels=segments(payload.get("travels") or ()),
+                travelStarts=[list(point) for point in payload.get("travelStarts") or ()],
+                travelEnds=[list(point) for point in payload.get("travelEnds") or ()])
+
+
 class PlateLayer(QObject):
     """One prepared layer's rendered images plus its motion count.
 
@@ -165,6 +192,15 @@ class PlateLayer(QObject):
     """
 
     rasterReady = pyqtSignal()
+
+    def geometry_payload(self):
+        """Borrow the immutable layer geometry without QVariant conversion.
+
+        Scene-graph preparation retains this payload while a worker reads it.
+        Callers must never mutate its polylines or motion numbers.
+        """
+        return self._payload
+
 
     def __init__(self, payload: dict, parent: QObject = None) -> None:
         super().__init__(parent)
@@ -217,7 +253,7 @@ class PlateLayer(QObject):
         at 100%, where normal publication deliberately omits this costly
         QVariant conversion.
         """
-        return self._payload
+        return qml_geometry(self._payload)
 
     @pyqtProperty(bool, constant=True)
     def hasFallbackVector(self) -> bool:
@@ -455,7 +491,7 @@ _CONTEXT_STAMP = "mpf-render-context"
 # painters' own reads; a key the signature misses is a hole, so a
 # change to a painter's inputs belongs here in the same pass.
 _CONTEXT_VIEW = ("width", "height", "scale", "panX", "panY", "backing",
-                 "dpr", "zoom", "lineScale", "compact", "nominalWidthMm",
+                 "dpr", "zoom", "lineScale", "lineWidthPx", "compact", "nominalWidthMm",
                  "travelVisualRatio", "bedWidth", "bedDepth")
 _CONTEXT_FLAGS = (("showPrevious", True), ("showNext", True),
                   ("showBase", True), ("showTravels", False))
@@ -625,6 +661,12 @@ def _geometry_pen(plot: dict, view: dict) -> QPen:
     else:
         floor = min(2.0, dpr)
     stroke = max(stroke, floor)
+    if view.get("lineWidthPx"):
+        # Explicit logical-pixel widths retain the existing raster backing
+        # and navigation camera contracts. Legacy callers keep their pen.
+        stroke = float(view["lineWidthPx"]) * backing
+        if view.get("backing"):
+            stroke /= max(1.0, float(view.get("zoom") or 1.0))
     pen = QPen()
     pen.setWidthF(stroke)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)

@@ -54,12 +54,12 @@ ColumnLayout {
                             // The SURFACE is explicit (the review's
                             // finding 1): this face is the mini.
                             root.printerModel.setFollowerPlot("mini", plot.bed.offsetX, plot.bed.offsetY, plot.sx, plot.sy, plot.bed.bedXMin, plot.bed.bedYMax);
-                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio);
+                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio, progressMini.toolpathWidthPx());
                         }
                     }
                     function onViewSettled() {
                         if (root.printerModel != null) {
-                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio);
+                            root.printerModel.setFollowerView("mini", progressMini.viewScale, progressMini.lineScale, progressMini.width, progressMini.height, true, progressMini.viewPanX, progressMini.viewPanY, progressMini.devicePixelRatio, progressMini.toolpathWidthPx());
                         }
                     }
                 }
@@ -80,7 +80,11 @@ ColumnLayout {
                 showNext: root.printerModel != null ? root.printerModel.followerShowNext : true
                 showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                 showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
-                lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 0.7
+                smoothToolpaths: root.printerModel != null ? root.printerModel.followerAntialiasing : false
+                renderSurface: "mini"
+                softwareRendering: root.printerModel != null ? root.printerModel.followerSoftwareRendering : false
+                pixelLineWidth: true
+                lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 1.0
                 // The mini is a THUMBNAIL of the live print, always:
                 // it never detaches with the popover, and it keeps its
                 // toolhead dot whatever the popover does (the live

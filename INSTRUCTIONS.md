@@ -760,3 +760,21 @@ Diagnostic traces are per-printer settings in the plugin's
 configuration: "Log layer resolution" writes the layer inputs every
 5 s to Cura's log; "Log HTTP requests" logs every request. Both off
 by default — request FAILURES always log a warning regardless.
+
+### Follower shader maintenance
+
+The release archives include `plugins/shaders/stroke.vert.qsb` and
+`stroke.frag.qsb`; Cura users need no compiler or additional dependency.
+`make all`, `make build`, and `make package` generate the bundles before
+packaging; CI and release artifact builds do the same. Windows package and
+snapshot commands also compile them. For shader-only iteration, run
+`make generate_shaders` (or supply `QSB=/path/to/qsb`). The development
+toolchains install PySide6-Addons 6.10.2, which provides qsb.
+`tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
+HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
+Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.
+The bundles have been exercised on Cura 5.13's Qt 6.6 OpenGL backend;
+this is not a claim that every Cura/platform combination was tested locally.
+The graphics driver compiles the packaged target shader when first used;
+Cura users need neither qsb nor a runtime GLSL-to-QSB compiler.
+Commit the GLSL and regenerated bundles together.

@@ -325,7 +325,7 @@ class EdgeGeometryTests(unittest.TestCase):
         self.assertEqual(len(walls), 2)
         self.assertChain(walls[0], [[0.0, 0.0], [10.0, 0.0]])
         self.assertChain(walls[1], [[10.0, 5.0], [20.0, 0.0]])
-        self.assertEqual(_classes(index, "SKIN")[0][-1][:2], [10.0, 5.0])
+        self.assertEqual(list(_classes(index, "SKIN")[0][-1][:2]), [10.0, 5.0])
 
     def test_a_moving_travel_with_a_retract_and_prime_draws_a_to_b(self):
         # The reviewer's travel case: extrusion stops at A, a pure-E
@@ -834,9 +834,9 @@ class SyntheticIndexTests(unittest.TestCase):
         # the zero-length step from the layer start, so the chain opens
         # at its start vertex and adds one per later motion.
         self.assertEqual(len(points), 20)
-        self.assertEqual(points[0][:2], [0.0, 0.0])
-        self.assertEqual(points[1][:2], [1.0, 0.0])
-        self.assertEqual(points[-1][:2], [19.0, 0.0])
+        self.assertEqual(list(points[0][:2]), [0.0, 0.0])
+        self.assertEqual(list(points[1][:2]), [1.0, 0.0])
+        self.assertEqual(list(points[-1][:2]), [19.0, 0.0])
         self.assertEqual([int(point[2]) for point in points[:2]], [0, 1])
         self.assertEqual(int(points[-1][2]), 19)
         # Every drawn edge is a real motion edge, one per motion.
@@ -873,9 +873,9 @@ class SyntheticIndexTests(unittest.TestCase):
         self.assertLess(kept, 200000)
         self.assertEqual(len(segments), 1)
         points = segments[0]
-        self.assertEqual(points[0][:2], [0.0, 0.0])
+        self.assertEqual(list(points[0][:2]), [0.0, 0.0])
         # The corner: the last horizontal point, then the vertical run.
-        self.assertEqual([point[:2] for point in points].count([1250.0, 0.0]), 1)
+        self.assertEqual([list(point[:2]) for point in points].count([1250.0, 0.0]), 1)
         self.assertAlmostEqual(points[-1][0], 1250.0, places=5)
         self.assertAlmostEqual(points[-1][1], (count - half - 1) * 0.01, places=4)
         # Douglas-Peucker returns a subset of the input vertices, so
@@ -896,9 +896,9 @@ class SyntheticIndexTests(unittest.TestCase):
         first, second = segments
         # The closing run ends at its true end (motion 9's endpoint),
         # the next opens at the position extrusion resumed from.
-        self.assertEqual(first[-1][:2], [9.0, 0.0])
+        self.assertEqual(list(first[-1][:2]), [9.0, 0.0])
         self.assertEqual(int(first[-1][2]), 9)
-        self.assertEqual(second[0][:2], [13.0, 0.0])
+        self.assertEqual(list(second[0][:2]), [13.0, 0.0])
         self.assertEqual(int(second[0][2]), 14)
         for segment in segments:
             for point in segment:
@@ -981,7 +981,7 @@ class SyntheticIndexTests(unittest.TestCase):
         edges = list(motion_edges(index, 0))
         self.assertEqual(edges[0][1:5], (5.0, 1.0, 5.0, 1.0))
         self.assertEqual(edges[1][1:5], (5.0, 1.0, 6.0, 1.0))
-        self.assertEqual(_classes(index, "WALL-OUTER")[0][0][:2], [5.0, 1.0])
+        self.assertEqual(list(_classes(index, "WALL-OUTER")[0][0][:2]), [5.0, 1.0])
 
     def test_an_arc_at_a_layer_without_a_recorded_start_keeps_its_helix(self):
         # The arc maths needs the layer's opening Z. A recorded start
@@ -1038,6 +1038,20 @@ class CompactCodecTests(unittest.TestCase):
         empty = {"classes": {}, "travels": [], "travelStarts": [],
                  "travelEnds": [], "motions": 0}
         self.assertEqual(decode_layer(encode_layer(empty)), empty)
+
+    def test_dense_decode_checkpoints_preserve_every_channel_and_can_stop(self):
+        from plugins.PlateProgress import decode_layer, encode_layer, PreparationYield
+        payload = dict(self.PAYLOAD)
+        payload["classes"] = {"SKIN": [[[float(i), .5, i] for i in range(8193)]]}
+        raw = encode_layer(payload)
+        calls = []
+        self.assertEqual(decode_layer(raw, checkpoint=lambda: calls.append(None)), payload)
+        self.assertGreaterEqual(len(calls), 9)
+
+        def stop():
+            raise PreparationYield()
+        with self.assertRaises(PreparationYield):
+            decode_layer(raw, checkpoint=stop)
 
     def test_garbage_decodes_to_the_empty_payload(self):
         from plugins.PlateProgress import decode_layer

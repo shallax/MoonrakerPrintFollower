@@ -217,6 +217,11 @@ FIRST_SEARCH_LOOKBACK = 8192
 _CANDIDATE_TIE = 1.02
 
 
+def candidate_distance_limit_sq(best_distance_sq):
+    """An upper bound beyond which a candidate cannot improve or tie."""
+    return best_distance_sq + max(1e-8, best_distance_sq * (_CANDIDATE_TIE - 1.0))
+
+
 def better_candidate(distance_sq, motion, best_distance_sq, best_motion, floor):
     """Resolve a search candidate against the best found so far.
 
@@ -610,25 +615,37 @@ class LayerMotionIndex:
             split = max(split, int(minimum_split))
         return max(0, min(n, split)), method
 
-    def layer_entry_confirmed(self, layer, candidate, live_position):
+    def layer_entry_confirmed(self, layer, candidate, live_position, previous_z=None):
         """Whether physical Z distinguishes this match from the previous layer.
 
         XY can repeat exactly on successive layers while the parser has
         already entered the next one. Use the matched motion's height when
-        hydrated; a compact index retains the next layer's modal start,
-        which is this layer's ending height. Equal-height/nonplanar or
+        hydrated; compact indices compare modal starts against the last
+        confirmed physical height because layer markers may precede or
+        follow their Z move. Equal-height/nonplanar or
         missing metadata cannot settle that ambiguity and defer to ordinary
         geometric matching rather than inventing physical evidence.
         """
         if layer <= 0 or candidate is None or live_position is None:
             return True
+        observed_previous_z = previous_z
         try:
             previous_z = float(self.layer_start_positions[layer][2])
             heights = self.motion_z[layer] if layer < len(self.motion_z) else ()
             if len(heights):
                 target_z = float(heights[min(len(heights) - 1, max(0, candidate - 1))])
             else:
-                target_z = float(self.layer_start_positions[layer + 1][2])
+                # A marker may occur before OR after its layer's Z move.
+                # Compact modal starts alone cannot distinguish these.
+                # The last physically confirmed height settles which start
+                # describes the new layer; absent that evidence, XY owns it.
+                if observed_previous_z is None:
+                    return True
+                start_z = float(observed_previous_z)
+                target_z = float(self.layer_start_positions[layer][2])
+                if abs(target_z - start_z) < 1e-4:
+                    target_z = float(self.layer_start_positions[layer + 1][2])
+                previous_z = start_z
             live_z = float(live_position[2])
         except (IndexError, TypeError, ValueError):
             return True

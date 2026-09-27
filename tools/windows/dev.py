@@ -73,6 +73,7 @@ PYPI_PINS = ("PyQt6==%(PyQt6)s", "PyQt6-Qt6==%(PyQt6-Qt6)s", "ruff==%(ruff)s",
 # qmlformat (PySide6 6.10.2 ships Qt 6.10.2's tool, the version
 # qt6-declarative-dev-tools pins).
 QMLFORMAT_PIN = "PySide6-Essentials==%(qmlformat)s"
+QSB_PIN = "PySide6-Addons==%(qmlformat)s"
 OPTIONAL_PINS = ("numpy",)
 PYTHON_INSTALLER = "https://www.python.org/ftp/python/%(v)s/python-%(v)s-amd64.exe"
 CLI_TOOLS = {
@@ -659,6 +660,7 @@ def cmd_bootstrap(args) -> int:
 
     step("installing the pinned packages")
     pins = [template % TOOLCHAIN for template in PYPI_PINS]
+    pins.append(QSB_PIN % TOOLCHAIN)
     if not args.no_qmlformat:
         pins.append(QMLFORMAT_PIN % TOOLCHAIN)
     if run([str(venv_python), "-m", "pip", "install", "--disable-pip-version-check",
@@ -908,6 +910,9 @@ def _version(root: Path) -> str:
 
 def _build_artifacts(root: Path, env: dict):
     """Both artifacts, side by side then verified (the Makefile's ruling)."""
+    step("compiling the packaged GPU shaders")
+    if run([sys.executable, "tools/build_shaders.py"], cwd=root, env=env) != 0:
+        return False
     step("building both artifacts")
     with ThreadPoolExecutor(max_workers=2) as pool:
         built = list(pool.map(

@@ -21,9 +21,10 @@ LEG := posix
 endif
 
 ARGS ?=
+QSB ?=
 
 .PHONY: help all build gates lint run_tests generate_screenshots verify_captures package \
-        snapshot_package snapshot_quick format coverage install_hooks dev_up dev_down docker_exec clean
+        snapshot_package snapshot_quick format coverage install_hooks dev_up dev_down docker_exec clean generate_shaders
 
 help:
 	@echo "all                    everything: gates, tests, screenshots, package"
@@ -36,7 +37,7 @@ help:
 	@echo "run_tests              the full test suite: stdlib on the host, then"
 	@echo "                       the real-Qt suite in the container"
 	@echo "test_files             a CHOSEN list of test files, one process per"
-	@echo "                       file, run in PARALLEL in the container — use"
+	@echo "                       file, run in PARALLEL in the container â€” use"
 	@echo "                       this instead of one unittest with many files,"
 	@echo "                       which runs them serially (the Qt files also"
 	@echo "                       need their own process)"
@@ -51,6 +52,7 @@ help:
 	@echo "                       verified package, no captures or determinism"
 	@echo "package                build and verify the Cura package and Marketplace ZIP"
 	@echo "format                 apply qmlformat to the plugin QML (in the container)"
+	@echo "generate_shaders       compile the packaged GPU shaders (also part of all)"
 	@echo "coverage               coverage run and report for plugins/ (in the container)"
 	@echo "install_hooks          install the pre-commit hook"
 	@echo "dev_up                 start the warm dev container (docker_dev.sh"
@@ -60,7 +62,7 @@ help:
 	@echo "                       (make docker_exec ARGS=\"qmlformat -i plugins/X.qml\")"
 	@echo "clean                  remove build outputs and editor backups"
 
-all: build lint run_tests verify_captures package snapshot_package
+all: generate_shaders build lint run_tests verify_captures package snapshot_package
 
 build: gates
 ifeq ($(LEG),windows)
@@ -71,7 +73,7 @@ else
 	./tools/refresh_screenshots.sh
 endif
 
-gates:
+gates: generate_shaders
 ifeq ($(LEG),windows)
 	$(DEV) gates
 else
@@ -135,7 +137,7 @@ else
 	./tools/verify_capture_determinism.sh
 endif
 
-package:
+package: generate_shaders
 ifeq ($(LEG),windows)
 	$(DEV) package
 else
@@ -159,7 +161,7 @@ endif
 
 # The FAST iteration path for the snapshot loop (the 2026-09-10
 # ruling, amended the same day): lint + the full test suite + a
-# verified package, WITHOUT captures and capture determinism — the
+# verified package, WITHOUT captures and capture determinism â€” the
 # snapshot iterations carry logic, so the suites run, and only the
 # screenshot machinery is skipped. make all remains mandatory before
 # any commit or push.
@@ -225,21 +227,29 @@ ifeq ($(LEG),windows)
 # (tools/native_harness.ps1 stages Cura, the plugin and the driver;
 # tests/harness/runner.py drives them). It needs a desktop session and
 # touches a Cura install, so it is NOT wired into a recipe that a
-# stray `make all` could reach — the sequence is in INSTRUCTIONS.md,
+# stray `make all` could reach â€” the sequence is in INSTRUCTIONS.md,
 # "Windows development".
 ui_test ui_release_gate:
-	@echo "$@: no container on this leg — run the native harness instead:"
+	@echo "$@: no container on this leg â€” run the native harness instead:"
 	@echo "  powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 -CuraVersion 5.13.0 -Scenario suite"
 	@echo "  then drive tests/harness/runner.py with the printed harness_env.ps1"
 	@exit /b 1
 else
-ui_test: package  # the harness stages dist — it must be the current tree, never a stale build
+ui_test: package  # the harness stages dist â€” it must be the current tree, never a stale build
 	./tools/ui_test.sh
 
 # The release gate's real-Cura scenario runs: the gates + suite on the
 # primary pinned Cura, the gates again on the secondary version. Run
 # on a box with docker; the budgets and retry policy live in
-# tools/harness_release.sh (TESTING.md §5).
+# tools/harness_release.sh (TESTING.md Â§5).
 ui_release_gate:
 	./tools/harness_release.sh
+endif
+
+# Build-time compilation; packaged shader bundles require no user compiler.
+generate_shaders:
+ifeq ($(LEG),windows)
+	$(PYTHON) tools/build_shaders.py $(if $(QSB),--qsb "$(QSB)",)
+else
+	./tools/docker_dev.sh python3 tools/build_shaders.py $(if $(QSB),--qsb "$(QSB)",)
 endif

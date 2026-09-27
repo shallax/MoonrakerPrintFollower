@@ -261,6 +261,10 @@ class SettingsManager(QObject):
         return False
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsSoftwareFollowerRenderer(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsCameraDisabled(self):
         return False
 

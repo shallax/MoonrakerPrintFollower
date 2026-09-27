@@ -19,6 +19,8 @@ class PlateSplitTracker:
         self.below_floor_polls = 0
         self.awaiting_layer_entry = False
         self.awaiting_resume_match = False
+        self.last_confirmed_z = None
+        self.entry_previous_z = None
 
     def begin(self, job_key, anchor):
         """Start an observation, returning whether this is the next live layer."""
@@ -27,9 +29,11 @@ class PlateSplitTracker:
         advanced = (previous is not None and previous[0] == job_key
                     and anchor == previous[1] + 1)
         if key != previous:
+            previous_z = self.last_confirmed_z if advanced else None
             self.reset()
             self.key = key
             self.awaiting_layer_entry = advanced
+            self.entry_previous_z = previous_z
         return advanced
 
     @property

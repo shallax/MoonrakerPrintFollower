@@ -22,6 +22,18 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_software_renderer_is_persistent_per_machine_and_defaults_to_gpu(self):
+        prefs = FakePreferences()
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        self.assertFalse(store.get().software_follower_renderer)
+        store.set(PrinterConfig(software_follower_renderer=True))
+        self.assertTrue(PrinterConfigStore(prefs, lambda: tuple(active)).get().software_follower_renderer)
+        active[:] = ["machine-b", "Printer B"]
+        self.assertFalse(store.get().software_follower_renderer)
+        active[:] = ["machine-a", "Printer A"]
+        self.assertTrue(store.get().software_follower_renderer)
+
     def test_configs_are_isolated_per_cura_machine(self):
         prefs = FakePreferences()
         active = ["machine-a", "Printer A"]

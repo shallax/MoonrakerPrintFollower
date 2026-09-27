@@ -3666,6 +3666,31 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         self.assertLess(painted, 300,
                         "the compatible raster was not the older one")
 
+    def test_attached_nav_retires_ink_ahead_of_a_corrected_boundary(self):
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        self._poll(model, surface, payload, 5, 300, clock, armed, self.qt)
+        self._drain_job(model, surface, self.qt)
+        self.assertTrue(model._navigation_data_value(surface))
+        self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
+        self.assertEqual(model._navigation_data_value(surface), "",
+                         "a warm raster with future ink survived a physical correction")
+
+    def test_attached_nav_discards_a_future_job_after_a_boundary_correction(self):
+        model = self.monitor()
+        model, surface, clock, armed, starts = self._attached(model)
+        payload = self._payload(600)
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 300)
+        future_key = model._navigation_key(surface)
+        self.assertIsNotNone(surface.nav["job"])
+        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+                         5, "motion index", 50)
+        self._drain_job(model, surface, self.qt)
+        self.assertNotEqual(surface.nav["key"], future_key,
+                            "an in-flight future raster promoted over corrected progress")
+
     def test_attached_nav_failure_retries_once_per_window(self):
         # A failing warm render must not hot-retry per poll: the
         # hard-key latch holds for the window, one retry per expiry,

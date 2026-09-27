@@ -51,9 +51,9 @@ from .MonitorCamera import MonitorCamera
 from .PlateQt import (
     PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _PLATE_TRAVEL_VISUAL_RATIO,
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
-    render_navigation_layer,
+    render_navigation_layer, qml_geometry,
 )
-from .PlateSceneIdentity import NavigationSceneKey, navigation_hard_key, navigation_zoom
+from .PlateSceneIdentity import NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -281,7 +281,7 @@ def _follower_view_state(stored) -> dict:
     """The print follower's view settings — GLOBAL, not per printer
     (the live ruling): the layer toggles, the stroke thickness and the
     centred follow. Bools stay booleans; the scale clamps to the
-    control's 0.5-2.0 range."""
+    control's 1-8 logical-pixel range."""
     stored = stored if isinstance(stored, dict) else {}
     def flag(key, default):
         value = stored.get(key, default)
@@ -289,15 +289,17 @@ def _follower_view_state(stored) -> dict:
     def scale(value):
         try:
             parsed = float(value)
-        except (TypeError, ValueError):
-            return 0.7
-        return min(2.0, max(0.5, parsed))
+            return float(min(8, max(1, round(parsed))))
+        except (TypeError, ValueError, OverflowError):
+            return 1.0
     return {
         "showPrevious": flag("showPrevious", True),
         "showNext": flag("showNext", True),
         "showBase": flag("showBase", True),
         "showTravels": flag("showTravels", False),
-        "lineScale": scale(stored.get("lineScale", 0.7)),
+        "antialiasing": flag("antialiasing", False),
+        "keepCentred": flag("keepCentred", False),
+        "lineScale": scale(stored.get("lineScale", 1.0)),
     }
 
 
@@ -375,6 +377,7 @@ class _RenderSurface:
         # the ghost pair, stamped with the anchor epoch they belong
         # to .
         self.desired = None
+        self.gpu_rendering = False
         self.tokens = {}                     # layer -> demand token
         self.job = None                      # {"layer", "token", "generation", "state", "cancel"}
         self.render_count = {}               # layer -> raster requests
@@ -519,7 +522,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # paints the new current layer as a pending base while it
         # still reads the previous attached state and then clears it
         # .
-        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale",
+        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerAntialiasing", "followerKeepCentred", "followerSoftwareRendering", "followerLineScale",
                                  "followerTravelVisualRatio", "followerAttached", "followerLayerAnchor")),
         # The popover's pause block: the schedule's rows and the
         # candidate-derived gates. Its own group — a pause landing
@@ -690,6 +693,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_show_next = follower_view["showNext"]
         self._follower_show_base = follower_view["showBase"]
         self._follower_show_travels = follower_view["showTravels"]
+        self._follower_antialiasing = follower_view["antialiasing"]
+        self._follower_keep_centred = follower_view["keepCentred"]
         self._follower_line_scale = follower_view["lineScale"]
         # The follower's attach state and its frozen layer — a LIVE view
         # state, never persisted: a restart follows the print again, and
@@ -1702,6 +1707,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowNext=self._follower_show_next,
             followerShowBase=self._follower_show_base,
             followerShowTravels=self._follower_show_travels,
+            followerAntialiasing=self._follower_antialiasing,
+            followerKeepCentred=self._follower_keep_centred,
+            followerSoftwareRendering=bool(getattr(self._config(), "software_follower_renderer", False)),
             followerLineScale=self._follower_line_scale,
             followerTravelVisualRatio=_PLATE_TRAVEL_VISUAL_RATIO,
             followerAttached=self._follower_attached,
@@ -1877,7 +1885,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
     followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
-    followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 0.7)
+    followerAntialiasing = value_property(bool, "followerAntialiasing", followerViewChanged, False)
+    followerKeepCentred = value_property(bool, "followerKeepCentred", followerViewChanged, False)
+    followerSoftwareRendering = value_property(bool, "followerSoftwareRendering", followerViewChanged, False)
+    followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 1.0)
     followerTravelVisualRatio = value_property(float, "followerTravelVisualRatio", followerViewChanged,
                                                _PLATE_TRAVEL_VISUAL_RATIO)
     followerAttached = value_property(bool, "followerAttached", followerViewChanged, True)
@@ -2821,6 +2832,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "showNext": self._follower_show_next,
                 "showBase": self._follower_show_base,
                 "showTravels": self._follower_show_travels,
+                "antialiasing": self._follower_antialiasing,
+                "keepCentred": self._follower_keep_centred,
                 "lineScale": self._follower_line_scale,
             },
             # The chrome-only rewrite in __init__ runs BEFORE the
@@ -3139,11 +3152,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._save_state()
         self._publish()
 
+    @pyqtSlot(bool)
+    def setFollowerAntialiasing(self, enabled):
+        if self._follower_antialiasing is bool(enabled):
+            return
+        self._follower_antialiasing = bool(enabled)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerKeepCentred(self, keep):
+        if self._follower_keep_centred is bool(keep):
+            return
+        self._follower_keep_centred = bool(keep)
+        self._save_state()
+        self._publish()
+
     @pyqtSlot(float)
     def setFollowerLineScale(self, scale):
         try:
-            scale = min(2.0, max(0.5, float(scale)))
-        except (TypeError, ValueError):
+            scale = float(min(8, max(1, round(float(scale)))))
+        except (TypeError, ValueError, OverflowError):
             return
         if self._follower_line_scale == scale:
             return
@@ -3306,7 +3335,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return None
         if split <= 0 or split >= motions:
             return None
-        return current
+        return qml_geometry(current)
 
     def _qt_window(self, surface, layers, anchor, method=None, split=None,
                    lookup_ms=None):
@@ -3409,6 +3438,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the newest desired current supersedes an obsolete one —
         rapid slider movement through 100..104 starts at most one
         current job plus its ghosts, never one per visited layer."""
+        if surface.gpu_rendering:
+            return
         if surface.job is not None:
             return  # the running job's completion re-schedules
         if surface.plot is None or not surface.view.get("width"):
@@ -3550,6 +3581,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._schedule_rewind_checkpoints(surface)
 
     def _schedule_rewind_checkpoints(self, surface):
+        if surface.gpu_rendering:
+            return
         if surface.name != "popover" or surface.desired is None:
             return
         layer = surface.desired["current"]
@@ -3635,8 +3668,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if surface.nav["url"] and demand is not None:
             stored = surface.nav.get("key")
             if stored == demand or (self._follower_attached
-                                    and self._nav_key_hard(stored)
-                                    == self._nav_key_hard(demand)):
+                                    and navigation_compatible(stored, demand)):
                 return surface.nav["url"]
         return ""
 
@@ -3728,6 +3760,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         the camera path, and only for the popover — the mini does
         not carry this feature. A ready URL is what the face can
         switch to INSTANTLY on the first camera input."""
+        if surface.gpu_rendering:
+            return
         # Presentation holds the entry image; the exact scene still
         # receives every poll. Do not burn 4x composites mid-gesture.
         if self._follower_interacting:
@@ -3815,6 +3849,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # geometry) switches to the warm raster as one.
                 "bedWidth": float(self.bedMeshMachineWidth or 0.0),
                 "bedDepth": float(self.bedMeshMachineDepth or 0.0)}
+        if "lineWidthPx" in surface.view:
+            view["lineWidthPx"] = surface.view["lineWidthPx"]
         plot = dict(surface.plot)
         split = desired.get("split")
         epoch = surface.job_epoch
@@ -3939,7 +3975,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # progress.
         demand = self._navigation_key(surface)
         compatible = self._follower_attached \
-            and self._nav_key_hard(demand) == self._nav_key_hard(key)
+            and navigation_compatible(key, demand)
         if demand is None or (demand != key and not compatible):
             self._unlink_asset_files(images)
             surface.nav["job"] = None
@@ -4172,6 +4208,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for surface in self._plate_surfaces.values():
             self._clear_surface_checkpoints(surface)
             self._unpin_surface(surface)
+            update_gpu = getattr(self._index_service, "set_gpu_rendering", None)
+            if callable(update_gpu):
+                update_gpu((id(self), surface.name), False)
 
     def _retire_surface(self, surface):
         """A surface whose QML consumer has gone retires its
@@ -4495,7 +4534,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         re-arm the window, and the gesture would latch a raster
         behind the painted lines (the live snap-back report)."""
         surface = self._surface_for(surface)
-        if surface is None or surface.name != "popover" \
+        if surface is None or surface.gpu_rendering or surface.name != "popover" \
                 or not self._follower_attached:
             return
         if surface.nav["job"] is not None:
@@ -4518,10 +4557,29 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # registration silently drops the ninth (the engine's "Too many
     # arguments, ignoring 1"), so the nine-argument form is
     # registered as its own overload.
+    @pyqtSlot(str, bool)
+    def setFollowerGpuRendering(self, name, enabled):
+        """A mounted face selects its backend; GPU faces need no raster jobs.
+
+        Retire outstanding CPU demand on a change. A queued publication
+        rebuilds the current demand so switching back resumes the original
+        full/prefix/navigation/checkpoint scheduler with the current view.
+        """
+        surface = self._surface_for(name)
+        if surface is None or surface.gpu_rendering == bool(enabled):
+            return
+        self._retire_surface(surface)
+        surface.gpu_rendering = bool(enabled)
+        update_gpu = getattr(self._index_service, "set_gpu_rendering", None)
+        if callable(update_gpu):
+            update_gpu((id(self), surface.name), bool(enabled))
+        self._schedule_publish()
+
+    @pyqtSlot(str, float, float, int, int, bool, float, float, float, float)
     @pyqtSlot(str, float, float, int, int, bool, float, float, float)
     @pyqtSlot(str, float, float, int, int, bool, float, float)
     def setFollowerView(self, surface, scale, lineScale, width, height, compact,
-                        panX, panY, dpr=1.0):
+                        panX, panY, dpr=1.0, pixelWidth=0.0):
         """The raster's view inputs for ONE SURFACE . An
         exact repeat is a no-op ; the
         plot+view pair coalesces into one flush. The DEVICE-PIXEL
@@ -4538,6 +4596,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "compact": bool(compact),
                 "panX": float(panX), "panY": float(panY),
                 "dpr": min(2.0, max(1.0, float(dpr)))}
+        if pixelWidth > 0:
+            view["lineWidthPx"] = float(pixelWidth)
         # Idempotence compares against the EFFECTIVE value — the
         # staged one when a burst is pending: A -> B -> A before
         # the flush must end at A, never commit the intermediate B.

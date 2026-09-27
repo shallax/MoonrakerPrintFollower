@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QUrl
+from PyQt6.QtQml import QQmlComponent
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
@@ -38,12 +39,37 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         changed = getattr(application, "globalContainerStackChanged", None)
         self._stack_signal = changed
         self._running = False
+        self._monitor_qml = None
+        self._monitor_qml_engine = None
+        self._engine_signal = getattr(application, "engineCreatedSignal", None)
+        self._engine_connected = False
         if changed is not None:
             changed.connect(self.refresh)
 
     def start(self) -> None:
         self._running = True
+        if self._engine_signal is not None and not self._engine_connected:
+            self._engine_signal.connect(self._warm_monitor_qml)
+            self._engine_connected = True
         self.refresh()
+
+    def _warm_monitor_qml(self) -> None:
+        """Compile the dashboard without instantiating controls or cameras.
+
+        Cura 5.13 exposes its QML engine through this protected member.
+        Retain one asynchronous component per engine so the first Monitor
+        opening reuses its compiled types instead of waiting several seconds.
+        """
+        engine = getattr(self._application, "_qml_engine", None)
+        if not self._running or self._current is None or engine is None \
+                or engine is self._monitor_qml_engine:
+            return
+        if self._monitor_qml is not None:
+            self._monitor_qml.deleteLater()
+        self._monitor_qml_engine = engine
+        self._monitor_qml = QQmlComponent(engine, QUrl.fromLocalFile(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorDashboard.qml")),
+            QQmlComponent.CompilationMode.Asynchronous)
 
     def _current_monitor(self) -> Optional[Any]:
         device = self._current
@@ -121,6 +147,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
     def stop(self) -> None:
         self._running = False
+        if self._engine_connected:
+            self._engine_signal.disconnect(self._warm_monitor_qml)
+            self._engine_connected = False
+        if self._monitor_qml is not None:
+            self._monitor_qml.deleteLater()
+            self._monitor_qml = None
+        self._monitor_qml_engine = None
         for device in self._devices.values():
             self._deactivate_device(device)
         if self._current is not None:
@@ -291,6 +324,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
             self._install_monitor(device, stack)
             self._current = device
+            self._warm_monitor_qml()
             if transition:
                 self.getOutputDeviceManager().addOutputDevice(device)
         except Exception as exc:

@@ -99,6 +99,9 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerShowNext": "b11",
     "MoonrakerMonitorModel.setFollowerShowBase": "b11",
     "MoonrakerMonitorModel.setFollowerShowTravels": "b11",
+    "MoonrakerMonitorModel.setFollowerAntialiasing": "b11",
+    "MoonrakerMonitorModel.setFollowerGpuRendering": "b11",
+    "MoonrakerMonitorModel.setFollowerKeepCentred": "b11",
     "MoonrakerMonitorModel.setFollowerLineScale": "b11",
     # The follower's view and layer seeks (4.6.0): the attach/detach
     # freeze and the layer slider's anchor.
@@ -158,6 +161,7 @@ SCENARIO_MAP = {
     # layer seek with its attach button and readout, and the
     # display-only within-layer bar.
     "moonrakerFollowerJump": "b11",
+    "moonrakerFollowerKeepCentred": "b11",
     "moonrakerFollowerLayerSlider": "b11",
     "moonrakerFollowerLayerReadout": "b11",
     "moonrakerFollowerAttach": "b11",
@@ -184,6 +188,9 @@ SCENARIO_MAP = {
     "followerShowNext": "b11",
     "followerShowBase": "b11",
     "followerShowTravels": "b11",
+    "followerAntialiasing": "b11",
+    "followerSoftwareRendering": "b11",
+    "followerKeepCentred": "b11",
     "followerLineScale": "b11",
     "followerTravelVisualRatio": "b11",
     # The popover's pause-at-layer block (4.6.0): the card's own

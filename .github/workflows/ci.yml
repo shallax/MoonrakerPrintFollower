@@ -476,6 +476,11 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:8}"
           echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
+      - name: Compile packaged GPU shaders
+        run: |
+          python -m pip install PySide6-Addons==6.10.2
+          python tools/build_shaders.py
+
       - name: Build Cura package
         run: python tools/build_curapackage.py
 

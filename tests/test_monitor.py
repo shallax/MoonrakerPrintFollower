@@ -3023,7 +3023,7 @@ class MonitorQtTests(unittest.TestCase):
                 # ruling) — the defaults ride the fresh document.
                 "followerView": {"showPrevious": True, "showNext": True,
                                  "showBase": True, "showTravels": False,
-                                 "lineScale": 0.7},
+                                 "antialiasing": False, "keepCentred": False, "lineScale": 1.0},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.
@@ -5185,11 +5185,22 @@ Item {
             # hidden in place while at 100% — its row is permanent.
             "visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0",
             "visible: progressFace.attached",
+            # Static renderer capability: smoothing is available only
+            # in the GPU development install, independent of print state.
+            "visible: progressFace.gpuRendering",
             # The plate face's native raster stack (the 4.6.0 render
             # architecture): the images own their state gates — a
             # full layer's raster, its travels, the grey partial
             # base and the ghost pair.
             "visible: _fullRaster()",
+            # Renderer ownership and the attached-only centring preference.
+            "visible: root.gpuRendering",
+            "visible: root.gpuRendering && root.available()",
+            'visible: root.gpuRendering ? root.available() && !gpuFollower.ready : root._presentation.kind === "preparing" && !root._presentation.ready',
+            "visible: !root.gpuRendering",
+            "visible: !root.gpuRendering && root._interactionActive",
+            'visible: !root.gpuRendering && root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")',
+            "visible: jumpButton.visible",
             "visible: root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current)",
             "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && _rasterOf(_ghost(\"prev\"))",
             "visible: root.available() && root.showNext && _ghost(\"next\") != null && _rasterOf(_ghost(\"next\"))",

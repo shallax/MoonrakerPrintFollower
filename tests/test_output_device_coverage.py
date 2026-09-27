@@ -271,6 +271,40 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         self.assertIsNone(plugin._current)
         self.assertEqual(plugin._devices, {})
 
+    def test_dashboard_warmup_waits_for_an_engine_and_compiles_once_without_creating_ui(self):
+        app = self.qt.Application()
+        follower = self.follower(self.client(), self.printer_config())
+        plugin = self.plugin(app, follower)
+        app._qml_engine = None
+        with patch.object(self.module, "QQmlComponent") as component:
+            plugin.start()
+            component.assert_not_called()
+            app._qml_engine = object()
+            plugin._warm_monitor_qml()
+            plugin.refresh()
+            plugin._warm_monitor_qml()
+            self.assertEqual(component.call_count, 1)
+            self.assertTrue(component.call_args.args[1].toLocalFile().endswith("MoonrakerMonitorDashboard.qml"))
+            self.assertEqual(component.call_args.args[2], component.CompilationMode.Asynchronous)
+            component.return_value.create.assert_not_called()
+            plugin.stop()
+            component.return_value.deleteLater.assert_called_once()
+            self.assertIsNone(plugin._monitor_qml)
+            plugin._warm_monitor_qml()
+            self.assertEqual(component.call_count, 1)
+
+    def test_dashboard_warmup_connects_and_disconnects_the_engine_lifecycle(self):
+        app = self.qt.Application()
+        app.engineCreatedSignal = Mock()
+        follower = self.follower(self.client(), self.printer_config())
+        plugin = self.plugin(app, follower)
+        plugin.start()
+        app.engineCreatedSignal.connect.assert_called_once_with(plugin._warm_monitor_qml)
+        plugin.start()
+        app.engineCreatedSignal.connect.assert_called_once()
+        plugin.stop()
+        app.engineCreatedSignal.disconnect.assert_called_once_with(plugin._warm_monitor_qml)
+
     def test_stop_gates_the_stack_handler_and_restart_recovers(self):
         # E (the 2026-09-19 review): stop must really stop — a stack
         # change after stop reinstalls nothing; start again registers

@@ -1314,7 +1314,7 @@ class ModuleCoercionSlotTests(MonitorModelCase):
         self.assertEqual(module._coerce_anchor("junk"), -1)
         self.assertEqual(module._coerce_anchor("7"), 7, "a stored digit is a layer")
         view = module._follower_view_state({"lineScale": "junk", "showNext": "yes"})
-        self.assertEqual(view["lineScale"], 0.7, "an unparseable stroke fell through")
+        self.assertEqual(view["lineScale"], 1.0, "an unparseable stroke fell through")
         self.assertTrue(view["showNext"], "a non-bool flag must keep its default")
 
     def test_a_snapshot_without_layer_info_reads_no_layer(self):
@@ -1358,6 +1358,7 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.model.setFollowerShowNext(True)
         self.model.setFollowerShowBase(True)
         self.model.setFollowerShowTravels(False)
+        self.model.setFollowerAntialiasing(False)
         self.model.setFollowerLineScale(0.7)
         self.assertEqual((self.saves, self.publishes), ([], []),
                          "a repeat rewrote the document or republished")
@@ -1372,15 +1373,36 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.assertFalse(self.model.followerShowBase)
         self.assertTrue(self.model.followerShowTravels)
 
+    def test_antialiasing_persists_and_defaults_to_crisp_lines(self):
+        store = self.persistence()
+        self.model = self.build(state_store=store)
+        self.assertFalse(self.model.followerAntialiasing)
+        self.model.setFollowerAntialiasing(True)
+        restored = self.build(state_store=store)
+        self.assertTrue(restored.followerAntialiasing)
+        restored.setFollowerAntialiasing(False)
+        self.assertFalse(self.build(state_store=store).followerAntialiasing)
+
     def test_the_line_scale_clamps_into_the_control_range(self):
         self.model = self.build()
         self.model.setFollowerLineScale(3.0)
-        self.assertEqual(self.model.followerLineScale, 2.0)
+        self.assertEqual(self.model.followerLineScale, 3.0)
         self.model.setFollowerLineScale(0.1)
-        self.assertEqual(self.model.followerLineScale, 0.5)
+        self.assertEqual(self.model.followerLineScale, 1.0)
         self.model.setFollowerLineScale("junk")
-        self.assertEqual(self.model.followerLineScale, 0.5,
+        self.assertEqual(self.model.followerLineScale, 1.0,
                          "an unparseable stroke moved the published scale")
+
+    def test_all_pixel_widths_persist_and_no_subpixel_level_is_allowed(self):
+        store = self.persistence()
+        self.model = self.build(state_store=store)
+        for level in range(1, 9):
+            self.model.setFollowerLineScale(level)
+            self.assertEqual(self.build(state_store=store).followerLineScale, level)
+        self.model.setFollowerLineScale(99.0)
+        self.assertEqual(self.model.followerLineScale, 8.0)
+        self.model.setFollowerLineScale(-1.0)
+        self.assertEqual(self.model.followerLineScale, 1.0)
 
     def test_the_popover_gates_only_publish_on_a_real_change(self):
         self.model = self.build()
@@ -1542,6 +1564,29 @@ class SurfaceDemandSlotTests(MonitorModelCase):
             payload if payload is not None else {"motions": motions, "classes": {}})
         surface.layers[layer] = wrapped
         return wrapped
+
+    def test_gpu_backend_retires_cpu_work_and_switching_back_resumes_scheduling(self):
+        import threading
+        surface = self.surface()
+        cancellation = threading.Event()
+        surface.job = {"cancel": cancellation}
+        surface.desired = {"anchor": 1}
+        self.model.setFollowerGpuRendering("popover", True)
+        self.assertTrue(cancellation.is_set())
+        self.assertTrue(surface.gpu_rendering)
+        self.assertIsNone(surface.job)
+        self.assertIsNone(surface.desired)
+        thread_pool = self.qt.load("MoonrakerMonitorModel").QThreadPool
+        with patch.object(thread_pool, "globalInstance", side_effect=AssertionError("GPU scheduled CPU raster")):
+            self.model._schedule_surface(surface)
+            self.model._schedule_navigation(surface)
+            self.model._schedule_rewind_checkpoints(surface)
+        with patch.object(self.model, "_schedule_publish") as publish:
+            self.model.setFollowerGpuRendering("popover", True)
+            publish.assert_not_called()
+            self.model.setFollowerGpuRendering("popover", False)
+            publish.assert_called_once()
+        self.assertFalse(surface.gpu_rendering)
 
     def test_five_percent_archive_is_background_only_bounded_and_current_layer_owned(self):
         import threading

@@ -68,7 +68,7 @@ if QT_AVAILABLE:
 
     from plugins.GCodeIndex import build_index_from_bytes
     from plugins.MonitorFormatting import _point_in_polygon, polygon_bounds
-    from plugins.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
+    from plugins.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
     from plugins.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
@@ -3743,6 +3743,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 # the same constant the printer double publishes to the
                 # face — one number, two channels, as production has it.
                 "travelVisualRatio": _PLATE_TRAVEL_VISUAL_RATIO}
+        if face.property("pixelLineWidth"):
+            view["lineWidthPx"] = line_scale
         PlateFaceRenderTests._raster_stem = getattr(
             PlateFaceRenderTests, "_raster_stem", 0) + 1
         stem = "fixture-%d-%d" % (os.getpid(), PlateFaceRenderTests._raster_stem)
@@ -4295,6 +4297,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # is a different thickness. Measure the real composed pixels on
         # a horizontal run before, at and after the prefix boundary.
         monitor, window, face, baseline = self._mount_empty()
+        if getattr(self, "_pixel_width_contract", False):
+            face.setProperty("pixelLineWidth", True)
         face.setProperty("lineScale", 8.0)
         self.pump(10)
         points = [[20.0 + motion * 10.0, 125.0, float(motion)]
@@ -4389,6 +4393,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # Restore the plain-dict payload: dicts wrap inertly.
         self._printer.setLayers(PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
+
+    def test_pixel_width_prefix_and_canvas_tail_keep_one_stroke_width(self):
+        self._pixel_width_contract = True
+        self.test_partial_prefix_and_canvas_tail_keep_one_stroke_width()
 
     def test_a_prefix_that_never_loads_leaves_the_vector_owning_the_history(self):
         # The prefix's model-side validity is NOT the scene's: while
@@ -5332,6 +5340,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # the allowed set is the LAST PRESENTED composition plus the
         # current demand, derived from actual presentation.
         monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("attached", False)
         face.setProperty("lineScale", 8.0)
         self.pump(10)
         points = [[20.0 + motion * 10.0, 125.0, float(motion)]
@@ -6966,6 +6975,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
 
     def test_reverse_checkpoint_handover_never_presents_less_than_the_requested_split(self):
         monitor, window, face, baseline = self._mount_empty()
+        face.setProperty("attached", False)
         face.setProperty("lineScale", 8.0)
         self.pump(10)
         payload = self._stroke_payload()
@@ -9639,7 +9649,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         index = build_index_from_bytes(gcode.encode("ascii"))
         return {
             "available": True, "reason": "",
-            "layers": {"prev": None, "current": layer_polylines(index, 0), "next": None},
+            "layers": {"prev": None, "current": qml_geometry(layer_polylines(index, 0)), "next": None},
             "split": index.motion_count(0) if split is None else int(split),
             "method": "motion index", "anchor": 0,
         }
@@ -10204,6 +10214,10 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self._open(monitor, "plateprogress")
         faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
         self.assertEqual(len(faces), 1)
+        # These existing composition fixtures deliberately exercise the
+        # original physical-width software contract. Pixel-width policy
+        # has its own native/Canvas parity test below.
+        faces[0].setProperty("pixelLineWidth", False)
         return monitor, window, faces[0]
 
     def test_popover_retains_geometry_across_split_and_raster_updates(self):

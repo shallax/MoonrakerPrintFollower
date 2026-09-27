@@ -72,6 +72,7 @@ Cura.MachineAction {
             "memory_diagnostics_log": memoryDiagnosticsBox.checked,
             "memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked,
             "camera_disabled": cameraDisabledBox.checked,
+            "software_follower_renderer": softwareFollowerRendererBox.checked,
             "frontend_url": frontendUrlField.text,
             "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
             "upload_dialog": uploadDialogBox.checked,
@@ -965,6 +966,11 @@ Cura.MachineAction {
                             // the main toggle is off so the two cannot
                             // be read as independent switches.
                             enabled: memoryDiagnosticsBox.checked
+                        }
+                        UM.CheckBox {
+                            id: softwareFollowerRendererBox
+                            text: "Use software Print Follower renderer"
+                            checked: manager.settingsSoftwareFollowerRenderer
                         }
                         UM.CheckBox {
                             id: cameraDisabledBox

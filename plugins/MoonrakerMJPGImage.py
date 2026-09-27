@@ -14,11 +14,12 @@
 from __future__ import annotations
 
 import queue
+import math
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QGuiApplication, QImage, QPainter
+from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QGuiApplication, QImage, QImageReader, QPainter
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtQuick import QQuickPaintedItem
 
@@ -79,7 +80,14 @@ def _decode_jpeg(frame: bytes) -> QImage:
     Module-level so the thread it runs on is a testable fact rather
     than an implementation detail: the worker calls this, and nothing
     Qt-affine is in it — a bytes payload in, a value type out."""
-    return QImage.fromData(frame)
+    # PyQt's QImage.fromData holds the GIL throughout the native decode.
+    # QImageReader.read releases it, so this worker cannot block Python
+    # callbacks on the GUI thread for the duration of every camera frame.
+    buffer = QBuffer()
+    buffer.setData(QByteArray(frame))
+    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+    reader = QImageReader(buffer)
+    return reader.read()
 
 
 class _FrameDecoder(QThread):
@@ -190,6 +198,10 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._render_timer.setInterval(RENDER_INTERVAL_MS)
         self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._render_timer.timeout.connect(self._render)
+        self._dispatch_timer = QTimer(self)
+        self._dispatch_timer.setSingleShot(True)
+        self._dispatch_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._dispatch_timer.timeout.connect(self._dispatch_from_completion)
 
         # The decode worker: the JPEG decode is the one large piece of
         # work this plugin used to do on the Qt thread, and it is a
@@ -199,13 +211,9 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._decode_generation = 0
         self._decode_in_flight = 0
         self._in_flight_arrival = 0.0
-        # When the last frame was handed over, and whether this tick
-        # period's hand-over is already spent: the two together are what
-        # keeps a completion's hand-over from stacking with the tick's,
-        # and 0.0/False are in the past, so a stream's first frame is
-        # never made to wait for a cap the stream has not spent yet.
+        # Every hand-over shares one deadline, independent of whether
+        # a render tick or a worker completion requested it.
         self._last_dispatch_at = 0.0
-        self._handed_over_since_tick = False
 
         # The diagnostics snapshot: the counters emit through one
         # low-frequency signal when they actually moved.
@@ -288,6 +296,10 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._app_state = ""
 
         self.setAntialiasing(True)
+        # Ignored by Qt 6.0-6.8 (including Cura 5.13's Qt 6.6).
+        # Qt 6.9+ can paint directly into an OpenGL framebuffer instead
+        # of rasterising an intermediate image and uploading it.
+        self.setRenderTarget(QQuickPaintedItem.RenderTarget.FramebufferObject)
 
     # -- the QML-facing contract -------------------------------------
 
@@ -516,6 +528,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._multipart_boundary = None
         self._started = False
         self._render_timer.stop()
+        self._dispatch_timer.stop()
         self._stats_timer.stop()
         # A decode in flight belongs to a stream that no longer exists:
         # bumping the generation discards its result on arrival, and
@@ -614,7 +627,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
                              self._round_trip_ms_total)
         self._last_drain_end = 0.0
         self._last_dispatch_at = 0.0
-        self._handed_over_since_tick = False
+        self._dispatch_timer.stop()
         self._drain_ms_max = 0.0
         self._drain_gap_ms_max = 0.0
         self._recent_decode_ms_max = 0.0
@@ -644,6 +657,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._stop_request()
         self._started = False
         self._render_timer.stop()
+        self._dispatch_timer.stop()
         self._stats_timer.stop()
 
     def _on_error(self, reply: QNetworkReply) -> None:
@@ -709,6 +723,11 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             else:
                 self._parse_scan()
             self._apply_limits()
+            # Parse the whole read before choosing its latest frame. A frame
+            # arriving just after a periodic tick must not wait an extra
+            # period once the decoder and the shared deadline are free.
+            if self._started:
+                self._dispatch_from_completion()
         self._last_drain_end = time.perf_counter()
         elapsed = (self._last_drain_end - started) * 1000.0
         self._drain_ms_total += elapsed
@@ -886,40 +905,24 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
     # -- the render scheduler -----------------------------------------
 
     def _render(self) -> None:
-        """The tick: the cap's floor.
-
-        The cap IS this cadence — it is what a fast source cannot
-        exceed — so the tick itself needs no interval test: its own
-        period is the interval, and it is the one hand-over point a
-        decode cannot reach. It takes at most one hand-over per period,
-        though: a completion that has spent this period's allowance
-        leaves the tick nothing to do, or the two callers would stack
-        into a burst the cap is there to prevent.
-        """
-        if not self._handed_over_since_tick:
-            self._dispatch()
-        self._handed_over_since_tick = False
+        """Ask for the newest frame at the presentation cadence."""
+        self._dispatch_from_completion()
 
     def _dispatch_from_completion(self) -> None:
-        """A decode's completion: hand the successor over without waiting
-        for the next tick.
+        """Dispatch at the shared deadline, or arrange its one wake-up.
 
-        The tick alone leaves the frame behind a slow decode waiting out
-        a whole further period — one display per two ticks — which is a
-        rate neither the source nor the cap asked for: the frames were
-        already being decoded, and hand-over is all that is left. The
-        interval is still the cap's minimum between hand-overs, so a
-        decode that finished inside it waits for the tick, and the
-        hand-over spends the current period's allowance so that the tick
-        behind it cannot immediately hand another over.
-
-        The ruler is perf_counter: on Windows time.monotonic is the
-        15.625 ms system tick, which is most of a 20 ms interval, and a
-        cap measured with it both refuses hand-overs that were due and
-        grants ones that were not.
+        A completion can fall between periodic ticks. Skipping the next
+        tick unconditionally then wastes a whole period, while waiting
+        for another tick quantises the rate to half the requested FPS.
+        The single-shot covers the remaining cap interval; both timers
+        re-check the same clock and cannot stack hand-overs into a burst.
         """
-        if time.perf_counter() - self._last_dispatch_at < \
-                self._render_timer.interval() / 1000.0:
+        if self._pending_frame is None or self._decode_in_flight:
+            return
+        remaining = self._render_timer.interval() / 1000.0 \
+            - (time.perf_counter() - self._last_dispatch_at)
+        if remaining > 0:
+            self._dispatch_timer.start(max(1, math.ceil(remaining * 1000)))
             return
         self._dispatch()
 
@@ -951,7 +954,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._decode_in_flight = self._decode_generation
         self._in_flight_arrival = arrival
         self._last_dispatch_at = time.perf_counter()
-        self._handed_over_since_tick = True
+        self._dispatch_timer.stop()
         self._decoder.submit(self._decode_generation, frame)
         self._tick_ms_total += (time.perf_counter() - started) * 1000.0
 

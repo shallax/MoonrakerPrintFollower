@@ -217,12 +217,12 @@ class ArcExtrusionStateTests(unittest.TestCase):
         layer = layer_polylines(index, 0)
         self.assertEqual(len(layer["travels"]), 1)
         travel = layer["travels"][0]
-        self.assertEqual(travel[0][:2], [10.0, 0.0])
-        self.assertEqual(travel[-1][:2], [0.0, 10.0])
+        self.assertEqual(tuple(travel[0][:2]), (10.0, 0.0))
+        self.assertEqual(tuple(travel[-1][:2]), (0.0, 10.0))
         self.assertLess(_deviation(travel, 0.0, 0.0, 10.0), 1.5e-3,
                         "the travel arc was drawn as its chord")
-        self.assertEqual(layer["travelStarts"], [[10.0, 0.0, 1.0]])
-        self.assertEqual(layer["travelEnds"], [[0.0, 10.0, 1.0]])
+        self.assertEqual([tuple(point) for point in layer["travelStarts"]], [(10.0, 0.0, 1.0)])
+        self.assertEqual([tuple(point) for point in layer["travelEnds"]], [(0.0, 10.0, 1.0)])
 
     def test_a_retracting_arc_is_not_geometry_in_a_feature_run(self):
         # Negative E is a retraction: the arc deposits nothing, so it is
@@ -267,7 +267,7 @@ class ArcFeatureTopologyTests(unittest.TestCase):
                        "G3 X0 Y10 I-10 J0 E2\n"
                        "G1 X-10 Y10 E3\n")
         chain = _chain(index, "SKIN")
-        self.assertEqual(chain[-1][:2], [-10.0, 10.0])
+        self.assertEqual(tuple(chain[-1][:2]), (-10.0, 10.0))
         self.assertEqual(_motions(chain)[-2:], [1, 2])
         endpoints = [(vertex[0], vertex[1]) for vertex in chain]
         self.assertEqual(len(endpoints), len(set(endpoints)),
@@ -909,7 +909,7 @@ class ArcPayloadGuardTests(unittest.TestCase):
             layer_start_positions=[(0.0, 0.0, 0.0)],
             layer_start_extruding=[True],
         )
-        self.assertEqual(layer_polylines(index, 0),
+        self.assertEqual(json.loads(json.dumps(layer_polylines(index, 0))),
                          {"classes": {"unknown": [[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0],
                                                    [0.0, 10.0, 1.0]]]},
                           "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})

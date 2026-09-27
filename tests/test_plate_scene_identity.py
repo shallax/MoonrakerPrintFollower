@@ -3,7 +3,7 @@
 import unittest
 
 from plugins.PlateSceneIdentity import (
-    NavigationSceneKey, navigation_hard_key, navigation_zoom,
+    NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom,
 )
 
 
@@ -35,6 +35,16 @@ class NavigationSceneKeyTests(unittest.TestCase):
                             navigation_hard_key(scene(split=0)))
         self.assertEqual(navigation_hard_key(scene(split=None)),
                          navigation_hard_key(scene(split=None)))
+
+    def test_a_raster_may_trail_progress_but_must_never_lead_a_correction(self):
+        self.assertTrue(navigation_compatible(scene(split=20), scene(split=60)))
+        self.assertTrue(navigation_compatible(scene(split=20), scene(split=20)))
+        self.assertFalse(navigation_compatible(scene(split=60), scene(split=20)))
+        self.assertFalse(navigation_compatible(scene(split=None), scene(split=20)))
+        self.assertTrue(navigation_compatible(scene(split=None), scene(split=None)))
+        self.assertFalse(navigation_compatible(scene(), scene(job_epoch=3)))
+        self.assertTrue(navigation_compatible(("a", "b"), ("a", "b")))
+        self.assertFalse(navigation_compatible(None, None))
 
     def test_context_changes_invalidate_the_scene(self):
         original = navigation_hard_key(scene())

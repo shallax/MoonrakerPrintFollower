@@ -85,7 +85,8 @@ function presentation(p) {
     // prefix it was painted against; demand changes cannot rename it.
     if(p.full && p.fullReady) return {kind:'full',prefix:'',ready:true};
     var r=p.receipt;
-    var delivered=r!==null && r.valid && r.epoch===p.epoch && r.world===p.world;
+    var overshot=p.attached && r!==null && p.split!==null && r.split>p.split;
+    var delivered=r!==null && r.valid && r.epoch===p.epoch && r.world===p.world && !overshot;
     // At the exact checkpoint an empty, delivered tail needs no vector
     // geometry. The native prefix alone covers the requested interval.
     if(delivered && r.from===-1 && p.inkless && !p.showTravels
@@ -101,7 +102,9 @@ function presentation(p) {
         if(retained.ready && retained.source===r.prefixSource && retained.from===r.from)
             return {kind:'prefix',prefix:'retained',ready:complete};
     }
-    if(p.heldFull) return {kind:'heldFull',prefix:'',ready:false};
+    // A detached scrub can keep its previous complete picture while seeking.
+    // An attached correction must never keep a whole layer's future ink.
+    if(p.heldFull && !p.attached) return {kind:'heldFull',prefix:'',ready:false};
     return {kind:'preparing',prefix:'',ready:delivered && r.from===-1 && p.inkless && (p.split===0 || p.split===null)};
 }
 function choosePrefix(current,retained,split) {

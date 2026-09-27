@@ -200,6 +200,23 @@ class ExactCompositionPolicyTests(unittest.TestCase):
             retainedPrefix:{ready:true,source:'old',from:10}
         })"""), {"kind": "preparing", "prefix": "", "ready": False})
 
+    def test_a_progress_correction_retires_future_canvas_and_prefix_pixels(self):
+        self.assertEqual(self.evaluate("""(function () {
+            var p={attached:true,full:false,fullReady:false,epoch:2,world:'scene',splitOk:false,split:10,
+                   inkless:false,heldFull:true,
+                   receipt:{valid:true,epoch:2,world:'scene',from:0,split:18,prefixSource:'old'},
+                   currentPrefix:{ready:true,source:'old',from:15},
+                   retainedPrefix:{ready:true,source:'old',from:15}};
+            var canvas=presentation(p);
+            p.receipt.from=15;
+            var prefix=presentation(p);
+            p.receipt.split=8;p.receipt.from=0;p.splitOk=true;
+            var trailing=presentation(p);
+            return [canvas,prefix,trailing];
+        })()"""), [{"kind": "preparing", "prefix": "", "ready": False},
+                     {"kind": "preparing", "prefix": "", "ready": False},
+                     {"kind": "canvas", "prefix": "", "ready": True}])
+
     def test_partial_canvas_cannot_release_a_full_demand(self):
         self.assertEqual(self.evaluate("""presentation({
             full:true,fullReady:false,epoch:2,world:'scene',split:21,
@@ -207,6 +224,13 @@ class ExactCompositionPolicyTests(unittest.TestCase):
             receipt:{valid:true,epoch:2,world:'scene',from:0,split:18},
             currentPrefix:{ready:false},retainedPrefix:{ready:false}
         })"""), {"kind": "canvas", "prefix": "", "ready": False})
+
+    def test_live_correction_cannot_hold_a_future_full_image_without_a_receipt(self):
+        self.assertEqual(self.evaluate("""presentation({
+            attached:true,full:false,fullReady:false,epoch:2,world:'scene',split:10,
+            splitOk:false,inkless:false,heldFull:true,receipt:null,
+            currentPrefix:{ready:false},retainedPrefix:{ready:false}
+        })"""), {"kind": "preparing", "prefix": "", "ready": False})
 
     def test_full_requires_a_ready_pair_or_a_complete_fallback(self):
         self.assertEqual(self.evaluate("""(function () {

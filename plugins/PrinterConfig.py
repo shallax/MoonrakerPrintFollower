@@ -132,6 +132,7 @@ class PrinterConfig:
     # The leak-battery's camera-off condition, without touching the
     # printer: MonitorCamera then publishes no stream URL at all.
     camera_disabled: bool = False
+    software_follower_renderer: bool = False
     # The trace axis within the memory-diagnostics log: tracemalloc
     # snapshots stall Cura for seconds each minute, so it is a
     # separate opt-in on top of memory_diagnostics_log.
@@ -321,7 +322,7 @@ class PrinterConfig:
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
             "eta_learn",
             "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace",
-            "camera_disabled",
+            "camera_disabled", "software_follower_renderer",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):

@@ -841,9 +841,11 @@ class QtRuntimeTests(unittest.TestCase):
         # connection.
         from PyQt6.QtNetwork import QTcpSocket
         closed = threading.Event()
+        entered = threading.Event()
 
         class Handler(PipeSafeHandler):
             def do_GET(self):
+                entered.set()
                 try:
                     while self.rfile.read(4096):
                         pass
@@ -873,6 +875,14 @@ class QtRuntimeTests(unittest.TestCase):
         # a different Python wrapper for the same connection.
         self.assertTrue(any(relay[0] is not None for relay in bridge._relays.values()),
                         "the upstream must be created before the cancel")
+        # A created QNetworkReply can still have its GET queued. Prove
+        # the server received it so closure is observable there, rather
+        # than mistaking cancellation before connection for a leak.
+        for _ in range(200):
+            self.qt.events(10)
+            if entered.is_set():
+                break
+        self.assertTrue(entered.is_set(), "the upstream must receive the GET before cancellation")
         socket.abort()
         for _ in range(200):
             self.qt.events(10)

@@ -18,6 +18,7 @@ from .GCodeIndex import (
     HydrationYield,
     LayerMotionIndex,
     better_candidate,
+    candidate_distance_limit_sq,
     build_index_from_file,
     hydrate_layer_from_file,
     passive_yield,
@@ -76,6 +77,7 @@ class IndexView:
 # the print — and 128 MB holds six dense decoded windows with room.
 _FULL_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _DECODED_LRU_MAX_BYTES = 128 * 1024 * 1024
+_GPU_DECODED_LRU_MAX_BYTES = 256 * 1024 * 1024
 # The decoded LRU's guaranteed floor: ONE entry — the just-committed
 # layer before its render wrappers pin it. The live and frozen
 # windows' protection moved to the pins (the wrappers charge their
@@ -378,6 +380,9 @@ class GCodeIndexService(QObject):
         # a slot floor: the live and
         # frozen windows side by side, bounded by measured bytes.
         self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
+        self._gpu_consumers = set()
+        self._gpu_prefetch_key = None
+        self._gpu_prefetch_done = set()
         # The render wrappers' pins: a wrapper holding a decoded
         # payload keeps its bytes charged against the budget even
         # after the LRU evicts the entry (the wrapper keeps the
@@ -676,6 +681,53 @@ class GCodeIndexService(QObject):
             return "hydrated"
         return "raw"
 
+    def set_gpu_rendering(self, consumer, enabled):
+        """GPU consumers share a larger decoded tier; software keeps its budget.
+
+        Count consumers separately so closing a popover does not withdraw the
+        mini map's allowance. The owner thread alone changes cache policy.
+        """
+        if enabled:
+            self._gpu_consumers.add(consumer)
+        else:
+            self._gpu_consumers.discard(consumer)
+        self._decoded_lru.max_bytes = (_GPU_DECODED_LRU_MAX_BYTES if self._gpu_consumers
+                                       else _DECODED_LRU_MAX_BYTES)
+        self._reconcile_decoded()
+        if not self._gpu_consumers:
+            self._gpu_prefetch_key = None
+            self._gpu_prefetch_done.clear()
+        self._advance()
+
+    def _gpu_prefetch_layer(self, index):
+        """One nearby prepared layer, after every visible demand is served.
+
+        No raw file download or motion-array hydration is triggered by this
+        speculation. Attempt each candidate once per pair of anchors, so
+        eviction cannot turn a full cache into a continuous decode loop.
+        """
+        if not self._gpu_consumers:
+            return None
+        anchors = (index.manual_anchor, index.followed_layer)
+        if anchors != self._gpu_prefetch_key:
+            self._gpu_prefetch_key = anchors
+            self._gpu_prefetch_done.clear()
+        if self.decoded_resident_bytes() >= self._decoded_lru.max_bytes * .85:
+            return None
+        visible = {n + delta for n in anchors if n is not None for delta in (-1, 0, 1)}
+        for distance in (2, 3, 4):
+            for anchor in anchors:
+                if anchor is None:
+                    continue
+                for candidate in (anchor + distance, anchor - distance):
+                    if (candidate in visible or candidate in self._gpu_prefetch_done
+                            or self._presentation_source(candidate)
+                            not in {"packed", "prepared", "hydrated"}):
+                        continue
+                    self._gpu_prefetch_done.add(candidate)
+                    return candidate
+        return None
+
     def _request_manual_window(self):
         view = self._view
         if view is None or self._manual_anchor is None:
@@ -833,10 +885,14 @@ class GCodeIndexService(QObject):
                             stall=tracker.stall_polls)
                         raw = refined
                         tracker.observe_payload_advance(refined)
-            return tracker.accept(
+            result = tracker.accept(
                 coarse, refined, raw, live_position is not None,
                 advanced=advanced, entry_confirmed=index.layer_entry_confirmed(
-                    anchor, raw, live_position) if tracker.awaiting_layer_entry else True)
+                    anchor, raw, live_position, previous_z=tracker.entry_previous_z)
+                if tracker.awaiting_layer_entry else True)
+            if raw is not None and live_position is not None and not tracker.awaiting_layer_entry:
+                tracker.last_confirmed_z = float(live_position[2])
+            return result
 
     @staticmethod
     def _refine_over_payload(payload, coarse, live_position, floor=None,
@@ -897,6 +953,8 @@ class GCodeIndexService(QObject):
             windows = ((max(0, int(coarse) - 8192), int(coarse) + 8192),)
         best_distance_sq = float("inf")
         best_motion = None
+        left = bottom = -float("inf")
+        right = top = float("inf")
 
         def offer(distance_sq, motion):
             # The shared candidate comparison (the hydrated search runs
@@ -904,9 +962,18 @@ class GCodeIndexService(QObject):
             # by the floor instead of by scan order — the pass the
             # nozzle is on, never a future pass that merely lies inside
             # the window and never an earlier one that stalls the fill.
-            nonlocal best_distance_sq, best_motion
+            nonlocal best_distance_sq, best_motion, left, right, bottom, top
+            previous_distance_sq = best_distance_sq
             best_distance_sq, best_motion = better_candidate(
                 distance_sq, motion, best_distance_sq, best_motion, floor)
+            if best_distance_sq != previous_distance_sq:
+                # Include the shared comparator's near-tie tolerance.
+                # A candidate outside this box can neither improve nor
+                # tie the current best; rejected candidates have no effect
+                # on subsequent comparisons, even near the distance limit.
+                reach = math.sqrt(candidate_distance_limit_sq(best_distance_sq))
+                left, right = px - reach, px + reach
+                bottom, top = py - reach, py + reach
 
         for lo, hi in windows:
             for segments in (payload.get("classes") or {}).values():
@@ -921,6 +988,11 @@ class GCodeIndexService(QObject):
                         offer((px - vertex[0]) ** 2 + (py - vertex[1]) ** 2,
                               float(vertex[2]))
                     if len(points) < 2:
+                        continue
+                    # Polylines carry increasing motion numbers. Most runs
+                    # are outside this bounded window; reject them before
+                    # bisecting every run on every status publication.
+                    if points[-1][2] < lo or points[1][2] > hi:
                         continue
                     # The manual bisect: the bundled engine's bisect
                     # key compares the unkeyed needle, and an int <
@@ -942,6 +1014,13 @@ class GCodeIndexService(QObject):
                             break
                         ax, ay = points[i - 1][0], points[i - 1][1]
                         bx, by = points[i][0], points[i][1]
+                        # An edge whose bounding box misses the best match's
+                        # neighbourhood cannot improve or tie that match.
+                        # Keep the motion window and tie policy unchanged,
+                        # but avoid projecting distant geometry on the UI thread.
+                        if (ax < left and bx < left) or (ax > right and bx > right) \
+                                or (ay < bottom and by < bottom) or (ay > top and by > top):
+                            continue
                         dx, dy = bx - ax, by - ay
                         length_sq = dx * dx + dy * dy
                         if length_sq <= 1e-12:
@@ -980,6 +1059,8 @@ class GCodeIndexService(QObject):
             for points in (payload.get("travels") or []):
                 if len(points) < 2:
                     continue
+                if points[-1][2] < lo or points[1][2] > hi:
+                    continue
                 low2, high2 = 0, len(points)
                 while low2 < high2:
                     mid2 = (low2 + high2) // 2
@@ -996,6 +1077,9 @@ class GCodeIndexService(QObject):
                         break
                     ax, ay = points[i - 1][0], points[i - 1][1]
                     bx, by = points[i][0], points[i][1]
+                    if (ax < left and bx < left) or (ax > right and bx > right) \
+                            or (ay < bottom and by < bottom) or (ay > top and by > top):
+                        continue
                     dx, dy = bx - ax, by - ay
                     length_sq = dx * dx + dy * dy
                     if length_sq <= 1e-12:
@@ -1008,7 +1092,10 @@ class GCodeIndexService(QObject):
                     distance_sq = (px - qx) ** 2 + (py - qy) ** 2
                     if best_travel_sq is None or distance_sq < best_travel_sq:
                         best_travel_sq = distance_sq
-        if best_travel_sq is not None and math.sqrt(best_travel_sq) + 0.2 \
+        # The old 0.2 mm margin admitted future skin only 0.024 mm from
+        # a live travel on the fine-layer print. Float-coordinate noise
+        # needs a small tolerance, not half a normal extrusion width.
+        if best_travel_sq is not None and math.sqrt(best_travel_sq) + 0.01 \
                 < math.sqrt(best_distance_sq):
             return None
         # The RAW result: the caller clamps for publication — a
@@ -1490,7 +1577,11 @@ class GCodeIndexService(QObject):
         self._plate_layers_memos = {}
         self._full_cache = _ByteBoundedLru(_FULL_CACHE_MAX_BYTES)
         self._full_next = 0
-        self._decoded_lru = _ByteBoundedLru(_DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES)
+        self._decoded_lru = _ByteBoundedLru(
+            _GPU_DECODED_LRU_MAX_BYTES if self._gpu_consumers else _DECODED_LRU_MAX_BYTES,
+            _DECODED_LRU_MIN_ENTRIES)
+        self._gpu_prefetch_key = None
+        self._gpu_prefetch_done.clear()
         self._decoded_pins = {}
         self._decoded_sizes = {}
         self._prepared_table = None
@@ -1603,7 +1694,8 @@ class GCodeIndexService(QObject):
             and ((index.followed_layer is None
                   or index.followed_layer - 1 <= n <= index.followed_layer + 1)
                  or (manual is not None and manual - 1 <= n <= manual + 1))}
-        if self._hydrate:
+        prefetch = self._gpu_prefetch_layer(index) if not self._hydrate and not self._hydrate_arrays else None
+        if self._hydrate or prefetch is not None:
             # CURRENT is a foreground presentation demand. Detached/manual
             # current outranks live current; live current outranks every
             # ghost. Each current rides its own task and can publish as
@@ -1618,6 +1710,10 @@ class GCodeIndexService(QObject):
             if not submitted:
                 submitted = window
                 self._hydrate.clear()
+            background = prefetch is not None
+            if background:
+                submitted = [prefetch]
+                self._foreground_pending.clear()
 
             # Only a layer with NO presentation source at all needs the
             # G-code lease for the DECODE — packed RAM, prepared disk
@@ -1631,7 +1727,7 @@ class GCodeIndexService(QObject):
             needs_raw = any(self._presentation_source(layer) == "raw"
                             for layer in submitted)
             arrays_owed = {layer for layer in submitted
-                           if index.compact and layer not in index.hydrated_layers}
+                           if not background and index.compact and layer not in index.hydrated_layers}
             lease = self._files.lease() if (needs_raw or arrays_owed) else None
             if needs_raw and lease is None:
                 self._hydrate.update(submitted)
@@ -1657,6 +1753,7 @@ class GCodeIndexService(QObject):
                     self._prepared_identity, len(self._view.ranges))
             prepared_writer = self._prepared_writer
             prepared_store = self._prepared
+            decode_cancel = self._cancel
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
@@ -1674,6 +1771,13 @@ class GCodeIndexService(QObject):
                 failed = []
                 stash = {}
                 yield_at = time.monotonic()
+
+                def decode_checkpoint():
+                    nonlocal yield_at
+                    if decode_cancel.is_set() or (background and self._foreground_pending.is_set()):
+                        raise PreparationYield()
+                    yield_at = passive_yield(time.monotonic(), yield_at)
+
                 for layer in submitted:
                     yield_at = passive_yield(time.monotonic(), yield_at)
                     raw = cache.peek(layer)  # peek: the worker never reorders
@@ -1682,9 +1786,11 @@ class GCodeIndexService(QObject):
                         raw = self._prepared_read(layer)
                     if raw is not None:
                         try:
-                            decoded = _decode_layer(raw)
+                            decoded = _decode_layer(raw, checkpoint=decode_checkpoint)
                             stash[layer] = (raw, decoded, ram_hit,
                                             _decoded_charge(raw=raw, payload=decoded))
+                        except PreparationYield:
+                            break  # A newly selected layer outranks speculative decode.
                         except Exception:
                             failed.append(layer)
                             continue
@@ -1696,7 +1802,7 @@ class GCodeIndexService(QObject):
                         # served even if the array hydration fails;
                         # the failure only degrades the split and is
                         # named, never latched.
-                        if index.compact and layer not in index.hydrated_layers:
+                        if layer in arrays_owed:
                             if lease is None:
                                 Logger.log(
                                     "w",
@@ -1723,7 +1829,11 @@ class GCodeIndexService(QObject):
                         if not result:
                             failed.append(layer)
                             continue
-                    payload = _prepare_layer(index, layer)
+                    try:
+                        payload = (_prepare_layer(index, layer, should_yield=self._foreground_pending.is_set)
+                                   if background else _prepare_layer(index, layer))
+                    except PreparationYield:
+                        break
                     if payload is None:
                         # A hydrate that succeeded but prepared nothing
                         # is not a hydrate failure: it must not latch
