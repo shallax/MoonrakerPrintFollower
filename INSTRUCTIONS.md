@@ -81,7 +81,9 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   cropped to their real cards. `tools/capture_penguin.py` generates a
   deterministic three-material illustration as G-code; the production
   indexer and prepared-layer renderer draw those motions. This fixture
-  is for screenshots, not a printer job. Both cards participate in the
+  is for screenshots, not a printer job. Native UI seeds and the shared
+  offscreen capture printer use a 250 x 250 x 250 mm volume; the penguin
+  is centred at X=125, Y=125 in both. Both cards participate in the
   normal light/dark determinism, contrast and committed-image sync gates.
   Native input probes must use window-relative coordinates for QTest;
   the driver's evidence rectangles are desktop-relative. The macOS

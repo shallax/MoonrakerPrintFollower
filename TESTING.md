@@ -179,6 +179,11 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   the whole-scenario video records the same display. An assertion's
   capture must postdate the state change it claims.
 
+The shared test printer has a **250 x 250 x 250 mm** print volume in
+all native Cura seeds and the offscreen runtime/capture double. The README
+and native following scenarios use the same penguin G-code, centred at
+X=125, Y=125 on that bed.
+
 ### 2.2 The Moonraker simulator
 
 A Tornado-based double (Tornado is Moonraker's own stack) speaking the

@@ -23,7 +23,7 @@ class PenguinTimelineTests(unittest.TestCase):
                 if key in line:
                     self.assertIn(f"{key}{coordinate:.3f}", line)
 
-    def test_penguin_is_centred_on_the_native_harness_bed(self):
+    def test_penguin_is_centred_on_the_shared_harness_bed(self):
         for axis in (0, 1):
             coordinates = [row["end"][axis] for row in self.rows]
             self.assertAlmostEqual((min(coordinates) + max(coordinates)) / 2, 125.0, delta=.5)

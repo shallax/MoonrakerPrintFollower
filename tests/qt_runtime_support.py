@@ -285,8 +285,9 @@ def runtime():
         def getId(self): return self.machine_id
         def getName(self): return self._name
         def getProperty(self, name, role):
-            return {"machine_extruder_count": 1, "machine_width": 200,
-                    "machine_depth": 200, "machine_center_is_zero": False}.get(name, "glass")
+            return {"machine_extruder_count": 1, "machine_width": 250,
+                    "machine_depth": 250, "machine_height": 250,
+                    "machine_center_is_zero": False}.get(name, "glass")
 
     class Application(QObject):
         globalContainerStackChanged = pyqtSignal()

@@ -17,9 +17,8 @@ def penguin_playback():
         from tools.capture_penguin import make_gcode as penguin
     except ModuleNotFoundError:
         from capture_penguin import make_gcode as penguin
-    # Every native harness seed has a 250 mm square bed. The README's
-    # fallback model has 200 mm, so use the generator's explicit bed size.
-    data = penguin(bed_size=250.0).encode("ascii")
+    # The native seeds and offscreen capture printer share a 250 mm bed.
+    data = penguin().encode("ascii")
     rows = []
     position = [0.0, 0.0, 0.0, 0.0]
     layer, tool, offset, clock, feed = -1, 0, 0, 0.0, 6000.0

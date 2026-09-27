@@ -37,7 +37,7 @@ def _material(x, y):
     return 0
 
 
-def make_gcode(bed_size=200.0):
+def make_gcode(bed_size=250.0):
     """Three identical layers of non-overlapping horizontal skin strokes."""
     lines = [";FLAVOR:Marlin", ";LAYER_COUNT:3", ";Generated capture illustration",
              "G90", "M82", "G92 E0"]
@@ -60,9 +60,9 @@ def make_gcode(bed_size=200.0):
                         end = x - 0.2
                         if end > start:
                             first, last = (start, end) if row % 2 == 0 else (end, start)
-                            # The README model defaults to 200 mm; the native
-                            # harness uses 250 mm. Centre the same geometry
-                            # on its actual bed without changing extrusion.
+                            # Captures and native UI tests share a 250 mm
+                            # print volume. Centre the geometry on its bed
+                            # without changing extrusion.
                             first = (first - 125) * 0.8 + bed_size / 2
                             last = (last - 125) * 0.8 + bed_size / 2
                             bed_y = (y - 121) * 0.8 + bed_size / 2
