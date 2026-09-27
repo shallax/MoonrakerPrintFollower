@@ -2,6 +2,32 @@
 from tests import index_plate_support as harness
 
 class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
+    def test_prefetched_geometry_gets_motion_arrays_when_the_live_window_arrives(self):
+        index = self._compact_view(8, hydrated=(2, 3, 4), followed=3)
+        payload = self.qt.load("PlateProgress").decode_layer(self._payload(5), immutable=True)
+        # Background GPU prefetch already decoded layer 5 without raw arrays.
+        self.service._decoded_lru.set(5, payload, 100)
+        with harness.patch.object(self.service, "_advance"):
+            self.service.set_gpu_rendering("popover", True)
+            self.service.set_followed_layer(4)
+        self.assertIn(5, self.service._hydrate_arrays,
+                      "hot GPU geometry suppressed the live motion-array demand")
+        self.assertNotIn(5, self.service._hydrate, "live handover re-decoded hot geometry")
+        self.assertIs(self.service._decoded_lru.peek(5), payload)
+        captured = self._capture_submit()
+        module = self.qt.load("GCodeIndexService")
+        self.service._foreground_pending.set()  # A prior foreground demand settled.
+        def hydrate(target, path, layer, should_stop):
+            self.assertIs(target, index)
+            self.assertEqual(layer, 5)
+            self.assertFalse(should_stop(), "the array worker cancelled on an old demand")
+            target.hydrated_layers.add(layer)
+            return True
+        with harness.patch.object(module, "hydrate_layer_from_file", side_effect=hydrate):
+            self.assertTrue(self.service._drain_arrays_debt(index))
+            self.assertEqual(captured[0][1](), ([], {}))
+        self.assertIn(5, index.hydrated_layers)
+
     def test_gpu_distant_prepared_seek_does_not_hydrate_live_motion_arrays(self):
         index = self._compact_view(16, hydrated=(2, 3, 4), followed=3)
         for layer in (9, 10, 11):

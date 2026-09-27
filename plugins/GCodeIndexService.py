@@ -1623,7 +1623,14 @@ class GCodeIndexService(QObject):
                 continue
             if anchor is not None and not anchor - 1 <= candidate <= anchor + 1:
                 continue
-            if self._presentation_source(candidate) not in {"decoded", "failed"}:
+            source = self._presentation_source(candidate)
+            if source == "decoded" and view._index.compact \
+                    and candidate not in view._index.hydrated_layers:
+                # GPU speculation serves geometry without motion arrays.
+                # Once that layer enters the LIVE window, its physical
+                # tracking debt stands even though presentation is hot.
+                self._hydrate_arrays.add(candidate)
+            elif source not in {"decoded", "failed"}:
                 self._hydrate.add(candidate)
                 self._foreground_pending.set()
 
@@ -2101,6 +2108,10 @@ class GCodeIndexService(QObject):
             return False
         owed = sorted(self._hydrate_arrays)
         self._hydrate_arrays.clear()
+        # _advance reaches this drain after foreground geometry is served.
+        # Only a NEW demand may interrupt the array worker, not the flag
+        # left by the demand whose cached geometry we just satisfied.
+        self._foreground_pending.clear()
         # The window _finish reports on: the debt's own layers, so a
         # failure list can never name a layer this worker never saw.
         self._hydrating = set(owed)

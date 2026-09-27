@@ -2,6 +2,31 @@
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def test_travel_velocity_roundoff_cannot_confirm_layer_entry(self):
+        parts = self._printing(self._make())
+        parts.index.view = harness._view()
+        calls = []
+        real = parts.index.plate_progress
+
+        def record(anchor, file_position=None, live_position=None, paused=False, extruding=None):
+            calls.append(extruding)
+            return real(anchor, file_position, live_position, paused=paused, extruding=extruding)
+
+        parts.index.plate_progress = record
+        # The connected printer reports tiny positive floating-point residue
+        # while travelling: it must not open the new layer's extrusion gate.
+        for velocity, expected in ((None, None), (0.0, False),
+                                   (3.552713678800501e-15, False), (5e-7, False),
+                                   (-0.03, False), (0.00001, True), (0.037, True)):
+            with self.subTest(velocity=velocity):
+                calls.clear()
+                self._printing(parts, motion_report={
+                    "live_position": [10., 10., 1.2, 0.],
+                    "live_extruder_velocity": velocity})
+                parts.coordinator.refresh()
+                self.assertTrue(calls)
+                self.assertIs(calls[-1], expected)
+
     def test_every_collaborator_signal_reaches_its_handler(self):
         parts = self._make()
         coordinator = parts.coordinator

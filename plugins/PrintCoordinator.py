@@ -378,9 +378,12 @@ class PrintCoordinator(QObject):
                 # visible).
                 lookup_start = time.monotonic()
                 extruder_velocity = number((status.get("motion_report") or {}).get("live_extruder_velocity"), None)
+                # Klipper can leave positive floating-point residue during
+                # a travel (observed 3.55e-15 mm/s). It cannot confirm entry
+                # into extrusion geometry on the next layer.
                 plate_progress_payload = self._index.plate_progress(
                     physical.index, position, live_position, paused=status_stats.get("state") == "paused",
-                    extruding=None if extruder_velocity is None else extruder_velocity > 0)
+                    extruding=None if extruder_velocity is None else extruder_velocity > 1e-6)
                 if self._manual_serving_active():
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)
