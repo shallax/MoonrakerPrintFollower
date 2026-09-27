@@ -1390,5 +1390,32 @@ class CensusReadinessTests(unittest.TestCase):
         self.assertIn("power:MISSING", detail)
 
 
+class CanvasInkTests(unittest.TestCase):
+    def test_blank_grid_and_surrounding_controls_do_not_count_as_toolpath(self):
+        from unittest.mock import patch
+        from subprocess import CompletedProcess
+        rect = [10, 10, 60, 60]
+        grey = bytes([153, 153, 153]) * 3600
+        ink = bytes([255, 0, 0]) * 40 + grey[120:]
+        with patch.object(runner.subprocess, "run", return_value=CompletedProcess([], 0, grey)) as decode:
+            self.assertEqual(runner.canvas_ink_pixels("frame.png", rect), 0)
+            self.assertIn("crop=60:60:10:10", decode.call_args.args[0])
+        with patch.object(runner.subprocess, "run", return_value=CompletedProcess([], 0, ink)):
+            self.assertEqual(runner.canvas_ink_pixels("frame.png", rect), 40)
+        with patch.object(runner.subprocess, "run", return_value=CompletedProcess([], 0, b"")):
+            with self.assertRaises(ValueError):
+                runner.canvas_ink_pixels("frame.png", rect)
+
+
+
+class ScenarioSelectionTests(unittest.TestCase):
+    def test_one_scenario_does_not_run_the_rest_of_its_group(self):
+        selected = runner.suite_specs("b12")
+        self.assertEqual([spec["id"] for spec in selected], ["b12"])
+        self.assertEqual(selected[0]["group"], "status")
+        self.assertGreater(len(runner.suite_specs("status")), 1)
+        self.assertEqual(runner.suite_specs("not-a-scenario"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

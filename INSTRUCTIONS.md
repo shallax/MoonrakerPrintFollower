@@ -843,3 +843,7 @@ an explicit diagnostic override with a recorded reason. A responsive QML
 tree or internal grab is not proof of current WindowServer pixels. These
 software-rendered CI recordings are evidence of the UI, not physical-Mac
 GPU performance. See TESTING.md for the capture contract and investigation.
+
+For a single native scenario diagnosis, dispatch `leg.yml` with its exact
+scenario ID as `group` (for example `b12`) and `mode=suite`. This uses the
+same runner and assertions as the full group, without running its siblings.

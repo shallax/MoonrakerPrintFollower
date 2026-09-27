@@ -270,6 +270,15 @@ jobs:
           }
           if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
 
+      - name: Preserve native renderer output (macOS)
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$GALLERY"
+          if [ -f /tmp/mpf-native/cura_run.log ]; then
+            cp /tmp/mpf-native/cura_run.log "$GALLERY/cura-run.log"
+          fi
+
       # The verdict panel for this job's page. GitHub shows a job as a
       # name and a dot; the leg's own log buries the outcome under a
       # hundred progress lines, so the summary states it first and the

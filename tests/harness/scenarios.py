@@ -1335,6 +1335,11 @@ for item in _walk(window.contentItem(), depth=96):
     if item.objectName() == "moonrakerPlateProgressFace" and _effectively_visible(item) and not item.property("compact"):
         result["smooth_gpu"] = bool(item.property("gpuRendering") and item.property("motionSmoothing") and item.property("attached"))
         result["motion"] = float(item.property("displayedMotion") or 0)
+        canvas = next((child for child in _walk(item) if child.objectName() == "moonrakerPlateProgressCanvas"), None)
+        if canvas is not None:
+            from PyQt6.QtCore import QPointF
+            origin = canvas.mapToGlobal(QPointF(0, 0))
+            result["canvas_rect"] = [origin.x(), origin.y(), canvas.width(), canvas.height()]
         model = item.property("printerModel")
         if model is not None:
             result["layer"] = int(model.property("plateProgressAnchor"))
@@ -1631,6 +1636,7 @@ SCENARIOS = [
          {"op": "wait_exec", "code": PENGUIN_MONITOR_READ, "contains": '"finished": true', "budget": 25},
          {"op": "wait_seconds", "seconds": 7},
          {"op": "wait_rendered", "objectName": "moonrakerFollowerLayerReadout", "contains": "3 / 3", "budget": 15},
+         {"op": "wait_canvas_ink", "code": PENGUIN_MONITOR_READ, "minimum": 100, "budget": 10},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────

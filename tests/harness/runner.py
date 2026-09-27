@@ -269,6 +269,23 @@ def shot(name):
     return (path, None)
 
 
+def canvas_ink_pixels(path, rect):
+    """Count coloured toolpath ink inside the native desktop canvas crop.
+
+    Grey grid/background pixels do not count. A lone toolhead dot cannot
+    satisfy the scenario's minimum; controls and legends are outside the crop.
+    """
+    x, y, w, h = (round(part) for part in rect)
+    frame = subprocess.run(["ffmpeg", "-v", "error", "-i", path,
+                            "-vf", f"crop={w}:{h}:{x}:{y}", "-frames:v", "1",
+                            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                           capture_output=True, check=True, timeout=15).stdout
+    if len(frame) != w * h * 3:
+        raise ValueError("canvas crop did not decode to the requested dimensions")
+    return sum(max(rgb) >= 120 and max(rgb) - min(rgb) >= 80
+               for rgb in zip(frame[0::3], frame[1::3], frame[2::3], strict=True))
+
+
 def _outline(path, geometry):
     """Draw the step's evidence geometry onto the captured frame (a
     harness-side overlay — the product QML never draws it)."""
@@ -3363,13 +3380,19 @@ def suite_apply(state, change):
     return state
 
 
+def suite_specs(selection):
+    """Select a complete group or one exact scenario for a diagnostic leg."""
+    import scenarios
+    return [spec for spec in scenarios.SCENARIOS
+            if spec.get("group") == selection or spec["id"] == selection]
+
+
 def suite_run(group_id):
     """Execute the suite specs for one group: one boot, then each
     scenario in sequence with a sim reset between scenarios (the
     process boundary is shared per group — the session boundary per
     scenario; see DECISIONS A40)."""
-    import scenarios
-    specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == group_id]
+    specs = suite_specs(group_id)
     if not specs:
         print(f"no suite scenarios in group {group_id}")
         return 1
@@ -4409,6 +4432,25 @@ def suite_step(step):
         reply = exec_rpc(step["code"])
         rendered = json.dumps(reply, default=str) if reply.get("error") is None else reply.get("error")
         return (ok, "the driver's inline probe followed the change", str(rendered)[:200])
+
+    if op == "wait_canvas_ink":
+        observed = {"pixels": 0, "error": "canvas not resolved"}
+
+        def check():
+            state = exec_rpc(step["code"])
+            rect = state.get("canvas_rect") if isinstance(state, dict) else None
+            if not rect:
+                return False
+            path, error = shot("canvas-ink-probe")
+            observed["error"] = error
+            if error or not path:
+                return False
+            observed["pixels"] = canvas_ink_pixels(path, rect)
+            return observed["pixels"] >= step.get("minimum", 100)
+
+        ok = bool(wait_for(check, float(step.get("budget", 10)), 1.0))
+        return (ok, "coloured toolpath strokes reached the native desktop canvas",
+                json.dumps(observed))
 
     if op == "wait_seconds":
         # A plain settle window — the follow's own 2s recovery lag

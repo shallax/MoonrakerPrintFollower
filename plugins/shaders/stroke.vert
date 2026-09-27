@@ -4,12 +4,15 @@ layout(location=1) in vec2 direction;
 layout(location=2) in vec2 corner;
 layout(location=3) in vec2 motion;
 layout(location=4) in vec2 metrics;
+// All vertices of a stroke carry the same ink, width and visibility.
+// Ordinary varyings preserve those constants and work on GLSL 120 / ES 100;
+// flat interpolation qualifiers are unavailable on those legacy targets.
 layout(location=0) out vec2 localPos;
 layout(location=1) out float segmentLength;
-layout(location=2) flat out float visibleSegment;
-layout(location=3) flat out float halfWidth;
+layout(location=2) out float visibleSegment;
+layout(location=3) out float halfWidth;
 layout(std140,binding=0) uniform buf { mat4 matrix; vec4 colour; vec4 parameters; vec4 options; vec4 colourOptions; vec4 palette[16]; } ubuf;
-layout(location=4) flat out vec4 ink;
+layout(location=4) out vec4 ink;
 vec3 gradient(float mode, float value) {
     float lo = ubuf.colourOptions.y, hi = ubuf.colourOptions.z;
     bool constantRange = abs(hi-lo) < .0001;
@@ -25,7 +28,7 @@ void main() {
     float mode = ubuf.colourOptions.x;
     ink = ubuf.colour;
     if (mode == 0.) {
-        vec4 material = ubuf.palette[clamp(int(metrics.y),0,15)];
+        vec4 material = ubuf.palette[int(clamp(metrics.y,0.,15.))];
         ink = vec4(material.rgb * material.a,material.a) * ubuf.colour.a;
     } else if (mode >= 2.) {
         float width = abs(corner.x), height = ubuf.colourOptions.w;

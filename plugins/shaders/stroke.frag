@@ -1,9 +1,9 @@
 #version 440
 layout(location=0) in vec2 localPos;
 layout(location=1) in float segmentLength;
-layout(location=2) flat in float visibleSegment;
-layout(location=3) flat in float halfWidth;
-layout(location=4) flat in vec4 ink;
+layout(location=2) in float visibleSegment;
+layout(location=3) in float halfWidth;
+layout(location=4) in vec4 ink;
 layout(location=0) out vec4 fragColor;
 layout(std140,binding=0) uniform buf { mat4 matrix; vec4 colour; vec4 parameters; vec4 options; vec4 colourOptions; vec4 palette[16]; } ubuf;
 void main() {
