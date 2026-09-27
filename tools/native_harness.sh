@@ -18,7 +18,7 @@
 #   --work-dir DIR   scratch root (default /tmp/mpf-native)
 #   --stage-only     do everything except launching Cura
 #
-# Environment: HARNESS_GEOMETRY (1920x1080), HARNESS_WINDOW (1840x1040),
+# Environment: HARNESS_GEOMETRY (1920x1080), HARNESS_WINDOW (1840x900),
 # MPF_WORK_DIR, RUNNER_TEMP. Every path this script owns lives under the
 # work dir; nothing is written into the repository.
 #
@@ -110,7 +110,7 @@ PLUGIN_VERSION="$(sed -n 's/.*"package_version"[[:space:]]*:[[:space:]]*"\([^"]*
 # environment. The window pins SMALLER than the screen - headroom, so
 # the screen-fits assertion has something to defend.
 HARNESS_GEOMETRY="${HARNESS_GEOMETRY:-1920x1080}"
-HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
+HARNESS_WINDOW="${HARNESS_WINDOW:-1840x900}"
 WANT_W="${HARNESS_GEOMETRY%%x*}"
 WANT_H="${HARNESS_GEOMETRY##*x}"
 

@@ -2284,7 +2284,7 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "infoPanel"},
           "no_overlap": {"objectName": "statusPanel"}},
-         {"op": "resize_window", "w": 1840, "h": 1040},
+         {"op": "resize_window", "w": 1840, "h": 900},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerInfoContent", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStatusContent", "budget": 30},
@@ -2333,7 +2333,7 @@ SCENARIOS = [
          # user can drag to, each platform's own value.
          {"op": "resize_window", "w": "min", "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "absent": True, "budget": 30},
-         {"op": "resize_window", "w": 1840, "h": 1040},
+         {"op": "resize_window", "w": 1840, "h": 900},
          {"op": "wait_rect", "objectName": "moonrakerFileSearch", "budget": 30},
          # The page leaves with the scenario: the rest of the leg
          # asserts the panes behind it.

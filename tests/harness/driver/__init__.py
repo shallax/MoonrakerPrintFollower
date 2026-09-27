@@ -33,6 +33,11 @@ TOKEN_FILE = os.path.join(RPC_DIR, "harness_token.txt")
 
 
 def _window_target(window, width, height):
+    # On the macOS CI desktop, 1840x1040 produced stale native pixels
+    # despite responsive QML/frameSwapped; 1840x900 remained live across
+    # Prepare, sliced Preview and Monitor changes. Resize recovery also
+    # reduced the actual window to fit. Keep its full frame inside the
+    # available area; the failing OS/Qt/Cura component is not identified.
     if QGuiApplication.platformName() != "cocoa" or os.environ.get("HARNESS_FIT_AVAILABLE") == "off":
         return [0, 0, width, height], None
     screen = window.screen() or QGuiApplication.primaryScreen()
@@ -598,7 +603,7 @@ class HarnessServer(QObject):
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
-                _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
+                _win = os.environ.get("HARNESS_WINDOW", "1840x900").split("x")
                 self._geometry_window = window
                 minimum = window.minimumSize()
                 asked = [request.get("w", int(_win[0])),

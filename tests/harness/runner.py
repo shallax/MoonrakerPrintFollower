@@ -43,7 +43,7 @@ DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 # by ui_test.sh. The window pins SMALLER than the screen — headroom,
 # so the screen-fits assertion has something to defend.
 SIZE = os.environ.get("HARNESS_GEOMETRY", "1920x1080")
-WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x1040")
+WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x900")
 RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-" + time.strftime("%Y-%m-%d-%H%M%S"))
 # The RPC rendezvous: the driver, inside Cura, writes the port and the
 # per-run token here and the runner reads them back. ONE variable —

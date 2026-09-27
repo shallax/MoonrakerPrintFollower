@@ -46,7 +46,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 # The window pins SMALLER than the screen — headroom, so the
 # screen-fits assertion has something to defend.
 HARNESS_GEOMETRY="${HARNESS_GEOMETRY:-1920x1080}"
-HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
+HARNESS_WINDOW="${HARNESS_WINDOW:-1840x900}"
 
 # The mode and the fixture policy resolve ONCE, here — the boot path
 # below reads them, and a later re-resolution would let the seeding

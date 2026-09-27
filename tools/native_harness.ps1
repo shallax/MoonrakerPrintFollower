@@ -18,7 +18,7 @@
 #   -WorkDir DIR      scratch root (default %RUNNER_TEMP%\mpf-native)
 #   -StageOnly        do everything except launching Cura
 #
-# Environment: HARNESS_GEOMETRY (1920x1080), HARNESS_WINDOW (1840x1040),
+# Environment: HARNESS_GEOMETRY (1920x1080), HARNESS_WINDOW (1840x900),
 # MPF_WORK_DIR, RUNNER_TEMP. Every path this script owns lives under the
 # work dir; nothing is written into the repository.
 #
@@ -130,7 +130,7 @@ $PluginVersion = $Matches[1]
 $Geometry = $env:HARNESS_GEOMETRY
 if (-not $Geometry) { $Geometry = '1920x1080' }
 $WindowPin = $env:HARNESS_WINDOW
-if (-not $WindowPin) { $WindowPin = '1840x1040' }
+if (-not $WindowPin) { $WindowPin = '1840x900' }
 $wantW = 0
 $wantH = 0
 if ($Geometry -match '^([0-9]+)x([0-9]+)$') {

@@ -238,7 +238,7 @@ class TestingDocPinTests(unittest.TestCase):
     def test_the_capture_gate_and_its_cost_are_documented(self):
         # Native capture is restored with explicit window bounds. Keep
         # the override and the limit of software-rendered evidence clear.
-        text = self._doc()
+        text = " ".join(self._doc().split())
         self.assertIn("Native screenshots and recordings are enabled", text)
         self.assertIn("availableGeometry", text)
         self.assertIn("bounds watchdog", text)

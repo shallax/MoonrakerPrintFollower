@@ -4069,7 +4069,7 @@ jobs:
           W "=== display geometry (the harness pins one screen size) ==="
           # The harness resolves ONE screen size (HARNESS_GEOMETRY, 1920x1080
           # by default) and pins the window INSIDE it (HARNESS_WINDOW,
-          # 1840x1040) - deliberately smaller, so the screen-fits assertion
+          # 1840x900) - deliberately smaller, so the screen-fits assertion
           # has something to defend. The capture is the whole display, so a
           # runner whose display is smaller than the pinned geometry breaks
           # two things at once: the pinned window cannot fit the screen at
@@ -4486,7 +4486,7 @@ jobs:
             }
           }
           $wantWin = "$env:HARNESS_WINDOW"
-          if (-not $wantWin) { $wantWin = '1840x1040' }
+          if (-not $wantWin) { $wantWin = '1840x900' }
           W ("window rectangle: {0},{1} {2}x{3} ({4}); the harness window pin is {5}" -f $winX, $winY, $winW, $winH, $rectWhy, $wantWin)
           # BOUNDS, checked against the display rather than assumed: a window
           # placed partly off the screen is CLIPPED by a full-display capture -
@@ -4513,7 +4513,7 @@ jobs:
             } elseif ($hwnd -eq [IntPtr]::Zero) {
               $clampWhy = 'there is no window handle to move'
             } elseif (($winW -gt $capW) -or ($winH -gt $capH)) {
-              # The window cannot fit this display at its pinned size (1840x1040
+              # The window cannot fit this display at its pinned size (1840x900
               # on a 1024x768 runner). Refusing to touch it left it clipped, and
               # a full-display capture then omits part of the window silently.
               # Shrinking it keeps every pixel in frame: the window pin is a

@@ -802,3 +802,32 @@ this is not a claim that every Cura/platform combination was tested locally.
 The graphics driver compiles the packaged target shader when first used;
 Cura users need neither qsb nor a runtime GLSL-to-QSB compiler.
 Commit the GLSL and regenerated bundles together.
+
+### Native UI harness window bounds and macOS capture
+
+Use the shared 1840×900 baseline on a 1920×1080 desktop. Do not restore
+1840×1040 in scenario cleanup or native launchers: on the macOS CI host,
+that window exceeded the usable desktop and native pixels stayed on an
+old Prepare frame while QML and even frameSwapped continued answering.
+Repeated comparisons passed recording at 1840×900 and failed at
+1840×1040. The apparent resize recovery actually changed the latter to
+1840×943 after Cocoa constrained it. At a fitted size, repeated Prepare
+model translations, valid sliced Preview layer changes and Monitor
+updates all presented without resizing between changes. This reproduces
+a size-dependent presentation fault; it does not identify whether macOS,
+Qt or Cura owns the underlying bug.
+
+Only macOS uses the additional bounds policy: HarnessDriver fits the
+whole frame into the current QScreen.availableGeometry(), subtracting
+frameMargins() in Qt logical coordinates. Boot and every scenario verify
+the actual content size and frame bounds. The one-second bounds watchdog
+preserves deliberate smaller collapse tests, corrects later out-of-bounds
+changes and reports repairs/errors. Never lower Cura's actual minimum to
+make a test fit. Linux and Windows retain exact requested geometry.
+
+Native macOS screenshots and video are enabled by default; their static
+and display/liveness checks must stay judged. HARNESS_CAPTURE=off remains
+an explicit diagnostic override with a recorded reason. A responsive QML
+tree or internal grab is not proof of current WindowServer pixels. These
+software-rendered CI recordings are evidence of the UI, not physical-Mac
+GPU performance. See TESTING.md for the capture contract and investigation.

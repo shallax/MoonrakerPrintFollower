@@ -80,7 +80,7 @@ Hard rules, in order:
    plugin's own published values.
 5. Determinism by environment, not by luck: pinned image, pinned Cura
    build with checksum, pinned fonts, software GL, fixed geometry
-   (one display geometry: the 1920x1080 screen, the 1840x1040
+   (one display geometry: the 1920x1080 screen, the 1840x900
    window, the pinned DPI), seeded configuration.
 
 ## 2. Architecture
@@ -594,7 +594,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   unpinned apt (the render-stack pinning is a follow-up). The
   launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
   the boot gate pins the window to the one display geometry
-  (1920x1080 screen, 1840x1040 window, pinned DPI) and FAILS unless
+  (1920x1080 screen, 1840x900 window, pinned DPI) and FAILS unless
   the pin reports BOTH the wanted window size AND the wanted screen
   — a window larger than the screen used to pass by self-report
   alone. The container runs with `docker run --init` (docker-init as
@@ -635,7 +635,9 @@ SimulationView is the ACTIVE view (the Preview stage click).
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
 - **Native macOS capture and available desktop bounds (2026-09-27).**
-  Native screenshots and recordings are enabled. The harness fits Cura's
+  The shared baseline is 1840×900 on Linux, Windows and macOS; explicit
+  smaller collapse tests retain their own dimensions. Native screenshots
+  and recordings are enabled. The macOS harness fits Cura's
   complete window frame inside the current screen's Qt `availableGeometry`,
   including its frame margins. It verifies the resulting size and bounds at
   boot and before every scenario. A one-second bounds watchdog preserves
