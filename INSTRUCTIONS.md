@@ -56,7 +56,9 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   the files a change actually touches — one process per file, `JOBS`
   (default 8) at a time, one log and one verdict line per file, and a
   non-zero exit if ANY file fails. It never reports a pass for an empty
-  list.
+  list. JUnit report generation also runs isolated files in parallel
+  (`JOBS`, default 2), then runs the timing benchmark alone. Empty or
+  crashed report children fail the report instead of silently dropping cases.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`

@@ -3,7 +3,7 @@
 test-results analytics — the CI leg uploads the file through
 codecov/test-results-action.
 
-ONE PROCESS PER FILE, which is the unit the parallel gate uses and the
+ONE PROCESS PER FILE, up to JOBS at a time (default 2), which is the unit the parallel gate uses and the
 only one the suite actually supports. A single-process discovery
 imports every module before running any test, and `test_leak_probe_
 coverage` creates a module-level ``QCoreApplication`` at import — so the
@@ -19,6 +19,7 @@ import tempfile
 import time
 import unittest
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 
 # The suite files import plugins.* — discovery alone puts tests/ on
 # the path, not the repo root (the parallel legs get the root from
@@ -28,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DISCOVER_DIR = "tests"
 PATTERN = "test_*.py"
 OUTPUT = "tests.junit.xml"
+TIMED_FILE = "test_follower_seek_performance.py"
 
 
 class _JUnitResult(unittest.TestResult):
@@ -145,31 +147,51 @@ def _discover_files():
                   if name.startswith("test_") and name.endswith(".py"))
 
 
-def _run_all():
-    """Every file in its own process, the records merged in order."""
+def _run_file(name):
+    """One isolated child report; malformed or empty output is a failure."""
     import json
     import subprocess
-    cases = []
-    for name in _discover_files():
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
-            out_path = handle.name
-        try:
-            proc = subprocess.run(
-                [sys.executable, os.path.abspath(__file__), "--one", name, out_path],
-                capture_output=True, text=True)
-            with open(out_path, encoding="utf-8") as handle:
-                cases.extend(json.load(handle))
-        except (OSError, ValueError):
-            # The file died before its result could be dumped: record it
-            # rather than lose it from the report.
-            cases.append({"classname": name, "name": name, "time": 0.0,
-                          "kind": "error",
-                          "message": ((proc.stderr if proc else "") or "")[-2000:]
-                                     or "the file produced no report"})
-        finally:
-            try: os.unlink(out_path)
-            except OSError: pass
-    return cases
+    proc = None
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
+        out_path = handle.name
+    try:
+        proc = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "--one", name, out_path],
+            capture_output=True, text=True)
+        if proc.returncode:
+            raise ValueError("report process failed")
+        with open(out_path, encoding="utf-8") as handle:
+            cases = json.load(handle)
+        if not isinstance(cases, list) or not cases:
+            raise ValueError("the file produced no test records")
+        return cases
+    except (OSError, ValueError) as error:
+        # A dead/empty child must remain visible in the merged report.
+        return [{"classname": name, "name": name, "time": 0.0,
+                 "kind": "error",
+                 "message": ((proc.stderr if proc else "") or "")[-2000:]
+                            or str(error)}]
+    finally:
+        try: os.unlink(out_path)
+        except OSError: pass
+
+
+def _run_all():
+    """Per-file parallel reports, in deterministic discovery order.
+
+    The wall-clock seek benchmark runs only after all other workers finish.
+    """
+    files = _discover_files()
+    if not files:
+        return [{"classname": "discovery", "name": "discovery", "time": 0.0,
+                 "kind": "error", "message": "no test files discovered"}]
+    parallel = [name for name in files if name != TIMED_FILE]
+    workers = max(1, int(os.environ.get("JOBS", "2")))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        reports = dict(zip(parallel, pool.map(_run_file, parallel), strict=True))
+    if TIMED_FILE in files:
+        reports[TIMED_FILE] = _run_file(TIMED_FILE)
+    return [case for name in files for case in reports[name]]
 
 
 def main():
