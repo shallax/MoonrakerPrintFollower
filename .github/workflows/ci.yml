@@ -157,7 +157,7 @@ jobs:
           sys.path.insert(0, os.path.join(os.environ["REPO"], "tests"))
           sys.path.insert(0, os.environ["REPO"])
 
-          import test_qml_real_engine as _re
+          import qml_engine_support as _re
 
 
           class MountShot(_re.CameraFpsControlTests):

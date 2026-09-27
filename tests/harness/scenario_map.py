@@ -420,7 +420,7 @@ PREFIX_RULES = [
 EXCLUSIONS = {
     "monitorPopoverPointerBarrier": {
         "reason": "internal input shield; real Qt mouse and wheel delivery is covered by the engine suite",
-        "evidence": "tests/test_qml_real_engine.py: test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works",
+        "evidence": "tests/test_qml_camera_controls.py: test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works",
         "date": "2026-09-27", "recheck": "popover input shielding changes",
     },
     "MoonrakerMonitorModel.acquirePlateAssetOwner": {
@@ -496,7 +496,7 @@ EXCLUSIONS = {
     # state machine and the model's record values — until it lands.
     "MoonrakerMonitorModel.dismissMigrationBanner": {
         "reason": "the dialog's Dismiss verb; the dialog scenario is deferred",
-        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor",
+        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -523,7 +523,7 @@ EXCLUSIONS = {
     },
     "migrationNotice": {
         "reason": "the failure banner; the dialog scenario is deferred",
-        "evidence": "test_migration_notice; the model's record values in test_monitor",
+        "evidence": "test_migration_notice; the model's record values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -541,7 +541,7 @@ EXCLUSIONS = {
     },
     "migrationDiagnosticsRow": {
         "reason": "the permanent post-dismissal row; the dialog scenario is deferred",
-        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor",
+        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -577,25 +577,25 @@ EXCLUSIONS = {
     },
     "jobPositionCellX": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
     "moonrakerInfoContent": {
         "reason": "the information pane's container, addressed by the real-engine tests; the section ORDER is asserted by the configure scenarios through the headers, not by this name",
-        "evidence": "test_qml_real_engine's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
+        "evidence": "test_qml_dashboard_interaction's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
         "date": "2026-09-18",
         "recheck": "the configure scenarios adopt the objectName directly",
     },
     "jobPositionCellY": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
     "jobPositionCellZ": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
@@ -624,13 +624,13 @@ EXCLUSIONS = {
     # pressed — a scenario would only be reading their rects.
     "moonrakerStatusFlick": {
         "reason": "geometry address point of the status pane; no scenario presses it",
-        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the column against it",
+        "evidence": "test_qml_dashboard_layout's StatusColumnGeometryTests measures the column against it",
         "date": "2026-09-18",
         "recheck": "a scenario scrolls or presses inside the status pane",
     },
     "moonrakerStatusContent": {
         "reason": "geometry address point of the status column; no scenario presses it",
-        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the sections against it",
+        "evidence": "test_qml_dashboard_layout's StatusColumnGeometryTests measures the sections against it",
         "date": "2026-09-18",
         "recheck": "a scenario scrolls or presses inside the status pane",
     },
@@ -639,13 +639,13 @@ EXCLUSIONS = {
     # never pressed — a scenario would only be reading their rects.
     "moonrakerControlsFlick": {
         "reason": "geometry address point of the controls pane; no scenario presses it",
-        "evidence": "test_qml_real_engine's PaneGutterTests measures the column against it",
+        "evidence": "test_qml_dashboard_layout's PaneGutterTests measures the column against it",
         "date": "2026-09-19",
         "recheck": "a scenario scrolls or presses inside the controls pane",
     },
     "moonrakerControlsContent": {
         "reason": "geometry address point of the controls column; no scenario presses it",
-        "evidence": "test_qml_real_engine's PaneGutterTests measures the gutter against it",
+        "evidence": "test_qml_dashboard_layout's PaneGutterTests measures the gutter against it",
         "date": "2026-09-19",
         "recheck": "a scenario scrolls or presses inside the controls pane",
     },
@@ -664,7 +664,7 @@ EXCLUSIONS = {
     # rendered pixels (it vanishes at completion).
     "optimisationBand": {
         "reason": "the job section's optimisation scanline is styling, not a scenario surface",
-        "evidence": "test_composed_components.test_the_job_bar_band_tracks_the_prepared_share pins the value; the census pins the visibility",
+        "evidence": "test_runtime_index_composition.test_the_job_bar_band_tracks_the_prepared_share pins the value; the census pins the visibility",
         "date": "2026-09-21",
         "recheck": "a scenario asserts the optimisation band's rendered state",
     },
@@ -674,10 +674,10 @@ EXCLUSIONS = {
     # QTest (the s8 track-click precedent) and gates the rendered
     # reorder the plain release commits.
     # British-spelling formatting is a pure function of the locale —
-    # unit-tested in test_monitor, invisible to scenarios.
+    # unit-tested in test_monitor_qml_contracts, invisible to scenarios.
     "britishSpelling": {
         "reason": "locale formatting, a pure function",
-        "evidence": "unit-tested in test_monitor.py",
+        "evidence": "unit-tested in test_monitor_qml_contracts.py",
         "date": "2026-09-15",
         "recheck": "the formatting moves out of a pure function",
     },
@@ -895,25 +895,25 @@ EXCLUSIONS = {
     },
     "cameraStreamChip": {
         "reason": "the camera stream chip (decoded resolution + recent bandwidth): display-only, driven by the renderer's published statistics",
-        "evidence": "test_qml_real_engine's chip visibility/text contract; the captures' non-live camera hides it",
+        "evidence": "test_qml_camera_lifecycle's chip visibility/text contract; the captures' non-live camera hides it",
         "date": "2026-09-19",
         "recheck": "the chip gains an interactive surface",
     },
     "temperatureDataCanvas": {
         "reason": "the temperature chart's data canvas: display-only, painted from the model's payloads; no scenario verb addresses a canvas",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
+        "evidence": "test_qml_chart's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
         "date": "2026-09-19",
         "recheck": "the canvas gains an interactive surface",
     },
     "temperatureHoverCursor": {
         "reason": "the chart hover cursor line: display-only scene-graph geometry following the snapped hover second",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "evidence": "test_qml_chart's ChartSurfaceTests hover-scene-graph contract",
         "date": "2026-09-19",
         "recheck": "the cursor gains an interactive surface",
     },
     "temperatureHoverMarkers": {
         "reason": "the chart hover markers' repeater: display-only scene-graph dots at each series' nearest sample",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "evidence": "test_qml_chart's ChartSurfaceTests hover-scene-graph contract",
         "date": "2026-09-19",
         "recheck": "the markers gain an interactive surface",
     },
@@ -929,25 +929,25 @@ EXCLUSIONS = {
     # canvas's bitmap alone. No scenario presses an Image.
     "moonrakerPlateProgressCanvas": {
         "reason": "internal texture producer addressed only by real-engine delivery tests",
-        "evidence": "tests/test_qml_real_engine.py: repeated_forward_refreshes_keep_every_frame_complete",
+        "evidence": "tests/test_qml_plate_prefix_refresh.py: repeated_forward_refreshes_keep_every_frame_complete",
         "date": "2026-09-26",
         "recheck": "the harness directly addresses the Canvas",
     },
     "moonrakerPlatePreparingCover": {
         "reason": "internal compositor presentation cover, not an interactive surface",
-        "evidence": "test_qml_real_engine: obsolete-world upload stays masked until current-view paint delivery",
+        "evidence": "test_qml_plate_paint_delivery: obsolete-world upload stays masked until current-view paint delivery",
         "date": "2026-09-26",
         "recheck": "exact compositor presentation or Canvas delivery changes",
     },
     "moonrakerPlatePrefixImage": {
         "reason": "the live replacement in the prefix handover: addressed by the ownership read, never pressed",
-        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "evidence": "test_qml_plate_prefix_ownership's prefix tests (the ownership invariant, the stroke census)",
         "date": "2026-09-23",
         "recheck": "a scenario addresses the prefix images directly",
     },
     "moonrakerPlateRetainedPrefixImage": {
         "reason": "the retained record in the prefix handover: addressed by the ownership read, never pressed",
-        "evidence": "test_qml_real_engine's prefix tests (the ownership invariant, the stroke census)",
+        "evidence": "test_qml_plate_prefix_ownership's prefix tests (the ownership invariant, the stroke census)",
         "date": "2026-09-23",
         "recheck": "a scenario addresses the prefix images directly",
     },

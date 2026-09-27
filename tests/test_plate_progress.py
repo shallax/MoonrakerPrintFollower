@@ -1039,6 +1039,21 @@ class CompactCodecTests(unittest.TestCase):
                  "travelEnds": [], "motions": 0}
         self.assertEqual(decode_layer(encode_layer(empty)), empty)
 
+    def test_immutable_decode_preserves_bytes_and_software_array_transport(self):
+        from plugins.PlateProgress import decode_layer, encode_layer
+        raw = encode_layer(self.PAYLOAD)
+        immutable = decode_layer(raw, immutable=True)
+        self.assertIsInstance(immutable["classes"]["WALL-OUTER"][0], tuple)
+        self.assertIsInstance(immutable["classes"]["WALL-OUTER"][0][0], tuple)
+        self.assertEqual(encode_layer(immutable), raw)
+        self.assertEqual(decode_layer(encode_layer(immutable)), self.PAYLOAD)
+
+    def test_encoding_rejects_malformed_point_triples(self):
+        from plugins.PlateProgress import encode_layer
+        for points in (([1, 2],), ([1, 2], [3, 4, 5, 6])):
+            with self.subTest(points=points), self.assertRaises(ValueError):
+                encode_layer(dict(self.PAYLOAD, classes={"SKIN": [points]}))
+
     def test_dense_decode_checkpoints_preserve_every_channel_and_can_stop(self):
         from plugins.PlateProgress import decode_layer, encode_layer, PreparationYield
         payload = dict(self.PAYLOAD)

@@ -112,11 +112,21 @@ fi
 # shellcheck disable=SC2086  # $files is a deliberate word-split list
 echo "discovered $(printf '%s\n' $files | wc -l | tr -d '[:space:]') test file(s) under $tests_dir/"
 
+# Keep the hard wall-clock benchmark outside CPU-contentious correctness
+# fan-out. Its budget stays unchanged; it measures an idle build host.
+# shellcheck disable=SC2086
+parallel_files="$(printf '%s\n' $files | sed '/^test_follower_seek_performance.py$/d' | tr '\n' ' ')"
+# shellcheck disable=SC2086
+timed_files="$(printf '%s\n' $files | sed -n '/^test_follower_seek_performance.py$/p' | tr '\n' ' ')"
+
 run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -X faulthandler -m unittest discover -v -s $tests_dir -p
+    printf '%s\n' $parallel_files | xargs -P "$jobs" -n1 "$PYTHON" -X faulthandler -m unittest discover -v -s $tests_dir -p
+    for file in $timed_files; do
+        "$PYTHON" -X faulthandler -m unittest discover -v -s "$tests_dir" -p "$file"
+    done
 }
 
 run_files_container() {
@@ -124,14 +134,15 @@ run_files_container() {
     # invocations would race on the image build) with the fan-out
     # inside: each worker runs its own file's discovery.
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s $tests_dir -p"
+    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $parallel_files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s $tests_dir -p && for f in $timed_files; do $PYTHON -m unittest discover -s $tests_dir -p \"\$f\" || exit; done"
 }
 
 run_coverage_container() {
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
-        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
+        printf '%s\n' $parallel_files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
+        for f in $timed_files; do COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\" || exit; done && \
         $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
         $PYTHON -m coverage report --include='plugins/*' --fail-under=95 && \
         $PYTHON -m coverage json -o /tmp/mpf/coverage.json && \

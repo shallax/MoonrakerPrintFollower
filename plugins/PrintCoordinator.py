@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
-from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
+from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, number, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
 from .MoonrakerProtocol import live_position_in_gcode_space
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
@@ -377,8 +377,10 @@ class PrintCoordinator(QObject):
                 # stayed on it (the live report: detaching did nothing
                 # visible).
                 lookup_start = time.monotonic()
+                extruder_velocity = number((status.get("motion_report") or {}).get("live_extruder_velocity"), None)
                 plate_progress_payload = self._index.plate_progress(
-                    physical.index, position, live_position, paused=status_stats.get("state") == "paused")
+                    physical.index, position, live_position, paused=status_stats.get("state") == "paused",
+                    extruding=None if extruder_velocity is None else extruder_velocity > 0)
                 if self._manual_serving_active():
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)

@@ -1449,7 +1449,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                                      popover.get("method"), popover.get("split"),
                                                      lookup_ms)
                                      if popover is not None else {})
-            values["plateScrubVector"] = self._scrub_vector_for(popover)
+            values["plateScrubVector"] = (None if self._plate_surfaces["popover"].gpu_rendering
+                                          else self._scrub_vector_for(popover))
             values["plateSplit"] = popover["split"] if popover is not None else None
             # The progress slider's range: the layer's own motion count (0
             # while the payload has not landed — the slider reads dead).
@@ -1522,7 +1523,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                                          progress.get("method"), progress.get("split"),
                                                          lookup_ms)
                                          if progress is not None else {})
-            values["plateLiveScrubVector"] = self._scrub_vector_for(progress)
+            values["plateLiveScrubVector"] = (None if self._plate_surfaces["mini"].gpu_rendering
+                                              else self._scrub_vector_for(progress))
             values["plateLiveSplit"] = progress["split"] if progress is not None else None
             values["plateLiveAnchor"] = (progress["anchor"]
                                           if progress is not None and progress["anchor"] is not None else -1)
@@ -4843,13 +4845,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def calibrateBedMesh(self): self._controls.setup("mesh")
     @pyqtSlot(int)
     def applyTemperaturePreset(self, index): self._controls.apply_preset(index)
-    @pyqtSlot(int)
+    @pyqtSlot(float)
     def previewSpeedFactor(self, percent): self._controls.factor("speed", percent, True)
-    @pyqtSlot(int)
+    @pyqtSlot(float)
     def setSpeedFactor(self, percent): self._controls.factor("speed", percent)
-    @pyqtSlot(int)
+    @pyqtSlot(float)
     def previewFlowFactor(self, percent): self._controls.factor("flow", percent, True)
-    @pyqtSlot(int)
+    @pyqtSlot(float)
     def setFlowFactor(self, percent): self._controls.factor("flow", percent)
     @pyqtSlot(float)
     def adjustZOffset(self, amount): self._controls.z_offset(amount)

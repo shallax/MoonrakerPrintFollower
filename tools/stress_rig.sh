@@ -36,7 +36,8 @@ jobs="${JOBS:-16}"
 # the camera FPS decay. unittest's -p is a filename GLOB, so the suffix
 # is part of the pattern — bare module names match nothing and every run
 # reports "NO TESTS RAN", which reads as a red leg while testing nothing.
-files="test_qml_real_engine.py test_renderer_parity.py test_zoom_raster_real_engine.py test_composed_components.py test_moonraker_mjpg.py"
+# The wall-clock seek budget belongs in an idle run, not CPU starvation.
+files="test_follower_attach_cadence.py test_follower_prefix_scheduler.py test_follower_raster_scheduler.py test_follower_surface_scheduler.py test_qml_camera_controls.py test_qml_camera_lifecycle.py test_qml_chart.py test_qml_dashboard_interaction.py test_qml_dashboard_layout.py test_qml_follower_dpr.py test_qml_harness_lifecycle.py test_qml_object_picker.py test_qml_plate_assets.py test_qml_plate_composition.py test_qml_plate_geometry.py test_qml_plate_interaction.py test_qml_plate_navigation.py test_qml_plate_paint_delivery.py test_qml_plate_prefix_ownership.py test_qml_plate_prefix_refresh.py test_qml_plate_raster_mapping.py test_qml_plate_travels.py test_qml_plate_zoom.py test_qml_settings.py test_runtime_index_composition.py test_runtime_lifecycle_composition.py test_runtime_misc_coverage.py test_runtime_monitor_composition.py test_renderer_parity.py test_zoom_raster_real_engine.py test_moonraker_mjpg.py"
 
 red=0
 run=1

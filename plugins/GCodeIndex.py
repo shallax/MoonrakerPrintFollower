@@ -976,8 +976,11 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 # are skipped.
                 line = b""
             stripped = line.rstrip(b"\r\n")
-
-            stats_match = _STATS_MARKER.search(stripped)
+            # Slicer motion lines cannot be anchored metadata markers. Parse
+            # this common shape once, skipping four regex probes per move.
+            code = stripped.split(b";", 1)[0]
+            fast = _fast_motion_line(code)
+            stats_match = None if fast is not None else _STATS_MARKER.search(stripped)
             if stats_match is not None:
                 try:
                     value = int(stats_match.group(1))
@@ -1003,7 +1006,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             # found this line before any later marker's pass ran).
             boundary = False
             matched = None
-            if winner is not None and winner.search(stripped) is not None:
+            if fast is None and winner is not None and winner.search(stripped) is not None:
                 boundary = True
                 matched = captures[winner]
             if boundary:
@@ -1061,7 +1064,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         except (TypeError, ValueError):
                             pass
             elif current is not None and current["end"] is None:
-                elapsed_match = _ELAPSED.search(stripped)
+                elapsed_match = None if fast is not None else _ELAPSED.search(stripped)
                 if elapsed_match is not None:
                     current["end"] = offset
                     # The elapsed marker closes the block as surely as the
@@ -1078,32 +1081,30 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
 
             # A baked end-of-layer pause command (the pause-offsets
             # concern, collected in the same read).
-            if _PAUSE_COMMAND.match(stripped) is not None:
+            if fast is None and _PAUSE_COMMAND.match(stripped) is not None:
                 pause_offsets.append(offset)
 
             # The slicer's feature marker. The prefix test is the fast
             # path — the anchored regex is the confirmation, so an
             # indented or oddly-spaced marker is still read.
-            if stripped.lstrip().startswith(_TYPE_PREFIX):
+            if fast is None and stripped.lstrip().startswith(_TYPE_PREFIX):
                 type_match = _TYPE_COMMENT.match(stripped)
                 if type_match is not None:
                     name = type_match.group(1)[:_MAX_TYPE_NAME_BYTES].decode("ascii", "replace")
-                    code = type_lookup.get(name)
-                    if code is None:
+                    type_code = type_lookup.get(name)
+                    if type_code is None:
                         if len(type_names) >= _MAX_TYPE_NAMES:
-                            code = _TYPE_OTHER
+                            type_code = _TYPE_OTHER
                         else:
                             type_names.append(name)
-                            code = len(type_names) + 1
-                            type_lookup[name] = code
-                    features.set_type(code)
+                            type_code = len(type_names) + 1
+                            type_lookup[name] = type_code
+                    features.set_type(type_code)
 
             # Track G-code XYZ state even outside the indexed layer
             # body. This is important for Cura files that emit
             # travel/macro motion between ;TIME_ELAPSED and the
             # following ;LAYER marker.
-            code = stripped.split(b";", 1)[0]
-            fast = _fast_motion_line(code)
             if fast is not None:
                 command, axes = fast
             else:

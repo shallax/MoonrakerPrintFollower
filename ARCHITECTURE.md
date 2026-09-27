@@ -465,7 +465,7 @@ aborts an in-flight request whose G-code may or may not have executed.
 Live Z-offset nudges stay enabled during prints by design.
 
 Two standing UI rules bound every Monitor control (both pinned in
-`tests/test_monitor.py`). **No reflow**: controls never disappear —
+`tests/test_monitor_qml_contracts.py`). **No reflow**: controls never disappear —
 state gates disable, status lines are permanent single-line slots, and
 reserved space uses opacity; nothing reflows unless the user acts
 (expanding/collapsing, resizing). The reasoning is safety: a control
@@ -821,6 +821,15 @@ erase the layer's already printed history. Pause/resume parser-offset
 rewinds keep the print identity; filename/size changes, an inactive boundary,
 or a reset print duration still establish a new print.
 
+Layer entry also considers `motion_report.live_extruder_velocity` when available.
+A reported zero or negative velocity prevents an unconfirmed new layer from
+accepting an apparent extrusion match during travel over excluded objects.
+Positive extrusion releases the gate when the existing physical entry check
+also succeeds. Missing velocity preserves the existing geometric policy;
+ordinary travel after entry still advances progress. This does not assume that
+the parsed file position identifies the currently executed move. Consistent
+physical matches below an accepted floor retain the existing backward correction.
+
 `GpuFollower` is the default OpenGL scene-graph renderer for both follower
 faces. Worker threads prepare immutable, motion-sorted vertex buffers;
 progress selects a prefix by binary search, while pan and zoom update one
@@ -843,6 +852,10 @@ coordinate lists, CPython can remove these acyclic tuples from its cyclic-GC
 traversal, avoiding long interpreter-wide pauses as the prepared cache grows.
 Qt converts the tuples to the same QML arrays and the prepared-file wire format
 is unchanged. No process-wide GC policy is changed.
+Prepared-file decoding uses immutable triples for GPU consumers too, with
+1,024-point cancellation checkpoints. Software decoding retains the original
+list shape, and software QML conversion is memoised per layer wrapper. GPU
+publication does not convert the unused software vector payload.
 
 GPU faces retire CPU raster, navigation and rewind-checkpoint demand. Shared
 prepared geometry is limited to 48 MB, including conservative accounting for
@@ -854,6 +867,12 @@ checkpoints yield the GIL and let newly selected layers interrupt speculation;
 prefetch never requests a file download or hydrates motion arrays. Consumer
 counts preserve the allowance until the last GPU face retires. Pinned active
 layers retain the existing cache policy's explicit exception to the byte bound.
+Geometry caching is per layer role and source payload, so a late ghost does not
+rebuild the unchanged current layer. Source points are charged once per source;
+synthetic dashed vertices retain their own byte charge. Loading an existing
+prepared distant layer for GPU inspection does not also hydrate its raw motion
+arrays. Followed-layer neighbours still hydrate for physical tracking, and
+software selection keeps the original hydration policy.
 
 `GpuObjectPicker` shares the scene-graph stroke and grid primitives while
 preserving the object picker palette, halo, hover widths, degraded centre
@@ -864,3 +883,37 @@ renderers. Software selection resumes the original raster schedulers and
 decoded-cache budget. The existing native/Canvas composition tests continue
 covering the original software stroke contract, with additional coverage for
 the new pixel-width control.
+
+### Renderer measurements and limits
+
+The retired `tools/spikes` prototype demonstrated scene-graph viability and is
+not part of the maintained renderer. On Windows with Qt 6.6, a dense synthetic
+layer measured median node updates of 0.193 ms (p95 0.275 ms) and frame swaps of
+6.325 ms (p95 7.352 ms). Its four-sample antialiasing variant increased swap
+median to 16.201 ms (p95 16.639 ms), motivating analytic follower antialiasing.
+The production stroke shader, with a 42,000-edge synthetic layer over 200
+width-change frames, measured median updates of 0.822 ms (p95 2.163 ms) and swaps
+of 8.662 ms (p95 12.719 ms). These are isolated renderer measurements, not Cura
+camera FPS or end-to-end interaction latency, and different runs are not a
+controlled before/after comparison of the whole application.
+
+Cold preparation of the first twelve layers in a captured large print improved
+from 5.152 s to 3.954 s after immutable coordinate storage; the longest observed
+generation-two collection fell from 311 ms to 26 ms and UI heartbeat delay from
+314 ms to 31 ms. The source and captures are private investigation fixtures.
+These measurements support avoiding cyclic-GC-heavy geometry and retaining GPU
+buffers; no global GC tuning or offscreen follower composition is required.
+
+The motion-line metadata shortcut reduced CPU time for a 20,971,515-byte scan
+from a median 6.188 s to 5.547 s over three paired Python 3.10 runs, with matching
+layer ranges, motion counts, types and travel boundaries. Encoding retains its
+original loop after a proposed flattening shortcut measured slower. On eleven
+captured prepared layers, three paired codec runs per layer measured median
+decode time of 49.766 ms for lists and 46.895 ms for GPU tuples. Repeated
+generation-two scans of those retained layers measured 121.858 ms versus
+8.453 ms. These isolated Python 3.10 measurements identify overhead; they do
+not predict Cura's Python 3.12 cold-index or distant-layer click latency.
+
+Translucent independently capped strokes can overlap at joins and produce darker
+dots. The renderer retains inexpensive direct blending; it does not add an
+offscreen opacity pass to conceal that cosmetic artifact.

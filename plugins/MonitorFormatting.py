@@ -19,14 +19,14 @@ def factor_percent(value) -> str:
     """A speed/flow factor as a percentage, or '—' when the printer did
     not report one (empty snapshot, reconnect, unsupported Klipper)."""
     factor = number(value, None)
-    return "—" if factor is None else f"{round(factor * 100)}%"
+    return "—" if factor is None else f"{round(min(500, max(0.01, factor)) * 100)}%"
 
 
 def number(value, default=0.0):
     try:
         result = float(value)
         return result if math.isfinite(result) else default
-    except (TypeError, ValueError): return default
+    except (TypeError, ValueError, OverflowError): return default
 
 
 def friendly(name):

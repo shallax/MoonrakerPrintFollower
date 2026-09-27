@@ -813,7 +813,7 @@ class GCodeIndexService(QObject):
             return min(1.0, len(self._full_cache) / total)
         return min(1.0, len(self._prepared_coverage) / total)
 
-    def plate_split(self, anchor, file_position=None, live_position=None, paused=False):
+    def plate_split(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
         — the only per-poll cost.
 
@@ -887,7 +887,7 @@ class GCodeIndexService(QObject):
                         tracker.observe_payload_advance(refined)
             result = tracker.accept(
                 coarse, refined, raw, live_position is not None,
-                advanced=advanced, entry_confirmed=index.layer_entry_confirmed(
+                advanced=advanced, entry_confirmed=extruding is not False and index.layer_entry_confirmed(
                     anchor, raw, live_position, previous_z=tracker.entry_previous_z)
                 if tracker.awaiting_layer_entry else True)
             if raw is not None and live_position is not None and not tracker.awaiting_layer_entry:
@@ -1268,12 +1268,12 @@ class GCodeIndexService(QObject):
                              if entry[0] not in self._visited]
         return stop
 
-    def plate_progress(self, anchor, file_position=None, live_position=None, paused=False):
+    def plate_progress(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
         """The composed payload (the tests and the one-shot consumers):
         the memoised layers plus the volatile split. The motion total is
         the progress slider's range — the layer's own edge count."""
         layers = self.plate_layers(anchor) if self._view is not None else {}
-        split = self.plate_split(anchor, file_position, live_position, paused=paused)
+        split = self.plate_split(anchor, file_position, live_position, paused=paused, extruding=extruding)
         method = "motion index" if split is not None else "unavailable"
         motion_total = 0
         if self._view is not None:
@@ -1727,7 +1727,9 @@ class GCodeIndexService(QObject):
             needs_raw = any(self._presentation_source(layer) == "raw"
                             for layer in submitted)
             arrays_owed = {layer for layer in submitted
-                           if not background and index.compact and layer not in index.hydrated_layers}
+                           if not background and index.compact and layer not in index.hydrated_layers
+                           and (not self._gpu_consumers or index.followed_layer is None
+                                or abs(layer - index.followed_layer) <= 1)}
             lease = self._files.lease() if (needs_raw or arrays_owed) else None
             if needs_raw and lease is None:
                 self._hydrate.update(submitted)
@@ -1754,6 +1756,7 @@ class GCodeIndexService(QObject):
             prepared_writer = self._prepared_writer
             prepared_store = self._prepared
             decode_cancel = self._cancel
+            gpu_decode = bool(self._gpu_consumers)
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
@@ -1786,7 +1789,8 @@ class GCodeIndexService(QObject):
                         raw = self._prepared_read(layer)
                     if raw is not None:
                         try:
-                            decoded = _decode_layer(raw, checkpoint=decode_checkpoint)
+                            decoded = _decode_layer(raw, checkpoint=decode_checkpoint,
+                                                    immutable=gpu_decode)
                             stash[layer] = (raw, decoded, ram_hit,
                                             _decoded_charge(raw=raw, payload=decoded))
                         except PreparationYield:

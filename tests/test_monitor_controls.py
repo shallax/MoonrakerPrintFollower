@@ -505,12 +505,32 @@ class OutputDispatchTests(ControlsCase):
 
 class FactorAndOffsetTests(ControlsCase):
     def test_factor_clamps_to_the_minimums_and_names_the_gcode(self):
-        self.controls.factor("speed", 5)
-        self.assertEqual(self.tuning.queued[-1], ("speed-factor", 10, "speed-factor", "M220 S10"))
-        self.controls.factor("flow", 20)
-        self.assertEqual(self.tuning.queued[-1], ("flow-factor", 50, "flow-factor", "M221 S50"))
+        self.controls.factor("speed", 0)
+        self.assertEqual(self.tuning.queued[-1], ("speed-factor", 1, "speed-factor", "M220 S1"))
+        self.controls.factor("flow", -20)
+        self.assertEqual(self.tuning.queued[-1], ("flow-factor", 1, "flow-factor", "M221 S1"))
         self.controls.factor("speed", 250)
         self.assertEqual(self.tuning.queued[-1], ("speed-factor", 250, "speed-factor", "M220 S250"))
+
+    def test_factor_limits_hold_for_commits_previews_and_oversized_inputs(self):
+        for kind, command in (("speed", "M220"), ("flow", "M221")):
+            for value, expected in ((1, 1), (50000, 50000), (50001, 50000),
+                                    (1e300, 50000), (-1e300, 1),
+                                    (float("nan"), 100), (float("inf"), 100)):
+                with self.subTest(kind=kind, value=value):
+                    self.controls.factor(kind, value)
+                    self.assertEqual(self.tuning.queued[-1],
+                                     (kind + "-factor", expected, kind + "-factor", f"{command} S{expected}"))
+                    self.controls.factor(kind, value, preview=True)
+                    self.assertEqual(self.tuning.previews[-1], (kind + "-factor", expected))
+
+    def test_reported_factors_cannot_overflow_qt_integer_properties(self):
+        for factor, expected in ((1e300, 50000), (-1e300, 1),
+                                 (0.01, 1), (500, 50000), (float("inf"), 100)):
+            with self.subTest(factor=factor):
+                self.data.rebuild(core={"gcode_move": {"speed_factor": factor, "extrude_factor": factor}})
+                self.assertEqual(self.controls.values["speedFactorPercent"], expected)
+                self.assertEqual(self.controls.values["flowFactorPercent"], expected)
 
     def test_a_previewed_factor_never_reaches_the_queue(self):
         self.controls.factor("flow", 80, preview=True)

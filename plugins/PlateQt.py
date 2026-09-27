@@ -205,6 +205,7 @@ class PlateLayer(QObject):
     def __init__(self, payload: dict, parent: QObject = None) -> None:
         super().__init__(parent)
         self._payload = payload
+        self._qml_payload = None
         self._scene_identity = str(next(_LAYER_IDENTITIES))
         self._raster = None
         self._base = None
@@ -253,7 +254,9 @@ class PlateLayer(QObject):
         at 100%, where normal publication deliberately omits this costly
         QVariant conversion.
         """
-        return qml_geometry(self._payload)
+        if self._qml_payload is None:
+            self._qml_payload = qml_geometry(self._payload)
+        return self._qml_payload
 
     @pyqtProperty(bool, constant=True)
     def hasFallbackVector(self) -> bool:

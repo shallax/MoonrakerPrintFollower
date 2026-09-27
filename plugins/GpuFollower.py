@@ -78,6 +78,13 @@ def dashed_edges(points):
 def prepare(payloads, cancel=None):
     """Sort each class once; every later progress update is a binary search."""
     payloads = tuple(sorted(payloads, key=lambda row: {"prev": 0, "next": 1, "current": 2}.get(row[0], 3)))
+    if cancel is not None and cancel.is_set():
+        return ()
+    if len(payloads) > 1:
+        # Ghosts arrive independently. Cache each role/layer so adding one
+        # never walks the unchanged current and other ghost again.
+        result = tuple(row for payload in payloads for row in prepare((payload,), cancel))
+        return () if cancel is not None and cancel.is_set() else result
     key = tuple((role, id(payload)) for role, payload in payloads)
     with _CACHE_LOCK:
         entry = _CACHE.get(key)
@@ -125,7 +132,14 @@ def prepare(payloads, cancel=None):
     result = tuple(prepared)
     # Cache keys hold source payloads to prevent id reuse. Account for their
     # retained Python points as well as packed vertices / motion integers.
-    charge = sum(len(row[3]) + len(row[2]) * (36 + 256) for row in result)
+    # A long next-layer edge expands into many dashes, but retains its source
+    # points only once. Charging a source point per dash refused dense windows
+    # even when their actual storage comfortably fitted the cache.
+    source_points = sum(len(segment) for _role, payload in payloads if payload
+                        for segments in (tuple((payload.get("classes") or {}).values())
+                                         + (payload.get("travels") or (),))
+                        for segment in segments)
+    charge = sum(len(row[3]) + len(row[2]) * 36 for row in result) + source_points * 192
     if (cancel is None or not cancel.is_set()) and charge <= _CACHE_BYTES:
         with _CACHE_LOCK:
             _CACHE[key] = (payloads, result, charge)
@@ -220,10 +234,15 @@ class GpuFollower(QQuickItem):
         value = dict(value or {})
         if value == self._layers:
             return
+        previous = self._layers
         self._layers = value
         self._generation += 1
         generation = self._generation
-        self._data = ()
+        # Keep only unchanged channels while an arriving ghost prepares.
+        # A new current layer always clears the old scene immediately.
+        self._data = tuple(row for row in self._data
+                           if value.get("current") is previous.get("current")
+                           and value.get(row[0]) is previous.get(row[0]))
         self.update()
         self.readyChanged.emit()
         self._work.close()

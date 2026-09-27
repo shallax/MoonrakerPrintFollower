@@ -1567,7 +1567,7 @@ SCENARIOS = [
          # right-drag can raise, and the harness's input set carries
          # neither: at the fit it must be absent while the row-mate that
          # shares its visibility rules is present. Its zoomed half is
-         # driven by the Qt suite (test_qml_real_engine.py).
+         # driven by the Qt suite (test_qml_plate_composition.py).
          {"op": "wait_rect", "objectName": "moonrakerFollowerJump", "absent": True, "budget": 5},
      ]},
 
@@ -1699,7 +1699,7 @@ SCENARIOS = [
          # One bar, two faces, and they never share the box: the rate's
          # face arrives on a gesture (Shift+wheel, right-drag) the
          # harness's input set does not carry, and its render is driven
-         # by the Qt suite (test_qml_real_engine.py). The zoom face
+         # by the Qt suite (test_qml_plate_composition.py). The zoom face
          # standing where the rate's is not is this rule's live half.
          {"op": "wait_rect", "objectName": "cameraFpsScale", "absent": True, "budget": 5},
          {"op": "wait_rect", "objectName": "cameraFpsReadout", "absent": True, "budget": 5},

@@ -751,9 +751,10 @@ def encode_layer(payload: dict) -> bytes:
     return b"".join(parts)
 
 
-def decode_layer(raw: bytes, checkpoint=None) -> dict:
-    """The compact form back into the painter's payload shape."""
+def decode_layer(raw: bytes, checkpoint=None, *, immutable=False) -> dict:
+    """Decode painter lists, or immutable GPU polylines with less GC work."""
     from array import array
+    from itertools import islice
     from struct import unpack_from
 
     if not isinstance(raw, (bytes, bytearray, memoryview)) or raw[:4] != b"PPL1":
@@ -761,15 +762,27 @@ def decode_layer(raw: bytes, checkpoint=None) -> dict:
     offset = 4
 
     def points(flat, count):
-        if checkpoint is None:
+        if not immutable and checkpoint is None:
             return [[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
                     for i in range(count)]
         result = []
+        if immutable:
+            if len(flat) != count * 3:
+                raise ValueError("truncated prepared points")
+            coordinates = iter(flat)
+            triples = zip(coordinates, coordinates, map(int, coordinates), strict=True)
         for start in range(0, count, 1024):
-            checkpoint()
-            result.extend([[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
-                           for i in range(start, min(start + 1024, count))])
-        return result
+            if checkpoint is not None:
+                checkpoint()
+            stop = min(start + 1024, count)
+            if immutable:
+                # A shared iterator and zip assemble immutable triples in C;
+                # the small chunks preserve cancellation and GIL checkpoints.
+                result.extend(islice(triples, stop - start))
+            else:
+                result.extend([[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
+                               for i in range(start, stop)])
+        return tuple(result) if immutable else result
 
     def read_triples():
         nonlocal offset

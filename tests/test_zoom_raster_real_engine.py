@@ -54,9 +54,9 @@ if QT_AVAILABLE:
     from PyQt6.QtQuick import QQuickItem
 
 try:
-    from . import test_qml_real_engine as _parent
+    from . import qml_engine_support as _parent
 except ImportError:
-    import test_qml_real_engine as _parent
+    import qml_engine_support as _parent
 
 # NOTE: never alias the parent's TestCase classes into this module's
 # namespace — unittest collects every TestCase subclass found here,

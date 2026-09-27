@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """Run a chosen list of test files, sharded across processes.
 
-The per-file fan-out (tools/run_tests.sh, tools/run_some.sh) parallelises
-ACROSS files, so one large file is a serial bottleneck: test_qml_real_engine
-alone is ~180 tests and several minutes, and every targeted run waits on it.
-
-This shards within a file as well. Each module's test ids are discovered,
-dealt round-robin into `--shards` chunks, and every chunk runs in its own
-process (which the real-Qt files require anyway — test_qml_real_engine owns
-its QGuiApplication and skips when one already exists). Chunks from all
-modules share one worker pool, so the pool stays busy as files finish.
+Domain files run in separate processes so each real-Qt file owns its
+application. Shared fixture modules do not start an application at import.
+The default is one process per file. Optional --shards distributes test ids
+round-robin across more processes; use it only for order-independent modules.
+The seek performance budget runs alone after the correctness worker pool.
 
 Shards are only used when a module has more tests than chunks: sharding a
 four-test file into four processes costs more in interpreter and engine
 startup than it saves.
 
-    tools/run_some.py tests.test_qml_real_engine tests.test_monitor
-    tools/run_some.py --jobs 8 --shards 4 tests.test_qml_real_engine
+    tools/run_some.py tests.test_qml_plate_composition tests.test_monitor_qml_contracts
+    tools/run_some.py --jobs 8 tests.test_qml_plate_composition
 
 One log per shard under the scratch dir; a per-module verdict prints at the
 end, naming the shard log to read when a module fails. Any failing shard
@@ -35,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SCRATCH = Path(os.environ.get("TMPDIR", "/tmp/mpf"))
+TIMED_MODULE = "tests.test_follower_seek_performance"
 
 # `python3 -m unittest` puts the working directory on sys.path; importing
 # the modules HERE to discover their tests must see the same layout, or a
@@ -120,25 +117,31 @@ def main(argv=None):
     log_dir = Path(tempfile.mkdtemp(dir=SCRATCH, prefix="run_some."))
 
     jobs = []
+    timed_jobs = []
     expected = {}
     for module in args.modules:
         ids = discover(module)
         if ids is None:
             print("%-40s %s" % (module.rsplit(".", 1)[-1], "IMPORT FAILED"))
             return 1
+        if not ids:
+            print("no tests discovered in %s" % module, file=sys.stderr)
+            return 2
         expected[module] = len(ids)
-        chunks = shard(ids, args.shards)
+        chunks = shard(ids, 1 if module == TIMED_MODULE else args.shards)
         for index, chunk in enumerate(chunks):
             label = module if len(chunks) == 1 else "%s#%d" % (module, index + 1)
-            jobs.append((label, chunk, log_dir / ("%s.log" % label.replace(".", "_"))))
+            target = timed_jobs if module == TIMED_MODULE else jobs
+            target.append((label, chunk, log_dir / ("%s.log" % label.replace(".", "_"))))
 
-    if not jobs:
+    if not jobs and not timed_jobs:
         print("no tests discovered — refusing to report a green run",
               file=sys.stderr)
         return 2
 
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         results = list(pool.map(run_shard, jobs))
+    results.extend(run_shard(job) for job in timed_jobs)
 
     # Per-module verdict from its shards: the run count must add up to
     # what discovery found, or a shard silently ran nothing.
@@ -171,7 +174,7 @@ def main(argv=None):
 
     if not failed:
         print("all %d module(s) passed (%d shard(s), jobs=%d)"
-              % (len(args.modules), len(jobs), args.jobs))
+              % (len(args.modules), len(jobs) + len(timed_jobs), args.jobs))
     return failed
 
 

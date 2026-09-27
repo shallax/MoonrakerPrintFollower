@@ -20,6 +20,11 @@ from .MonitorPermissions import R_UNKNOWN, Verdict, can_apply_temperature_preset
 PENDING_CEILING_SECONDS = 10.0
 
 
+def _factor_percent(value):
+    """Clamp before integer conversion or publication through Qt's int API."""
+    return int(round(min(50000, max(1, number(value, 100)))))
+
+
 def _exclude_status(snapshot):
     """The volatile plate fields live on the CORE lane (the 4.6.0 move);
     the aux copy covers the lane's first landing alone.
@@ -194,8 +199,8 @@ class MonitorControls(QObject):
             # so this one action takes its own policy row (a pause is
             # exactly when a temperature change is wanted).
             "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
-            "speedFactorPercent": self._display("speed-factor", int(round(number(move.get("speed_factor")) * 100))),
-            "flowFactorPercent": self._display("flow-factor", int(round(number(move.get("extrude_factor")) * 100))),
+            "speedFactorPercent": self._display("speed-factor", _factor_percent(min(500, max(0.01, number(move.get("speed_factor"), 1))) * 100)),
+            "flowFactorPercent": self._display("flow-factor", _factor_percent(min(500, max(0.01, number(move.get("extrude_factor"), 1))) * 100)),
             "zOffset": number(origin[2]) if len(origin) > 2 else 0,
             "zOffsetText": f"{number(origin[2]) if len(origin) > 2 else 0:+.3f} mm",
             "fanControlItems": fans, "ledItems": leds, "pwmOutputItems": pwm,
@@ -314,7 +319,7 @@ class MonitorControls(QObject):
         if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_apply_temperature_preset)
 
     def factor(self, kind, percent, preview=False):
-        percent = max(10 if kind == "speed" else 50, int(percent))
+        percent = _factor_percent(percent)
         key = kind + "-factor"
         if preview: self._tuning.preview(key, percent)
         else: self._tuning.queue(key, percent, key, f"{'M220' if kind == 'speed' else 'M221'} S{percent}")

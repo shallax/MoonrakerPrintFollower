@@ -41,7 +41,7 @@ help:
 	@echo "                       this instead of one unittest with many files,"
 	@echo "                       which runs them serially (the Qt files also"
 	@echo "                       need their own process)"
-	@echo "                       (make test_files FILES=\"tests.test_monitor tests.test_index\")"
+	@echo "                       (make test_files FILES=\"tests.test_monitor_qml_contracts tests.test_index\")"
 	@echo "generate_screenshots   regenerate the canonical captures in the"
 	@echo "                       container and refresh the committed copies"
 	@echo "verify_captures        two capture runs in the pinned container must be"
@@ -104,12 +104,12 @@ endif
 
 ifeq ($(LEG),windows)
 test_files:
-	@if not defined FILES (echo usage: make test_files FILES="tests.test_monitor tests.test_index" & exit /b 2)
+	@if not defined FILES (echo usage: make test_files FILES="tests.test_monitor_qml_contracts tests.test_index" & exit /b 2)
 	$(DEV) test $(foreach file,$(FILES),--file $(file))
 else
 test_files:
 	@test -n "$(FILES)" || { \
-	    echo 'usage: make test_files FILES="tests.test_monitor tests.test_index"'; \
+	    echo 'usage: make test_files FILES="tests.test_monitor_qml_contracts tests.test_index"'; \
 	    exit 2; }
 	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) tools/run_some.sh $(FILES)"
 endif

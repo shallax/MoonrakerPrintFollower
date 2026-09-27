@@ -17,9 +17,9 @@ PRESENTED 400% view at the zoomed physical stroke (the live 4x
 report), plus the Day-scale separation the floor destroyed."""
 
 try:
-    from . import test_qml_real_engine as _parent
+    from . import qml_engine_support as _parent
 except ImportError:
-    import test_qml_real_engine as _parent
+    import qml_engine_support as _parent
 
 PROBE_PLOT = {"offsetX": 0.0, "offsetY": 0.0, "sx": 2.25, "sy": 2.25,
               "bedXMin": 0.0, "bedYMax": 250.0}

@@ -17,7 +17,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   `qt6-declarative-dev-tools`. QML files must stay qmlformat-canonical:
   `tools/check_qml_format.sh` formats to stdout and diffs (qmlformat
   before Qt 6.5 has no `--check`), `tools/check_qml.py` verifies
-  structure, and the token tests in `tests/test_monitor.py` must be
+  structure, and the token tests in `tests/test_monitor_qml_contracts.py` must be
   written so the formatter cannot break them (pin semantics, not
   whitespace).
 - The pinned, disposable dev container (`Dockerfile`) carries the whole
@@ -49,8 +49,8 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   `unittest` invocation naming several files.** A single
   `python3 -m unittest tests.a tests.b tests.c` runs those files
   SERIALLY inside one process — that is where the minutes go — and the
-  real-Qt files cannot share a process in any case: `test_qml_real_engine`
-  owns its `QGuiApplication` and skips whenever one already exists.
+  real-Qt files cannot share a process in any case: the QML domain files
+  own their `QGuiApplication` and reject a foreign application.
   `tools/run_some.sh` applies the same per-file fan-out
   `tools/run_tests.sh` already uses for the whole discovery, scoped to
   the files a change actually touches — one process per file, `JOBS`
@@ -266,11 +266,25 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 
 ## Test suite organisation
 
-- One file per domain (`test_architecture.py`, `test_session.py`,
-  `test_print_state.py`, `test_monitor.py`, …).
+- One file per cohesive domain or domain responsibility (`test_architecture.py`,
+  `test_session.py`, `test_qml_plate_navigation.py`, …). Split a large domain by
+  responsibility when its serial runtime blocks parallel runs; do not split
+  unrelated cases into arbitrary numbered shards.
 - Never name test files or classes after versions, releases, or individual
   fixes (no `test_v31_*`, no `*_regressions`).
-- New tests join the existing domain file; a new domain gets a new file.
+- New tests join the appropriate domain file; a new responsibility gets a new file.
+- Shared `*_support.py` modules contain fixtures and doubles, not test methods.
+  Construct Qt applications lazily during test setup, never at import time.
+  `qml_engine_support.py` owns its application and retains QML context objects;
+  `test_qml_harness_lifecycle.py` verifies import-time ownership, execution without
+  silent skips, and the preserved census of 199 original QML cases. Production
+  model DPI tests run separately from dashboard doubles.
+- Do not inherit test-bearing classes to reuse fixtures: unittest runs every
+  inherited test again. The scheduler split removes 102 such duplicate executions
+  while retaining all unique cases. Keep fixtures and assertions separate.
+- The seek performance budget runs alone after the parallel correctness pool in
+  both full and subset runners. Its five-second limit measures implementation
+  performance, rather than competition with other test processes.
 - Tests that need real Qt are guarded with
   `@unittest.skipUnless(QT_AVAILABLE, ...)`. They skip in stdlib-only local
   runs and run in CI, where `ci.yml` installs PyQt6.
@@ -291,7 +305,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 ### Standing UI rules
 
 Two rules govern every control on the Monitor tab; both are pinned by
-`tests/test_monitor.py` (`test_no_controls_disappear_controls_disable`
+`tests/test_monitor_qml_contracts.py` (`test_no_controls_disappear_controls_disable`
 and `test_disconnected_disables_every_monitor_control`) — update the
 pins in the same commit as any change to a control.
 
@@ -370,7 +384,7 @@ file, never inline content:
    capability gates (hide while the data is absent, refuse while the
    permission is absent) ride the SECTION body.
 
-Then update the pins in `tests/test_monitor.py` in the same commit:
+Then update the pins in `tests/test_monitor_qml_contracts.py` in the same commit:
 the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
 per QML file plus the totals, and the section-id haystack — a moved
 section decrements one file and increments another, and the totals
@@ -393,7 +407,7 @@ label's extents (`width: label.implicitHeight`,
 `anchors.centerIn` — the rotated text then occupies the wrapper exactly,
 starting under the header. Never anchor to the toggle inside the header:
 QML only allows anchoring to a parent or sibling, so that anchor is
-silently dropped and the title floats. The pins in `tests/test_monitor.py`
+silently dropped and the title floats. The pins in `tests/test_monitor_qml_contracts.py`
 enforce the header-row anchors. The pane widths collapse to
 `<toggle>.width + 2 * thin_margin`.
 
@@ -402,14 +416,14 @@ title in its own 24 px band at the top (the title shifts down 12 px
 via `anchors.verticalCenterOffset`), matching the expanded header's
 dot-before-title order with a space-width gap. The dot binds
 `connectionDotColour` from the pane root; the collapsed-strip pin in
-`tests/test_monitor.py` enforces it.
+`tests/test_monitor_qml_contracts.py` enforces it.
 The state is a model bool: add it to
 `_read_state`/`_write_state`/`_save_state` in `MoonrakerMonitorModel.py`
 (with a `bool(decoded.get(..., False))` default), a
 `value_property` + signal group + `set…Collapsed` slot, the QML root
 binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
-`tests/test_composed_components.py`.
+`tests/test_runtime_monitor_composition.py`.
 
 Plugin-drawn glyphs (see `plugins/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
@@ -460,7 +474,7 @@ cycle, and mangles values through configparser.
   file's second consumer — the model hydrates it but no longer
   writes it.
 - Every new property and slot also goes into the surface lists in
-  `tests/test_composed_components.py` (the properties string and the slot
+  `tests/test_runtime_monitor_composition.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.
 
 ### Rehydration order
@@ -491,7 +505,7 @@ they cannot recur silently.
   <toggle>.bottom` where the toggle lives inside a sibling header row is
   illegal — the engine logs "Cannot anchor to an item that isn't a
   parent or sibling" and *silently drops the anchor*. Anchor to the
-  header row instead; `tests/test_monitor.py` pins the header-row
+  header row instead; `tests/test_monitor_qml_contracts.py` pins the header-row
   anchors. Related: expression reads of anchor lines
   (`y: item.bottom + margin`) evaluate to 0/NaN — only the anchor form
   positions reliably; a probe with the real engine proved both.
@@ -538,7 +552,7 @@ they cannot recur silently.
   `ReferenceError` — which also killed the auto-close statement that
   followed the throw. Inner components see outer ids, never the
   reverse; put refresh `Connections` inside the component.
-  `tests/test_monitor.py` pins `meshDetail.refresh()` to exactly one
+  `tests/test_monitor_qml_contracts.py` pins `meshDetail.refresh()` to exactly one
   in-scope call.
 - **Pop-over anchoring is a single consistent offset.** Both pop-overs
   open at `x: cameraArea.x + margin, y: margin` — clear of the
@@ -557,7 +571,7 @@ they cannot recur silently.
   that froze pane collapses (the 3.5.0 capture runaway). Likewise never
   bind a pop-over shell's height to its content column's implicit height
   while the content uses `Layout.fillHeight` — the same cycle.
-  `tests/test_monitor.py` pins both.
+  `tests/test_monitor_qml_contracts.py` pins both.
 
 ### QML change discipline (learned the hard way)
 
@@ -642,7 +656,7 @@ they cannot recur silently.
   `UM.TooltipArea` over a control — a popup that can cover its
   control swallows the click when the pointer crosses it (the live
   find: a reset button's tooltip ate presses, and the native-property
-  popups pointed at the wrong control entirely). `test_monitor`'s
+  popups pointed at the wrong control entirely). `test_monitor_qml_contracts`'s
   tooltip-discipline pin fails the leg if either form returns.
   Passive readouts get the same pattern, not an exemption.
 - **The Uranium-controls-first rule (the 2026-09-18 ruling):** where

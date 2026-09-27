@@ -1,10 +1,13 @@
 """Geometry invariants shared by the retained follower and object picker."""
 from array import array
 import importlib.util
+import os
 import threading
 import unittest
+from unittest.mock import patch
 
 QT_AVAILABLE = importlib.util.find_spec("PyQt6") is not None
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to test retained geometry")
@@ -13,6 +16,37 @@ class RetainedGeometryTests(unittest.TestCase):
     def setUpClass(cls):
         from PyQt6.QtGui import QGuiApplication
         cls.app = QGuiApplication.instance() or QGuiApplication([])
+
+    def test_arriving_ghost_reuses_cached_roles_and_keeps_the_current_channel(self):
+        from concurrent.futures import Future
+        from PyQt6 import sip
+        from PyQt6.QtQuick import QQuickWindow
+        from plugins import GpuFollower as module
+        from plugins.GpuStrokeMaterial import pack_shader
+
+        payload = {"classes": {"SKIN": [[(0, 0, 0), (20, 0, 1)]]}, "travels": []}
+        class Layer:
+            def geometry_payload(self):
+                return payload
+        current, ghost, replacement = Layer(), Layer(), Layer()
+        with module._CACHE_LOCK:
+            module._CACHE.clear()
+        prior = module.prepare((("current", payload), ("next", payload)))
+        with patch.object(module, "dashed_edges", side_effect=AssertionError("cached next was rebuilt")):
+            again = module.prepare((("prev", payload), ("current", payload), ("next", payload)))
+        self.assertIs(next(row for row in prior if row[0] == "next"),
+                      next(row for row in again if row[0] == "next"))
+        window = QQuickWindow()
+        item = module.GpuFollower(window.contentItem())
+        item._layers = {"current": current}
+        item._data = pack_shader(module.prepare((("current", payload),)))
+        retained = item._data[0]
+        with patch.object(module._POOL, "submit", return_value=Future()):
+            item.layers = {"current": current, "next": ghost}
+            self.assertIs(item._data[0], retained)
+            item.layers = {"current": replacement}
+            self.assertFalse(item._data)
+        sip.delete(window)
 
     def test_layer_replacement_retires_the_previous_native_tree(self):
         from PyQt6 import sip

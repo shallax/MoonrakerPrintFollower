@@ -72,8 +72,8 @@ ColumnLayout {
                     id: speedSlider
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    from: 10
-                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
+                    from: 1
+                    to: Math.min(50000, Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200))
                     stepSize: 1
                     live: false
                     value: 100
@@ -165,8 +165,8 @@ ColumnLayout {
                     id: flowSlider
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    from: 50
-                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
+                    from: 1
+                    to: Math.min(50000, Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200))
                     stepSize: 1
                     live: false
                     value: 100

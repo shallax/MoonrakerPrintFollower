@@ -503,7 +503,7 @@ if QT_AVAILABLE:
             # The retry is the single deferred re-arm: invoking it
             # re-fires the chain (the probe's override counts
             # refresh_discovery calls). The defer re-arm cycle itself
-            # is pinned in test_preview_family_coverage.
+            # is pinned in test_preview_monitor_data.
             discovery_before = self.data.discovery_calls
             callback()
             self.assertEqual(self.data.discovery_calls, discovery_before + 1)

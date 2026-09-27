@@ -16,13 +16,13 @@ nothing printed, and the service's monotonic floor then holds it.
 
 Layer selection is here (``PrintState.LayerResolver``); the anchor's
 consequence is asserted against the real ``GCodeIndexService`` in the
-Qt-gated class below, through the same seams ``test_gcode_index_plate``
+Qt-gated class below, through the same seams ``test_index_physical_progress``
 uses. The QML half of the finding — world/generation identity in the
 compositor, old-layer textures, retained prefixes, the pending grey base
 — is out of this file's scope: it needs the real engine and belongs to
 the render lane. Its Python analogue, a self-consistent
 (anchor, layers, split) delivery when a later frame arrives mid-refresh,
-is covered in test_coordinator_toolhead_console_coverage.
+is covered in test_coordinator_coverage.
 """
 from __future__ import annotations
 

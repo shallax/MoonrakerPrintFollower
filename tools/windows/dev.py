@@ -142,7 +142,7 @@ def default_jobs() -> int:
     """The fan-out width, matching the legs CI runs.
 
     tools/run_tests.sh defaults to 16 workers, and the suite carries
-    wall-clock budgets (test_composed_components' seek matrix holds a
+    wall-clock budgets (test_runtime_monitor_composition' seek matrix holds a
     cold seek under 5 s) that measure the MACHINE, not just the code:
     doubling the width doubles the contention and the budget flakes.
     More cores do not buy a wider fan-out here — JOBS overrides it when
@@ -168,6 +168,7 @@ def tool_env() -> dict:
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     env.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONFAULTHANDLER", "1")
     if not env.get("QT_QPA_FONTDIR"):
         # The container's fonts-dejavu-core first: the capture and
         # metric pins were taken with those faces, so a box carrying
@@ -314,8 +315,14 @@ def formatted_text(root: Path, env: dict, exe: str, path: Path):
 # --- the suite ------------------------------------------------------------
 def run_jobs(root: Path, jobs, log_dir: Path, workers: int):
     """One process per job. Returns (label, rc, ran tests, log, failures, secs)."""
+    # A hard wall-clock renderer budget measures the host as well as the
+    # implementation. Keep it isolated after the parallel correctness lane.
+    measured = [job for job in jobs if job[0] == "test_follower_seek_performance"]
+    concurrent = [job for job in jobs if job not in measured]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        return list(pool.map(_one_job, [(root, job, log_dir) for job in jobs]))
+        results = list(pool.map(_one_job, [(root, job, log_dir) for job in concurrent]))
+    results.extend(_one_job((root, job, log_dir)) for job in measured)
+    return results
 
 
 def elapsed_text(seconds: float) -> str:
@@ -332,7 +339,7 @@ def selected_tests(root: Path, files):
     if not files:
         return names
     # The same spellings the POSIX leg takes: a dotted module path
-    # (tests.test_monitor, the Makefile's own usage line), a bare
+    # (tests.test_monitor_qml_contracts, the Makefile's own usage line), a bare
     # module name, or a file name.
     wanted = set()
     for name in files:
@@ -359,7 +366,7 @@ def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool, cov_di
         if coverage:
             job_env["COVERAGE_FILE"] = str(cov_dir / ("cov.%s.coverage" % name[:-3]))
             argv += ["coverage", "run", "-m"]
-        argv += ["unittest", "discover", "-s", "tests", "-p", name]
+        argv += ["unittest", "discover", "-v", "-s", "tests", "-p", name]
         jobs.append((name[:-3], argv, job_env))
     jobs += [(Path(module).stem, [python, module.replace("/", os.sep)], dict(env))
              for module in HARNESS_MODULES]

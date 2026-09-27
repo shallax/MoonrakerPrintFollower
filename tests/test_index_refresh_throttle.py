@@ -35,7 +35,7 @@ if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication
 
     from plugins.PrinterConfig import PrinterConfig
-    from tests.test_coordinator_toolhead_console_coverage import (
+    from tests.control_owner_support import (
         _BedMesh,
         _Binding,
         _Client,
