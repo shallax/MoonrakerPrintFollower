@@ -17,6 +17,44 @@ class RetainedGeometryTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         cls.app = QGuiApplication.instance() or QGuiApplication([])
 
+    def test_layer_preparation_holds_the_last_frame_without_applying_new_progress(self):
+        from concurrent.futures import Future
+        from PyQt6 import sip
+        from PyQt6.QtQuick import QQuickWindow
+        from plugins import GpuFollower as module
+        from plugins.GpuStrokeMaterial import pack_shader
+
+        class Layer:
+            def geometry_payload(self):
+                return {"classes": {"SKIN": [[(0, 0, 0), (10, 0, 1), (20, 0, 2)]]},
+                        "travels": []}
+
+        window = QQuickWindow()
+        item = module.GpuFollower(window.contentItem())
+        item._layers = {"current": Layer()}
+        item._data = pack_shader(module.prepare((("current", item._layers["current"].geometry_payload()),)))
+        item.settings = {"split": 2}
+        old = item.updatePaintNode(None, None)
+        printed = old._groups[0][-1]
+        self.assertEqual(printed.geometry().vertexCount(), 6)
+        with patch.object(module._POOL, "submit", return_value=Future()):
+            item.layers = {"current": Layer()}
+            generation = item._generation
+            item.settings = {"split": 1000}  # The new manual layer lands at 100%.
+            held = item.updatePaintNode(old, None)
+            self.assertIs(held, old, "the preparing layer flashed an empty native tree")
+            self.assertEqual(printed.geometry().vertexCount(), 6,
+                             "new progress was applied to the held old layer")
+            item._prepared(generation - 1, ())  # A retired worker cannot release the hold.
+            self.assertIs(item.updatePaintNode(held, None), held)
+            # Even an empty completed layer must retire the old frame.
+            item._prepared(generation, ())
+            empty = item.updatePaintNode(held, None)
+            self.assertTrue(sip.isdeleted(held))
+            self.assertEqual(empty.childCount(), 0)
+            sip.delete(empty)
+        sip.delete(window)
+
     def test_arriving_ghost_reuses_cached_roles_and_keeps_the_current_channel(self):
         from concurrent.futures import Future
         from PyQt6 import sip

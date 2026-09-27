@@ -221,6 +221,7 @@ class GpuFollower(QQuickItem):
         self._layers = {}
         self._settings = {}
         self._generation = 0
+        self._preparing_generation = None
         self._data = ()
         self._render_generation = -1
         self.prepared.connect(self._prepared)
@@ -238,8 +239,10 @@ class GpuFollower(QQuickItem):
         self._layers = value
         self._generation += 1
         generation = self._generation
+        self._preparing_generation = generation
         # Keep only unchanged channels while an arriving ghost prepares.
-        # A new current layer always clears the old scene immediately.
+        # A new current layer retires its CPU data immediately. The native
+        # tree may hold its frozen frame until this generation is prepared.
         self._data = tuple(row for row in self._data
                            if value.get("current") is previous.get("current")
                            and value.get(row[0]) is previous.get(row[0]))
@@ -268,10 +271,13 @@ class GpuFollower(QQuickItem):
 
         if payloads:
             self._work.futures.append(_POOL.submit(build))
+        else:
+            self._preparing_generation = None
         self.layersChanged.emit()
 
     def _prepared(self, generation, data):
         if generation == self._generation:
+            self._preparing_generation = None
             self._data = data
             self.readyChanged.emit()
             self.update()
@@ -326,6 +332,13 @@ class GpuFollower(QQuickItem):
             node.markDirty(QSGNode.DirtyStateBit.DirtyGeometry)
 
     def updatePaintNode(self, old, update_data):
+        if old is not None and not self._data \
+                and self._preparing_generation == self._generation \
+                and self._layers.get("current") is not None:
+            # Hold the previous native frame without repainting its prefix
+            # with the NEW layer's split. Replace it atomically when ready;
+            # clears, empty completions and stale workers cannot latch it.
+            return old
         if old is not None and getattr(old, "_data", None) is not self._data:
             sip.delete(old)
             old = None

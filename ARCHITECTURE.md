@@ -874,6 +874,24 @@ prepared distant layer for GPU inspection does not also hydrate its raw motion
 arrays. Followed-layer neighbours still hydrate for physical tracking, and
 software selection keeps the original hydration policy.
 
+Decoded geometry is presentation readiness, not physical-tracking readiness.
+A speculatively decoded layer entering the live window must still request its
+motion arrays, even though no geometry decode is needed. Otherwise compact
+matching can select future geometry during a long excluded-object entry travel;
+live traces captured motion 6,604 with coarse progress near 135, and motion
+11,335 with coarse progress near 147. Extruder velocity below 1e-6 mm/s does
+not confirm extrusion: the connected printer reported positive roundoff of
+3.55e-15 mm/s during travel.
+
+QML software fallback-vector reads and hidden Canvas paint demand are gated
+off while the GPU renderer owns the face. The real-engine isolation regression
+recorded 188 fallback reads before the gate and zero after it; selecting
+Diagnostics software rendering restores those producers. During GPU buffer
+preparation the last native frame may stand frozen until the new generation
+lands. Its old progress remains frozen too: a new layer's split must never
+paint the old buffers. Empty completions and explicit clears retire that frame;
+retired worker generations cannot change it.
+
 `GpuObjectPicker` shares the scene-graph stroke and grid primitives while
 preserving the object picker palette, halo, hover widths, degraded centre
 circles and pointer handling. It always uses four-sample antialiasing and adds

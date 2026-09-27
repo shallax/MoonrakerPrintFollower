@@ -363,7 +363,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         pane, window, _model, _image, frame = self._fps_pane(700, 700)
         left = harness.QPointF(frame.width() / 4, frame.height() / 2)
         self._wheel(window, frame, position=left)
-        self.pump(30)
+        self._pump_ms(50)
         # (W/2 - x) / 4 is where the pointer's own point lands once the
         # picture is a quarter bigger: the edge it was over stays put,
         # so a wheel to the left of the centre walks the pan right.
@@ -371,6 +371,17 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
                                (frame.width() / 2 - left.x()) * 0.25, delta=1.0,
                                msg="the point under the pointer drifted")
         self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1.0)
+        displayed = pane.property("cameraDisplayZoom")
+        self.assertGreater(displayed, 1.0, "the image must start gliding immediately")
+        self.assertLess(displayed, pane.property("cameraZoom"),
+                        "a wheel notch must not snap the image to its target")
+        anchor = left.x() - frame.width() / 2
+        self.assertAlmostEqual(pane.property("cameraDisplayOffsetX"),
+                               anchor * (1 - displayed), delta=1.0,
+                               msg="the pointer's image point must stay fixed during the glide")
+        self._pump_ms(350)
+        self.assertEqual(pane.property("cameraDisplayZoom"), pane.property("cameraZoom"))
+        self.assertEqual(pane.property("cameraDisplayOffsetX"), pane.property("cameraPanOffsetX"))
         # Zooming out past the fit stops at the fit and re-centres.
         for _ in range(8):
             self._wheel(window, frame, delta=-120)
@@ -379,6 +390,9 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
                                msg="the fit is the floor")
         self.assertAlmostEqual(pane.property("cameraPanX"), 0.0, delta=1e-6)
         self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1e-6)
+        self._pump_ms(350)
+        self.assertEqual(pane.property("cameraDisplayZoom"), 1.0)
+        self.assertEqual(pane.property("cameraDisplayOffsetX"), 0.0)
 
     def test_the_drag_pans_the_picture_and_stops_at_the_pictures_edge(self):
         # The pan follows the pointer exactly while there is picture to

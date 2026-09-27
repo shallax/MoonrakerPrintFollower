@@ -562,6 +562,29 @@ Cura.RoundedRectangle {
     // transform, so the frame box — and with it every overlay, the veil
     // and the FPS control — stays put while the picture moves under it.
     property real cameraZoom: 1.0
+    // Match the follower's retargetable ease-out. Only the image's
+    // transform moves; decoded frames and the control overlays stay put.
+    property real cameraDisplayZoom: 1.0
+    property real cameraDisplayPanX: 0
+    property real cameraDisplayPanY: 0
+    readonly property real cameraDisplayOffsetX: Math.max(-cameraImage.width * (cameraDisplayZoom - 1) / 2, Math.min(cameraImage.width * (cameraDisplayZoom - 1) / 2, cameraDisplayPanX))
+    readonly property real cameraDisplayOffsetY: Math.max(-cameraImage.height * (cameraDisplayZoom - 1) / 2, Math.min(cameraImage.height * (cameraDisplayZoom - 1) / 2, cameraDisplayPanY))
+
+    Timer {
+        id: cameraZoomAnimator
+        interval: 16
+        repeat: true
+        onTriggered: {
+            var next = root.cameraDisplayZoom + (root.cameraZoom - root.cameraDisplayZoom) * 0.30;
+            var settled = Math.abs(root.cameraZoom - next) < 0.005;
+            root.cameraDisplayZoom = settled ? root.cameraZoom : next;
+            root.cameraDisplayPanX = settled ? root.cameraPanOffsetX : root.cameraDisplayPanX + (root.cameraPanOffsetX - root.cameraDisplayPanX) * 0.30;
+            root.cameraDisplayPanY = settled ? root.cameraPanOffsetY : root.cameraDisplayPanY + (root.cameraPanOffsetY - root.cameraDisplayPanY) * 0.30;
+            if (settled) {
+                stop();
+            }
+        }
+    }
     // The pan is stored in the picture's own units and CLAMPED as it is
     // stored — never only on the way to the transform. A pan that ran
     // past the limit and was held there would swallow the first stretch
@@ -611,15 +634,16 @@ Cura.RoundedRectangle {
         if (target === root.cameraZoom) {
             return;
         }
-        var ratio = target / root.cameraZoom;
-        root.cameraPanX += (x - cameraImage.width / 2 - root.cameraPanX) * (1 - ratio);
-        root.cameraPanY += (y - cameraImage.height / 2 - root.cameraPanY) * (1 - ratio);
+        var ratio = target / root.cameraDisplayZoom;
+        root.cameraPanX = root.cameraDisplayOffsetX + (x - cameraImage.width / 2 - root.cameraDisplayOffsetX) * (1 - ratio);
+        root.cameraPanY = root.cameraDisplayOffsetY + (y - cameraImage.height / 2 - root.cameraDisplayOffsetY) * (1 - ratio);
         root.cameraZoom = target;
         if (target <= 1.0) {
             root.cameraPanX = 0;
             root.cameraPanY = 0;
         }
         root.clampCameraPan();
+        cameraZoomAnimator.restart();
     }
 
     function setCameraZoom(value) {
@@ -636,15 +660,20 @@ Cura.RoundedRectangle {
             root.cameraPanY = 0;
         }
         root.clampCameraPan();
+        cameraZoomAnimator.restart();
     }
 
     function panCamera(dx, dy) {
         // The picture follows the pointer exactly, up to the limit: the
         // clamp lands on the STORED pan, so the next drag in the
         // opposite direction moves the picture at once.
+        var oldX = root.cameraPanX;
+        var oldY = root.cameraPanY;
         root.cameraPanX += dx;
         root.cameraPanY += dy;
         root.clampCameraPan();
+        root.cameraDisplayPanX += root.cameraPanX - oldX;
+        root.cameraDisplayPanY += root.cameraPanY - oldY;
     }
 
     function resetCameraView() {
@@ -653,6 +682,10 @@ Cura.RoundedRectangle {
         root.cameraZoom = 1.0;
         root.cameraPanX = 0;
         root.cameraPanY = 0;
+        cameraZoomAnimator.stop();
+        root.cameraDisplayZoom = 1.0;
+        root.cameraDisplayPanX = 0;
+        root.cameraDisplayPanY = 0;
         // The fit leaves the zoom face nothing to hint at, so the bar
         // goes at once rather than waiting out the idle five seconds —
         // a camera switch parks it through this too (the live request).
@@ -900,12 +933,12 @@ Cura.RoundedRectangle {
                         Scale {
                             origin.x: cameraImage.width / 2
                             origin.y: cameraImage.height / 2
-                            xScale: (root.printerModel != null && root.printerModel.cameraFlipHorizontal ? -1 : 1) * root.cameraZoom
-                            yScale: (root.printerModel != null && root.printerModel.cameraFlipVertical ? -1 : 1) * root.cameraZoom
+                            xScale: (root.printerModel != null && root.printerModel.cameraFlipHorizontal ? -1 : 1) * root.cameraDisplayZoom
+                            yScale: (root.printerModel != null && root.printerModel.cameraFlipVertical ? -1 : 1) * root.cameraDisplayZoom
                         },
                         Translate {
-                            x: root.cameraPanOffsetX
-                            y: root.cameraPanOffsetY
+                            x: root.cameraDisplayOffsetX
+                            y: root.cameraDisplayOffsetY
                         }
                     ]
 
