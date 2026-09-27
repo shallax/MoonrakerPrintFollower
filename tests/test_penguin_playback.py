@@ -23,6 +23,11 @@ class PenguinTimelineTests(unittest.TestCase):
                 if key in line:
                     self.assertIn(f"{key}{coordinate:.3f}", line)
 
+    def test_penguin_is_centred_on_the_native_harness_bed(self):
+        for axis in (0, 1):
+            coordinates = [row["end"][axis] for row in self.rows]
+            self.assertAlmostEqual((min(coordinates) + max(coordinates)) / 2, 125.0, delta=.5)
+
     def test_interpolation_stays_on_the_commanded_segment_at_corners(self):
         rows = [dict(at=1.0, start=[0, 0, 0, 0], end=[10, 0, 0, 1]),
                 dict(at=2.0, start=[10, 0, 0, 1], end=[10, 10, 0, 2])]

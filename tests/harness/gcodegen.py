@@ -7,7 +7,7 @@ import re
 
 
 def penguin_playback():
-    """A test-only linear-motion timeline from the README's exact G-code.
+    """A test-only linear-motion timeline from the README's penguin toolpaths.
 
     Kept independent of the plugin's indexer so following is tested against
     telemetry from the file, not answers supplied by the tracker under test.
@@ -17,7 +17,9 @@ def penguin_playback():
         from tools.capture_penguin import make_gcode as penguin
     except ModuleNotFoundError:
         from capture_penguin import make_gcode as penguin
-    data = penguin().encode("ascii")
+    # Every native harness seed has a 250 mm square bed. The README's
+    # fallback model has 200 mm, so use the generator's explicit bed size.
+    data = penguin(bed_size=250.0).encode("ascii")
     rows = []
     position = [0.0, 0.0, 0.0, 0.0]
     layer, tool, offset, clock, feed = -1, 0, 0, 0.0, 6000.0
