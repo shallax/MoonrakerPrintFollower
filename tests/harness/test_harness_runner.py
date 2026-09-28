@@ -26,7 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 # A per-run scratch, never a fixed path: a fixed dir under the shared
 # /tmp/mpf collects files owned by the harness container's root user,
 # which the host-side legs cannot then overwrite (the live gate error).
-SCRATCH = tempfile.mkdtemp(prefix="test-harness-runner-", dir="/tmp/mpf")
+SCRATCH_ROOT = Path("/tmp/mpf") if os.name != "nt" else Path(tempfile.gettempdir()) / "mpf"
+SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+SCRATCH = tempfile.mkdtemp(prefix="test-harness-runner-", dir=SCRATCH_ROOT)
 
 
 def _attempt(answered=True, verified=True, in_scene=True, is_visible=True,
@@ -490,7 +492,7 @@ class TwoBootRunTests(unittest.TestCase):
         # The relaunch truncates cura.log, so boot 1's half of the
         # evidence has to be taken between the boots, not at the end.
         self._set_subprocess()
-        config = Path(tempfile.mkdtemp(prefix="two-boot-config-", dir="/tmp/mpf"))
+        config = Path(tempfile.mkdtemp(prefix="two-boot-config-", dir=SCRATCH_ROOT))
         (config / "cura.log").write_text("boot one", encoding="utf-8")
         os.environ["HARNESS_CURA_CONFIG"] = str(config)
         try:
@@ -510,8 +512,8 @@ class HarvestCuraLogTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.src = Path(tempfile.mkdtemp(prefix="harvest-config-", dir="/tmp/mpf"))
-        self.dest = Path(tempfile.mkdtemp(prefix="harvest-dest-", dir="/tmp/mpf"))
+        self.src = Path(tempfile.mkdtemp(prefix="harvest-config-", dir=SCRATCH_ROOT))
+        self.dest = Path(tempfile.mkdtemp(prefix="harvest-dest-", dir=SCRATCH_ROOT))
         self._old = os.environ.get("HARNESS_CURA_CONFIG")
 
     def tearDown(self):

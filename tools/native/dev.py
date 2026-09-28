@@ -457,6 +457,9 @@ def _one_job(packed):
             ran = int(line.split()[1])
         if line.startswith(("FAIL: ", "ERROR: ")):
             failing.append(line)
+        if label == "test_platform_safety" and line.startswith("OK (skipped="):
+            rc = 1
+            failing.append("ERROR: platform safety skipped Qt tests")
     return label, rc, ran, log_path, failing, time.monotonic() - started
 
 
