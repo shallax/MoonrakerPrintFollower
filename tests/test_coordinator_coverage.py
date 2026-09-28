@@ -441,6 +441,32 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertEqual(parts.index.plate_anchors, [])
         self.assertEqual(parts.index.plate_positions, [])
 
+    def test_manual_plate_is_served_before_the_live_layer_resolves(self):
+        parts = self._make()
+        view = harness._view()
+        view.layer_at = lambda position: None
+        parts.index.view = view
+        status = harness._status()
+        status["print_stats"]["info"] = {}
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.set_popover_open(True)
+        parts.coordinator.set_plate_anchor(0)
+        snapshot = parts.coordinator.snapshot
+        self.assertTrue(snapshot.index_ready)
+        self.assertIsNone(snapshot.layer.index)
+        self.assertIsNone(snapshot.plate_progress,
+                          "the live plate invented a physical layer")
+        self.assertIsNotNone(snapshot.plate_manual_progress,
+                             "manual viewing waited for a physical layer")
+        self.assertEqual(snapshot.plate_manual_progress["anchor"], 0)
+        self.assertEqual(parts.index.plate_anchors[-1], 0)
+        self.assertIsNone(parts.index.plate_positions[-1])
+        self.assertEqual(parts.index.manual_anchor, 0)
+        parts.coordinator.set_plate_anchor(2)
+        self.assertEqual(parts.coordinator.snapshot.plate_manual_progress["anchor"], 2,
+                         "manual layer browsing stopped before the live layer resolved")
+        self.assertIsNone(parts.coordinator.snapshot.plate_progress)
+
     def test_an_unchanged_plate_definition_is_not_re_walked_by_a_position_poll(self):
         # The coordinator's plate projection is per-vertex Python work
         # (coordinate validation plus ring decimation) and it ran on
@@ -1320,5 +1346,3 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             "info": {"current_layer": 0, "total_layer": 100}}))
         self.assertIsNone(coordinator.snapshot.layer.index)
         self.assertEqual(coordinator._next_pause._last_index, 4)
-
-

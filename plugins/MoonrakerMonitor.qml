@@ -3487,9 +3487,9 @@ Component {
                             fixedWidthMode: true
                             width: 76 * screenScaleFactor
                             text: root.printer != null && root.printer.followerAttached ? "Detach" : "Attach"
-                            // A detach holds the layer the face shows; an
-                            // attach needs a live index to rejoin.
-                            enabled: root.printer != null && (root.printer.followerAttached ? root.printer.plateProgressAnchor >= 0 : root.printer.plateLayerCount > 0)
+                            // Before the print reaches an indexed layer,
+                            // detach starts manual viewing at the first layer.
+                            enabled: root.printer != null && root.printer.plateLayerCount > 0
                             onClicked: {
                                 if (root.printer != null) {
                                     root.printer.setFollowerAttached(!root.printer.followerAttached);

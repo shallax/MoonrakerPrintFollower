@@ -362,18 +362,17 @@ class PrintCoordinator(QObject):
             manual_payload = None
             plate_visited = frozenset()
             plate_lookup_ms = None
-            if plate_available and physical.index is not None:
+            if plate_available and (physical.index is not None or self._manual_serving_active()):
                 # The payload is built INSIDE the service — the raw
                 # index's arrays never cross its boundary (the
                 # architecture contract), so the coordinator asks the
-                # service, never the view. The plate is the PRINT's, so
-                # it needs the resolved physical layer: there is no
-                # anchor without one (the monitor-only index whose
-                # layer never resolved), and the plate APIs are never
-                # asked for a None one. A frozen layer carries NO
-                # file position: the split is a live print's boundary,
-                # and on another layer it would be another print's
-                # fill.
+                # service, never the view. The live plate needs a
+                # resolved physical layer; the detached plate can use
+                # its own anchor before the print reaches that layer.
+                # Neither plate API is asked for a None anchor. A
+                # frozen layer carries NO file position: the split is
+                # a live print's boundary, and on another layer it
+                # would be another print's fill.
                 # TWO payloads (the live request): the live one serves
                 # the mini and the attached popover — the mini NEVER
                 # detaches with the popover — and the frozen one the
@@ -383,9 +382,10 @@ class PrintCoordinator(QObject):
                 # stayed on it (the live report: detaching did nothing
                 # visible).
                 lookup_start = time.monotonic()
-                plate_progress_payload = self._index.plate_progress(
-                    physical.index, position, live_position, paused=status_stats.get("state") == "paused",
-                    extruding=extruding, motion=motion_progress)
+                if physical.index is not None:
+                    plate_progress_payload = self._index.plate_progress(
+                        physical.index, position, live_position, paused=status_stats.get("state") == "paused",
+                        extruding=extruding, motion=motion_progress)
                 if self._manual_serving_active():
                     manual_payload = self._index.plate_progress(
                         self._plate_anchor, None, live_position)
@@ -405,11 +405,12 @@ class PrintCoordinator(QObject):
                 # or advanced the clock re-delivers the same definition,
                 # and re-walking every ring here runs O(vertices) of
                 # Python per object on this thread, every poll.
-                exclude_rows = self._plate_memo.value(exclude_status, job)["objects"]
-                visited = getattr(self._index, "plate_visited", None)
-                if visited is not None and plate_progress_payload.get("split") is not None:
-                    plate_visited = visited(physical.index,
-                                            plate_progress_payload["split"], exclude_rows)
+                if plate_progress_payload is not None:
+                    exclude_rows = self._plate_memo.value(exclude_status, job)["objects"]
+                    visited = getattr(self._index, "plate_visited", None)
+                    if visited is not None and plate_progress_payload.get("split") is not None:
+                        plate_visited = visited(physical.index,
+                                                plate_progress_payload["split"], exclude_rows)
             # The frame is stored WITH the snapshot it produced: _publish()
             # and the signal-driven publishes compose their text from this
             # pair, so the pair can never be two different polls.
@@ -487,11 +488,11 @@ class PrintCoordinator(QObject):
                 # window even when the preview is detached (the
                 # monitor-only index — the live ruling). The service
                 # dedupes and clamps; this never grows a queue.
-                if plate_available and self._index.phase != "indexing" \
-                        and isinstance(current, int):
-                    for layer in (current - 1, current, current + 1):
-                        if layer >= 0:
-                            self._index.request_hydration(layer)
+                if plate_available and self._index.phase != "indexing":
+                    if isinstance(current, int):
+                        for layer in (current - 1, current, current + 1):
+                            if layer >= 0:
+                                self._index.request_hydration(layer)
                     # The detached face's own demand, re-asked every
                     # poll: the live window's advance is what evicts a
                     # frozen layer's geometry, so the request has to
@@ -1072,5 +1073,3 @@ class PrintCoordinator(QObject):
 
     def close(self):
         self._closed = True
-
-

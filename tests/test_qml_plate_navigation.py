@@ -235,6 +235,23 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
         self.assertTrue(slider.property("enabled"))
 
+    def test_detach_is_enabled_before_the_live_layer_resolves(self):
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(-1)
+        self.pump(20)
+        attach = self.find(monitor, "moonrakerFollowerAttach")
+        self.assertEqual(attach.property("text"), "Detach")
+        self.assertTrue(attach.property("enabled"),
+                        "the indexed print's detach is disabled before layer entry")
+        self._click(window, attach)
+        self.assertIn(("attached", False), self._printer.calls)
+        self.assertEqual(attach.property("text"), "Attach")
+        self.assertFalse(face.property("attached"))
+        self.assertEqual(self._printer.followerLayerAnchor, 0)
+        slider = self.find(monitor, "moonrakerFollowerLayerSlider")
+        self.assertTrue(slider.property("enabled"))
+        self.assertEqual(slider.property("value"), 0.0)
+
     def test_the_layer_ghost_stays_available_on_every_layer_detached(self):
         monitor, window, face = self._follower_popover()
         self._printer.setAnchor(9)
@@ -394,5 +411,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertIsNotNone(follower_dot)
         self.assertTrue(follower_dot.property("visible"),
                         "the follower lost its toolhead dot")
-
-

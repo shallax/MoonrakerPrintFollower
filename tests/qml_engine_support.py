@@ -1471,7 +1471,9 @@ if QT_AVAILABLE:
             else:
                 frozen = self._layer_anchor if self._layer_anchor >= 0 else self._anchor
                 if frozen < 0:
-                    return
+                    if self._layer_count <= 0:
+                        return
+                    frozen = 0
                 self._attached = False
                 self._layer_anchor = frozen
                 self._anchor = frozen
