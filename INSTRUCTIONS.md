@@ -351,6 +351,11 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 - The seek performance budget runs alone after the parallel correctness pool in
   both full and subset runners. Its five-second limit measures implementation
   performance, rather than competition with other test processes.
+- For expiry, cadence and recency rules, inject a controllable clock and
+  advance it in the test. Do not use `time.sleep` to make a timestamp change.
+  For actual worker, socket and Qt completion, wait on a signal or condition
+  with a bounded timeout so a stalled completion fails rather than hanging.
+  Keep real elapsed-time measurements isolated from parallel correctness tests.
 - CI coverage and the release workflow also isolate files. The host coverage
   job uses `tools/run_some.py --coverage-dir <fresh-directory>` and combines its
   per-worker data; the wall-clock seek benchmark runs without instrumentation.

@@ -1233,10 +1233,7 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
         # Wait for the worker without running the event loop: the
         # result must still be in flight when the stream stops, which is
         # the case this pins.
-        deadline = time.monotonic() + 4.0
-        while not decoded.is_set() and time.monotonic() < deadline:
-            time.sleep(0.005)
-        self.assertTrue(decoded.is_set(), "the worker never finished the decode")
+        self.assertTrue(decoded.wait(4.0), "the worker never finished the decode")
         self.item.stop()
         self.assertIsNotNone(self.item._decoder,
                              "the worker was orphaned rather than joined")

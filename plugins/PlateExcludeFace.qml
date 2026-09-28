@@ -29,6 +29,7 @@ Item {
     // script drives its clicks well inside it, and the pin asserts
     // the RELATIONSHIP, never the literal (the review's rule).
     readonly property int tripleClickWindowMs: 400
+    property var gestureClock: Date
 
     property string _pendingName: ""
     property int _pendingClicks: 0
@@ -63,7 +64,7 @@ Item {
     }
 
     function _registerClick(name) {
-        var now = Date.now();
+        var now = root.gestureClock.now();
         if (name === "" || (root._pendingName !== "" && name !== root._pendingName)) {
             root._pendingName = name;
             root._pendingClicks = 1;

@@ -31,7 +31,7 @@ import os
 import struct
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from .CachePolicy import evict_to_budget, temporary_owner_alive
 
@@ -76,9 +76,11 @@ def _valid_table(table, payload_start: int, size: int) -> bool:
 class PreparedCache:
     """Per-print prepared-layer files under one directory."""
 
-    def __init__(self, directory: str, max_bytes: int = _DEFAULT_MAX_BYTES) -> None:
+    def __init__(self, directory: str, max_bytes: int = _DEFAULT_MAX_BYTES,
+                 clock_ns: Optional[Callable[[], int]] = None) -> None:
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
+        self._clock_ns = clock_ns or time.time_ns
         # The writer-ownership lock (the review's ownership finding):
         # every writer touch and the publish boundaries (suspend,
         # abort, finish) serialize through it, so an owner's suspend
@@ -252,7 +254,8 @@ class PreparedCache:
                     return None
                 # Only a validated, usable table refreshes explicit recency.
                 try:
-                    os.utime(path, None)
+                    stamp = self._clock_ns()
+                    os.utime(path, ns=(stamp, stamp))
                 except OSError:
                     pass
                 return {"table": table, "complete": bool(complete)}

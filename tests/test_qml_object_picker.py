@@ -318,15 +318,25 @@ class PlateCanvasHitTests(harness.PlateCanvasHitTests):
         self._park_pointer(window, canvas, face)
 
     def test_an_expired_gesture_rearms_from_the_current_plate(self):
+        class GestureClock(harness.QObject):
+            def __init__(self):
+                super().__init__()
+                self.value = 1000.0
+
+            @harness.pyqtSlot(result=float)
+            def now(self):
+                return self.value
+
         rows = self._polygon_bed()
         window, face, canvas = self._picker(rows)
+        clock = GestureClock()
+        self.assertTrue(face.setProperty("gestureClock", clock))
         window_ms = face.property("tripleClickWindowMs")
         self.assertGreater(window_ms, 0, "the gesture carries no window")
         point = (188.0, 226.0)
         self._click_bed(window, canvas, face, *point)
         self.assertEqual(face.property("pendingAction"), "exclude")
-        # Real wall clock: the gesture's own clock is Date.now().
-        harness.time.sleep(window_ms / 1000.0 + 0.1)
+        clock.value += window_ms + 1
         self._status_moves("Left_Block", True)
         self._click_bed(window, canvas, face, *point)
         self.assertEqual(face.property("clickProgress"), 1,
@@ -496,5 +506,4 @@ class PlateDownloadActionTests(harness.PlateDownloadActionTests):
         self._click_centre(label, window)
         self.assertEqual(printer.improve_eta_calls, 1,
                          "clicking the label no longer downloads the index")
-
 
