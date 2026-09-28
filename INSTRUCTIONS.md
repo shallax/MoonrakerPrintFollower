@@ -343,7 +343,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
   Construct Qt applications lazily during test setup, never at import time.
   `qml_engine_support.py` owns its application and retains QML context objects;
   `test_qml_harness_lifecycle.py` verifies import-time ownership, execution without
-  silent skips, and the preserved census of 199 original QML cases. Production
+  silent skips, and the current census of 209 QML domain cases. Production
   model DPI tests run separately from dashboard doubles.
 - Do not inherit test-bearing classes to reuse fixtures: unittest runs every
   inherited test again. The scheduler split removes 102 such duplicate executions
