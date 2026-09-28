@@ -207,6 +207,21 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.item._begin_snapshot_request()
         self.assertEqual(len(self.nam.requests), 2, "stop prevents later polling")
 
+    def test_stale_reply_callbacks_leave_the_current_snapshot_request_alone(self):
+        self.item.setSnapshotMode(True)
+        self.assertTrue(self.item.getSnapshotMode())
+        self.item.setSnapshotMode(True)  # Reapplying the mode cannot reconnect.
+        self.item.start()
+        active = self._reply()
+        stale = FakeReply()
+        self.item._on_finished(stale)
+        self.item._on_snapshot_finished(stale)
+        self.item._on_error(stale)
+        self.assertIs(self.item._image_reply, active)
+        self.assertTrue(self.item._started)
+        self.assertEqual(self.item.transportErrors, 0)
+        self.assertEqual(len(self.nam.requests), 1)
+
     def test_switching_to_snapshot_mode_aborts_the_mjpeg_connection(self):
         self._start()
         stream = self._reply()

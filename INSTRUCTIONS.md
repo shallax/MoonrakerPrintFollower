@@ -387,7 +387,8 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
   module's application can silently skip the real-engine cases.
 - Tests that need real Qt are guarded with
   `@unittest.skipUnless(QT_AVAILABLE, ...)`. They skip in stdlib-only local
-  runs and run in CI, where `ci.yml` installs PyQt6.
+  runs and run in CI, where `ci.yml` installs PyQt6 and NumPy for the
+  bed-mesh and GPU geometry cases.
 
 ## Architecture contract
 

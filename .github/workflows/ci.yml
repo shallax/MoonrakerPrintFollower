@@ -269,7 +269,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0
+          # Match the native and pinned-container suites: without NumPy,
+          # the bed-mesh tests skip and GPU packing takes only its fallback.
+          python -m pip install PyQt6==6.11.0 numpy
 
       - name: Run all discovered tests with the real Qt runtime
         if: matrix.python-version != '3.12'
