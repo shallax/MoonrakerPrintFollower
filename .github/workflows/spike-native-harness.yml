@@ -70,7 +70,7 @@
 # the same reason - disposable, trivially deleted, never a job inside ci.yml.
 #
 # Dispatch-only because its questions are answered: the native legs of
-# release.yml ARE the port, and this file is what they were carved from. It
+# ci.yml ARE the port, and this file is what they were carved from. It
 # and the release gate both ask for macos-latest and windows-latest, the
 # scarcest hosted runners, so an automatic run here takes the slot a gate leg
 # is queueing for - and the gate holds a merge while this, by the paragraph

@@ -295,6 +295,17 @@ merely fixed forward (the 2026-09-11 amendment).
 
 ## Release workflow
 
+Branch pushes run `ci.yml` with its normal lint, test, build and capture
+stages. Pull requests run that same CI suite plus the full Cura release
+gate in the same workflow. A push to a branch with
+an open PR starts a lightweight CI check that skips its expensive jobs,
+because the PR event runs them. If the PR lookup fails, the push CI runs
+rather than silently dropping a check. CI also runs on its weekly schedule
+and when manually dispatched. A version tag runs `release.yml` only when
+it points to the current `main` HEAD. That workflow publishes the harness
+image, calls the shared CI package, test and Cura gate jobs, then publishes
+the verified release artifacts.
+
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
 plan with real push-back → one round-1 critic
 before going deep → build with tests → a six-persona panel

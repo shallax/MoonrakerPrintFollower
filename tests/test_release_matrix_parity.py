@@ -1,4 +1,4 @@
-"""The release-matrix parity gate: the GitHub Release workflow's
+"""The release-matrix parity gate: the GitHub PR CI workflow's
 logical units must match the local canonical release gate's units —
 the 4.5.0 drift class where units existed in one place and never ran
 in the other. A controlled text parser reads both declarations (the
@@ -14,7 +14,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 LOCAL = (ROOT / "tools" / "harness_release.sh").read_text(encoding="utf-8")
 SWEEP = (ROOT / ".github" / "workflows" / "sweep.yml").read_text(encoding="utf-8")
 
@@ -62,9 +62,9 @@ EXPECTED_SWEEP_VERSIONS = (
 
 def workflow_units():
     """The workflow's UNITS declaration: name -> {mode, group}."""
-    match = re.search(r"UNITS: '(\{.*\})'", WORKFLOW, re.S)
+    match = re.search(r"UNITS: '(\{[^\n]*\})'", WORKFLOW)
     if not match:
-        raise AssertionError("release.yml's UNITS declaration was not found")
+        raise AssertionError("ci.yml's UNITS declaration was not found")
     return json.loads(match.group(1))
 
 
@@ -87,7 +87,8 @@ def workflow_matrix_names():
     """The gate job's matrix unit list (anchored between the gate
     job's `matrix:` and its `env:` — the unit-test jobs' matrices
     carry python versions, not units)."""
-    gate = WORKFLOW[WORKFLOW.index("matrix:"):WORKFLOW.index("    env:")]
+    gate = WORKFLOW[WORKFLOW.index("  gate:\n"):]
+    gate = gate[gate.index("    matrix:"):gate.index("    env:")]
     return [match.group(1) for match in re.finditer(r"^\s+- (\S+)$", gate, re.M)]
 
 

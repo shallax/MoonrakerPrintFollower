@@ -76,7 +76,7 @@ the proof artifact.
 
 The original rulings required screenshots as proof and end-to-end coverage
 where feasible. The historical `v4.0.0-harness` branch instructions below
-describe how the harness was developed; the current release workflow uses
+describe how the harness was developed; the current PR gate uses
 the cross-platform Make targets above.
 
 ## 1. What "real" means
