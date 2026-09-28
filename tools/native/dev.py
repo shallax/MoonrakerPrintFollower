@@ -238,14 +238,17 @@ def pinned_fonts_dir():
     return fonts if any(fonts.glob("*.ttf")) else None
 
 
-def run(argv, cwd=None, env=None) -> int:
+def run(argv, cwd=None, env=None, timeout=None) -> int:
     print("$ " + " ".join(str(a) for a in argv), flush=True)
     try:
         # stdin is /dev/null, never the console: a tool that decides to
         # ask something must fail rather than hang a gate (actionlint's
         # shellcheck pipe is exactly that failure on this platform).
         return subprocess.run([str(a) for a in argv], cwd=cwd, env=env,
-                              stdin=subprocess.DEVNULL).returncode
+                              stdin=subprocess.DEVNULL, timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        print("  timed out after %ss: %s" % (timeout, argv[0]), flush=True)
+        return 1
     except OSError as error:
         print("  cannot run %s: %s" % (argv[0], error))
         return 1
@@ -926,7 +929,8 @@ def cmd_captures(args) -> int:
         env["CAPTURE_THEME"] = args.theme
     step("capture scenes into %s" % out)
     for script in CAPTURE_SCRIPTS:
-        if run([sys.executable, "tools/%s" % script, str(out)], cwd=root, env=env) != 0:
+        if run([sys.executable, "tools/%s" % script, str(out)], cwd=root, env=env,
+               timeout=120) != 0:
             return record("captures", False, "%s failed" % script)
     rendered = sorted(path.name for path in out.glob("*.png"))
     for name in rendered:

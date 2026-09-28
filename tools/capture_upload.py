@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import sys
+import faulthandler
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -226,13 +227,20 @@ def main():
     # already-collected ones, spewing nondeterministic null-context
     # TypeErrors (harmless to the PNG, noisy in CI logs). See
     # capture_settings.py for the same pattern.
+    faulthandler.dump_traceback_later(30, repeat=False)
+    print("upload capture: closing dialog", flush=True)
     dialog.close()
+    print("upload capture: releasing dialog and component", flush=True)
     dialog = None
     component = None
+    print("upload capture: clearing component cache", flush=True)
     engine.clearComponentCache()
+    print("upload capture: releasing engine", flush=True)
     engine = None
     for _ in range(5):
         app.processEvents()
+    print("upload capture: teardown complete", flush=True)
+    faulthandler.cancel_dump_traceback_later()
 
 if __name__ == "__main__":
     main()
