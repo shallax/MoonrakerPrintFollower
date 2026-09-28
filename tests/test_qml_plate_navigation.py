@@ -2,6 +2,32 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_touchpad_zoom_uses_pixel_distance_and_wheel_keeps_its_notch(self):
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QWheelEvent
+
+        monitor, window, face = self._follower_popover()
+        self.assertIsNotNone(face.property("plot"))
+
+        def wheel(pixels, angle):
+            scene = face.mapToItem(window.contentItem(), QPointF(face.width() / 2, face.height() / 2))
+            event = QWheelEvent(
+                scene, QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                QPoint(0, pixels), QPoint(0, angle), Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            QGuiApplication.sendEvent(window, event)
+            self.pump(1)
+
+        wheel(0, 120)
+        self.assertAlmostEqual(face.property("viewScale"), 1.25)
+        for _ in range(10):
+            wheel(12, 12)
+        self.assertAlmostEqual(face.property("viewScale"), 1.25 * (1.25 ** (2 / 3)), places=4)
+        wheel(0, 0)
+        self.assertAlmostEqual(face.property("viewScale"), 1.25 * (1.25 ** (2 / 3)), places=4)
+        wheel(-120, -120)
+        self.assertAlmostEqual(face.property("viewScale"), 1.25)
+
     def test_loading_placeholder_transitions_do_not_create_polish_loops(self):
         monitor, window, face = self._follower_popover()
         start = len(harness._APPLICATION["messages"])

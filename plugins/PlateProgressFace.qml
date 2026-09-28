@@ -2834,7 +2834,16 @@ Item {
             if (mapping._plot == null) {
                 return;
             }
-            var factor = wheel.angleDelta.y > 0 ? 1.25 : 0.8;
+            // A mouse wheel sends discrete angle notches, while a touchpad
+            // sends many small pixel deltas during one gesture. Treating
+            // every touchpad event as a whole notch made macOS zoom race
+            // from bed fit to the limit. Keep the wheel's 25% step and
+            // scale touchpad movement continuously by its pixel distance.
+            var pixels = wheel.pixelDelta.y;
+            var angle = wheel.angleDelta.y;
+            if (pixels === 0 && angle === 0)
+                return;
+            var factor = pixels !== 0 ? Math.pow(1.25, pixels / 180.0) : (angle > 0 ? 1.25 : 0.8);
             var target = Math.min(20.0, Math.max(1.0, root.viewScale * factor));
             if (target === root.viewScale && root.displayScale === root.viewScale) {
                 return;

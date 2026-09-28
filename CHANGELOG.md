@@ -12,6 +12,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 - Follow continuous-Z vase layers from the nozzle's physical height, including
   the transition from a flat toolpath into a spiral. Keep ordinary flat layers
   on their existing path matching and soften the live layer handoff.
+- Scale touchpad zoom by scroll distance while retaining the mouse wheel's
+  discrete zoom steps.
 
 ## 4.6.0
 
