@@ -252,6 +252,20 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertTrue(slider.property("enabled"))
         self.assertEqual(slider.property("value"), 0.0)
 
+    def test_index_ready_detach_remains_clickable_before_count_publish(self):
+        monitor, window, face = self._follower_popover()
+        self._printer.setAnchor(-1)
+        self._printer.setIndexState(True, 0)
+        self.pump(20)
+        attach = self.find(monitor, "moonrakerFollowerAttach")
+        self.assertTrue(attach.property("enabled"))
+        self._click(window, attach)
+        self.assertFalse(self._printer.followerAttached)
+        self.assertEqual(self._printer.followerLayerAnchor, 0)
+        self._printer.setIndexState(False, 0)
+        self.pump(20)
+        self.assertFalse(self.find(monitor, "moonrakerFollowerLayerSlider").property("enabled"))
+
     def test_the_layer_ghost_stays_available_on_every_layer_detached(self):
         monitor, window, face = self._follower_popover()
         self._printer.setAnchor(9)

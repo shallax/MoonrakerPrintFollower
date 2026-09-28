@@ -1259,6 +1259,7 @@ if QT_AVAILABLE:
             self._navigation_split = 0
             self._navigation_backing = 4.0
             self._layer_count = 40
+            self._index_ready = True
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1369,9 +1370,18 @@ if QT_AVAILABLE:
             self._anchor = int(anchor)
             self.plateProgressChanged.emit()
 
-        @pyqtProperty(int, constant=True)
+        @pyqtProperty(int, notify=plateProgressChanged)
         def plateLayerCount(self):
             return self._layer_count
+
+        @pyqtProperty(bool, notify=plateProgressChanged)
+        def printIndexReady(self):
+            return self._index_ready
+
+        def setIndexState(self, ready, count):
+            self._index_ready = bool(ready)
+            self._layer_count = int(count)
+            self.plateProgressChanged.emit()
 
         @pyqtProperty(int, constant=True)
         def plateLayerMotionCount(self):
@@ -1471,7 +1481,7 @@ if QT_AVAILABLE:
             else:
                 frozen = self._layer_anchor if self._layer_anchor >= 0 else self._anchor
                 if frozen < 0:
-                    if self._layer_count <= 0:
+                    if self._layer_count <= 0 and not self._index_ready:
                         return
                     frozen = 0
                 self._attached = False

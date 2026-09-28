@@ -997,6 +997,22 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(requests, [0, 3],
                          "the indexed print refused a manual layer seek")
 
+    def test_detach_can_latch_during_the_ready_to_count_publish_gap(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        coordinator._snapshot = harness.replace(
+            coordinator._snapshot, index_ready=True, plate_progress=None,
+            plate_manual_progress=None, plate_layer_count=0)
+        model._publish()
+        self.assertTrue(model.printIndexReady)
+        self.assertEqual(model.plateLayerCount, 0)
+        requests = []
+        model._request_plate_anchor = requests.append
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(requests, [0])
+
     def test_a_collapsed_mini_section_freezes_the_live_payload(self):
         model = self.monitor()
         self._with_layers(model, anchor=7, count=12)
@@ -2624,7 +2640,7 @@ Item {
             # GPU render passes overlap inside the fixed canvas; visibility
             # changes cannot reflow controls or any surrounding layout.
             "visible: gpuFollower.visible",
-            'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious : root.showNext))',
+            'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))',
             "visible: root.available()",
             # The objects list's current-row bar: a highlight behind
             # the text, never a layout shift.

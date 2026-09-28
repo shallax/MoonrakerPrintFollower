@@ -26,6 +26,25 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.6.1",
+        "headline": "Version 4.6.1 makes Print Follower more reliable across "
+            "ordinary and vase prints, and adds native macOS builds.",
+        "items": (
+            "You can detach and scrub the Print Follower while the print "
+            "is waiting to reach its first indexed layer.",
+            "Vase prints now follow the nozzle's rising path through layer "
+            "changes, including the transition from flat layers into "
+            "the spiral. Ordinary flat layers keep their path tracking.",
+            "The previous layer fades as the new layer appears, and the "
+            "toolhead moves toward its first observed position instead "
+            "of jumping there.",
+            "Developers can build and test natively on macOS or Windows "
+            "with the same Make commands. Docker is still available by "
+            "choice on either platform.",
+        ),
+    },
+
+    {
         "version": "4.6.0",
         "headline": "Version 4.6.0 brings your build plate to Monitor, with a "
             "GPU Print Follower, smooth live motion and Cura Preview colours.",

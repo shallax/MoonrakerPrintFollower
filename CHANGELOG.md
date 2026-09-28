@@ -2,6 +2,17 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.6.1 (in development)
+
+- Add native macOS development and CI builds. The same Make targets now run
+  native builds and tests on macOS and Windows; Linux keeps its Docker default.
+  Docker remains an opt-in backend on both desktop platforms.
+- Make Print Follower's Detach and layer scrubbing available while an indexed
+  print is still waiting to reach its first layer.
+- Follow continuous-Z vase layers from the nozzle's physical height, including
+  the transition from a flat toolpath into a spiral. Keep ordinary flat layers
+  on their existing path matching and soften the live layer handoff.
+
 ## 4.6.0
 
 Version 4.6.0 adds an interactive build plate and Print Follower to

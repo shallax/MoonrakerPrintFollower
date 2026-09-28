@@ -280,7 +280,7 @@ class PrintCoordinator(QObject):
             # treats a parser-side value as physical.
             live_position = live_position_in_gcode_space(
                 status.get("motion_report") or {}, status.get("gcode_move") or {})
-            physical = self._layers.resolve(status, config, view, metadata, self._cura.heights,
+            physical = self._layers.resolve(status, config, plate_view, metadata, self._cura.heights,
                                             live_position)
             self._next_pause.track(physical.index)
             try:

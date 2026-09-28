@@ -3489,7 +3489,7 @@ Component {
                             text: root.printer != null && root.printer.followerAttached ? "Detach" : "Attach"
                             // Before the print reaches an indexed layer,
                             // detach starts manual viewing at the first layer.
-                            enabled: root.printer != null && root.printer.plateLayerCount > 0
+                            enabled: root.printer != null && (root.printer.printIndexReady || root.printer.plateLayerCount > 0)
                             onClicked: {
                                 if (root.printer != null) {
                                     root.printer.setFollowerAttached(!root.printer.followerAttached);

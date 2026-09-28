@@ -118,6 +118,20 @@ class LayerClaimHeldAtTheNozzleTests(unittest.TestCase):
                                      heights=HEIGHTS, nozzle=nozzle(0.4 + offset)).index,
                     1)
 
+    def test_spiral_layer_keeps_its_tail_until_the_next_height(self):
+        status = transition_status(claimed=3, live_z=0.52, commanded_z=0.6)
+        index = SimpleNamespace(ranges=((0, 100), (100, 200), (200, 300)),
+                                current_layer_map={},
+                                continuous_z_boundary=lambda layer: 0.6 if layer == 2 else None)
+        self.assertEqual(self.resolve(status, index=index, nozzle=nozzle(0.52)).index, 1)
+        self.assertEqual(self.resolve(status, index=index, nozzle=nozzle(0.59)).index, 1)
+        self.assertEqual(self.resolve(status, index=index, nozzle=nozzle(0.6)).index, 2)
+        # A flat layer retains its existing half-step tolerance.
+        flat = SimpleNamespace(ranges=index.ranges, current_layer_map={},
+                               continuous_z_boundary=lambda _layer: None)
+        self.assertEqual(LayerResolver().resolve(status, self.config, index=flat,
+            metadata=METADATA, heights=HEIGHTS, nozzle=nozzle(0.52)).index, 2)
+
     def test_a_pause_lift_above_the_model_is_not_a_layer(self):
         # A nozzle parked above the print is not evidence about a layer:
         # the heights cannot answer, so the claim stands.

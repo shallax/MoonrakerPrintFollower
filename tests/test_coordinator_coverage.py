@@ -424,6 +424,27 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertEqual(snapshot.plate_layer_count, len(parts.index.view.ranges),
                          "monitor-only plate rendered with a zero layer-slider range")
 
+    def test_monitor_only_spiral_uses_the_print_index_to_hold_the_tail(self):
+        parts = self._printing(self._make())
+        parts.cura.heights = []  # no Preview toolpath for this printer file
+        view = harness._view(job_key=(), ranges=((0, 1000), (1000, 2000), (2000, 3000)))
+        view.continuous_z_boundary = lambda layer: 0.6 if layer == 2 else None
+        parts.index.view = view
+        status = harness._status(
+            "printing",
+            virtual_sdcard={"file_position": 2200, "file_size": 100000, "progress": 0.5},
+            gcode_move={"gcode_position": [9.0, 0.0, 0.6, 12.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [9.0, 0.0, 0.52, 0.0]})
+        status["print_stats"]["info"] = {"current_layer": 3, "total_layer": 3}
+        parts.client.statusReceived.emit(status)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 1)
+        self.assertEqual(parts.index.plate_anchors[-1], 1)
+        status["motion_report"]["live_position"][2] = 0.6
+        parts.client.statusReceived.emit(status)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 2)
+        self.assertEqual(parts.index.plate_anchors[-1], 2)
+
     def test_an_unresolved_physical_layer_builds_no_plate_payload(self):
         # The print's own layer never resolved while the index exists:
         # there is no anchor, so the plate APIs are never asked — and

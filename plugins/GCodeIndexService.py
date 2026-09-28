@@ -5,7 +5,9 @@ from UM.Logger import Logger
 
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from bisect import bisect_left
+from itertools import pairwise
 import math
 import sys
 import threading
@@ -42,6 +44,7 @@ class IndexView:
     """Read-only query capability, never mutable arrays or worker state."""
     job_key: tuple
     _index: LayerMotionIndex
+    _spiral_cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def ranges(self): return tuple(self._index.ranges)
@@ -60,6 +63,74 @@ class IndexView:
     def fraction(self, layer, position, live, minimum=None):
         """Stateless index query; live renderers consume snapshot motion progress."""
         return self._index.refined_fraction(layer, position, live, minimum_fraction=minimum)
+
+    def _z_pattern(self, layer):
+        """Return (whole-layer spiral, distributed late rise).
+
+        A transition layer may print a flat region before winding upward.
+        Its own progress still needs XY matching, but its *next* boundary
+        must wait for the nozzle to reach the rising path's final height.
+        """
+        with self._index.cache_lock:
+            if not 0 <= layer < len(self._index.motion_z) \
+                    or layer >= len(self._index.layer_start_positions):
+                return False, False
+            heights = self._index.motion_z[layer]
+            if len(heights) < 8:
+                return False, False
+            start = self._index.layer_start_positions[layer][2]
+            finish = heights[-1]
+            signature = (id(heights), len(heights), start, finish)
+            cached = self._spiral_cache.get(layer)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            rise = finish - start
+            quarter = heights[(len(heights) - 1) // 4]
+            halfway_index = (len(heights) - 1) // 2
+            halfway = heights[halfway_index]
+            three_quarters = heights[(len(heights) - 1) * 3 // 4]
+            late_rise = (rise >= 0.02
+                         and three_quarters < finish - rise * 0.05
+                         and three_quarters - halfway >= rise * 0.1
+                         and sum(right > left + 1e-5 for left, right
+                                 in pairwise(heights[halfway_index:])) >= 4
+                         and all(left <= right + 1e-5 for left, right in pairwise(heights)))
+            spiral = (late_rise
+                      and start + max(0.01, rise * 0.1) < three_quarters
+                      and halfway - quarter >= rise * 0.1)
+            pattern = spiral, late_rise
+            self._spiral_cache[layer] = signature, pattern
+            return pattern
+
+    def continuous_z_at(self, layer):
+        """Whether Z climbs through the layer, allowing Z ordered progress."""
+        return self._z_pattern(layer)[0]
+
+    def continuous_z_boundary(self, layer):
+        """The physical start of a layer following a continuous Z rise."""
+        if layer <= 0 or layer >= len(self._index.layer_start_positions) \
+                or not self._z_pattern(layer - 1)[1]:
+            return None
+        return self._index.layer_start_positions[layer][2]
+
+    def spiral_z_split(self, layer, z):
+        """Fallback motion count when XY matching misses a rising spiral."""
+        try:
+            z = float(z)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(z):
+            return None
+        with self._index.cache_lock:
+            if not self.continuous_z_at(layer):
+                return None
+            heights = self._index.motion_z[layer]
+            start = self._index.layer_start_positions[layer][2]
+            if z < start - 0.001 or z > heights[-1] + 0.001:
+                return None
+            # Equal-Z edges may still be in flight; only strictly lower
+            # endpoints are certainly complete.
+            return bisect_left(heights, z)
 
     def layer_at(self, position):
         low, high = 0, len(self._index.ranges) - 1
@@ -886,14 +957,22 @@ class GCodeIndexService(QObject):
             refined = None
             raw = None
             if live_position is not None:
-                # The index uses the previous boundary as a search anchor,
-                # but deliberately returns the UNCLAMPED geometric match.
-                # The tracker must see behind-floor evidence to recover an
-                # erroneously advanced boundary on repeated toolpaths.
-                raw, _method = index.refined_split(
-                    anchor, file_position, live_position,
-                    minimum_split=None, floor_split=floor,
-                    stall=tracker.stall_polls)
+                # On a monotonic spiral, Z itself orders the motions.
+                # XY repeats around the vase and can match an earlier
+                # seam, holding the first few percent at zero and
+                # truncating the last few percent. Flat layers still
+                # use the geometry search and its overshoot evidence.
+                raw = self._view.spiral_z_split(anchor, live_position[2]) \
+                    if extruding is True else None
+                if raw is None:
+                    # The index uses the previous boundary as a search
+                    # anchor and returns an UNCLAMPED geometric match.
+                    # The tracker needs behind-floor evidence to recover
+                    # an erroneously advanced repeated path.
+                    raw, _method = index.refined_split(
+                        anchor, file_position, live_position,
+                        minimum_split=None, floor_split=floor,
+                        stall=tracker.stall_polls)
                 refined = raw if floor is None or raw is None \
                     else max(raw, floor)
                 if refined is None:
@@ -908,11 +987,21 @@ class GCodeIndexService(QObject):
                             stall=tracker.stall_polls) if memo is not None else None
                         raw = refined
                         tracker.observe_payload_advance(refined)
+            spiral = self._view.continuous_z_at(anchor)
+            entry_confirmed = extruding is not False and index.layer_entry_confirmed(
+                anchor, raw, live_position, previous_z=tracker.entry_previous_z,
+                continuous_z=spiral) \
+                if tracker.awaiting_layer_entry else True
+            # The ordinary first poll is deliberately held: the parser
+            # can claim a flat layer before the nozzle gets there. For a
+            # continuously rising layer, a geometric match at its actual
+            # Z is already physical entry evidence. Discarding it leaves
+            # a visible gap at the start of every short spiral turn.
+            spiral_entry = advanced and raw is not None and entry_confirmed \
+                and spiral
             result = tracker.accept(
                 coarse, refined, raw, live_position is not None,
-                advanced=advanced, entry_confirmed=extruding is not False and index.layer_entry_confirmed(
-                    anchor, raw, live_position, previous_z=tracker.entry_previous_z)
-                if tracker.awaiting_layer_entry else True)
+                advanced=advanced and not spiral_entry, entry_confirmed=entry_confirmed)
             if raw is not None and live_position is not None and not tracker.awaiting_layer_entry:
                 tracker.last_confirmed_z = float(live_position[2])
             return result

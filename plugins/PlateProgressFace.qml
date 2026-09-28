@@ -40,6 +40,29 @@ Item {
     property int _motionAnchor: -1
     property real _motionAt: 0.0
     property bool _motionCorrected: false
+    // The previous layer is already in the new GPU bundle. Let its complete
+    // stroke fade over the measured start of the next one instead of
+    // replacing the held native frame in a single render frame.
+    property real _handoffOpacity: 0.0
+    property int _handoffAnchor: -1
+    property bool _handoffPending: false
+    NumberAnimation {
+        id: handoffAnimator
+        target: root
+        property: "_handoffOpacity"
+        to: 0.0
+        duration: 300
+        easing.type: Easing.Linear
+    }
+    function _startHandoff() {
+        var current = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        var prepared = gpuFollower.layers != null ? gpuFollower.layers.current : null;
+        if (!root._handoffPending || !gpuFollower.ready || current == null || prepared == null || root.progress.anchor !== root._handoffAnchor || current.sceneIdentity !== prepared.sceneIdentity)
+            return;
+        root._handoffPending = false;
+        root._handoffOpacity = 1.0;
+        handoffAnimator.start();
+    }
     property real displayDotX: 0.0
     property real displayDotY: 0.0
     readonly property real displayedMotion: _motionFrom + (_motionTo - _motionFrom) * _motionBlend
@@ -64,8 +87,12 @@ Item {
         if (!force && layer === root._motionLayer && anchor === root._motionAnchor && target === root._motionTo)
             return;
         var now = Date.now();
-        var canSmooth = !force && root.gpuRendering && root.motionSmoothing && root.attached && root.visible && layer != null && layer === root._motionLayer && anchor === root._motionAnchor && target > root._motionTo && !(root.printerModel != null && root.printerModel.canResumePrint === true);
-        var previous = root.displayedMotion;
+        var active = !force && root.gpuRendering && root.motionSmoothing && root.attached && root.visible && layer != null && !(root.printerModel != null && root.printerModel.canResumePrint === true);
+        var entrySmooth = active && root._handoffPending && target > 0;
+        var canSmooth = (active && layer === root._motionLayer && anchor === root._motionAnchor && target > root._motionTo) || entrySmooth;
+        // At a live handoff, motion zero is the new layer's known start.
+        // Animate toward the first observed split; never extrapolate past it.
+        var previous = entrySmooth ? 0 : root.displayedMotion;
         root._motionCorrected = layer !== root._motionLayer || anchor !== root._motionAnchor || target < root._motionTo;
         motionAnimator.stop();
         root._motionFrom = canSmooth ? previous : target;
@@ -74,7 +101,7 @@ Item {
         root._motionAnchor = anchor;
         root._motionBlend = canSmooth ? 0.0 : 1.0;
         if (canSmooth) {
-            motionAnimator.duration = Math.min(1000, Math.max(50, now - root._motionAt));
+            motionAnimator.duration = entrySmooth ? 300 : Math.min(1000, Math.max(50, now - root._motionAt));
             motionAnimator.start();
         }
         root._motionAt = now;
@@ -1523,8 +1550,17 @@ Item {
     }
 
     onProgressChanged: {
+        var incomingAnchor = root.progress != null ? root.progress.anchor : -1;
+        if (incomingAnchor !== root._motionAnchor) {
+            handoffAnimator.stop();
+            root._handoffOpacity = 0.0;
+            root._handoffPending = root.gpuRendering && root.attached && root.visible && root._motionAnchor >= 0 && incomingAnchor >= 0 && root.progress != null && root.progress.layers != null && root.progress.layers.current != null && root.progress.layers.prev != null;
+            root._handoffAnchor = incomingAnchor;
+        }
         _updateMotion(false);
         _adoptProgressWorld();
+        if (root._handoffPending)
+            Qt.callLater(root._startHandoff);
         if (root.progress == null || root.progress.layers == null) {
             _requestProgressPaint();
             root._lastSplit = -1;
@@ -1673,6 +1709,11 @@ Item {
     }
     // Detaching hides the dot (the one-shot jump reads it on demand).
     onAttachedChanged: {
+        if (!root.attached) {
+            handoffAnimator.stop();
+            root._handoffOpacity = 0.0;
+            root._handoffPending = false;
+        }
         _updateMotion(true);
         _updateDot(true);
         _followToolhead();
@@ -1776,8 +1817,8 @@ Item {
             anchors.fill: parent
             z: 0.3 + index * 0.01
             dataSource: gpuFollower
-            visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious : root.showNext))
-            opacity: modelData === "ghost" ? 0.55 : 0.3
+            visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))
+            opacity: modelData === "ghost" ? 0.55 : (modelData === "prev" ? Math.max(root.showPrevious ? 0.3 : 0, root._handoffOpacity) : 0.3)
             layer.enabled: visible
             layer.smooth: false
             settings: root.translucentSettings(modelData)
@@ -1786,7 +1827,10 @@ Item {
 
     GpuFollowerItem {
         id: gpuFollower
-        onReadyChanged: root._updateDot(false)
+        onReadyChanged: {
+            root._updateDot(false);
+            root._startHandoff();
+        }
         anchors.fill: parent
         z: 0.5
         smoothToolpaths: root.smoothToolpaths

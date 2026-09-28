@@ -4839,10 +4839,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 desired = surface.desired if surface is not None else None
                 if desired is not None:
                     frozen = _coerce_anchor(desired.get("current"))
-            if frozen < 0 and self._values.get("plateLayerCount", 0) > 0:
+            if frozen < 0 and (self._values.get("plateLayerCount", 0) > 0
+                               or self._print_state().index_ready):
                 # The index can be ready before the physical print has
-                # reached one of its layers. Start manual viewing at layer
-                # zero so the user can inspect and scrub it immediately.
+                # reached one of its layers. The count can also lag the
+                # ready signal by a publish. Hold the detach at layer zero
+                # and serve its geometry as soon as that count arrives.
                 frozen = 0
             if frozen >= 0:
                 self._follower_layer_anchor = frozen

@@ -6,9 +6,20 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release branch: **4.6.0**, release-candidate validation. The shipped
-feature description is maintained in `CHANGELOG.md`, `README.md` and the
-What's New entries; `ARCHITECTURE.md` describes the implementation.
+Current release branch: **release/v4.6.1**, in development. The release notes
+are maintained in `CHANGELOG.md`, `README.md` and the What's New entries;
+`ARCHITECTURE.md` describes the implementation.
+
+## 4.6.1 — native development and follower corrections
+
+- Build and test natively on macOS and Windows with the same Make targets.
+  Keep the pinned Docker backend available by choice on both; Linux uses it
+  by default to avoid distribution-specific toolchain instructions.
+- Let the follower detach and scrub before the first indexed print layer.
+- Track continuously rising vase paths by physical Z, including the last
+  part of the flat-to-spiral transition, without changing flat-layer matching.
+  Keep the previous layer visible briefly while the new layer's observed
+  motion begins.
 
 ## 4.6.0 — implemented direction and historical proposals
 
