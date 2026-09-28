@@ -376,7 +376,8 @@ def selected_tests(root: Path, files):
     return chosen
 
 
-def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool, cov_dir=None):
+def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool,
+               cov_dir=None, include_harness=True):
     jobs = []
     for name in names:
         job_env = dict(env)
@@ -386,12 +387,14 @@ def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool, cov_di
             argv += ["coverage", "run", "-m"]
         argv += ["unittest", "discover", "-v", "-s", "tests", "-p", name]
         jobs.append((name[:-3], argv, job_env))
-    jobs += [(Path(module).stem, [python, module.replace("/", os.sep)], dict(env))
-             for module in HARNESS_MODULES]
+    if include_harness:
+        jobs += [(Path(module).stem, [python, module.replace("/", os.sep)], dict(env))
+                 for module in HARNESS_MODULES]
     return jobs
 
 
-def run_suite(title: str, names, jobs_count: int, coverage: bool = False) -> int:
+def run_suite(title: str, names, jobs_count: int, coverage: bool = False,
+              include_harness=True) -> int:
     root = checkout_root()
     env = tool_env()
     python = sys.executable
@@ -408,9 +411,10 @@ def run_suite(title: str, names, jobs_count: int, coverage: bool = False) -> int
         shutil.rmtree(cov_dir, ignore_errors=True)
         cov_dir.mkdir(parents=True, exist_ok=True)
 
-    jobs = suite_jobs(python, root, names, env, coverage, cov_dir)
+    jobs = suite_jobs(python, root, names, env, coverage, cov_dir, include_harness)
     print("discovered %d test file(s) under tests/ (+ %d harness module(s)), "
-          "jobs=%d" % (len(names), len(HARNESS_MODULES), jobs_count), flush=True)
+          "jobs=%d" % (len(names), len(HARNESS_MODULES) if include_harness else 0,
+                       jobs_count), flush=True)
     started = time.monotonic()
     results = run_jobs(root, jobs, log_dir, jobs_count)
 
@@ -859,13 +863,14 @@ def cmd_format(args) -> int:
 
 def cmd_test(args) -> int:
     names = selected_tests(checkout_root(), args.files)
-    return run_suite("test", names, args.jobs)
+    return run_suite("test", names, args.jobs, include_harness=not args.files)
 
 
 def cmd_coverage(args) -> int:
     root = checkout_root()
     names = selected_tests(root, args.files)
-    status = run_suite("coverage suite", names, args.jobs, coverage=True)
+    status = run_suite("coverage suite", names, args.jobs, coverage=True,
+                       include_harness=not args.files)
     if status:
         return status
     env = tool_env()
