@@ -12,9 +12,11 @@ def main():
     args = parser.parse_args()
     executable = args.qsb or shutil.which('qsb') or shutil.which('pyside6-qsb')
     if executable is None:
-        sibling = Path(sys.executable).parent / 'pyside6-qsb.exe'
-        if sibling.is_file():
-            executable = str(sibling)
+        for name in ('pyside6-qsb', 'pyside6-qsb.exe'):
+            sibling = Path(sys.executable).parent / name
+            if sibling.is_file():
+                executable = str(sibling)
+                break
     if not executable:
         parser.error('Install Qt Shader Tools or supply --qsb; release packages already contain the bundles')
     directory = Path(__file__).resolve().parents[1] / 'plugins' / 'shaders'

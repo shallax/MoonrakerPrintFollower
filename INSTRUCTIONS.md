@@ -5,8 +5,33 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 ## Development environment
 
-- Python 3.10+ with the standard library alone runs everything except the
-  real-Qt tests, which skip automatically when PyQt6 is absent.
+The Makefile is the entry point on every host. Linux defaults to the
+pinned Docker image; macOS and Windows default to native host tools.
+On macOS and Windows, run `make dev_install` once. Linux builds its
+Docker toolchain on demand; its existing `make dev_install` links the
+checkout into a local Cura installation. Then use `make build`, `make lint`,
+`make run_tests`, `make test_files FILES="tests.test_index"`,
+`make generate_screenshots`, `make verify_captures`, and `make package`
+with the same names on each system. Set `BACKEND=docker` on macOS or
+Windows to run those targets in the Linux dev image instead. For example,
+`make BACKEND=docker dev_install` builds the image and
+`make BACKEND=docker build` uses it. Docker Desktop is only needed for
+that opt-in. On Apple Silicon and Windows ARM, the Docker backend uses
+a native arm64 Linux image for checks and packages; screenshot refresh
+uses the amd64 image that defines the committed pixel baseline.
+`make help` lists the complete target set.
+
+Native development uses `tools/native/dev.py` on macOS and Windows.
+The Docker option uses `tools/native/docker.py`, which invokes the pinned
+image without requiring a host shell. Linux continues to use its
+existing `tools/*.sh` procedures. The native driver keeps the PyQt6,
+PySide6, ruff, DejaVu, shellcheck, gitleaks and actionlint pins aligned
+with the image. `make dev_install` prints actual versions so differences
+are visible; a Python 3.14 patch release difference is acceptable.
+
+- Python 3.10+ with the standard library can run individual non-Qt tests
+  directly. The Makefile's full suite requires PyQt6 and fails clearly
+  when it is missing, so a skipped Qt half cannot appear to pass.
 - For the Qt tests, create a venv with PyQt6 (CI pins 6.11.0). Some systems
   lack `libxkbcommon`; if `import PyQt6.QtGui` fails with that library
   missing, obtain it from the distro's binary packages and add its
@@ -20,7 +45,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   structure, and the token tests in `tests/test_monitor_qml_contracts.py` must be
   written so the formatter cannot break them (pin semantics, not
   whitespace).
-- The pinned, disposable dev container (`Dockerfile`) carries the whole
+- The Linux-default pinned, disposable dev container (`Dockerfile`) carries the whole
   toolchain — Ubuntu 26.04, git, Qt 6.10.2's qmlformat, Python 3.14,
   PyQt6 6.11.0, ruff 0.16.6 — and nothing else; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
@@ -31,20 +56,19 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   never run `docker run` by hand for this repo).
 - Every procedure has a `make` target (see `make help`):
   `make build` (the full verification build — every gate plus fresh
-  committed screenshots, i.e. what CI checks), `make lint` (structure,
-  qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
-  (stdlib suite on the host, the real-Qt suite in the container),
+  captures; the Docker backend also refreshes committed screenshots),
+  `make lint` (structure, qmlformat, ruff and tool checks), `make run_tests`
+  (the full suite on the selected backend),
   `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
-  (qmlformat in the container), `make coverage` (plugins/ report,
-  the gcov gate), `make snapshot_package` (build + verify + copy to
-  /tmp/mpf.curapackage, ready to SCP), `make snapshot_quick`
+  (qmlformat on the selected backend), `make coverage` (plugins/ report,
+  the coverage gate), `make snapshot_package` (build + verify + copy to
+  `mpf.curapackage` in the host's temporary directory), `make snapshot_quick`
   (the fast iteration path: lint + tests + package, no captures),
-  `make install_hooks`, `make docker_exec ARGS="…"`, `make clean`.
-  The targets are thin
-  wrappers over the `tools/*.sh` scripts, which remain the single
-  source of truth.
+  `make install_hooks`, `make clean`. `make docker_exec ARGS="…"`
+  is available with the Docker backend. The targets call the native
+  driver or the Linux scripts according to the selected backend.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
   `python3 -m unittest tests.a tests.b tests.c` runs those files
@@ -62,11 +86,12 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
-  target — a thin wrapper, with the real logic in `tools/*.sh`. Add a
+  target — a thin wrapper, with the real logic in `tools/native/dev.py`
+  or `tools/*.sh` according to the backend. Add a
   target only when it would genuinely benefit other users or
   maintainers of the project; one-off and session-specific commands
   should just be run as-is.
-- Install the pre-commit hook with `tools/install_hooks.sh`; it runs the
+- Install the pre-commit hook with `make install_hooks`; it runs the
   compile, structure, ruff, qmlformat and unit-test gates locally.
 - Builds: `tools/build_curapackage.py` (Cura package) and
   `tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
@@ -95,8 +120,8 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   MonitorFormatting.py because the Qt runtime registers plugin modules
   under synthetic names), the model's time module is patched
   module-scoped during seeding, and the console pane renders no caret.
-  `make verify_captures` runs the full capture suite TWICE in the
-  pinned container and fails on any byte difference — a deterministic
+  `make verify_captures` runs the full capture suite TWICE on the
+  selected backend and fails on any byte difference — a deterministic
   catch for leaks the committed-compare only catches by chance. Run it
   after changing anything the captures render.
 - The capture scripts: `tools/capture_monitor.py` plus the sibling
@@ -145,12 +170,10 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 ## Windows development
 
-Windows has no POSIX shell on PATH and no pinned dev container, so
-every procedure has a native implementation under `tools/windows`,
-driven by the OS switch at the top of the `Makefile`. The target names,
-the arguments and the meaning are the same on both legs; only the
-implementation differs, and the tool versions are pinned to the
-container's so a verdict here means what it means there.
+Windows defaults to the shared native driver under `tools/native`,
+selected by the OS switch at the top of the `Makefile`. The target names,
+arguments and meaning of the build and verification commands match the
+other platforms. The version table makes toolchain deviations explicit.
 
 Getting started (once per machine):
 
@@ -187,22 +210,15 @@ What differs on this leg, and why:
   it does not copy into `screenshots/`, because the CI sync job
   compares against renders made with the container's pinned fonts.
   `make verify_captures` (two runs, byte-compared) does work natively.
-- **`make ui_test` / `make ui_release_gate` have no container leg.**
-  The real-Cura work on Windows is the harness the repo already
-  carries: `tools/native_harness.ps1` stages Cura, the plugin and the
-  driver, then `tests/harness/runner.py` drives them (see TESTING.md).
-  It launches a desktop app, so it is deliberately not a recipe a
-  stray `make all` can reach; run it directly:
+- **`make ui_test MODE=suite` and `make ui_release_gate` use the native
+  desktop harness.** They stage Cura, the plugin and the driver, then
+  invoke `tests/harness/runner.py` using the harness environment (see
+  TESTING.md). These targets need an interactive desktop and are not
+  reached by `make all`.
 
-      powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
-          -CuraVersion 5.13.0 -Scenario suite
-      # then, with the env file it prints:
-      . "$env:TEMP\mpf-native\harness_env.ps1"
-      .venv\Scripts\python.exe tests\harness\runner.py suite
-
-- **`make dev_up`, `dev_down` and `docker_exec` do not exist here** —
-  they exist to manage the container that this leg replaces. They say
-  so and exit non-zero rather than pretending.
+- **`make dev_up`, `dev_down` and `docker_exec` require
+  `BACKEND=docker`.** With the native default, they explain that a
+  container is not running and exit non-zero.
 - **`actionlint` runs with `-shellcheck=`,** because the Windows
   shellcheck binary deadlocks the pipe actionlint feeds it (reproduced
   on this leg: the lint hangs with the pinned shellcheck on PATH and
@@ -222,10 +238,41 @@ normalised once:
     git add --renormalize .
     git checkout -- .        # re-materialises the working tree as LF
 
-The implementation is `tools/windows/dev.py` — run it directly
+The implementation is shared with macOS in `tools/native/dev.py`;
+`tools/windows/dev.py` remains a compatibility entry point. Run it directly
 (`.venv\Scripts\python.exe tools\windows\dev.py <command>`) when a
 step needs its own options; `make help` lists the procedures and the
 module docstring lists the commands.
+
+## macOS development
+
+The default `make` backend runs natively on macOS and never invokes Docker.
+The Xcode Command Line Tools provide `/usr/bin/make` (`xcode-select
+--install` if needed). Install Homebrew if Python 3.14 or hadolint is
+missing; then run `make dev_install`. It creates `.venv`,
+uses Python 3.14 and installs pinned Qt wheels, downloads native Apple Silicon
+or Intel shellcheck, gitleaks and actionlint binaries, installs DejaVu
+fonts, and obtains a native hadolint from Homebrew. Existing Python
+3.14 patch releases are accepted. The parity table reports the exact
+versions, including Homebrew's hadolint version if it differs from the
+Linux image's 2.12.0 pin.
+
+Run `make build`, `make lint`, `make run_tests`, `make test_files FILES="…"`,
+`make verify_captures`, `make package`, and the other standard targets.
+PyQt runs with the offscreen platform for tests and captures. Packaged
+shaders are compiled by the PySide6 wheel's native `pyside6-qsb`; Cura
+users do not need that compiler. `make generate_screenshots` writes
+`dist/screenshots`. Committed `screenshots/` remain canonical to the
+pinned Linux image because host rasterisation and fonts can differ;
+`make BACKEND=docker generate_screenshots` refreshes those copies when
+needed. This is the same distinction as the Windows native leg.
+
+`make install_hooks` installs the native checks. `make dev_up`,
+`make dev_down`, and `make docker_exec` are available when
+`BACKEND=docker` is selected. `make ui_test MODE=suite` and
+`make ui_release_gate` use the native real-Cura harness through the
+same targets as the other hosts (see TESTING.md). They need an
+interactive desktop session and are separate from `make all`.
 
 ## Repo hygiene — the standing rule on addresses
 
