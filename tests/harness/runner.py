@@ -570,6 +570,16 @@ def _interaction_seconds(run_dir):
         return None
     steps = data.get("steps") or []
     if not any(step.get("at_s") is not None for step in steps):
+        # First-install and migration are boot/configuration probes. Their
+        # tuple steps use RPC and disk reads, never screen input, so an
+        # unchanged Prepare window is expected. Their evidence has no
+        # timed steps; distinguish that known no-input shape from old or
+        # broken evidence whose interaction timestamps are missing.
+        if (data.get("mode") in {"firstinstall", "firstinstall1", "firstinstall2",
+                                  "migration", "migration1", "migration2"}
+                and not steps
+                and data.get("classification", {}).get("steps", {}).get("ui-interaction") == 0):
+            return []
         return None
     return [step["at_s"] for step in steps
             if step.get("class") == "ui-interaction" and step.get("at_s") is not None]

@@ -8,21 +8,26 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.6.1 (in development)
+- **Release:** 4.6.1
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
 
 ## What changed in 4.6.1
 
-Version 4.6.1 brings native macOS development and CI builds into the same
-Make workflow used on Windows and Linux. macOS and Windows build natively by
-default and can select Docker when needed; Linux continues to default to its
-pinned Docker toolchain.
+Version 4.6.1 brings smooth following to vase prints. Print Follower tracks
+the nozzle's continuous Z rise through the flat-to-spiral transition, fades
+the previous layer during the handoff, and moves the head toward its first
+observed position on the new layer. Ordinary flat layers keep their existing
+path tracking. You can also detach and scrub before the print reaches its
+first indexed layer.
 
-Print Follower can now detach and scrub while a print waits to reach its first
-indexed layer. Vase prints follow the nozzle's continuous Z rise, including the
-flat-to-spiral transition. Live layer changes retain a soft fade and move the
-head toward the first observed position on the new layer. Ordinary flat layers
-keep their existing path tracking.
+At 5 FPS and below, webcams with a usable snapshot URL switch from MJPEG to
+snapshot polling, closing the stream to save bandwidth. Camera zoom and FPS
+touchpad scrolling now match follower zoom sensitivity. The auxiliary and
+console interval sliders no longer jump to their maximum when grabbed.
+
+Developers can build and test natively on macOS and Windows through the same
+Make workflow used on Linux. Docker remains available by choice on those two
+platforms; Linux defaults to its pinned Docker toolchain.
 
 ## What changed in 4.6.0
 

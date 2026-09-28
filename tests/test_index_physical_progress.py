@@ -2,6 +2,36 @@
 from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
+    def test_indexed_vase_and_flat_gcode_keep_distinct_layer_rules(self):
+        """Exercise the parser too: the transition and a flat control use
+        the same slicer markers, with only their physical Z paths changed."""
+        def indexed(spiral):
+            rows = ["M82", "G90", "G92 E0", "G0 Z1.4", ";LAYER:6",
+                    ";TYPE:WALL-OUTER"]
+            extrusion = 0
+            for layer in range(3):
+                if layer:
+                    rows.extend((f";LAYER:{layer + 6}", ";TYPE:WALL-OUTER"))
+                for move in range(1, 33 if layer else 66):
+                    extrusion += 1
+                    height = 1.4 + .2 * layer
+                    if spiral and (layer or move > 33):
+                        ramp_move = move if layer else move - 33
+                        height += .2 * ramp_move / 32
+                    rows.append(f"G1 X{move % 8} Y{move // 8} "
+                                f"Z{height:.4f} E{extrusion}")
+            return harness.build_index_from_bytes(("\n".join(rows) + "\n").encode())
+
+        view_type = self.qt.load("GCodeIndexService").IndexView
+        vase = view_type(self.job, indexed(True))
+        flat = view_type(self.job, indexed(False))
+        self.assertAlmostEqual(vase.continuous_z_boundary(1), 1.6)
+        self.assertTrue(vase.continuous_z_at(1))
+        self.assertGreater(vase.spiral_z_split(1, 1.7), 0)
+        self.assertIsNone(flat.continuous_z_boundary(1))
+        self.assertFalse(flat.continuous_z_at(1))
+        self.assertIsNone(flat.spiral_z_split(1, 1.7))
+
     def test_flat_first_layer_with_start_and_end_z_moves_is_not_spiral(self):
         from array import array
         from plugins.GCodeIndex import LayerMotionIndex

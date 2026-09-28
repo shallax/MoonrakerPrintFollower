@@ -104,9 +104,9 @@ compile wait without changing pane layout or initialization ordering.
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
-| `MonitorCamera.py` | Camera selection, transforms, per-printer selection persistence and the bridge URL rewrite | Private configuration store |
-| `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener relaying the configured stream with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
-| `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
+| `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
+| `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
+| `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation and bounded snapshot polling; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
@@ -306,6 +306,13 @@ user writes detach the follower. Preview view reads and writes go through typed
 observation and scheduled PAUSE continue while Preview is detached. ETA uses
 slicer layer timing, speed, path progress and observed duration anchors—not
 G-code byte percentage as time.
+
+The index distinguishes continuously rising vase paths from flat layers.
+`PrintState` uses the continuous-Z boundary for physical layer resolution,
+and `GCodeIndexService` uses nozzle height to split spiral progress within
+that layer. Flat layers continue to use ordinary path matching. The follower
+can detach and scrub after indexing even while the print is waiting to reach
+its first indexed layer.
 
 Path smoothing is display-only: `PreviewMotion` animates the displayed path
 toward the newest physical observation using the pure `PreviewSmoothing`
@@ -688,7 +695,8 @@ Monitor timing/tuning, the QML meta-object surface, upload terminal ordering, an
 the download operation lifecycle — gated-writer retirement, per-attempt accounting,
 stale-writer isolation and the no-GUI-join guarantee.
 
-CI runs real-Qt regressions on Python 3.10–3.12; Cura provides Qt in production, so
+CI runs real-Qt regressions on Python 3.10–3.12 and native macOS/Windows
+builds on Python 3.14. Cura provides Qt in production, so
 no Qt wheel is bundled in the plugin. Stdlib-only local runs explicitly skip the
 Qt suite and must not be presented as equivalent validation.
 
@@ -819,8 +827,9 @@ ambiguous and follows ordinary matching rather than claiming height evidence.
 Real-engine pixel tests cover interval replacement, full/partial transitions,
 failed assets, camera handover and scene changes. Dense native and publication
 benchmarks retain the incremental rendering and 4x warm backing requirements.
-Cross-platform CI and performance inside a real Windows Cura session remain
-separate validation requirements; offscreen rendering does not certify them.
+Cross-platform native CI now builds and tests on macOS and Windows. Performance
+inside a real Windows Cura session remains a separate validation requirement;
+offscreen rendering does not certify it.
 
 Backward seeks can restore the nearest earlier native prefix checkpoint from
 the same immutable wrapper and render key, then extend only its remaining

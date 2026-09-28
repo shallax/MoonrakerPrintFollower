@@ -757,6 +757,22 @@ class StaticLegTests(unittest.TestCase):
         self.assertIsNone(runner._interaction_seconds(SCRATCH))
         self.assertIsNone(runner._interaction_seconds(os.path.join(SCRATCH, "absent")))
 
+    def test_boot_only_first_install_has_no_screen_input_to_judge(self):
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"mode": "firstinstall", "steps": [],
+                       "classification": {"steps": {"ui-interaction": 0}}}, handle)
+        interactions = runner._interaction_seconds(SCRATCH)
+        self.assertEqual(interactions, [])
+        frames = self._sequence([(10, 10), (61, 90), (23, 200)])
+        verdict = runner.static_verdict(frames, interactions=interactions)
+        self.assertTrue(verdict["ok"])
+        self.assertFalse(verdict["driven"])
+        # An unknown leg with the same empty record has no such exemption.
+        with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
+            json.dump({"mode": "suite", "steps": [],
+                       "classification": {"steps": {"ui-interaction": 0}}}, handle)
+        self.assertIsNone(runner._interaction_seconds(SCRATCH))
+
     def test_the_response_margin_is_the_documented_one(self):
         # Two seconds: the decode samples at 1 fps and a step's offset
         # from the recorder's start carries about a second of ffmpeg

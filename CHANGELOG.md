@@ -2,23 +2,27 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 4.6.1 (in development)
+## 4.6.1
 
+- **Vase mode following** — Print Follower tracks the nozzle's continuously
+  rising path through layer changes, including the flat-to-spiral transition.
+  Ordinary flat layers keep their existing path matching. The previous layer
+  fades briefly as the new layer's observed motion begins, with the toolhead
+  moving smoothly into position.
+- Detach and scrub Print Follower before the print reaches its first indexed
+  layer.
 - Poll a webcam's snapshot URL at 5 FPS or below to reduce camera
   bandwidth, closing the MJPEG stream while polling. Mark the snapshot
   range on the FPS control only for webcams that provide a usable URL.
 - Match camera zoom and FPS touchpad sensitivity to Print Follower zoom
   while retaining discrete mouse wheel steps.
+- Keep the auxiliary and console interval handles at their intended values
+  when clicked or dragged; short drags no longer jump to 60,000 ms.
 - Add native macOS development and CI builds. The same Make targets now run
   native builds and tests on macOS and Windows; Linux keeps its Docker default.
   Docker remains an opt-in backend on both desktop platforms.
-- Make Print Follower's Detach and layer scrubbing available while an indexed
-  print is still waiting to reach its first layer.
-- Follow continuous-Z vase layers from the nozzle's physical height, including
-  the transition from a flat toolpath into a spiral. Keep ordinary flat layers
-  on their existing path matching and soften the live layer handoff.
-- Scale touchpad zoom by scroll distance while retaining the mouse wheel's
-  discrete zoom steps.
+- Scale Print Follower touchpad zoom by scroll distance while retaining the
+  mouse wheel's discrete zoom steps.
 
 ## 4.6.0
 

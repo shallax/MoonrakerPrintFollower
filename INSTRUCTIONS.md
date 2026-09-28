@@ -47,7 +47,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   whitespace).
 - The Linux-default pinned, disposable dev container (`Dockerfile`) carries the whole
   toolchain — Ubuntu 26.04, git, Qt 6.10.2's qmlformat, Python 3.14,
-  PyQt6 6.11.0, ruff 0.16.6 — and nothing else; the repository is
+  PyQt6 6.11.0, ruff 0.16.6 and the other pinned build tools; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
   (docker layer caching makes unchanged rebuilds instant), so deleting
   the container costs nothing. `tools/docker_dev.sh <command…>` runs
@@ -77,9 +77,10 @@ are visible; a Python 3.14 patch release difference is acceptable.
   own their `QGuiApplication` and reject a foreign application.
   `tools/run_some.sh` applies the same per-file fan-out
   `tools/run_tests.sh` already uses for the whole discovery, scoped to
-  the files a change actually touches — one process per file, `JOBS`
-  (default 8) at a time, one log and one verdict line per file, and a
-  non-zero exit if ANY file fails. It never reports a pass for an empty
+  the files a change actually touches — one process per file, up to `JOBS`
+  workers at a time (native default: core count capped at 16; Linux
+  container `test_files` default: 8), one log and one verdict line per
+  file, and a non-zero exit if ANY file fails. It never reports a pass for an empty
   list. JUnit report generation also runs isolated files in parallel
   (`JOBS`, default 2), then runs the timing benchmark alone. Empty or
   crashed report children fail the report instead of silently dropping cases.
@@ -234,7 +235,7 @@ What differs on this leg, and why:
 Line endings: `.gitattributes` pins `* text=auto eol=lf`, and the
 build is byte-sensitive (the curapackage is compared file for file,
 and `qmlformat` reads a carriage return as file CONTENT, so a CRLF
-tree fails the format gate on all 52 QML files). A clone made before
+tree fails the format gate on every QML file). A clone made before
 that file landed, or one with `core.autocrlf=true`, should be
 normalised once:
 
@@ -302,8 +303,9 @@ Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
 through the maintainer; a 3D-printer enthusiast/pro-user persona joins
 from 3.6.0 on, feeding next-release feature planning rather than
 gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
-round-3 verification → the snapshot loop (live testing of
-`/tmp/mpf.curapackage`; commits and pushes hold until it is
+round-3 verification → the snapshot loop (live testing of the
+temporary-directory `mpf.curapackage`, normally `/tmp/mpf.curapackage`
+on macOS and Linux; commits and pushes hold until it is
 confirmed good) → ship via PR.
 
 ## Version bump checklist
@@ -322,7 +324,9 @@ change together:
    never edit the older ones
 6. `ROADMAP.md` — name the active `release/v<version>` branch and its scope;
    keep older release plans as history
-7. At release time, Git tag — `v<version>`; the release workflow validates the
+7. `TESTING.md` — keep the current-release testing commands and evidence
+   at the top; label older harness audits as historical
+8. At release time, Git tag — `v<version>`; the release workflow validates the
    tag against both version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
@@ -344,9 +348,9 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 - Shared `*_support.py` modules contain fixtures and doubles, not test methods.
   Construct Qt applications lazily during test setup, never at import time.
   `qml_engine_support.py` owns its application and retains QML context objects;
-  `test_qml_harness_lifecycle.py` verifies import-time ownership, execution without
-  silent skips, and the current census of 209 QML domain cases. Production
-  model DPI tests run separately from dashboard doubles.
+  `test_qml_harness_lifecycle.py` verifies import-time ownership and execution
+  without silent skips. Production model DPI tests run separately from
+  dashboard doubles.
 - Do not inherit test-bearing classes to reuse fixtures: unittest runs every
   inherited test again. The scheduler split removes 102 such duplicate executions
   while retaining all unique cases. Keep fixtures and assertions separate.
@@ -801,7 +805,7 @@ not needed in ordinary operation.
 Local (also run by the pre-commit hook):
 
     make lint        # compileall, check_qml(.py + engine), qmlformat, ruff,
-                     # shellcheck, hadolint, gitleaks — one container pass
+                     # shellcheck, hadolint, gitleaks on the selected backend
     make run_tests   # every suite once, verdict + failures extracted from that single pass
 
 CI runs the same checks (the `lint` job) plus the full suite including the
@@ -836,7 +840,7 @@ look identical to the real artifact by eye.
 
 ## Development install loop
 
-`make dev_install` (tools/install_dev.sh) symlinks this checkout's
+On Linux, `make dev_install` (`tools/install_dev.sh`) symlinks this checkout's
 `plugins/` into Cura's user plugin directory
 (`~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower`), so
 edits appear on the next Cura restart — no package download, unzip or

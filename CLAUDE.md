@@ -14,8 +14,11 @@ for the toolchain, parity report and platform details.
 
     make test_files FILES="tests.test_monitor_qml_contracts tests.test_index"
 
-One process per file, `JOBS` (default 8) at a time, a verdict per file,
+One process per file, up to `JOBS` workers at a time, a verdict per file,
 non-zero exit if any file fails.
+The native default is the host's core count capped at 16; Linux's
+container runner defaults to 8 for `test_files`. Use `JOBS=2` on small
+CI runners or when wall-clock-sensitive tests share the host.
 
 **Never** pass several files to a single `python3 -m unittest` call.
 That runs them serially inside one process — which is where the minutes

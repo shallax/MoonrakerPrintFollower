@@ -6,11 +6,11 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release branch: **release/v4.6.1**, in development. The release notes
+Current release branch: **release/v4.6.1**. The release notes
 are maintained in `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## 4.6.1 — native development and follower corrections
+## 4.6.1 — vase following and native development
 
 - Build and test natively on macOS and Windows with the same Make targets.
   Keep the pinned Docker backend available by choice on both; Linux uses it
@@ -20,6 +20,10 @@ are maintained in `CHANGELOG.md`, `README.md` and the What's New entries;
   part of the flat-to-spiral transition, without changing flat-layer matching.
   Keep the previous layer visible briefly while the new layer's observed
   motion begins.
+- Poll webcam snapshots at 5 FPS and below when a valid snapshot URL is
+  available, closing the MJPEG connection to save bandwidth. Keep streaming
+  for cameras without a usable snapshot URL. Align camera and follower
+  touchpad controls, and repair the auxiliary and console interval handles.
 
 ## 4.6.0 — implemented direction and historical proposals
 
@@ -2200,11 +2204,10 @@ controls depend on the common action policy and session ownership
 from 4.2.0, and its lifecycle boundaries are proven by the 4.0.2
 repairs and the 4.1.0 scenarios. The layer-hardening/foreign-heights pack becomes an
 explicit gate for the resolver/coordinate work, scoped to the
-behaviour the marker relies on; continuous-Z/vase support stays a
-distinct capability and is not a requirement for every preceding
-maintenance release. If feature value demands, the marker's
-display-only slice may proceed after 4.3.0 while the presentation
-refactor finishes.
+behaviour the marker relies on. Continuous-Z/vase following arrived
+in 4.6.1 and remains separate from this Preview marker work. If feature
+value demands, the marker's display-only slice may proceed after 4.3.0
+while the presentation refactor finishes.
 
 - The nozzle repair's remaining private-state writes (the
   2026-09-16 ruling, backlog): the 4.2.0 NativeNozzleLifecycle

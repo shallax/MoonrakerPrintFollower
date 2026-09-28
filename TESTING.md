@@ -1,5 +1,17 @@
 # TESTING.md — the real-Cura UI test harness
 
+## Current release: 4.6.1
+
+Run the cross-platform test suite with `make run_tests JOBS=2`; use
+`make test_files FILES='tests.test_index_physical_progress tests.test_qml_settings' JOBS=1`
+for the indexed follower and settings slider regressions. The index tests
+exercise both continuous-Z vase G-code and conventional flat layers through
+the parser. Camera transport coverage lives in `tests.test_monitor_camera_runtime`,
+`tests.test_moonraker_mjpg` and `tests.test_qml_camera_controls`.
+`make lint`, `make verify_captures`, and `make package` cover the
+remaining local gates. The real-Cura UI harness below provides additional
+end-to-end evidence through `make ui_test` and `make ui_release_gate`.
+
 The `status` group's **b12** plays the README penguin through the GPU
 Print Follower popover; the `preview` group's **p8** follows that same
 G-code in Cura's attached 3D Preview. Each playback takes 20 seconds
@@ -21,8 +33,9 @@ headless harness work, outside `make all`. The Docker mandate below
 records the original Linux headless harness requirement; it does not
 require Docker for native macOS or Windows development.
 
-> **Reconciliation status (2026-09-15, the 4.1.0 release):** this
-> document describes the harness as it IS. Every section below
+> **Historical audit — Reconciliation status (2026-09-15, the 4.1.0 release):** this
+> records the harness as audited then. Later platform changes are
+> described above and in `INSTRUCTIONS.md`. Every section below
 > carries its status inline; claims struck or amended in the 4.1.0
 > reconciliation are marked **STRUCK**/**AMENDED** with the reason,
 > and a doc-pin test fails if a struck phrase re-enters the text.
@@ -35,13 +48,13 @@ require Docker for native macOS or Windows development.
 > catalogue, §4's flake policy, §6. Sections marked *planned* are
 > design intent for later releases, never gate inputs.
 
-The 4.0.0 release gate: an automated suite that drives the REAL Cura
+The original 4.0.0 release gate called for an automated suite that drives the REAL Cura
 application with REAL clicks against the REAL UI, connected to a full
 Moonraker simulator over the same websocket and HTTP transports a real
 printer speaks, and produces SCREENSHOTS AND VIDEO of every step as
 the proof artifact.
 
-## The mandate (2026-09-11)
+## Original mandate (2026-09-11)
 
 1. REAL Cura, not instantiating QML and faking things: the plugin
    must be installed in Cura and live in the real runtime with a
@@ -61,11 +74,10 @@ the proof artifact.
    testing (orchestration only — logging, performance counters —
    unless absolutely necessary).
 
-Earlier rulings, still binding: screenshots are PROOF (no fakery);
-the mandate covers ALL functionality end-to-end where feasible,
-starting with the recent failures to prove the process; harness work
-lives on the `v4.0.0-harness` branch (no PRs, no releases, sparse
-commits — work locally).
+The original rulings required screenshots as proof and end-to-end coverage
+where feasible. The historical `v4.0.0-harness` branch instructions below
+describe how the harness was developed; the current release workflow uses
+the cross-platform Make targets above.
 
 ## 1. What "real" means
 
@@ -253,6 +265,12 @@ REAL protocols over real TCP, in both transports:
   the real host does.
 
 ### 2.3 Runner, selection and artifacts
+
+The AppImage, container paths and `/tmp/mpf` references in this section
+describe the Linux harness. Native macOS and Windows runs stage their
+desktop Cura installations with `tools/native_harness.sh` and
+`tools/native_harness.ps1`; CI artifacts use the runner's temporary
+directory. The Make targets at the top of this file are shared.
 
 `make ui_test` runs the skeleton demo scenario by default; the gates
 run as `MODE=scenario1`..`scenario11`, and the suite as
@@ -758,9 +776,9 @@ SimulationView is the ACTIVE view (the Preview stage click).
   **What a miss means is decided per leg, and the decision is
   recorded rather than implied** (`liveness_gating`, `judged` and
   `gating` on every outcome): a leg that captures reads the screen
-  beside the app, so a stall is a **failing scenario** — Linux and
-  Windows keep their pixel and video checks, and the verdict fails the
-  scenario through the same `zz-frames` fold whatever the leg
+  beside the app, so a stall is a **failing scenario** — capturing Linux,
+  Windows and macOS legs keep their pixel and video checks. The verdict
+  fails the scenario through the same `zz-frames` fold whatever the leg
   captured. A leg that captures nothing has declared its own screen
   unjudgeable, so a stall there is a **report-only diagnostic**:
   announced as `ui_test: HEARTBEAT REPORT-ONLY — scenario …`, listed
@@ -769,18 +787,11 @@ SimulationView is the ACTIVE view (the Preview stage click).
   platform has not demonstrated. The failing smoke unit prints both
   lines into the job log itself rather than only into the uploaded run
   root.
-  **Remaining limitations, recorded rather than hidden.**
-  No macOS hardware validation is possible here, so the mac leg's
-  presentation is not judged and its report-only misses are the only
-  record — the heartbeat runs and reports there, and does not claim
-  coverage. It measures frame delivery, not pixels: a renderer that
-  swaps buffers while the window stops updating on screen still reads
-  healthy, and that is measured, not theoretical — on the hosted mac
-  (2026-09-24, `4ad8278`) the count ran 0 → 483 over two minutes while
-  the pixels stayed byte-identical, which is why that platform is
-  report-only rather than judged. A window that was never shown reads
-  unverified, and the display guard's stand-down is named in the same
-  breath.
+  **Historical limitation (2026-09-24), now superseded.** The hosted
+  macOS window once reported buffer swaps while its recorded pixels
+  remained frozen. Native macOS capture is now on by default and judged
+  with the fitted-window policy above. A window that was never shown
+  still reads unverified, and the display guard names any stand-down.
 - **A still span nobody drove is not judged (2026-09-24).** The
   static rule asks whether the screen moved, and it cannot tell
   "nothing was supposed to happen" from "the window froze".
@@ -804,7 +815,11 @@ SimulationView is the ACTIVE view (the Preview stage click).
   stillness was fine. A genuinely frozen window is driven *while* it
   freezes, so the rule keeps its teeth; a leg whose steps cannot be
   aligned (`at_s` absent) keeps the old everything-is-judged
-  behaviour rather than silently losing them. **Known weakness,
+  behaviour rather than silently losing them. First-install and
+  migration boot/configuration probes are explicit exceptions when
+  their evidence records zero UI interactions: their RPC and disk
+  checks do not ask the Prepare window to move, so an idle video is
+  recorded as unjudged, not passed as a responsive display. **Known weakness,
   recorded rather than hidden:** the boundary is a response-latency
   question, so a click whose response the encoder catches more than
   two seconds late still reads as "driven"; the rule has now been

@@ -362,7 +362,7 @@ Cura.MachineAction {
                                         if (!parent.handlePress) {
                                             return;
                                         }
-                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from) / parent.stepSize);
                                         parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
                                         if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
                                             parent.handleDragged = true;
@@ -471,7 +471,7 @@ Cura.MachineAction {
                                         if (!parent.handlePress) {
                                             return;
                                         }
-                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from) / parent.stepSize);
                                         parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
                                         if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
                                             parent.handleDragged = true;
@@ -568,7 +568,7 @@ Cura.MachineAction {
                                         if (!parent.handlePress) {
                                             return;
                                         }
-                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from) / parent.stepSize);
                                         parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
                                         if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
                                             parent.handleDragged = true;

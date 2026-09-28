@@ -258,10 +258,9 @@ class TestingDocPinTests(unittest.TestCase):
         self.assertIn("report-only diagnostic", text)
         self.assertIn("HEARTBEAT REPORT-ONLY", text)
         self.assertIn("frames_outcome", text)
-        # The heartbeat itself: what it forces, and the limitation that
-        # keeps the software-rendered platform report-only.
+        # The heartbeat itself and the current macOS capture verdict.
         self.assertIn("mpfLivenessHeartbeat", text)
-        self.assertIn("No macOS hardware validation is possible here", text)
+        self.assertIn("Native macOS capture is now on by default and judged", text)
         # The still-span rule's own change, which is what clears the
         # windows group-status red without retiring the check.
         self.assertIn("A still span nobody drove is not judged", text)
