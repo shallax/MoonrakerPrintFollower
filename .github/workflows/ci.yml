@@ -7,9 +7,9 @@ on:
   pull_request:
   workflow_call:
     inputs:
-      run_ci:
+      tag_release:
         type: boolean
-        default: true
+        default: false
       release_gate:
         type: boolean
         default: false
@@ -31,42 +31,11 @@ env:
   # their own streams so they hold wherever they are invoked.
   PYTHONUTF8: "1"
 jobs:
-  branch-pr:
-    name: Select branch CI
-    runs-on: ubuntu-26.04
-    permissions:
-      pull-requests: read
-    outputs:
-      run_ci: ${{ steps.detect.outputs.run_ci }}
-    steps:
-      - name: Check for an open PR on this branch
-        id: detect
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_CI_INPUT: ${{ inputs.run_ci }}
-        run: |
-          run_ci=true
-          if [[ "$RUN_CI_INPUT" == false ]]; then
-            run_ci=false
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/* ]]; then
-            if count="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
-                -f state=open -f head="${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" --jq 'length')"; then
-              if (( count > 0 )); then
-                run_ci=false
-                echo "Open PR found for ${GITHUB_REF_NAME}; Release runs the same CI jobs."
-              fi
-            else
-              echo '::warning::Could not check for an open PR; running branch CI.'
-            fi
-          fi
-          echo "run_ci=$run_ci" >> "$GITHUB_OUTPUT"
-
   # The same native Makefile gate on both desktop OSes. The pinned font
   # keeps offscreen Qt layout measurements comparable with the Linux image.
   native-build:
     name: Native build (${{ matrix.os }})
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,8 +135,7 @@ jobs:
     # container brings its own Xvfb and ffmpeg, so the ubuntu runner
     # needs no display. Galleries upload alongside the other evidence.
     name: Harness smoke
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -192,8 +160,7 @@ jobs:
 
   lint:
     name: Lint
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -269,8 +236,7 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -317,8 +283,7 @@ jobs:
 
   python-compatibility:
     name: Python ${{ matrix.python-version }} and Qt runtime
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -371,8 +336,6 @@ jobs:
 
   ci-package:
     name: Release
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true' || inputs.release_gate
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -426,7 +389,7 @@ jobs:
         run: python tools/native/dev.py package
 
       - name: Capture deterministic screenshots
-        if: needs.branch-pr.outputs.run_ci == 'true'
+        if: ${{ !inputs.tag_release }}
         run: |
           QT_QPA_PLATFORM=offscreen python tools/capture_monitor.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_preview.py dist/screenshots
@@ -436,7 +399,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
 
       - name: Upload CI artifacts
-        if: needs.branch-pr.outputs.run_ci == 'true'
+        if: ${{ !inputs.tag_release }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.build_meta.outputs.artifact_name }}
@@ -457,8 +420,7 @@ jobs:
 
   screenshot-sync:
     name: Screenshot sync
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -503,8 +465,7 @@ jobs:
 
   analyze:
     name: Analyze (CodeQL)
-    needs: branch-pr
-    if: needs.branch-pr.outputs.run_ci == 'true'
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     permissions:
       security-events: write

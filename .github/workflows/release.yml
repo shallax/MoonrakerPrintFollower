@@ -73,7 +73,7 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/ci.yml
     with:
-      run_ci: false
+      tag_release: true
       release_gate: true
     secrets: inherit
 
