@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# Native launches use this script's directory as sys.path[0]. The shared
+# screenshot G-code generator lives in tools; Linux stages a flat copy.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import tornado.ioloop
 

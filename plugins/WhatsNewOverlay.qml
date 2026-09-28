@@ -68,8 +68,7 @@ Popup {
                 contentWidth: width
                 contentHeight: contentColumn.implicitHeight
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {
-                }
+                ScrollBar.vertical: ScrollBar {}
 
                 Column {
                     id: contentColumn

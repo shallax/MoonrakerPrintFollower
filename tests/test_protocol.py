@@ -64,6 +64,33 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(live_position_in_gcode_space({}, {}))
         self.assertIsNone(live_position_in_gcode_space({"live_position": [1]}, {}))
 
+    def test_xyz_g92_uses_origin_without_following_the_queued_endpoint(self):
+        motion = {"live_position": [115, 225, 10.5, 400]}
+        move = {"position": [180, 290, 10.8, 450],
+                "gcode_position": [80, 90, 0.8, 50],
+                "homing_origin": [0, 0, 0, 0]}
+        result = live_position_in_gcode_space(motion, move)
+        self.assertEqual(result[:2], (15, 25))
+        self.assertAlmostEqual(result[2], 0.5)
+        self.assertNotEqual(result, tuple(move["gcode_position"][:3]))
+
+    def test_extruder_reset_and_flow_override_do_not_change_xyz(self):
+        motion = {"live_position": [15, 25, 0.5, 400]}
+        move = {"position": [80, 90, 0.8, 450],
+                "gcode_position": [80, 90, 0.8, 0], "extrude_factor": 500}
+        self.assertEqual(live_position_in_gcode_space(motion, move), (15, 25, 0.5))
+
+    def test_paired_origin_respects_axis_mapping_and_rejects_nonfinite_values(self):
+        motion = {"live_position": [999, 10.5, 115, 225, 400]}
+        move = {"axis_map": {"X": 2, "Y": 3, "Z": 1, "E": 4},
+                "position": [999, 10.8, 180, 290, 450],
+                "gcode_position": [999, 0.8, 80, 90, 50]}
+        result = live_position_in_gcode_space(motion, move)
+        self.assertEqual(result[:2], (15, 25))
+        self.assertAlmostEqual(result[2], 0.5)
+        move["position"][2] = float("nan")
+        self.assertIsNone(live_position_in_gcode_space(motion, move))
+
 
 class FileIdentityTests(unittest.TestCase):
     def test_remote_identity_keys_on_surviving_discriminators(self):

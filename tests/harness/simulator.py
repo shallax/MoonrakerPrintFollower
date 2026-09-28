@@ -34,9 +34,9 @@ CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", 
 
 
 try:  # The harness stages these files FLAT (simulator_serve imports
-    from .gcodegen import make_gcode  # noqa: F401  # the package form)
+    from .gcodegen import make_gcode, penguin_playback, playback_sample
 except ImportError:
-    from gcodegen import make_gcode  # noqa: F401  # the staged flat form
+    from gcodegen import make_gcode, penguin_playback, playback_sample
 
 
 KICKOFF_STATE: Dict[str, Any] = {
@@ -88,6 +88,12 @@ KICKOFF_STATE: Dict[str, Any] = {
                    "config": {"extruder": {"filament_diameter": "1.75"}},
                    "settings": {"extruder": {"filament_diameter": 1.75}}},
     "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
+    # The plate's own object: a real Klipper carries exclude_object on
+    # every print, and the plugin subscribes to it (CORE_OBJECTS). The
+    # shape is Klipper's — objects with a name, a centre and a polygon —
+    # empty until a scenario arms one, so the empty-plate surfaces stay
+    # the kickoff state they were.
+    "exclude_object": {"objects": [], "excluded_objects": [], "current_object": None},
 }
 
 
@@ -151,6 +157,7 @@ class PrinterState:
         # needs bytes arriving on the wire to animate its bar — a
         # pre-request hold delivers nothing and the bar never moves.
         self.gcode_stream_ms = 0
+        self.gcode_stream_hold = False
         # The missed-pause arm: the PAUSE gcode script is refused —
         # the controller must keep the entry, restyled.
         self.fail_pause_script = False
@@ -175,7 +182,7 @@ class PrinterState:
         # sim_arm/sim_set refuse on these.
         self.unknown_keys = []
         try:
-            directory = tempfile.mkdtemp(prefix="mpf-frames-")
+            directory = tempfile.mkdtemp(prefix="mpfxtest-frames-")
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=2",
@@ -194,6 +201,10 @@ class PrinterState:
                                "time": time.time()}]
         # The gcode store the file manager walks.
         self.gcode_bytes = make_gcode(40).encode("utf-8")
+        self._playback_rows = []
+        self._playback_duration = 0.0
+        self._playback_elapsed = 0.0
+        self._playback_original = None
         self.files = [
             {"filename": "scenario1.gcode", "modified": time.time() - 3600.0,
              "size": len(self.gcode_bytes), "permissions": "rw",
@@ -285,8 +296,25 @@ class PrinterState:
                 self.power_devices = list(value)
             elif name == "presets_value":
                 self.presets_value = dict(value)
+            elif name == "gcode_stream_hold":
+                self.gcode_stream_hold = bool(value)
             elif name == "gcode_stream_ms":
                 self.gcode_stream_ms = max(0, int(value))
+            elif name == "gcode_fixture" and value == "penguin":
+                if self._playback_original is None:
+                    self._playback_original = self.gcode_bytes, self.files
+                self.gcode_bytes, self._playback_rows = penguin_playback()
+                self.files = [dict(self.files[0], filename="penguin.gcode",
+                                   size=len(self.gcode_bytes), modified=self.now(),
+                                   uuid="penguin-capture", estimated_time=900.0)]
+                self.layer_clock_interval_s = 0
+                self.progress_hold = True
+                self._playback_duration = self._playback_elapsed = 0.0
+                self._set_playback_position(0.0)
+            elif name == "gcode_playback_s" and self._playback_rows:
+                self._playback_duration = min(30.0, max(1.0, float(value)))
+                self._playback_elapsed = 0.0
+                self._set_playback_position(0.0)
             elif name == "fail_pause_script":
                 self.fail_pause_script = bool(value)
             elif name == "corrupt_frame_once":
@@ -345,11 +373,17 @@ class PrinterState:
         self.power_devices = []
         self.presets_value = {}
         self.gcode_stream_ms = 0
+        self.gcode_stream_hold = False
         self.fail_pause_script = False
         self.corrupt_frame_once = False
         self.temp_tick_deg_c = 0.0
         self.motion_speed_mm_s = 0.0
         self.motion_e_mm_s = 0.0
+        if self._playback_original is not None:
+            self.gcode_bytes, self.files = self._playback_original
+            self._playback_original = None
+        self._playback_rows = []
+        self._playback_duration = self._playback_elapsed = 0.0
         self.fail_upload = False
         self.accept_pause_without_state = False
         self.clock_skew_ms = 0.0
@@ -362,6 +396,10 @@ class PrinterState:
         # layer past the print's end (the x10 report) — restamping
         # per reset means every scenario's print starts from the
         # kickoff layer instead of the previous scenario's residue.
+        # The interval comes back too: a scenario that holds the
+        # clock mid-run must not hand the next one a print that
+        # never crosses a layer.
+        self.layer_clock_interval_s = 6.0
         self._layer_clock_at = time.monotonic()
         self._prev_state = None
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
@@ -392,6 +430,29 @@ class PrinterState:
         # scenarios shift time with clock_skew_ms instead of
         # hand-computed stamps.
         return time.time() + self.clock_skew_ms / 1000.0
+
+    def _set_playback_position(self, fraction):
+        row = playback_sample(self._playback_rows, fraction)
+        position = row["position"]
+        self.state["print_stats"]["info"] = {"total_layer": 3, "current_layer": row["layer"] + 1}
+        self.state["virtual_sdcard"].update(file_size=len(self.gcode_bytes),
+                                           file_position=row["offset"],
+                                           progress=row["offset"] / len(self.gcode_bytes))
+        # This fixture has no G92 origin shift. Klipper publishes both
+        # commanded coordinate spaces together; a stale machine position
+        # would falsely advertise an origin offset to the real follower.
+        self.state["gcode_move"]["position"] = list(position)
+        self.state["gcode_move"]["gcode_position"] = list(position)
+        self.state["motion_report"]["live_position"] = list(position)
+        # Position and velocity describe the same commanded segment. Leaving
+        # the kickoff's zero extrusion velocity here falsely describes every
+        # extrusion as travel and correctly keeps the layer-entry gate shut.
+        acceleration = self._playback_rows[-1]["at"] / self._playback_duration if self._playback_duration else 0.0
+        self.state["motion_report"]["live_velocity"] = row["velocity"] * acceleration
+        self.state["motion_report"]["live_extruder_velocity"] = row["extruder_velocity"] * acceleration
+        self.state["display_status"]["progress"] = self.state["virtual_sdcard"]["progress"]
+        self.state.setdefault("toolhead", {})["extruder"] = (
+            "extruder" if row["tool"] == 0 else f"extruder{row['tool']}")
 
     def push_patch(self) -> Dict[str, Any]:
         """One changed-objects frame, as Moonraker shapes it: only
@@ -434,6 +495,11 @@ class PrinterState:
                 motion["live_position"][3] = round(motion["live_position"][3] + self.motion_e_mm_s * step_s, 4)
                 motion["live_velocity"] = self.motion_speed_mm_s
                 motion["live_extruder_velocity"] = self.motion_e_mm_s
+            if self._playback_rows:
+                if self._playback_duration:
+                    self._playback_elapsed += self.push_cadence_ms / 1000.0
+                self._set_playback_position(self._playback_elapsed / self._playback_duration
+                                            if self._playback_duration else 0.0)
         elif stats.get("state") == "error" and self.cold_start:
             # The cold-start error: Klipper refuses below the minimum
             # temperature while Moonraker ramps the heater; once the
@@ -681,6 +747,15 @@ class StatusHandler(tornado.web.RequestHandler):
                 for start in range(0, len(self._printer.gcode_bytes), 256):
                     self.write(self._printer.gcode_bytes[start:start + 256])
                     await self.flush()
+                    if start == 0:
+                        # Keep a partial transfer alive until the harness has
+                        # observed the real loading UI. Capture/IPC latency
+                        # must not race a fixed-duration tiny download.
+                        deadline = time.monotonic() + 90
+                        while self._printer.gcode_stream_hold:
+                            if time.monotonic() >= deadline:
+                                raise RuntimeError("gcode stream hold was never released")
+                            await tornado.gen.sleep(0.05)
                     await tornado.gen.sleep(cadence / 1000.0)
             else:
                 self.write(self._printer.gcode_bytes)
@@ -965,10 +1040,30 @@ class ControlHandler(tornado.web.RequestHandler):
             except Exception:
                 body = {}
             if body.pop("webcam_bridged", False):
-                # The container's own (non-loopback) IP plus this
+                # The host's own (non-loopback) IP plus this
                 # request's port: the exact URL the bridge will fetch.
+                # The address comes from a UDP connect, never a
+                # hostname lookup: gethostbyname resolves through
+                # DNS/mDNS, and macOS's local-network consent gate
+                # blocks that with a prompt no runner can answer, so
+                # the call never returns and wedges this single sim
+                # thread (the s5 leg died with a reset timeout and no
+                # gallery). The connect sends no packet — it only
+                # asks the routing table which local address it would
+                # use.
                 import socket
-                ip = socket.gethostbyname(socket.gethostname())
+                probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    probe.connect(("192.0.2.1", 9))
+                    ip = probe.getsockname()[0]
+                except OSError:
+                    # No route (an isolated container): the loopback
+                    # answer keeps the sim responsive; the bridge then
+                    # fetches over loopback, which no consent gate
+                    # covers.
+                    ip = "127.0.0.1"
+                finally:
+                    probe.close()
                 port = str(self.request.host).rsplit(":", 1)[-1]
                 self._printer.webcam_bridged_base = f"http://{ip}:{port}"
             self._printer.unknown_keys = []

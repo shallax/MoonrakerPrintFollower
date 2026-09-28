@@ -10,6 +10,8 @@ ui_test.sh resolve through it; these tests pin the behaviour and the
 wiring.
 """
 
+import os
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -19,20 +21,54 @@ HELPER = ROOT / "tools" / "ui_test_paths.sh"
 UI_TEST = ROOT / "tools" / "ui_test.sh"
 
 
-def _resolve(base, name):
-    out = subprocess.run(
-        ["sh", str(HELPER), "resolve", base, name],
-        capture_output=True, text=True, check=True,
+def _posix_shell():
+    """The shell the helper is written for, or None.
+
+    The pins here are the SHELL script's behaviour, so they run wherever
+    a POSIX shell can be found rather than only on the CI host — a
+    Windows dev box qualifies: Git for Windows keeps sh.exe in its own
+    usr/bin instead of on PATH, which is why the usual locations are
+    named explicitly (INSTRUCTIONS.md, "Windows development"). MPF_SH
+    overrides the lookup. A host with no shell at all skips: with the
+    helper unrunnable, nothing is proven either way.
+    """
+    override = os.environ.get("MPF_SH")
+    if override:
+        return override
+    found = shutil.which("sh")
+    if found:
+        return found
+    for base in (os.environ.get("ProgramFiles"),
+                 os.environ.get("ProgramFiles(x86)"),
+                 os.environ.get("LOCALAPPDATA")):
+        if not base:
+            continue
+        for relative in ("Git/usr/bin/sh.exe", "Git/bin/sh.exe"):
+            candidate = Path(base) / relative
+            if candidate.exists():
+                return str(candidate)
+    return None
+
+
+SHELL = _posix_shell()
+NO_SHELL = "no POSIX shell found (set MPF_SH, or install Git for Windows)"
+
+
+def _helper(*args, check=True):
+    if SHELL is None:
+        raise unittest.SkipTest(NO_SHELL)
+    return subprocess.run(
+        [SHELL, str(HELPER), *args],
+        capture_output=True, text=True, check=check,
     )
-    return out.stdout.strip()
+
+
+def _resolve(base, name):
+    return _helper("resolve", base, name).stdout.strip()
 
 
 def _container(work_dir, path):
-    out = subprocess.run(
-        ["sh", str(HELPER), "container", work_dir, path],
-        capture_output=True, text=True, check=True,
-    )
-    return out.stdout.strip()
+    return _helper("container", work_dir, path).stdout.strip()
 
 
 class ContainerPathMappingTests(unittest.TestCase):
@@ -80,9 +116,7 @@ class ContainerPathMappingTests(unittest.TestCase):
         for args in (("container", "/tmp/mpf", "/tmp/mpf/../shared"),
                      ("resolve", "/tmp/mpf", "../shared/run"),
                      ("container", "/tmp/mpf", "/tmp/mpf/x/..")):
-            out = subprocess.run(
-                ["sh", str(HELPER), *args], capture_output=True, text=True,
-            )
+            out = _helper(*args, check=False)
             self.assertEqual(out.returncode, 2, args)
 
 
@@ -200,6 +234,31 @@ class TestingDocPinTests(unittest.TestCase):
                        "REAL_MOONRAKER_URL",
                        "orchestrates the whole release gate"):
             self.assertNotIn(phrase, text, phrase)
+
+    def test_the_capture_gate_and_its_cost_are_documented(self):
+        # Native capture is restored with explicit window bounds. Keep
+        # the override and the limit of software-rendered evidence clear.
+        text = " ".join(self._doc().split())
+        self.assertIn("Native screenshots and recordings are enabled", text)
+        self.assertIn("availableGeometry", text)
+        self.assertIn("bounds watchdog", text)
+        self.assertIn("HARNESS_CAPTURE=off", text)
+        self.assertIn("not a benchmark of a physical Mac", text)
+        # The liveness verdict rides the leg rather than the platform, and
+        # what a miss MEANS there is documented beside the gate rather
+        # than folded into its cost: a judged stall where the leg reads
+        # its screen, a report-only diagnostic where it does not.
+        self.assertIn("The renderer-liveness verdict rides the leg, not the platform", text)
+        self.assertIn("report-only diagnostic", text)
+        self.assertIn("HEARTBEAT REPORT-ONLY", text)
+        self.assertIn("frames_outcome", text)
+        # The heartbeat itself: what it forces, and the limitation that
+        # keeps the software-rendered platform report-only.
+        self.assertIn("mpfLivenessHeartbeat", text)
+        self.assertIn("No macOS hardware validation is possible here", text)
+        # The still-span rule's own change, which is what clears the
+        # windows group-status red without retiring the check.
+        self.assertIn("A still span nobody drove is not judged", text)
 
 
 if __name__ == "__main__":

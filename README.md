@@ -8,8 +8,55 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.5.0
+- **Release:** 4.6.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 4.6.0
+
+Version 4.6.0 adds an interactive build plate and Print Follower to
+Monitor, with GPU rendering for both the follower and Exclude Object picker.
+The follower shares Cura Preview's colour modes and tracks live motion along
+the indexed toolpath.
+
+- **GPU plate views** — retained geometry keeps pan, smooth zoom, scrubbing
+  and width changes responsive. The themed grid moves with the toolpath,
+  and the last complete frame stays visible while a new layer loads.
+  Diagnostics offers a software-renderer fallback for both plate views.
+- **The object picker** — see included, current, excluded and visited objects
+  on the bed. Triple-click to exclude or restore one object; the status line
+  counts clicks and reports the outcome. Hover to read its name and state.
+- **Smooth live following** — Preview and Monitor share accepted motion
+  progress. With Smooth path progress enabled, the GPU follower reveals each move
+  progressively and moves the toolhead along the indexed path, including
+  curves. Keep centred follows the toolhead; panning switches it off.
+- **Cura Preview colours** — Material colour, Line type, Speed, Layer
+  thickness, Flow rate and Line thickness use Cura's selected palette and
+  print-wide gradient ranges. Material colour supports multiple tools.
+  Travels distinguish non-retracted, retracting, retracted and priming moves.
+- **Readable layers and widths** — choose 1–8 px strokes or True thickness,
+  which estimates each extrusion's width from the G-code. Previous layers
+  are coloured and solid; next layers are coloured and dashed; Layer ghost
+  stays grey. Anti-aliasing is an optional saved setting. Retractions and
+  Priming show small hollow arrows only after those events occur.
+- **Layer inspection and pauses** — seeking a layer detaches live following;
+  scrub its progress, attach again, or schedule a pause at its end. The pause
+  list shows ETAs and read-only pauses already baked into the G-code.
+- **Faster indexing and preparation** — workers yield regularly, publish
+  bounded progress updates and prepare demanded layers off the UI thread.
+  GPU geometry and decoded layers have bounded memory caches and nearby
+  layers are prefetched. Per-printer disk caches reuse prepared prints,
+  checkpoint interrupted preparation and evict whole prints least recently
+  used first; the default limit is 512 MiB per printer.
+- **Webcam and printer controls** — webcam zoom is smooth. Restart last print
+  remembers a file for this Cura session only and is disabled while a print
+  is active. Resume allows 120 seconds for the command to finish. Speed and
+  extrusion multipliers accept 1–50,000%, with bounds enforced on input.
+- **Monitor polish** — print progress has two decimal places, Last action
+  includes a timestamp, and index-download offers disappear once indexing
+  succeeds, including during PRINT_START. Hidden download controls no longer
+  accept clicks or show tooltips. Button text, legends and empty states are
+  aligned consistently. The temperature chart retains its own one-second
+  sampling clock.
 
 ## What changed in 4.5.0
 - The webcam comes up in milliseconds on the Monitor page — the startup's two races (a refresh restarting its own websocket, and the first discovery applying the stream twice) are fixed.
@@ -393,7 +440,7 @@ For each Cura printer, the same Moonraker URL and optional API key now drive:
 - Pause, Resume and Cancel controls
 - Moonraker power-device controls
 - estimated remaining time and finish time
-- Exclude Object controls when Klipper exposes `exclude_object`
+- Exclude Object plate map and controls when Klipper exposes `exclude_object`
 - Klippy, host and MCU health information
 
 The generic Cura output controller remains conservative and does not advertise unrelated preheat/manual-control capabilities that are not implemented by this plugin. Print controls are provided by the dedicated Monitor view.
@@ -416,7 +463,7 @@ The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.13 / SDK 8.12**. The 
 
 The implementation stays on APIs present across Cura 5.7–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
-Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by 5.11's SimulationView: the live print does not render as view layers and the layer slider hides after a plugin load (the follower's card, state and pause scheduling still work).
+Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by a 5.11 SimulationView bug: that version rebuilds its view layers only when the Preview stage is re-entered, and the plugin's load lands while Preview is already open — so the live print does not appear in the view and the layer slider stays hidden after a load until you switch tabs and come back (the follower's card, state and pause scheduling still work throughout).
 
 Actual rendering, output-device presentation, webcam streaming and printer interaction should still be smoke-tested on representative Cura releases before publishing a compatibility claim.
 
@@ -530,7 +577,49 @@ Unsupported object types simply do not appear.
 
 ### Exclude Object
 
-When Klipper exposes `exclude_object`, Monitor lists the known print objects, marks the current and already-excluded objects, and provides an **Exclude** action for remaining objects while the print is active.
+When Klipper exposes `exclude_object`, Monitor draws the print's objects to scale on the bed in the Information pane: included objects in the text colour, the object printing right now in the accent, excluded objects red, and the objects the print has already visited green while the print's index is available. An object whose definition carries no usable polygon still appears, as a centre point with a hit radius.
+
+A click on the pane's map opens the picker. **Triple-click an object to exclude it, and triple-click an excluded object to bring it back** — the gesture is the confirmation, so no dialog asks, and the old list of object names and its per-name action are gone. The picker's permanent line counts the clicks and names the direction while a command is in flight, and the status line under the map reports the outcome, refusals included. Restoring sends Klipper's name-scoped reset (`EXCLUDE_OBJECT RESET=1 NAME=…`), so one object comes back instead of the whole plate.
+
+### Print Follower
+
+The Information pane's second plate section shows the current layer's printed
+portion and live toolhead. Click it to open the follower pop-over. Both this
+view and the Exclude Object picker use GPU rendering by default; Configuration
+→ Diagnostics has a software-renderer fallback for both.
+
+Zoom and pan the plate, or seek any layer with the Layer slider, which detaches
+live following. The layer-progress slider plays that layer through by hand;
+Detach and Attach are explicit. **Jump to toolhead** moves the view to the
+live position. **Keep centred** follows it while attached; panning turns this
+off, while zooming keeps it enabled. The themed grid uses 10 mm minor lines
+and 50 mm major lines. The previous frame remains visible during layer loads.
+
+The colour dropdown shares Cura Preview's Material colour, Line type, Speed,
+Layer thickness, Flow rate and Line thickness modes and palette. Gradient
+bounds cover the whole indexed print; material colours follow each tool.
+Travels are hidden by default and distinguish non-retracted, retracting,
+retracted and priming moves. Previous-layer strokes are coloured and solid;
+next-layer strokes use 0.5 mm dashes and 0.5 mm gaps. **Layer ghost** remains
+translucent grey in every mode.
+
+Set extrusion strokes to **1–8 px**, independent of zoom, or enable **True
+thickness** to estimate width per motion from filament volume, path length and
+layer height. Its readout says **True**; using the pixel-width controls disables
+it and resumes the previously saved pixel setting. Travels remain 1 px and
+grid widths are independent. This estimates a rectangular bead cross-section;
+it does not infer volumetric E or live flow overrides. Missing diameter metadata
+uses 1.75 mm filament; invalid width estimates use 0.4 mm.
+
+**Anti-aliasing**, **Retractions** and **Priming** are saved checkbox choices.
+The latter two show hollow up/down arrows only after the events occur, and
+thin dense markers when zoomed out. Exclude Object is always antialiased and
+has no additional rendering controls. With **Smooth path progress** enabled in Settings → Following, the GPU follower animates line progress and toolhead position
+along the indexed path between observations. The software fallback keeps its
+discrete presentation. Preview and Monitor use the same accepted live motion
+progress.
+
+The follower can also pause the print. Click the pane's plate to open the pop-over, slide its Layer slider to a layer, and the button at the foot of the schedule offers the end of that layer: one press schedules the pause, and the same button then removes it. The list beside the plate carries the whole schedule — each pause with its own ETA (`in 31m · ≈14:32`), a row's ✕ cancelling that one and **Clear** cancelling the rest — with a pause the printer has already taken dimmed to "passed" and one whose moment went by untaken left in the list as "pause not taken". Two kinds of row share the list. The pauses you schedule are fired by the plugin: it sends Klipper's `PAUSE` itself as the print crosses the layer, so the schedule lives with that print — it is dropped when the print ends, a new print starts with an empty list, and nothing survives a Cura restart. A pause the gcode already carries is listed as "baked" and is read-only — it belongs to the slicer, so the ✕ does nothing on it and the layer cannot be scheduled again from here.
 
 ### Power
 
@@ -553,7 +642,8 @@ The System section can show:
 The dashboard includes direct printer controls when the printer is idle:
 
 - **Macros** — run any non-private `gcode_macro`, with typed parameter fields inferred from `{% set x = params.NAME|default(...) %}` declarations
-- **Live tuning** — speed factor, flow factor and fan sliders that preview during a drag and send one debounced command after release
+- **Live tuning** — speed and extrusion multipliers from 1% to 50,000%, and fan sliders that preview during a drag and send one debounced command after release
+- **Print** — pause, resume and cancel, plus Restart last print when idle. Restart remembers only this Cura session’s last file for the selected printer; it is disabled during printing or a pause and when disconnected or busy. Resume allows 120 seconds for its command to complete, including hotend warming.
 - **Z offset** — current offset display, nudging buttons and clear
 - **Fans and LEDs** — per-object speed/brightness and RGBW colour controls discovered from the printer
 - **PWM outputs** — per-pin percentage controls for `output_pin` objects configured for PWM
@@ -603,6 +693,15 @@ The Monitor dashboard: printer status, information panes and printer controls.
 Panes collapse to the window edge with a rotated title; each pane's
 sections collapse into an accordion like Cura's own settings.
 
+![Exclude Object Picker](screenshots/10-exclude-object-picker.png)
+
+The Exclude Object Picker shows each object's position and exclusion state.
+
+![Print follower](screenshots/11-print-follower.png)
+
+The print follower renders indexed toolpaths, with layer and progress controls.
+This three-material penguin is generated as deterministic G-code for the capture.
+
 ![Preview panel](screenshots/04-preview-panel.png)
 
 The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
@@ -623,6 +722,12 @@ The Cura-to-Moonraker upload dialog.
 The once-per-version what's-new popup: the new release's items open
 at the top, previous versions in collapsed sections, the project link
 at the bottom.
+
+![File manager](screenshots/09-file-manager.png)
+
+The file manager: recent prints, breadcrumb navigation, filters and a
+sortable table of every file on the printer with its slicer metadata,
+size and print history.
 
 ## Moonraker transport
 

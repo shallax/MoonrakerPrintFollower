@@ -309,6 +309,28 @@ class MessageAssemblyTests(unittest.TestCase):
         self.assertEqual(events[0][0], "error")
         self.assertEqual(state.fragmented_opcode, None)
 
+    def test_oversized_declared_payload_is_rejected_before_it_arrives(self):
+        for opcode in (1, 2):
+            for fin in (False, True):
+                for header in (bytes([11]), b"\x7e" + struct.pack(">H", 126),
+                               b"\x7f" + struct.pack(">Q", 2**32)):
+                    with self.subTest(opcode=opcode, fin=fin, header=header):
+                        wire = bytes([(0x80 if fin else 0) | opcode]) + header
+                        events, _, _ = FrameParseTests.events(wire, FrameState(max_bytes=10))
+                        self.assertEqual(events, [("error", "message exceeds the size cap")])
+
+    def test_cap_applies_to_each_message_not_the_input_burst(self):
+        wire = self.frame(1, b"1234567890") * 3
+        events, rest, _ = FrameParseTests.events(wire, FrameState(max_bytes=10))
+        self.assertEqual(events, [("message", b"1234567890")] * 3)
+        self.assertEqual(rest, b"")
+
+    def test_continuation_header_exceeding_remaining_budget_fails_early(self):
+        state = FrameState(max_bytes=10)
+        FrameParseTests.events(self.frame(1, b"12345678", fin=False), state)
+        events, _, _ = FrameParseTests.events(b"\x80\x03", state)
+        self.assertEqual(events, [("error", "message exceeds the size cap")])
+
     def test_binary_fragments_reassemble_without_utf8(self):
         state = FrameState()
         FrameParseTests.events(self.frame(2, b"\xff\xfe", fin=False), state)

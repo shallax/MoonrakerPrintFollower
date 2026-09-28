@@ -83,7 +83,7 @@ class FilamentTotalFileTests(unittest.TestCase):
     """The file scan reads the head once, bounded, and only complete lines."""
 
     def _write(self, data, limit=None):
-        directory = tempfile.mkdtemp(prefix="mpf-filament-test-")
+        directory = tempfile.mkdtemp(prefix="mpfxtest-filament-test-")
         path = os.path.join(directory, "print.gcode")
         with open(path, "wb") as handle:
             handle.write(data)

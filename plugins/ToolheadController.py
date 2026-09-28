@@ -67,12 +67,24 @@ class ToolheadController(QObject):
         self._extrude_speed = EXTRUDE_SPEED_DEFAULT
         self._absolute_coordinates = True
         self._mode_latch = None
-        self._z_estimate = None
-        # The dispatched-but-unreflected DOWNWARD distance (the
-        # stale-poll safety, the 2026-09-19 review's B): while it is
-        # nonzero, a poll between the pre-command level and the
-        # projection is mid-flight, not truth.
-        self._z_down_pending = 0.0
+        # The client-side axis projections (the live report's stale-
+        # poll safety, generalised): rapid nudge taps outrun the
+        # poll, and each tap clamped against the STALE position let
+        # the merged queue walk the head past a limit — Z went below
+        # zero (the 2026-09-19 review's B), and X/Y can overshoot
+        # their maxima the same way. The projection advances with
+        # every queued move and re-syncs from the poll once the
+        # queue drains.
+        self._axis_estimate = {"x": None, "y": None, "z": None}
+        # The dispatched-but-unreflected distance per axis, by
+        # direction: while it is nonzero, a poll between the
+        # pre-command level and the projection is mid-flight, not
+        # truth. Upward moves need the same guard as downward ones —
+        # the pre-command level sits BELOW the projection there, so a
+        # stale poll re-armed the estimate and let repeated taps walk
+        # the head past the axis maximum.
+        self._axis_down_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self._axis_up_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._pause_waiting = False
         self._pause_in_flight = False
         self._draining = False
@@ -124,31 +136,42 @@ class ToolheadController(QObject):
         else:
             self._mode_latch = None
             self._absolute_coordinates = absolute
-        if not any(getattr(op, "axis", None) == "z" for op in self._pending):
-            # The queue has no Z moves left: the poll's position is
-            # the truth again — but only once it has actually CAUGHT
-            # UP. An op leaves the queue at dispatch, so a poll that
-            # still reads HIGHER than the projection is mid-flight
-            # while downward distance is unreflected; adopting it
-            # would re-arm the estimate and let repeated stale polls
-            # accept downward distance beyond the real headroom (the
-            # 2026-09-19 review's B). A poll ABOVE the pre-command
-            # level is a genuine upward move (external G-code, a
-            # home) and adopts. No position data clears the estimate,
-            # as before (the no-data clamp fails closed anyway).
-            polled = self._polled_z()
-            if self._z_estimate is None or polled is None:
-                self._z_estimate = polled
-                self._z_down_pending = 0.0
-            elif polled <= self._z_estimate + 1e-9:
+        for axis in ("x", "y", "z"):
+            if any(getattr(op, "axis", None) == axis for op in self._pending):
+                continue
+            # The queue has no moves of this axis left: the poll's
+            # position is the truth again — but only once it has
+            # actually CAUGHT UP. An op leaves the queue at dispatch,
+            # so a poll that still reads HIGHER than the projection
+            # is mid-flight while downward distance is unreflected;
+            # adopting it would re-arm the estimate and let repeated
+            # stale polls accept downward distance beyond the real
+            # headroom (the 2026-09-19 review's B). The upward mirror
+            # is the same seam with the sides swapped: a poll still
+            # reading between the pre-command level and the
+            # projection lags the dispatch, and adopting it re-armed
+            # an upward projection tap after tap until the head
+            # walked past the axis maximum. Above the projection, or
+            # past the level the move started from, the poll is a
+            # genuine move (external G-code, a home) and adopts. No
+            # position data clears the estimate, as before (the
+            # no-data clamp fails closed anyway).
+            polled = self._polled_axis(axis)
+            estimate = self._axis_estimate[axis]
+            if estimate is None or polled is None:
+                self._adopt_axis(axis, polled)
+            elif self._axis_up_pending[axis] > 0.0 \
+                    and estimate - self._axis_up_pending[axis] - 1e-9 < polled < estimate - 1e-9:
+                # Mid-flight upward — the projection stays
+                # conservative.
+                pass
+            elif polled <= estimate + 1e-9:
                 # The head reached the projection: adopt the truth.
-                self._z_estimate = polled
-                self._z_down_pending = 0.0
-            elif polled > self._z_estimate + self._z_down_pending + 1e-9:
+                self._adopt_axis(axis, polled)
+            elif polled > estimate + self._axis_down_pending[axis] + 1e-9:
                 # Higher than the level our downward move started
                 # from: the head genuinely moved up.
-                self._z_estimate = polled
-                self._z_down_pending = 0.0
+                self._adopt_axis(axis, polled)
             # else: mid-flight — the projection stays conservative.
         # The policy projection (4.2.0, A4): jogEnabled stays the
         # published property, now fed by the permissions table's
@@ -246,22 +269,63 @@ class ToolheadController(QObject):
         self._commands.send("Absolute mode" if absolute else "Relative mode",
                             "printer/gcode/script", {"script": "G90" if absolute else "G91"})
 
-    def _polled_z(self):
-        """The freshest Z the poll knows: the live motion report when
-        present, else the gcode position (the Position readout's own
-        source — the live report: the plugin KNOWS Z and
-        must guard with it)."""
+    def _adopt_axis(self, axis, value):
+        """The poll has caught up with this axis: the projection becomes
+        the truth and no reflection is owed in either direction."""
+        self._axis_estimate[axis] = value
+        self._axis_down_pending[axis] = 0.0
+        self._axis_up_pending[axis] = 0.0
+
+    def _disown_axis(self, axis, distance):
+        """Withdraw a queued move the queue no longer holds.
+
+        The head will never go where that move pointed, so the distance
+        comes off the estimate and off the reflection owed in its
+        direction (F2's ledger): leaving either behind would let the
+        next jog measure phantom headroom — the -25 tap that the
+        vanished +25 paid for walks the head below the floor it was
+        clamped against.
+        """
+        if axis not in ("x", "y", "z") or not distance:
+            return
+        if self._axis_estimate[axis] is None:
+            # No position data when it was queued: nothing was advanced.
+            return
+        self._axis_estimate[axis] -= distance
+        if distance > 0:
+            self._axis_up_pending[axis] = max(0.0, self._axis_up_pending[axis] - distance)
+        else:
+            self._axis_down_pending[axis] = max(0.0, self._axis_down_pending[axis] - abs(distance))
+
+    def _drop_queue(self):
+        """Empty the queue, reconciling the projection as it goes.
+
+        Every drop — a lock or permission change (the gate going
+        disabled), a failed or timed-out pause, a resume mid-drain —
+        cancels moves that never dispatched, and the projection may only
+        hold what is still committed.
+        """
+        for op in self._pending:
+            self._disown_axis(getattr(op, "axis", ""), getattr(op, "distance", 0.0))
+        self._pending = ()
+
+    def _polled_axis(self, axis):
+        """The freshest axis value the poll knows: the live motion
+        report when present, else the gcode position (the Position
+        readout's own source — the live report: the plugin KNOWS
+        the position and must guard with it)."""
+        index = {"x": 0, "y": 1, "z": 2}[axis]
         core = self._data.snapshot.core
         live = (core.get("motion_report") or {}).get("live_position") or ()
-        if len(live) > 2:
+        if len(live) > index:
             try:
-                return float(live[2])
+                return float(live[index])
             except (TypeError, ValueError):
                 pass
         position = (core.get("gcode_move") or {}).get("gcode_position") or ()
-        if len(position) > 2:
+        if len(position) > index:
             try:
-                return float(position[2])
+                return float(position[index])
             except (TypeError, ValueError):
                 pass
         return None
@@ -278,14 +342,15 @@ class ToolheadController(QObject):
         live = (self._data.snapshot.core.get("motion_report") or {}).get("live_position") or ()
         toolhead = self._data.snapshot.auxiliary.get("toolhead") or {}
         try:
-            if axis == "z" and self._z_estimate is not None:
-                # The client-side Z projection (the live
+            if self._axis_estimate[axis] is not None:
+                # The client-side axis projection (the live
                 # report: rapid nudge taps outrun the poll, and each
                 # tap clamped against the STALE position let the
-                # merged queue walk the head below zero). The
-                # estimate advances with every queued Z move and
+                # merged queue walk the head past a limit — Z below
+                # zero, X/Y beyond their maxima). The estimate
+                # advances with every queued move of the axis and
                 # re-syncs from the poll once the queue drains.
-                current = self._z_estimate
+                current = self._axis_estimate[axis]
             else:
                 current = float(live[index])
             minimum = toolhead.get("axis_minimum") or ()
@@ -352,23 +417,49 @@ class ToolheadController(QObject):
             self._set_status(status)
         # The tail re-clamps BEFORE the estimate advances, so
         # the re-clamp sees the pre-tap position.
-        self._pending = self._clamp_tail(self._pending)
-        # The Z projection advances the moment the move is ACCEPTED
+        queued = self._pending
+        self._pending = self._clamp_tail(queued)
+        if self._pending != queued:
+            # The re-clamp refused or shrank a tail: the distance it took
+            # out of the queue will never run, so the projection retreats
+            # with it. A tail this push appended has advanced nothing yet
+            # (the advance below is still to come) — it counts only in
+            # the retained form the queue holds.
+            kept = self._pending[-1].distance if len(self._pending) == len(queued) else 0.0
+            if queued[-1] is op:
+                op = self._pending[-1] if kept else None
+            else:
+                self._disown_axis(queued[-1].axis, queued[-1].distance - kept)
+        # The axis projection advances the moment the move is ACCEPTED
         # into the queue — a later tap clamps against the move its
         # predecessor already covers, never the stale polled value
-        # (the live report: the head could still be nudged
-        # to zero and beyond).
-        if getattr(op, "axis", None) == "z":
-            base = self._z_estimate if self._z_estimate is not None else self._polled_z()
+        # (the live report: the head could still be nudged past a
+        # limit). Only a move the queue actually HOLDS may advance it:
+        # the depth cap's refusal above is not a move (the report said
+        # too many are queued — the next tap must still measure against
+        # what those will do), and a tap the re-clamp dropped is not one
+        # either.
+        op_axis = getattr(op, "axis", None) if op is not None else None
+        if not status and op_axis in ("x", "y", "z"):
+            base = self._axis_estimate[op_axis]
+            if base is None:
+                base = self._polled_axis(op_axis)
             if base is not None:
                 distance = getattr(op, "distance", 0.0)
-                self._z_estimate = base + distance
+                self._axis_estimate[op_axis] = base + distance
+                # The reflection is owed in the direction the move
+                # travelled; a move the other way supersedes any owed
+                # one, since the head ends at the newer projection
+                # either way. A zero-distance op (a per-axis home) is
+                # no relative move: nothing is owed for it.
                 if distance < 0:
-                    # A downward command's reflection is now owed;
-                    # an upward command supersedes any owed one.
-                    self._z_down_pending += abs(distance)
+                    self._axis_down_pending[op_axis] += abs(distance)
+                    self._axis_up_pending[op_axis] = 0.0
+                elif distance > 0:
+                    self._axis_up_pending[op_axis] += distance
+                    self._axis_down_pending[op_axis] = 0.0
                 else:
-                    self._z_down_pending = 0.0
+                    self._axis_down_pending[op_axis] = 0.0
         if self._pending:
             self._guard_cooldown.stop()
             self._guard_latched = True
@@ -433,7 +524,7 @@ class ToolheadController(QObject):
                 self._guard_cooldown.start()
             return
         if gate == "disabled":
-            self._pending = ()
+            self._drop_queue()
             self._pause_waiting = self._pause_in_flight = self._draining = False
             self._deadline.stop()
             self._set_status(STATUS_NOT_READY)
@@ -442,7 +533,7 @@ class ToolheadController(QObject):
             if self._draining and not self._pause_waiting:
                 # The pause had been granted and the print resumed mid-drain;
                 # remaining moves must never run while printing.
-                self._pending = ()
+                self._drop_queue()
                 self._draining = False
                 self._set_status(STATUS_RESUMED_DROP)
                 return
@@ -487,7 +578,7 @@ class ToolheadController(QObject):
             return
         self._pause_waiting = self._pause_in_flight = False
         self._deadline.stop()
-        self._pending = ()
+        self._drop_queue()
         self._draining = False
         self._set_status(STATUS_PAUSE_TIMED_OUT)
 
@@ -495,20 +586,22 @@ class ToolheadController(QObject):
         if not self._pause_waiting:
             return
         self._pause_waiting = False
-        self._pending = ()
+        self._drop_queue()
         self._draining = False
         self._set_status(STATUS_PAUSE_TIMED_OUT)
         # _pause_in_flight is left alone: if the pause does land later, a
         # later _pump simply finds an empty queue.
 
     def _reset(self):
-        self._pending = ()
+        self._drop_queue()
         self._pause_waiting = self._pause_in_flight = self._draining = False
         self._deadline.stop()
         self._guard_cooldown.stop()
         self._guard_latched = False
         self._set_guard(False)
-        self._z_down_pending = 0.0
+        self._axis_estimate = {"x": None, "y": None, "z": None}
+        self._axis_down_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self._axis_up_pending = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._set_status("")
         self.observe()
 

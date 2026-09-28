@@ -17,11 +17,11 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   `qt6-declarative-dev-tools`. QML files must stay qmlformat-canonical:
   `tools/check_qml_format.sh` formats to stdout and diffs (qmlformat
   before Qt 6.5 has no `--check`), `tools/check_qml.py` verifies
-  structure, and the token tests in `tests/test_monitor.py` must be
+  structure, and the token tests in `tests/test_monitor_qml_contracts.py` must be
   written so the formatter cannot break them (pin semantics, not
   whitespace).
 - The pinned, disposable dev container (`Dockerfile`) carries the whole
-  toolchain — Ubuntu 24.04, git, Qt 6.4.2's qmlformat, Python 3.12,
+  toolchain — Ubuntu 26.04, git, Qt 6.10.2's qmlformat, Python 3.14,
   PyQt6 6.11.0, ruff 0.16.6 — and nothing else; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
   (docker layer caching makes unchanged rebuilds instant), so deleting
@@ -34,6 +34,8 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   committed screenshots, i.e. what CI checks), `make lint` (structure,
   qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
   (stdlib suite on the host, the real-Qt suite in the container),
+  `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
+  test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
   (qmlformat in the container), `make coverage` (plugins/ report,
   the gcov gate), `make snapshot_package` (build + verify + copy to
@@ -43,6 +45,20 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   The targets are thin
   wrappers over the `tools/*.sh` scripts, which remain the single
   source of truth.
+- **To run a subset of the tests, use `make test_files`, never one
+  `unittest` invocation naming several files.** A single
+  `python3 -m unittest tests.a tests.b tests.c` runs those files
+  SERIALLY inside one process — that is where the minutes go — and the
+  real-Qt files cannot share a process in any case: the QML domain files
+  own their `QGuiApplication` and reject a foreign application.
+  `tools/run_some.sh` applies the same per-file fan-out
+  `tools/run_tests.sh` already uses for the whole discovery, scoped to
+  the files a change actually touches — one process per file, `JOBS`
+  (default 8) at a time, one log and one verdict line per file, and a
+  non-zero exit if ANY file fails. It never reports a pass for an empty
+  list. JUnit report generation also runs isolated files in parallel
+  (`JOBS`, default 2), then runs the timing benchmark alone. Empty or
+  crashed report children fail the report instead of silently dropping cases.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
@@ -61,6 +77,18 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   module — never the global one), grabs a fourth scene with the chart
   pop-over open, and asserts the mini-chart region contains painted
   pixels (the requestPaint regression test).
+  It also captures the Exclude Object Picker and Print Follower popovers,
+  cropped to their real cards. `tools/capture_penguin.py` generates a
+  deterministic three-material illustration as G-code; the production
+  indexer and prepared-layer renderer draw those motions. This fixture
+  is for screenshots, not a printer job. Native UI seeds and the shared
+  offscreen capture printer use a 250 x 250 x 250 mm volume; the penguin
+  is centred at X=125, Y=125 in both. Both cards participate in the
+  normal light/dark determinism, contrast and committed-image sync gates.
+  Native input probes must use window-relative coordinates for QTest;
+  the driver's evidence rectangles are desktop-relative. The macOS
+  available-desktop fit moves the content below the menu/title bars,
+  so assuming a window origin of (0, 0) misses controls and drag handles.
 - Deterministic captures: the harness freezes EVERY live input the
   scenes render — the formatter's wall clock is patched to a fixed
   instant (`FrozenDatetime`, patching every module object loaded from
@@ -112,9 +140,92 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   scripts as a render smoke test (each script fails on a blank capture)
   but no longer ships the PNGs as artifacts. These capture the 2-D UI
   only: the 3-D Preview (bed-mesh overlay on a rendered model) needs a
-  real Cura session — capture those by hand for marketing. Automating
-  that (running real Cura under a virtual display) was considered and
-  deliberately rejected: the cost and fragility are not worth it.
+  real Cura session. The native harness exercises Preview with screenshots
+  and video (see TESTING.md); choose marketing captures deliberately.
+
+## Windows development
+
+Windows has no POSIX shell on PATH and no pinned dev container, so
+every procedure has a native implementation under `tools/windows`,
+driven by the OS switch at the top of the `Makefile`. The target names,
+the arguments and the meaning are the same on both legs; only the
+implementation differs, and the tool versions are pinned to the
+container's so a verdict here means what it means there.
+
+Getting started (once per machine):
+
+1. Install GNU make: `winget install ezwinports.make` (user scope, no
+   elevation). Git for Windows is worth having beside it — the harness
+   path pins and the `sh`-based helper tests find `sh` in
+   `C:\Program Files\Git\usr\bin` (`MPF_SH` overrides the lookup) and
+   skip with a reason when no shell exists.
+2. Run `make dev_install`. It creates `.venv` with the pinned
+   toolchain and prints a parity table against the container:
+
+   | component | container (Ubuntu 26.04 image) |
+   | --- | --- |
+   | Python | 3.14.3 (installed per-user if missing — no PATH change, no elevation) |
+   | PyQt6 / Qt | 6.11.0 / 6.11.2 |
+   | qmlformat | 6.10.2 (from the PySide6 wheel; `qt6-declarative-dev-tools` on Linux) |
+   | ruff | 0.16.6 |
+   | shellcheck / hadolint / gitleaks / actionlint | 0.11.0 / 2.12.0 / 8.30.1 / 1.7.12 |
+   | fonts | DejaVu 2.37, the offscreen platform's font directory |
+
+   The linters land in `.venv/tools/bin` and the fonts in `.venv/fonts`;
+   both are gitignored, and `make lint` always prefers them. Anything
+   the machine already has at a different version is reported as
+   `DIFFERS` rather than adopted silently.
+3. `make lint`, `make run_tests`, `make test_files FILES="…"`,
+   `make package` — the same commands as everywhere else. `JOBS` (or
+   `--jobs`) sizes the one-process-per-file fan-out; the default is the
+   machine's core count, capped at 16.
+
+What differs on this leg, and why:
+
+- **The committed screenshots stay container-canonical.**
+  `make generate_screenshots` renders `dist/screenshots` for a look;
+  it does not copy into `screenshots/`, because the CI sync job
+  compares against renders made with the container's pinned fonts.
+  `make verify_captures` (two runs, byte-compared) does work natively.
+- **`make ui_test` / `make ui_release_gate` have no container leg.**
+  The real-Cura work on Windows is the harness the repo already
+  carries: `tools/native_harness.ps1` stages Cura, the plugin and the
+  driver, then `tests/harness/runner.py` drives them (see TESTING.md).
+  It launches a desktop app, so it is deliberately not a recipe a
+  stray `make all` can reach; run it directly:
+
+      powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
+          -CuraVersion 5.13.0 -Scenario suite
+      # then, with the env file it prints:
+      . "$env:TEMP\mpf-native\harness_env.ps1"
+      .venv\Scripts\python.exe tests\harness\runner.py suite
+
+- **`make dev_up`, `dev_down` and `docker_exec` do not exist here** —
+  they exist to manage the container that this leg replaces. They say
+  so and exit non-zero rather than pretending.
+- **`actionlint` runs with `-shellcheck=`,** because the Windows
+  shellcheck binary deadlocks the pipe actionlint feeds it (reproduced
+  on this leg: the lint hangs with the pinned shellcheck on PATH and
+  returns in a second without it). `tools/*.sh` are still linted —
+  by shellcheck itself, in the step before.
+- **Every child process gets stdin from /dev/null,** so a tool that
+  decides to prompt fails the gate instead of hanging it.
+
+Line endings: `.gitattributes` pins `* text=auto eol=lf`, and the
+build is byte-sensitive (the curapackage is compared file for file,
+and `qmlformat` reads a carriage return as file CONTENT, so a CRLF
+tree fails the format gate on all 52 QML files). A clone made before
+that file landed, or one with `core.autocrlf=true`, should be
+normalised once:
+
+    git config core.autocrlf false
+    git add --renormalize .
+    git checkout -- .        # re-materialises the working tree as LF
+
+The implementation is `tools/windows/dev.py` — run it directly
+(`.venv\Scripts\python.exe tools\windows\dev.py <command>`) when a
+step needs its own options; `make help` lists the procedures and the
+module docstring lists the commands.
 
 ## Repo hygiene — the standing rule on addresses
 
@@ -168,11 +279,30 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 
 ## Test suite organisation
 
-- One file per domain (`test_architecture.py`, `test_session.py`,
-  `test_print_state.py`, `test_monitor.py`, …).
+- One file per cohesive domain or domain responsibility (`test_architecture.py`,
+  `test_session.py`, `test_qml_plate_navigation.py`, …). Split a large domain by
+  responsibility when its serial runtime blocks parallel runs; do not split
+  unrelated cases into arbitrary numbered shards.
 - Never name test files or classes after versions, releases, or individual
   fixes (no `test_v31_*`, no `*_regressions`).
-- New tests join the existing domain file; a new domain gets a new file.
+- New tests join the appropriate domain file; a new responsibility gets a new file.
+- Shared `*_support.py` modules contain fixtures and doubles, not test methods.
+  Construct Qt applications lazily during test setup, never at import time.
+  `qml_engine_support.py` owns its application and retains QML context objects;
+  `test_qml_harness_lifecycle.py` verifies import-time ownership, execution without
+  silent skips, and the preserved census of 199 original QML cases. Production
+  model DPI tests run separately from dashboard doubles.
+- Do not inherit test-bearing classes to reuse fixtures: unittest runs every
+  inherited test again. The scheduler split removes 102 such duplicate executions
+  while retaining all unique cases. Keep fixtures and assertions separate.
+- The seek performance budget runs alone after the parallel correctness pool in
+  both full and subset runners. Its five-second limit measures implementation
+  performance, rather than competition with other test processes.
+- CI coverage and the release workflow also isolate files. The host coverage
+  job uses `tools/run_some.py --coverage-dir <fresh-directory>` and combines its
+  per-worker data; the wall-clock seek benchmark runs without instrumentation.
+  Never restore a single-process Qt discovery in either workflow: another
+  module's application can silently skip the real-engine cases.
 - Tests that need real Qt are guarded with
   `@unittest.skipUnless(QT_AVAILABLE, ...)`. They skip in stdlib-only local
   runs and run in CI, where `ci.yml` installs PyQt6.
@@ -193,7 +323,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 ### Standing UI rules
 
 Two rules govern every control on the Monitor tab; both are pinned by
-`tests/test_monitor.py` (`test_no_controls_disappear_controls_disable`
+`tests/test_monitor_qml_contracts.py` (`test_no_controls_disappear_controls_disable`
 and `test_disconnected_disables_every_monitor_control`) — update the
 pins in the same commit as any change to a control.
 
@@ -272,7 +402,7 @@ file, never inline content:
    capability gates (hide while the data is absent, refuse while the
    permission is absent) ride the SECTION body.
 
-Then update the pins in `tests/test_monitor.py` in the same commit:
+Then update the pins in `tests/test_monitor_qml_contracts.py` in the same commit:
 the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
 per QML file plus the totals, and the section-id haystack — a moved
 section decrements one file and increments another, and the totals
@@ -295,7 +425,7 @@ label's extents (`width: label.implicitHeight`,
 `anchors.centerIn` — the rotated text then occupies the wrapper exactly,
 starting under the header. Never anchor to the toggle inside the header:
 QML only allows anchoring to a parent or sibling, so that anchor is
-silently dropped and the title floats. The pins in `tests/test_monitor.py`
+silently dropped and the title floats. The pins in `tests/test_monitor_qml_contracts.py`
 enforce the header-row anchors. The pane widths collapse to
 `<toggle>.width + 2 * thin_margin`.
 
@@ -304,14 +434,14 @@ title in its own 24 px band at the top (the title shifts down 12 px
 via `anchors.verticalCenterOffset`), matching the expanded header's
 dot-before-title order with a space-width gap. The dot binds
 `connectionDotColour` from the pane root; the collapsed-strip pin in
-`tests/test_monitor.py` enforces it.
+`tests/test_monitor_qml_contracts.py` enforces it.
 The state is a model bool: add it to
 `_read_state`/`_write_state`/`_save_state` in `MoonrakerMonitorModel.py`
 (with a `bool(decoded.get(..., False))` default), a
 `value_property` + signal group + `set…Collapsed` slot, the QML root
 binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
-`tests/test_composed_components.py`.
+`tests/test_runtime_monitor_composition.py`.
 
 Plugin-drawn glyphs (see `plugins/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
@@ -323,9 +453,11 @@ relative to the QML file's directory.
 
 ### Persisting monitor panel state
 
-State lives in one plugin-owned JSON file next to cura.cfg —
-`Resources.getStoragePath(Resources.Preferences, SECTIONS_FILE_NAME)` in
-`MoonrakerMonitorModel.py` — never Uranium's preference store, which drops
+Production panel state lives in `MoonrakerPrintFollower/state.json` under
+Cura's preferences directory. `FollowerRuntime` constructs the shared
+`PluginPersistence` facade and the model merges through it. The old
+`moonrakerprintfollower_sections.json` path remains a migration source and
+a standalone test fallback — never Uranium's preference store, which drops
 reads and writes on unregistered keys, only persists on Cura's own save
 cycle, and mangles values through configparser.
 
@@ -362,7 +494,7 @@ cycle, and mangles values through configparser.
   file's second consumer — the model hydrates it but no longer
   writes it.
 - Every new property and slot also goes into the surface lists in
-  `tests/test_composed_components.py` (the properties string and the slot
+  `tests/test_runtime_monitor_composition.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.
 
 ### Rehydration order
@@ -393,7 +525,7 @@ they cannot recur silently.
   <toggle>.bottom` where the toggle lives inside a sibling header row is
   illegal — the engine logs "Cannot anchor to an item that isn't a
   parent or sibling" and *silently drops the anchor*. Anchor to the
-  header row instead; `tests/test_monitor.py` pins the header-row
+  header row instead; `tests/test_monitor_qml_contracts.py` pins the header-row
   anchors. Related: expression reads of anchor lines
   (`y: item.bottom + margin`) evaluate to 0/NaN — only the anchor form
   positions reliably; a probe with the real engine proved both.
@@ -440,7 +572,7 @@ they cannot recur silently.
   `ReferenceError` — which also killed the auto-close statement that
   followed the throw. Inner components see outer ids, never the
   reverse; put refresh `Connections` inside the component.
-  `tests/test_monitor.py` pins `meshDetail.refresh()` to exactly one
+  `tests/test_monitor_qml_contracts.py` pins `meshDetail.refresh()` to exactly one
   in-scope call.
 - **Pop-over anchoring is a single consistent offset.** Both pop-overs
   open at `x: cameraArea.x + margin, y: margin` — clear of the
@@ -459,7 +591,7 @@ they cannot recur silently.
   that froze pane collapses (the 3.5.0 capture runaway). Likewise never
   bind a pop-over shell's height to its content column's implicit height
   while the content uses `Layout.fillHeight` — the same cycle.
-  `tests/test_monitor.py` pins both.
+  `tests/test_monitor_qml_contracts.py` pins both.
 
 ### QML change discipline (learned the hard way)
 
@@ -544,7 +676,7 @@ they cannot recur silently.
   `UM.TooltipArea` over a control — a popup that can cover its
   control swallows the click when the pointer crosses it (the live
   find: a reset button's tooltip ate presses, and the native-property
-  popups pointed at the wrong control entirely). `test_monitor`'s
+  popups pointed at the wrong control entirely). `test_monitor_qml_contracts`'s
   tooltip-discipline pin fails the leg if either form returns.
   Passive readouts get the same pattern, not an exemption.
 - **The Uranium-controls-first rule (the 2026-09-18 ruling):** where
@@ -662,3 +794,72 @@ Diagnostic traces are per-printer settings in the plugin's
 configuration: "Log layer resolution" writes the layer inputs every
 5 s to Cura's log; "Log HTTP requests" logs every request. Both off
 by default — request FAILURES always log a warning regardless.
+
+### Follower shader maintenance
+
+The release archives include `plugins/shaders/stroke.vert.qsb` and
+`stroke.frag.qsb`; Cura users need no compiler or additional dependency.
+`make all`, `make build`, and `make package` generate the bundles before
+packaging; CI and release artifact builds do the same. Windows package and
+snapshot commands also compile them. For shader-only iteration, run
+`make generate_shaders` (or supply `QSB=/path/to/qsb`). The development
+toolchains install PySide6-Addons 6.10.2, which provides qsb.
+On Linux, install `libegl1` before invoking the wheel's qsb executable;
+it links the Qt graphics runtime even for offline shader compilation. CI
+installs the capture runtime before this build step for that reason.
+`tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
+HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
+Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.
+The bundles have been exercised on Cura 5.13's Qt 6.6 OpenGL backend;
+this is not a claim that every Cura/platform combination was tested locally.
+The graphics driver compiles the packaged target shader when first used;
+Cura users need neither qsb nor a runtime GLSL-to-QSB compiler.
+Commit the GLSL and regenerated bundles together.
+
+### Native UI harness window bounds and macOS capture
+
+Use the shared 1840×900 baseline on a 1920×1080 desktop. Do not restore
+1840×1040 in scenario cleanup or native launchers: on the macOS CI host,
+that window exceeded the usable desktop and native pixels stayed on an
+old Prepare frame while QML and even frameSwapped continued answering.
+Repeated comparisons passed recording at 1840×900 and failed at
+1840×1040. The apparent resize recovery actually changed the latter to
+1840×943 after Cocoa constrained it. At a fitted size, repeated Prepare
+model translations, valid sliced Preview layer changes and Monitor
+updates all presented without resizing between changes. This reproduces
+a size-dependent presentation fault; it does not identify whether macOS,
+Qt or Cura owns the underlying bug.
+
+Only macOS uses the additional bounds policy: HarnessDriver fits the
+whole frame into the current QScreen.availableGeometry(), subtracting
+frameMargins() in Qt logical coordinates. Boot and every scenario verify
+the actual content size and frame bounds. The one-second bounds watchdog
+preserves deliberate smaller collapse tests, corrects later out-of-bounds
+changes and reports repairs/errors. Never lower Cura's actual minimum to
+make a test fit. Linux and Windows retain exact requested geometry.
+
+Native macOS screenshots and video are enabled by default; their static
+and display/liveness checks must stay judged. HARNESS_CAPTURE=off remains
+an explicit diagnostic override with a recorded reason. A responsive QML
+tree or internal grab is not proof of current WindowServer pixels. These
+software-rendered CI recordings are evidence of the UI, not physical-Mac
+GPU performance. See TESTING.md for the capture contract and investigation.
+
+For a single native scenario diagnosis, dispatch `leg.yml` with its exact
+scenario ID as `group` (for example `b12`) and `mode=suite`. This uses the
+same runner and assertions as the full group, without running its siblings.
+
+### Shared Cura-log verdict
+
+Native and container UI journeys share `tests/harness/log_gate.py`. Both must
+fail on plugin-owned warnings/errors and QML polish or binding loops; missing
+logs are a failure, not a clean verdict. Keep this module beside the staged
+runner. First-install and migration journeys must retain and check both boots.
+Normal pre-telemetry startup is not a warning; optional layer diagnostics own
+that debug message. Do not suppress a warning merely to turn a journey green.
+
+The shared harness log gate also checks fault-injection evidence: an exact expected
+warning is allowed only after its scenario passes every step, and only for the
+declared count. Repeated authentication refusals use the verified scenario's
+recorded start/end time instead. Neither allowance exempts unrelated warnings,
+errors or critical tracebacks.

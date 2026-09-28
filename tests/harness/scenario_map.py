@@ -10,6 +10,11 @@ under the workstream-4 schema.
 from __future__ import annotations
 
 SCENARIO_MAP = {
+    "MoonrakerMonitorModel.setFollowerColourMode": "b11",
+    "moonrakerFollowerColourMode": "b11",
+    "MoonrakerMonitorModel.setFollowerShowRetractions": "b11",
+    "MoonrakerMonitorModel.setFollowerTrueThickness": "b11",
+    "MoonrakerMonitorModel.setFollowerShowUnretractions": "b11",
     # The QML-facing verbs on the settings machine action (the settings group).
     "MoonrakerFollowerMachineAction.cancelTest": "i2",
     "MoonrakerFollowerMachineAction.clearCache": "i6",
@@ -17,6 +22,7 @@ SCENARIO_MAP = {
     "MoonrakerFollowerMachineAction.saveConfig": "i6",
     "MoonrakerFollowerMachineAction.testConnection": "i2",
     "MoonrakerFollowerMachineAction.validAuxInterval": "i3",
+    "MoonrakerFollowerMachineAction.validCacheMax": "i3",
     "MoonrakerFollowerMachineAction.validConsoleInterval": "i3",
     "MoonrakerFollowerMachineAction.validPollInterval": "i3",
     "MoonrakerFollowerMachineAction.validRetryInterval": "i3",
@@ -38,6 +44,7 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.emergencyHoldStarted": "s7",
     "MoonrakerMonitorModel.emergencyStopClick": "s7",
     "MoonrakerMonitorModel.excludeObject": "b11",
+    "MoonrakerMonitorModel.restoreObject": "b11",
     "MoonrakerMonitorModel.extrude": "g4",
     "MoonrakerMonitorModel.firmwareRestart": "g9b",
     "MoonrakerMonitorModel.heatersOff": "g9b",
@@ -65,10 +72,13 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.refreshFileManager": "f1",
     "MoonrakerMonitorModel.refreshWebcams": "e1",
     "MoonrakerMonitorModel.resumePrint": "g6",
+    "MoonrakerMonitorModel.restartLastPrint": "g6",
     "MoonrakerMonitorModel.runMacro": "g5",
     "MoonrakerMonitorModel.runQuadGantryLevel": "g2",
     "MoonrakerMonitorModel.saveConfig": "i6",
     "MoonrakerMonitorModel.selectWebcam": "e2",
+    "MoonrakerMonitorModel.setWebcamStreamEnabled": "e2",
+    "MoonrakerMJPGImage.clearFrame": "e2",
     "MoonrakerMonitorModel.sendConsoleCommand": "d1",
     "MoonrakerMonitorModel.setBedMeshPreviewVisible": "h6",
     "MoonrakerMonitorModel.setBedMeshThresholds": "h6c",
@@ -91,6 +101,45 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setSectionLayout": "x3",
     "MoonrakerMonitorModel.sectionLayoutFor": "x1",
     "MoonrakerMonitorModel.setShowProbePoints": "h6b",
+    "MoonrakerMonitorModel.setFollowerShowPrevious": "b11",
+    "MoonrakerMonitorModel.setFollowerShowNext": "b11",
+    "MoonrakerMonitorModel.setFollowerShowBase": "b11",
+    "MoonrakerMonitorModel.setFollowerShowTravels": "b11",
+    "MoonrakerMonitorModel.setFollowerAntialiasing": "b11",
+    "MoonrakerMonitorModel.setFollowerGpuRendering": "b11",
+    "MoonrakerMonitorModel.setFollowerKeepCentred": "b11",
+    "MoonrakerMonitorModel.setFollowerLineScale": "b11",
+    # The follower's view and layer seeks (4.6.0): the attach/detach
+    # freeze and the layer slider's anchor.
+    "MoonrakerMonitorModel.setFollowerAttached": "b11",
+    "MoonrakerMonitorModel.setFollowerLayerAnchor": "b11",
+    # The slider's raw tick (the debounce's start for the seek trace).
+    "MoonrakerMonitorModel.seekAnchorTicked": "b11",
+    # The progress slider's within-layer scrub (the 4.6.0 request).
+    "MoonrakerMonitorModel.setFollowerLayerProgress": "b11",
+    # The native renderer's inputs (4.6.0 round 3): the view and the
+    # bed plot the raster bakes in.
+    "MoonrakerMonitorModel.setFollowerView": "b11",
+    "MoonrakerMonitorModel.setFollowerPlot": "b11",
+    # The owner-thread raster commit (an internal handler, not a
+    # QML-driven surface — exercised through the follower scenarios).
+    "MoonrakerMonitorModel._raster_committed": "b11",
+    # The worker's start report (the scheduler's superseded-before-
+    # start accounting — exercised through the follower scenarios).
+    "MoonrakerMonitorModel._raster_started": "b11",
+    # The seek-trace stage log (a diagnostics instrument, gated on
+    # the seek_trace config — exercised by the trace scenarios).
+    "MoonrakerMonitorModel._trace": "b11",
+    # The plate popovers' open states (the closed-surface freeze).
+    "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
+    "MoonrakerMonitorModel.setFollowerInteracting": "b11",
+    "MoonrakerMonitorModel.setFollowerGestureBake": "b11",
+    # The gesture's navigation-file hold: the face names the raster it
+    # is presenting so a mid-gesture supersede cannot unlink it.
+    "MoonrakerMonitorModel.setFollowerGestureRaster": "b11",
+    # The face's barrier report (the warm raster's hold diagnostic).
+    "MoonrakerMonitorModel.followerHoldReport": "b11",
+    "MoonrakerMonitorModel.setPickerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",
     "MoonrakerMonitorModel.setSpeedFactor": "c2",
@@ -110,6 +159,63 @@ SCENARIO_MAP = {
     "MoonrakerPrintFollower.toggleFollowingPause": "h3",
     # The interactive items by objectName.
     "moonrakerTemperatureDetail": "v6",
+    "moonrakerPlateCanvas": "b11",
+    "moonrakerPlateExcludeFace": "b11",
+    "moonrakerPlateProgressFace": "b11",
+    "moonrakerPlateToolheadDot": "b11",
+    # The follower's own controls (4.6.0): the toolhead jump, the
+    # layer seek with its attach button and readout, and the
+    # display-only within-layer bar.
+    "moonrakerFollowerJump": "b11",
+    "moonrakerFollowerKeepCentred": "b11",
+    "moonrakerFollowerLayerSlider": "b11",
+    "moonrakerFollowerLayerReadout": "b11",
+    "moonrakerFollowerAttach": "b11",
+    "moonrakerFollowerLayerProgress": "b11",
+    "moonrakerFollowerLayerProgressReadout": "b11",
+    "moonrakerFollowerPauseButton": "b11",
+    "followerShowPrevious": "b11",
+    # The webcam pane's FPS/zoom controls (4.6.0): the bar, its chip
+    # readouts, the gesture area and the badges — the camera scenario.
+    "cameraBar": "e2",
+    "cameraBarChip": "e2",
+    "cameraBarChipText": "e2",
+    "cameraFpsBar": "e2",
+    "cameraFpsMarker": "e2",
+    "cameraFpsReadout": "e2",
+    "cameraFpsScale": "e2",
+    "cameraFrame": "e2",
+    "cameraGestureArea": "e2",
+    "cameraLiveBadge": "e2",
+    "cameraZoomBar": "e2",
+    "cameraZoomMarker": "e2",
+    "cameraZoomReadout": "e2",
+    "cameraZoomScale": "e2",
+    "followerShowNext": "b11",
+    "followerShowBase": "b11",
+    "followerShowTravels": "b11",
+    "followerAntialiasing": "b11",
+    "followerSoftwareRendering": "b11",
+    "followerKeepCentred": "b11",
+    "followerLineScale": "b11",
+    "followerTravelVisualRatio": "b11",
+    # The popover's pause-at-layer block (4.6.0): the card's own
+    # schedule, read from the popover's own layer — the nine published
+    # keys, the three intents its controls send, and the button itself.
+    # b11 opens the popover over the live print and reads the block
+    # back off the model.
+    "pauseAtLayerActive": "b11",
+    "pauseAtLayerCandidate": "b11",
+    "pauseAtLayerCanToggle": "b11",
+    "pauseAtLayerScheduled": "b11",
+    "pauseAtLayerSummary": "b11",
+    "pauseAtLayerItems": "b11",
+    "pauseAtLayerUnavailableText": "b11",
+    "pauseAtLayerHasBaked": "b11",
+    "pauseAtLayerHasClearable": "b11",
+    "MoonrakerMonitorModel.togglePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.removePauseAtLayer": "b11",
+    "MoonrakerMonitorModel.clearPauseAtLayer": "b11",
     "sectionConfigurePopOver": "x1",
     "sectionConfigureRowTitle": "x1",
     "configureControlsSectionsButton": "x1",
@@ -174,6 +280,15 @@ SCENARIO_MAP = {
     "printConfirmStartButton": "f6",
     "deleteConfirmDeleteButton": "f3",
     "renameConfirmButton": "f7",
+    # The replace prompt (the card's own dialog): h2 asks, cancels and
+    # asks again, so all three surfaces ride that one scenario — the
+    # cancel surface has no other caller.
+    "moonrakerReplacePrompt": "h2",
+    "moonrakerReplaceCancelButton": "h2",
+    # Its PRESS lives in the preview leg: h2 answers by keyboard
+    # (Escape, then Return) so both keyboard answers are witnessed,
+    # and p1 presses the same button with the mouse.
+    "moonrakerReplaceConfirmButton": "p1",
     # The protocol endpoints: the simulator's contract test owns the
     # wire shapes; the scenarios drive them through the real UI.
     "status_endpoint": "b1", "websocket_endpoint": "a1",
@@ -185,6 +300,7 @@ SCENARIO_MAP = {
 }
 
 PREFIX_RULES = [
+    ("objectName", "moonrakerExtruderMarkers", "b11"),
     # The policy projections (4.2.0) ride the motion scenarios that
     # exercise the gates: the caption pair and the restart pair.
     ("key", "jogReason", "g6"),
@@ -197,6 +313,7 @@ PREFIX_RULES = [
     ("slot", "MoonrakerMonitorModel.setFile", "f1"),
     # The camera slots ride the camera-group scenario.
     ("slot", "MoonrakerMonitorModel.cameraRenderStalled", "e2"),
+    ("slot", "MoonrakerMonitorModel.setCameraFps", "e2"),
     # The published keys by family.
     ("key", "console", "d1"),
     ("key", "camera", "e2"),
@@ -204,6 +321,8 @@ PREFIX_RULES = [
     ("key", "fan", "c2"),
     ("key", "fileManager", "f1"),
     ("key", "fileUpload", "f2"),
+    ("key", "fileDownloadProgress", "f2"),
+    ("slot", "MoonrakerMonitorModel.fileDownloadCancel", "f2"),
     ("key", "filePrint", "f6"),
     ("key", "fileDelete", "f3"),
     ("key", "fileRename", "f5"),
@@ -231,6 +350,7 @@ PREFIX_RULES = [
     ("key", "canSaveConfig", "i6"),
     ("key", "webcamNames", "e2"),
     ("key", "activeWebcamIndex", "e2"),
+    ("key", "webcamStreamEnabled", "e2"),
     ("key", "speedFactorPercent", "c2"),
     ("key", "flowFactorPercent", "c2"),
     ("key", "ledItems", "c3"),
@@ -238,7 +358,30 @@ PREFIX_RULES = [
     ("key", "fanControlItems", "c2"),
     ("key", "fanItems", "c2"),
     ("key", "filamentSensorItems", "c4"),
-    ("key", "excludeObjectItems", "b11"),
+    ("key", "plateObjects", "b11"),
+    ("key", "plateDot", "b11"),
+    ("key", "plateLayers", "b11"),
+    ("key", "plateSplit", "b11"),
+    ("key", "platePartial", "b11"),
+    ("key", "plateSceneEpoch", "b11"),
+    ("key", "plateProgressAnchor", "b11"),
+    ("key", "plateProgressAvailable", "b11"),
+    ("key", "plateProgressReason", "b11"),
+    ("key", "plateHasObjects", "b11"),
+    ("key", "plateLayerMotionCount", "b11"),
+    ("key", "plateLiveLayers", "b11"),
+    ("key", "plateLiveSplit", "b11"),
+    ("key", "plateLivePartial", "b11"),
+    ("key", "plateLiveAnchor", "b11"),
+    ("key", "plateLiveAvailable", "b11"),
+    # The layer slider's range and the follower's follow state (4.6.0).
+    ("key", "plateLayerCount", "b11"),
+    ("key", "followerAttached", "b11"),
+    ("key", "followerMotionSmoothing", "b11"),
+    ("key", "followerShowRetractions", "b11"),
+    ("key", "followerTrueThickness", "b11"),
+    ("key", "followerShowUnretractions", "b11"),
+    ("key", "followerLayerAnchor", "b11"),
     ("key", "zOffset", "g4"),
     ("key", "homedAxes", "b8"),
     ("key", "positionMode", "g3"),
@@ -254,6 +397,7 @@ PREFIX_RULES = [
     ("key", "printJobCaption", "g6"),
     ("key", "canPausePrint", "g6"),
     ("key", "canResumePrint", "g6"),
+    ("key", "canRestartLastPrint", "g6"),
     ("key", "pauseReason", "g6"),
     ("key", "pauseReasonDetail", "g6"),
     # The next scheduled pause's published keys ride the improve-ETA
@@ -263,11 +407,18 @@ PREFIX_RULES = [
     ("key", "nextPauseFraction", "h8"),
     ("key", "nextPauseLayer", "h8"),
     ("key", "nextPauseBaked", "h8"),
+    ("key", "platePassFraction", "h8"),
+    ("key", "plateScrubVector", "h8"),
+    ("key", "plateLiveScrubVector", "h8"),
+    ("key", "plateNavigationData", "h8"),
+    ("key", "plateNavigationSplit", "h8"),
+    ("key", "plateNavigationBacking", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),
     ("key", "actionBusy", "b10"),
     ("key", "actionStatus", "b10"),
+    ("key", "actionTimestamp", "b10"),
     ("key", "connectionDetail", "a9"),
     ("key", "canApplyTemperaturePreset", "c1"),
     ("key", "temperaturePresetItems", "c1"),
@@ -282,7 +433,63 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
-    # The T0-T9 cold-camera timing chain (the reviewer's diagnostics):
+    "plateDownloadProgressRow": {
+        "reason": "noninteractive progress readout; the enclosing download action is mapped",
+        "evidence": "test_qml_object_picker: instruction and progress rows are centred on the real engine",
+        "date": "2026-09-27",
+        "recheck": "the progress row gains an input action",
+    },
+    "plateTrackingAvailable": {
+        "reason": "ungated live tracking flag used by the picker, independent of follower visibility",
+        "evidence": "test_monitor_model_runtime: live tracking readiness updates with both follower surfaces closed",
+        "date": "2026-09-27",
+        "recheck": "the native picker scenario closes both follower surfaces before testing tracking",
+    },
+    "printIndexReady": {
+        "reason": "read-only download guard; startup with an index but no physical layer is covered in Qt runtime tests",
+        "evidence": "test_monitor_model_runtime: indexed PRINT_START does not offer another download",
+        "date": "2026-09-27",
+        "recheck": "a native PRINT_START scenario covers this waiting phase",
+    },
+    "moonrakerFollowerColourControls": {
+        "reason": "noninteractive legend container; its colour selector is mapped to b11",
+        "evidence": "test_qml_plate_navigation: colour keys preserve geometry and paint gradients",
+        "date": "2026-09-27",
+        "recheck": "the legend container becomes interactive",
+    },
+    "moonrakerFollowerColourGradient": {
+        "reason": "paint-only gradient key, not an input surface",
+        "evidence": "test_qml_plate_navigation: all gradient modes paint distinct sampled colours",
+        "date": "2026-09-27",
+        "recheck": "the gradient key gains an input action",
+    },
+    "GpuFollower.pointAtMotion": {
+        "reason": "internal retained-geometry lookup for the animated marker, not a user command",
+        "evidence": "tests/test_gpu_follower.py: test_marker_tracks_every_curve_subedge_and_matches_shader_fraction",
+        "date": "2026-09-27", "recheck": "marker geometry lookup or fractional stroke encoding changes",
+    },
+    "monitorPopoverPointerBarrier": {
+        "reason": "internal input shield; real Qt mouse and wheel delivery is covered by the engine suite",
+        "evidence": "tests/test_qml_camera_controls.py: test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works",
+        "date": "2026-09-27", "recheck": "popover input shielding changes",
+    },
+    "MoonrakerMonitorModel.acquirePlateAssetOwner": {
+        "reason": "internal face lifetime protocol, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: asset_owners_release_independently_and_cannot_be_resurrected",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+    "MoonrakerMonitorModel.setPlateAssetReferences": {
+        "reason": "internal atomic asset snapshot, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: presentation_references_survive_arbitrary_prefix_supersedes",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+    "MoonrakerMonitorModel.releasePlateAssetOwner": {
+        "reason": "internal face destruction protocol, not a user command",
+        "evidence": "tests/test_monitor_model_coverage.py: asset_owners_release_independently_and_cannot_be_resurrected",
+        "date": "2026-09-26", "recheck": "asset lifetime API becomes a user command",
+    },
+
+    # The T0-T9 cold-camera timing chain:
     # the QML-invoked first-frame slot and the trace-gate key are
     # instrumentation, never scenario verbs.
     "MoonrakerMonitorModel.cameraFirstFrameRendered": {
@@ -339,7 +546,7 @@ EXCLUSIONS = {
     # state machine and the model's record values — until it lands.
     "MoonrakerMonitorModel.dismissMigrationBanner": {
         "reason": "the dialog's Dismiss verb; the dialog scenario is deferred",
-        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor",
+        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -366,7 +573,7 @@ EXCLUSIONS = {
     },
     "migrationNotice": {
         "reason": "the failure banner; the dialog scenario is deferred",
-        "evidence": "test_migration_notice; the model's record values in test_monitor",
+        "evidence": "test_migration_notice; the model's record values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -384,7 +591,7 @@ EXCLUSIONS = {
     },
     "migrationDiagnosticsRow": {
         "reason": "the permanent post-dismissal row; the dialog scenario is deferred",
-        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor",
+        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor_model_coverage",
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
@@ -420,25 +627,25 @@ EXCLUSIONS = {
     },
     "jobPositionCellX": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
     "moonrakerInfoContent": {
         "reason": "the information pane's container, addressed by the real-engine tests; the section ORDER is asserted by the configure scenarios through the headers, not by this name",
-        "evidence": "test_qml_real_engine's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
+        "evidence": "test_qml_dashboard_interaction's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
         "date": "2026-09-18",
         "recheck": "the configure scenarios adopt the objectName directly",
     },
     "jobPositionCellY": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
     "jobPositionCellZ": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
-        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "evidence": "test_monitor_qml_contracts pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
@@ -452,18 +659,34 @@ EXCLUSIONS = {
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
     },
+    # The follower popover's own pause list: the same seam as the
+    # card's model above — the b11 scenario reads the block off the
+    # live model and the rows through the list view, never the model
+    # object itself.
+    "moonrakerFollowerPauseListModel": {
+        "reason": "probe seam for the popover list's in-place sync; no scenario reads the model object itself",
+        "evidence": "b11 reads the published pause block off the model and the QML syncs it into this model in place",
+        "date": "2026-09-25",
+        "recheck": "a popover pause-row scenario that presses the row's ✕ lands",
+    },
     # The status column's two geometry address points (the status-width
     # fix): the flickable and the column it holds are measured, never
     # pressed — a scenario would only be reading their rects.
     "moonrakerStatusFlick": {
         "reason": "geometry address point of the status pane; no scenario presses it",
-        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the column against it",
+        "evidence": "test_qml_dashboard_layout's StatusColumnGeometryTests measures the column against it",
         "date": "2026-09-18",
         "recheck": "a scenario scrolls or presses inside the status pane",
     },
+    "jobTelemetryGrid": {
+        "reason": "passive geometry seam for the print-job telemetry layout, not an interactive surface",
+        "evidence": "test_qml_dashboard_layout.SectionContentSizingTests checks no-wrap labels and stable height across widths and telemetry states",
+        "date": "2026-09-28",
+        "recheck": "the telemetry grid gains an interactive action",
+    },
     "moonrakerStatusContent": {
         "reason": "geometry address point of the status column; no scenario presses it",
-        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the sections against it",
+        "evidence": "test_qml_dashboard_layout's StatusColumnGeometryTests measures the sections against it",
         "date": "2026-09-18",
         "recheck": "a scenario scrolls or presses inside the status pane",
     },
@@ -472,13 +695,13 @@ EXCLUSIONS = {
     # never pressed — a scenario would only be reading their rects.
     "moonrakerControlsFlick": {
         "reason": "geometry address point of the controls pane; no scenario presses it",
-        "evidence": "test_qml_real_engine's PaneGutterTests measures the column against it",
+        "evidence": "test_qml_dashboard_layout's PaneGutterTests measures the column against it",
         "date": "2026-09-19",
         "recheck": "a scenario scrolls or presses inside the controls pane",
     },
     "moonrakerControlsContent": {
         "reason": "geometry address point of the controls column; no scenario presses it",
-        "evidence": "test_qml_real_engine's PaneGutterTests measures the gutter against it",
+        "evidence": "test_qml_dashboard_layout's PaneGutterTests measures the gutter against it",
         "date": "2026-09-19",
         "recheck": "a scenario scrolls or presses inside the controls pane",
     },
@@ -492,16 +715,25 @@ EXCLUSIONS = {
         "date": "2026-09-18",
         "recheck": "a scenario asserts the job section's stacked track directly",
     },
+    # The background optimisation's sweep: a passive scanline on the
+    # same stacked track, asserted through the model value rather than
+    # rendered pixels (it vanishes at completion).
+    "optimisationBand": {
+        "reason": "the job section's optimisation scanline is styling, not a scenario surface",
+        "evidence": "test_runtime_index_composition.test_the_job_bar_band_tracks_the_prepared_share pins the value; the census pins the visibility",
+        "date": "2026-09-21",
+        "recheck": "a scenario asserts the optimisation band's rendered state",
+    },
     # The drag GESTURE stays excluded: the synthetic drag cannot drive
     # a QML MouseArea grab under Xvfb (the console-resize precedent).
     # Retired: x6 drives a real press/move/release on the handle via
     # QTest (the s8 track-click precedent) and gates the rendered
     # reorder the plain release commits.
     # British-spelling formatting is a pure function of the locale —
-    # unit-tested in test_monitor, invisible to scenarios.
+    # unit-tested in test_monitor_qml_contracts, invisible to scenarios.
     "britishSpelling": {
         "reason": "locale formatting, a pure function",
-        "evidence": "unit-tested in test_monitor.py",
+        "evidence": "unit-tested in test_monitor_qml_contracts.py",
         "date": "2026-09-15",
         "recheck": "the formatting moves out of a pure function",
     },
@@ -645,6 +877,12 @@ EXCLUSIONS = {
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
     },
+    "downloadProgressCancelButton": {
+        "reason": "the download popup's chrome — the scenario addresses the cancel verb directly (fileDownloadCancel), the button rides the same flow",
+        "evidence": "the model coverage presses the cancel verb; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-20",
+        "recheck": "the deferred popup round lands",
+    },
     "printTimePopup": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
@@ -713,25 +951,25 @@ EXCLUSIONS = {
     },
     "cameraStreamChip": {
         "reason": "the camera stream chip (decoded resolution + recent bandwidth): display-only, driven by the renderer's published statistics",
-        "evidence": "test_qml_real_engine's chip visibility/text contract; the captures' non-live camera hides it",
+        "evidence": "test_qml_camera_lifecycle's chip visibility/text contract; the captures' non-live camera hides it",
         "date": "2026-09-19",
         "recheck": "the chip gains an interactive surface",
     },
     "temperatureDataCanvas": {
         "reason": "the temperature chart's data canvas: display-only, painted from the model's payloads; no scenario verb addresses a canvas",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
+        "evidence": "test_qml_chart's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
         "date": "2026-09-19",
         "recheck": "the canvas gains an interactive surface",
     },
     "temperatureHoverCursor": {
         "reason": "the chart hover cursor line: display-only scene-graph geometry following the snapped hover second",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "evidence": "test_qml_chart's ChartSurfaceTests hover-scene-graph contract",
         "date": "2026-09-19",
         "recheck": "the cursor gains an interactive surface",
     },
     "temperatureHoverMarkers": {
         "reason": "the chart hover markers' repeater: display-only scene-graph dots at each series' nearest sample",
-        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "evidence": "test_qml_chart's ChartSurfaceTests hover-scene-graph contract",
         "date": "2026-09-19",
         "recheck": "the markers gain an interactive surface",
     },
@@ -740,5 +978,45 @@ EXCLUSIONS = {
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
+    },
+    # The prefix handover's two Images (the composition transaction):
+    # identity address points for the real-engine ownership read, which
+    # proves no beat of a boundary advance leaves the interior to the
+    # canvas's bitmap alone. No scenario presses an Image.
+    "moonrakerPlateProgressCanvas": {
+        "reason": "internal texture producer addressed only by real-engine delivery tests",
+        "evidence": "tests/test_qml_plate_prefix_refresh.py: repeated_forward_refreshes_keep_every_frame_complete",
+        "date": "2026-09-26",
+        "recheck": "the harness directly addresses the Canvas",
+    },
+    "moonrakerPlatePreparingCover": {
+        "reason": "internal compositor presentation cover, not an interactive surface",
+        "evidence": "test_qml_plate_paint_delivery: obsolete-world upload stays masked until current-view paint delivery",
+        "date": "2026-09-26",
+        "recheck": "exact compositor presentation or Canvas delivery changes",
+    },
+    "moonrakerPlatePrefixImage": {
+        "reason": "the live replacement in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_plate_prefix_ownership's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
+    "moonrakerPlateRetainedPrefixImage": {
+        "reason": "the retained record in the prefix handover: addressed by the ownership read, never pressed",
+        "evidence": "test_qml_plate_prefix_ownership's prefix tests (the ownership invariant, the stroke census)",
+        "date": "2026-09-23",
+        "recheck": "a scenario addresses the prefix images directly",
+    },
+    # The zoom rail down the plate's edge: raised only by a wheel or a
+    # right-drag, and the harness's input set carries neither — the
+    # same limit moonrakerFollowerJump's absent-wait records. No
+    # scenario can reach it, so it carries an exclusion rather than a
+    # mapping. The name exists for the Qt suite, which addresses it to
+    # take it out of the miter stroke census's frame.
+    "moonrakerPlateZoomScope": {
+        "reason": "the plate's zoom rail: raised only by a wheel or a right-drag, neither of which the harness input set carries",
+        "evidence": "test_zoom_raster_real_engine.py's chrome exclusion in the miter stroke census",
+        "date": "2026-09-24",
+        "recheck": "the harness gains wheel or drag input over the plate face",
     },
 }

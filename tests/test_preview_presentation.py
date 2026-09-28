@@ -18,6 +18,7 @@ release harness's job (tools/check_qml_engine.py, tools/capture_preview.py).
 """
 from __future__ import annotations
 
+import os
 import unittest
 from types import SimpleNamespace
 
@@ -130,7 +131,12 @@ if QT_AVAILABLE:
             self._platform = value
 
         def createQmlComponent(self, path):
-            name = path.rsplit("/", 1)[-1]
+            # The adapter hands Cura a native path (os.path.join of the
+            # plugin directory and the host's file name), backslash-
+            # spelled on Windows: key by the FILE NAME whichever
+            # separator the platform produced, or the whole path becomes
+            # the key and no host is ever found off POSIX.
+            name = os.path.basename(path.replace("\\", "/"))
             self.requested.append(name)
             outcome = self.components.get(name)
             if isinstance(outcome, Exception):
@@ -313,6 +319,18 @@ class PreviewPresentationTests(unittest.TestCase):
                          [[QQuickItem], [QQuickItem]])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
 
+    def test_a_host_path_is_keyed_by_its_file_name_on_every_platform(self):
+        # The adapter hands Cura a native path (os.path.join of the
+        # plugin directory and the host's file name). On Windows that
+        # path is backslash-spelled, and a "/"-only split kept the whole
+        # path as the key: both hosts stayed unborn there and every
+        # host-born assertion in this file came up empty (the CI logs).
+        application = HostApplication(window=Window(QQuickItem()))
+        application.components[PANEL_HOST] = "the panel host"
+        self.assertEqual(application.createQmlComponent(r"D:\plugins" + "\\" + PANEL_HOST),
+                         "the panel host")
+        self.assertEqual(application.requested, [PANEL_HOST])
+
     def test_the_two_hostings_are_named_apart(self):
         scene = self.build()
         # The harness walks one tree and must tell the hostings apart.
@@ -473,6 +491,39 @@ class PreviewPresentationTests(unittest.TestCase):
             self.assertFalse(card.property("followingPaused"))
             # A caller's gateVisible is not a value: the gate is this module's call.
             self.assertFalse(card.property("gateVisible"))
+
+    def test_only_the_current_card_is_told_to_raise_the_prompt(self):
+        # The prompt is a Popup, and a Popup renders in the WINDOW's
+        # overlay: it escapes whatever hidden ancestor holds its card,
+        # so publishing the value to both hostings put two identical
+        # dialogs on screen at once (measured, in the local gate run's
+        # own screenshots). The card the model considers current is the
+        # one that may ask — the overlay while Cura hides its panel,
+        # the panel while it shows it.
+        scene = self.build()
+        scene.presentation.publish({"configuredForFollowing": True,
+                                    "previewStageActive": True,
+                                    "replacePromptVisible": True})
+        self.assertTrue(scene.panel_card.property("replacePromptVisible"))
+        self.assertFalse(scene.overlay_card.property("replacePromptVisible"))
+
+        scene.app.set_platform_activity(False)
+        scene.app.activityChanged.emit()
+        self.assertFalse(scene.panel_card.property("replacePromptVisible"))
+        self.assertTrue(scene.overlay_card.property("replacePromptVisible"))
+
+    def test_a_withdrawn_prompt_stays_withdrawn_on_the_hidden_card(self):
+        # The other direction: the card that is NOT current must read
+        # False, never a stale True from the turn it was current.
+        scene = self.build()
+        scene.presentation.publish({"configuredForFollowing": True,
+                                    "previewStageActive": True,
+                                    "replacePromptVisible": True})
+        scene.app.set_platform_activity(False)
+        scene.app.activityChanged.emit()
+        scene.presentation.publish({"replacePromptVisible": False})
+        for card in (scene.panel_card, scene.overlay_card):
+            self.assertFalse(card.property("replacePromptVisible"))
 
     def test_a_deleted_card_never_takes_the_other_host_down(self):
         scene = self.build(panel_card=DeletedCard())

@@ -8,9 +8,14 @@ import "theme"
 // The Print-job section (4.3.0 extraction): the status, progress,
 // layer, ETA and Improve-ETA rows out of the monitor as one
 // property-driven component.
-ColumnLayout {
+Item {
     id: root
-    spacing: 0
+    // Width flows down from the pane; content height flows back up only
+    // through this implicit size. A layout around the inner layout made
+    // late telemetry/preset rows recursively polish both layout solvers.
+    readonly property real sideMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+    readonly property real verticalMargin: UM.Theme.getSize("default_margin").height
+    implicitHeight: sectionHeader.height + (sectionBody.visible ? sectionBody.implicitHeight + 2 * verticalMargin : 0)
     property var printerModel: null
     // The tuple rule (the live ruling): if ANY axis value is
     // unavailable, the Position row's cells empty themselves — a
@@ -19,22 +24,23 @@ ColumnLayout {
     readonly property bool positionRowAvailable: root.printerModel != null && root.printerModel.monitorPositionX !== "—" && root.printerModel.monitorPositionX !== "" && root.printerModel.monitorPositionY !== "—" && root.printerModel.monitorPositionY !== "" && root.printerModel.monitorPositionZ !== "—" && root.printerModel.monitorPositionZ !== ""
 
     CollapsibleSectionHeader {
-        Layout.fillWidth: true
+        id: sectionHeader
+        width: parent.width
         printerModel: root.printerModel
         title: "Print job"
         sectionId: "job"
         sectionIcon: "Printer"
     }
-    ColumnLayout {
+    Column {
+        id: sectionBody
+        x: root.sideMargin
+        y: sectionHeader.height + root.verticalMargin
+        width: Math.max(0, root.width - 2 * root.sideMargin)
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["job"] !== false
-        Layout.topMargin: UM.Theme.getSize("default_margin").height
-        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-        Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
         Row {
-            Layout.fillWidth: true
+            width: parent.width
             spacing: UM.Theme.getSize("default_margin").width
             UM.Label {
                 // The two status lines carry labels
@@ -61,7 +67,7 @@ ColumnLayout {
         UM.Label {
             text: root.printerModel != null && root.printerModel.monitorFilename.length > 0 ? root.printerModel.monitorFilename : "No active file"
             color: UM.Theme.getColor("text_inactive")
-            Layout.fillWidth: true
+            width: parent.width
             elide: Text.ElideMiddle
         }
 
@@ -72,7 +78,7 @@ ColumnLayout {
             // objectName stays on the VALUE label so
             // the harness's rendered-text assertions
             // keep reading the raw message.
-            Layout.fillWidth: true
+            width: parent.width
             spacing: UM.Theme.getSize("default_margin").width
             UM.Label {
                 width: 64 * screenScaleFactor
@@ -102,11 +108,11 @@ ColumnLayout {
         // layer fill the top half, touching at the centre — no gap.
         // Without layer info the print fill takes the whole height.
         Item {
-            Layout.fillWidth: true
+            width: parent.width
             // Double the strip's height (the live ruling): with all
             // three fills stacked the original 10 px was too tiny to
             // read the sections.
-            Layout.preferredHeight: 20 * screenScaleFactor
+            height: 20 * screenScaleFactor
             HoverHandler {
                 id: tooltipHover1
             }
@@ -122,6 +128,8 @@ ColumnLayout {
                 // always present, so a lone bar names it plainly.
                 text: {
                     var shown = [];
+                    if (root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1)
+                        shown.push("the background optimisation's sweep (teal, top edge)");
                     if (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0)
                         shown.push("the current layer's progress (top)");
                     if (root.printerModel != null && root.printerModel.nextPauseFraction >= 0)
@@ -141,9 +149,12 @@ ColumnLayout {
                 border.width: 1 * screenScaleFactor
                 border.color: UM.Theme.getColor("lining")
                 Rectangle {
-                    // Thirds with a scheduled pause, halves without,
-                    // the whole height without layer info (the live
+                    // The overall print fill owns the BOTTOM: thirds
+                    // with a scheduled pause, halves without, the
+                    // whole height without layer info (the live
                     // ruling).
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
                     height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
                     // monitorProgress is a PERCENTAGE (0..100); the
                     // layer value is already 0..1.
@@ -158,20 +169,40 @@ ColumnLayout {
                     // poll and landed its invalidation inside the
                     // column's polish (the 4.5.0 live find).
                     objectName: "nextPauseFill"
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
                     height: parent.height / 3
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
                     color: MoonrakerTheme.neonOrange
                 }
                 Rectangle {
+                    // The current layer's fill owns the TOP.
+                    anchors.left: parent.left
+                    anchors.top: parent.top
                     height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
                     color: UM.Theme.getColor("primary")
+                }
+                Rectangle {
+                    // The background optimisation's sweep (the live
+                    // request): a slim band across the bar's top edge
+                    // that crawls with the prepared share — visible
+                    // only while the pass is walking, and gone at 1.0,
+                    // so a completed pass adds nothing to the bar.
+                    // Only THIS bar shows it (the live ruling).
+                    objectName: "optimisationBand"
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    height: 3 * screenScaleFactor
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.platePassFraction : -1.0))
+                    color: MoonrakerTheme.jobOptimisation
+                    visible: root.printerModel != null && root.printerModel.platePassFraction > 0 && root.printerModel.platePassFraction < 1
                 }
             }
         }
 
         Row {
-            Layout.alignment: Qt.AlignHCenter
+            x: (parent.width - width) / 2
             spacing: 4 * screenScaleFactor
             UM.Label {
                 text: root.printerModel != null ? root.printerModel.monitorProgress.toFixed(2) + "%" : "0.00%"
@@ -206,10 +237,14 @@ ColumnLayout {
         }
 
         GridLayout {
+            objectName: "jobTelemetryGrid"
+            // UM.Label wraps by default. Every telemetry cell below uses
+            // NoWrap + elision so polling, pause/resume and long values do
+            // not feed width-dependent heights back into this grid.
             columns: 2
             columnSpacing: UM.Theme.getSize("default_margin").width
             rowSpacing: UM.Theme.getSize("default_margin").height / 2
-            Layout.fillWidth: true
+            width: parent.width
 
             // "Last action": the shared one-shot
             // lane's status row, first in the grid so
@@ -220,12 +255,14 @@ ColumnLayout {
             // before its first event; the value is
             // "—" until then.
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Last action"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
-                text: root.printerModel != null && root.printerModel.actionStatus.length > 0 ? root.printerModel.actionStatus : "—"
+                text: root.printerModel != null && root.printerModel.actionStatus.length > 0 ? root.printerModel.actionStatus + (root.printerModel.actionTimestamp.length > 0 ? " · " + root.printerModel.actionTimestamp : "") : "—"
                 Layout.fillWidth: true
                 // A live value in the status stack must never wrap:
                 // a per-poll wrap flip reflows the column (the
@@ -235,6 +272,8 @@ ColumnLayout {
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Layer"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
@@ -246,6 +285,8 @@ ColumnLayout {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("narrow_margin").width
                     UM.Label {
+                        wrapMode: Text.NoWrap
+                        elide: Text.ElideRight
                         text: root.printerModel != null ? root.printerModel.monitorLayer : "—"
                         Layout.fillWidth: true
                         // Which source produced the layer —
@@ -267,16 +308,22 @@ ColumnLayout {
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Elapsed"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.monitorElapsed : "00:00:00"
                 Layout.fillWidth: true
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Remaining"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
@@ -285,6 +332,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 spacing: UM.Theme.getSize("narrow_margin").width
                 UM.Label {
+                    wrapMode: Text.NoWrap
                     text: root.printerModel != null ? root.printerModel.monitorEta : "—"
                     // The ETA colour shows its basis:
                     // normal text for the layer-timed
@@ -312,8 +360,8 @@ ColumnLayout {
                 }
                 // The Improve-ETA affordance: a small
                 // download glyph beside the value it
-                // improves, shown only while the
-                // plain blend is the active basis.
+                // improves, offered until the index is ready. PRINT_START
+                // can keep the ETA on its blend before motion matching begins.
                 Item {
                     // NO-REFLOW RULE: the 16 px glyph
                     // slot is always reserved — it
@@ -321,12 +369,14 @@ ColumnLayout {
                     // ETA value sideways.
                     width: 16 * screenScaleFactor
                     height: 16 * screenScaleFactor
-                    opacity: root.printerModel != null && root.printerModel.printActive && (root.printerModel.monitorEtaBasis === "blend" || root.printerModel.improvingEta) ? 1 : 0
+                    opacity: root.printerModel != null && root.printerModel.printActive && !root.printerModel.printIndexReady ? 1 : 0
+                    enabled: opacity > 0
                     HoverHandler {
                         id: tooltipHover5
+                        enabled: parent.enabled
                     }
                     UM.ToolTip {
-                        visible: tooltipHover5.hovered
+                        visible: parent.enabled && tooltipHover5.hovered
                         targetPoint: Qt.point(parent.width / 2, 0)
                         x: 0
                         y: parent.height + UM.Theme.getSize("default_margin").height
@@ -362,7 +412,7 @@ ColumnLayout {
                         // The hourglass flips and rests at
                         // each 180-degree stop while the
                         // sand drains, then flips again.
-                        SequentialAnimation on rotation  {
+                        SequentialAnimation on rotation {
                             running: root.printerModel != null && root.printerModel.improvingEta
                             loops: Animation.Infinite
                             NumberAnimation {
@@ -391,7 +441,7 @@ ColumnLayout {
                         // legitimate retry, and after a failed download
                         // the glyph is the ONLY in-UI recovery (the
                         // hourglass state ends on failure — panel P1-1).
-                        enabled: root.printerModel != null && root.printerModel.monitorConnected
+                        enabled: parent.enabled && root.printerModel != null && root.printerModel.monitorConnected
                         cursorShape: root.printerModel != null ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: root.printerModel.improveEta()
                     }
@@ -413,12 +463,8 @@ ColumnLayout {
             // restarts when the bar resizes so its
             // captured endpoints stay current.
             RowLayout {
-                // NO-REFLOW RULE: the Improve-ETA
-                // progress row reserves its space at
-                // all times (opacity, never
-                // visibility) — its automatic
-                // disappearance on completion used to
-                // shift the rows beneath it.
+                // This optional status row collapses when idle.
+                visible: root.printerModel != null && root.printerModel.improvingEta
                 Layout.fillWidth: true
                 Layout.columnSpan: 2
                 Layout.topMargin: UM.Theme.getSize("narrow_margin").height
@@ -435,7 +481,7 @@ ColumnLayout {
                     // current width — no captured
                     // endpoints, no restart tricks.
                     property real sweepPhase: 0
-                    NumberAnimation on sweepPhase  {
+                    NumberAnimation on sweepPhase {
                         running: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0
                         from: 0
                         to: 1
@@ -488,37 +534,43 @@ ColumnLayout {
                     text: root.printerModel != null && root.printerModel.improvingEta ? (root.printerModel.improveEtaPhase + (root.printerModel.improveEtaProgress >= 0 ? " " + (root.printerModel.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
                     color: UM.Theme.getColor("text_inactive")
                     Layout.maximumWidth: 140 * screenScaleFactor
+                    // UM.Label defaults to wrapping. Progress changes must
+                    // not feed a width-dependent height back into the grid.
+                    wrapMode: Text.NoWrap
                     elide: Text.ElideRight
                 }
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Finish"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.monitorFinish : "—"
                 Layout.fillWidth: true
             }
 
             // The next scheduled pause's ETA (the live ruling):
-            // countdown and deadline, under Finish — the row hides
-            // whole while no pause lies ahead.
-            // NO-REFLOW RULE (the M117 slot's precedent): the row is
-            // a PERMANENT slot — flipping its visibility reflowed
-            // the section stack and fed a layout polish loop (the
-            // live report, the pause's clear/re-add cycle). The
-            // labels read empty while no pause lies ahead.
+            // countdown and deadline, under Finish. Keep its caption
+            // visible and use an em-dash when no pause lies ahead.
             UM.Label {
-                text: root.printerModel != null && root.printerModel.nextPauseEta.length > 0 ? "Next pause" : ""
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
+                text: "Next pause"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 // "(baked)" marks the gcode's own pauses (the live
                 // ruling) — the manual schedule reads plain.
-                text: root.printerModel != null ? (root.printerModel.nextPauseEta + (root.printerModel.nextPauseBaked ? " (baked)" : "")) : ""
+                text: root.printerModel != null && root.printerModel.nextPauseEta.length > 0 ? (root.printerModel.nextPauseEta + (root.printerModel.nextPauseBaked ? " (baked)" : "")) : "—"
                 Layout.fillWidth: true
             }
 
@@ -530,25 +582,35 @@ ColumnLayout {
             // the grid never shifts when a job
             // starts or finishes.
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Filament used"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.filamentUsed : "—"
                 Layout.fillWidth: true
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Filament remaining"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.filamentRemaining : "—"
                 Layout.fillWidth: true
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 // "Speed factor" (the 4.2.0
                 // ruling): the row is the M220
                 // multiplier, and the live speed
@@ -558,21 +620,29 @@ ColumnLayout {
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.monitorSpeed : "100%"
                 Layout.fillWidth: true
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Flow"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: root.printerModel != null ? root.printerModel.monitorFlow : "100%"
                 Layout.fillWidth: true
             }
 
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Position"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
@@ -619,11 +689,14 @@ ColumnLayout {
             // the printer reports no motion
             // object. The values must not wrap.
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Velocity"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
                 text: root.printerModel != null ? root.printerModel.monitorVelocity : "—"
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
@@ -643,11 +716,14 @@ ColumnLayout {
                 }
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Flow rate"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
                 text: root.printerModel != null ? root.printerModel.monitorFlowRate : "—"
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
@@ -665,11 +741,14 @@ ColumnLayout {
                 }
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Filament diameter"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
                 text: root.printerModel != null ? root.printerModel.monitorFlowDiameter : "—"
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
@@ -687,11 +766,14 @@ ColumnLayout {
                 }
             }
             UM.Label {
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
                 text: "Accel limit"
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
             UM.Label {
+                wrapMode: Text.NoWrap
                 text: root.printerModel != null ? root.printerModel.monitorAccelLimit : "—"
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true

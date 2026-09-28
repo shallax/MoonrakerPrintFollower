@@ -7,23 +7,30 @@ import Cura 1.1 as Cura
 // The Temperature-profiles section (4.3.0 extraction): the preset
 // rows, the cooldown and the status readout moved out of the
 // dashboard as one property-driven component.
-ColumnLayout {
+Item {
     id: root
-    spacing: 0
+    // Width flows down from the pane; content height flows back up only
+    // through this implicit size. A layout around the inner layout made
+    // late telemetry/preset rows recursively polish both layout solvers.
+    readonly property real sideMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+    readonly property real verticalMargin: UM.Theme.getSize("default_margin").height
+    implicitWidth: sectionBody.implicitWidth + 2 * sideMargin
+    implicitHeight: sectionHeader.height + (sectionBody.visible ? sectionBody.implicitHeight + 2 * verticalMargin : 0)
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        Layout.fillWidth: true
+        id: sectionHeader
+        width: parent.width
         printerModel: root.printerModel
         title: "Temperature profiles"
         sectionId: "profiles"
         sectionIcon: "PrintQuality"
     }
     ColumnLayout {
-        Layout.topMargin: UM.Theme.getSize("default_margin").height
-        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-        Layout.fillWidth: true
+        id: sectionBody
+        x: root.sideMargin
+        y: sectionHeader.height + root.verticalMargin
+        width: Math.max(0, root.width - 2 * root.sideMargin)
         visible: root.printerModel != null && root.printerModel.temperaturePresetItems.length > 0 && root.printerModel.sectionExpandedMap["profiles"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height / 2
@@ -71,7 +78,7 @@ ColumnLayout {
             }
             UM.Label {
                 height: 36 * screenScaleFactor
-                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive ? "Disabled during a print" : "—")) : "—"
+                text: root.printerModel != null ? (root.printerModel.sectionReason !== "" ? root.printerModel.sectionReason : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Disabled during a print" : "—")) : "—"
                 wrapMode: Text.NoWrap
                 elide: Text.ElideRight
                 color: UM.Theme.getColor("text")
@@ -87,7 +94,7 @@ ColumnLayout {
                     width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
                     // sentence in the tooltip (the ruling).
-                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
+                    text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive && !root.printerModel.canApplyTemperaturePreset ? "Temperature profiles are disabled while the print is running. A paused print allows them." : "")) : ""
                 }
             }
         }

@@ -69,6 +69,21 @@ def fake_status(state="printing"):
                 [-0.01, 0.02, 0.05, 0.08, 0.11],
             ],
         },
+        # The plate's seed (4.6.0): a constant three-object plate so
+        # the capture legs render the map deterministically — the same
+        # payload in both determinism legs (the engineering F15 rule).
+        "exclude_object": {
+            "objects": [
+                {"name": "BENCHY_STL", "center": [62.0, 62.0],
+                 "polygon": [[42.0, 42.0], [42.0, 82.0], [82.0, 82.0], [82.0, 42.0]]},
+                {"name": "BENCHY_STL_1", "center": [125.0, 125.0],
+                 "polygon": [[105.0, 105.0], [105.0, 145.0], [145.0, 145.0], [145.0, 105.0]]},
+                {"name": "BENCHY_STL_2", "center": [188.0, 62.0],
+                 "polygon": [[168.0, 42.0], [168.0, 82.0], [208.0, 82.0], [208.0, 42.0]]},
+            ],
+            "excluded_objects": ["BENCHY_STL_1"],
+            "current_object": "BENCHY_STL_2",
+        },
     }
 
 
@@ -189,6 +204,16 @@ def main():
                                                            "target": 45.0, "power": 0.2}
                 model._data._update(auxiliary=auxiliary)
                 model._data.auxiliaryChanged.emit()
+                # The chart's series feeds from the 1 s ticks — never
+                # from the data updates — so observe it HERE with the
+                # frozen clock, or the scenes' event pump would fill
+                # it with live-ticked samples stamped with the real
+                # wall minute (the 01/07 byte drift CI's compare
+                # catches: the axis clock text carried the capture's
+                # own minute, and the curve's extent carried the
+                # pump's duration).
+                model._history.observe(auxiliary, tick[0],
+                                       1700000000.0 + tick[0])
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")
         model.sendConsoleCommand("M104 S210")
@@ -206,6 +231,12 @@ def main():
             if entry["kind"] == "command":
                 entry["saved"] = False
         console.changed.emit()
+
+        # The seeded history is the chart's whole story: stop the tick
+        # before the scenes pump the event loop, or a live sample
+        # stamped with the real wall minute lands on top of the frozen
+        # series (the console's settle timer above froze the same way).
+        model._chart_timer.stop()
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
         # `or`, not a get() default: an empty CAPTURE_THEME is a value,
@@ -348,7 +379,7 @@ def main():
                 "the capture window never settled across %d identical frames over %.1fs"
                 % (REQUIRED_IDENTICAL_FRAMES, SETTLE_SPAN_SECONDS))
 
-        def grab(name):
+        def grab(name, card=None):
             image = settled_window()
             if image.isNull():
                 raise RuntimeError("grabWindow produced a null image for " + name)
@@ -360,16 +391,26 @@ def main():
                        for x in range(0, image.width(), 8)}
             if len(sampled) < 20:
                 raise RuntimeError("capture looks blank (%d sampled colors)" % len(sampled))
+            # Contrast census reads actual pixels, holding the verdict until
+            # every scene has been captured. Audit card descendants against
+            # their scene coordinates;
+            # covered dashboard text is not part of a popover photograph.
+            census.audit(card or window.contentItem(), image, name)
             path = os.path.join(output_dir, name)
+            if card is not None:
+                corner = card.mapToScene(QPointF(0, 0))
+                image = image.copy(int(corner.x()), int(corner.y()),
+                                   int(card.width()), int(card.height()))
             image.save(path)
             print("captured", path)
-            # Contrast census: the pinned screenshots catch drift, not
-            # unreadability, so every text element in this frame is read
-            # against the ground its pixels actually show. It reads the
-            # image only, and runs AFTER the save so a census failure is a
-            # verdict on the scene, never a missing screenshot. The report
-            # holds the verdict until the last scene is captured.
-            census.audit(window.contentItem(), image, name)
+
+        def popover_card(title):
+            cards = [child for child in item.findChildren(QQuickItem)
+                     if child.property("title") == title and child.isVisible()
+                     and "MonitorPopOver" in child.metaObject().className()]
+            if len(cards) != 1:
+                raise RuntimeError("expected one visible popover: " + title)
+            return cards[0]
 
         grab("01-dashboard-default.png")
         # The stacked progress track (the 4.4.0 bars replaced the
@@ -471,11 +512,82 @@ def main():
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
                    for y in range(5, int(chart.height()), 4)}
-        if len(colours) < 12:
+        # The mini is a SPARKLINE (2 grid lines, flat series, no
+        # labels): its correct signature is the background, the grid
+        # and at least ONE series colour — the old 12-colour floor
+        # dated from the full chart's gradient era and flagged the
+        # correctly-rendered mini as blank (the 2026-09-22 capture
+        # failure: 4 colours, two of them the drawn series).
+        if len(colours) < 3:
             raise RuntimeError("mini chart region looks blank (%d colours)" % len(colours))
         print("mini chart region colours:", len(colours))
         for _ in range(3):
             app.processEvents()
+
+        # Capture the two 4.6.0 popovers through the same real dashboard,
+        # theme, stable-frame and contrast checks as the existing gallery.
+        host.setProperty("openPopOver", "plate")
+        settled_window()
+        grab("10-exclude-object-picker.png", popover_card("Exclude Object Picker"))
+        host.setProperty("openPopOver", "plateprogress")
+        settled_window()
+        faces = [child for child in item.findChildren(QQuickItem)
+                 if child.objectName() == "moonrakerPlateProgressFace"
+                 and not child.property("compact") and child.isVisible()]
+        if len(faces) != 1:
+            raise RuntimeError("expected one visible follower popover canvas")
+        face = faces[0]
+        from capture_penguin import make_gcode
+        index = qt.load("GCodeIndex").build_index_from_bytes(make_gcode().encode("ascii"))
+        payload = qt.load("PlateProgress").layer_polylines(index, 1)
+        if payload is None or payload["motions"] < 100:
+            raise RuntimeError("the penguin G-code did not produce indexed toolpaths")
+        layer = qt.load("PlateQt").PlateLayer(payload)
+        # Seed production model properties, not a painted screenshot overlay.
+        # The material palette is a capture-only equivalent of Cura's three
+        # configured material colours; real per-motion tool IDs choose it.
+        model._colour_scheme = SimpleNamespace(snapshot={
+            "mode": 0, "materials": ["#20252b", "#f4f4f4", "#e9ad20"]})
+        model._values.update({"plateLayerCount": 3, "plateLayerMotionCount": payload["motions"],
+                              "plateProgressAnchor": 1, "plateProgressAvailable": True,
+                              "plateProgressReason": "", "plateTrackingAvailable": True,
+                              "plateLayers": {"prev": None, "current": layer, "next": None},
+                              "plateSplit": payload["motions"], "followerLineScale": 2.0})
+        model.followerViewChanged.emit()
+        model.plateProgressChanged.emit()
+        # Offscreen Qt has no native GPU surface. Feed the real fallback's
+        # prepared raster, painted from exactly the same indexed layer.
+        plate_qt = qt.load("PlateQt")
+        plot_value = face.property("plot").toVariant()
+        bed = plot_value["bed"]
+        plot = {"offsetX": bed["offsetX"], "offsetY": bed["offsetY"],
+                "sx": plot_value["sx"], "sy": plot_value["sy"],
+                "bedXMin": bed["bedXMin"], "bedYMax": bed["bedYMax"]}
+        view = {"width": int(face.width()), "height": int(face.height()),
+                "scale": 1.0, "lineWidthPx": 2.0, "lineScale": 2.0,
+                "colourScheme": model.followerColourScheme}
+        coloured, _, _ = plate_qt.render_layer_raster(payload, plot, view)
+        layer.set_expected_key("capture-penguin")
+        layer.set_raster(coloured, "capture-penguin", plate_qt.png_file(
+            coloured, os.path.join(output_dir, ".layers"), "penguin"))
+        # A fixed observation of the indexed layer prevents the synthetic
+        # transport's unrelated dashboard job from replacing this illustration.
+        face.setProperty("progress", {"available": True, "reason": "",
+                                     "layers": {"prev": None, "current": layer, "next": None},
+                                     "split": payload["motions"], "anchor": 1,
+                                     "method": "motion index", "sceneEpoch": "capture-penguin"})
+        face.setProperty("scrubVector", payload)
+        face.setProperty("dot", {"valid": False})
+        face.setProperty("motionSmoothing", False)
+        scene = settled_window()
+        corner = face.mapToScene(QPointF(0, 0))
+        yellow = sum(1 for y in range(int(face.height()))
+                     for x in range(0, int(face.width()), 2)
+                     if scene.pixelColor(int(corner.x()) + x, int(corner.y()) + y).name() == "#e9ad20")
+        if yellow < 100:
+            raise RuntimeError("the indexed penguin toolpaths did not paint")
+        grab("11-print-follower.png", popover_card("Print Follower"))
+        host.setProperty("openPopOver", "")
 
         # Tear the scene down in dependency order while the context-property
         # wrappers are still referenced: at exit the wrappers free in

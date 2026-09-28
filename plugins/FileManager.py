@@ -56,6 +56,8 @@ from .FileManagerPolicy import (
 )
 
 MAX_DIRECTORIES = 50
+MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024
+MAX_UPLOAD_REPLY_BYTES = 1024 * 1024
 
 
 class FileManager(QObject):
@@ -104,7 +106,7 @@ class FileManager(QObject):
         self._walk_error: Optional[str] = None
         self._print_attempt: Optional[tuple] = None
         self._thumbs: Dict[str, Dict[str, str]] = {}
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         # In-flight thumbnail replies ride this registry until their
         # handlers run — the transport's own lifetime pattern (see
         # _fetch_thumb: a bare closure connected to a network signal
@@ -161,7 +163,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -192,7 +194,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -528,6 +530,7 @@ class FileManager(QObject):
             self._upload_seq += 1
             op_id = f"upload-{self._upload_seq}"
             self._upload_replies[op_id] = (reply, relpath)
+            self._watch_reply_body(reply, MAX_UPLOAD_REPLY_BYTES)
             reply.uploadProgress.connect(
                 lambda sent, total, g=generation: self.uploadProgress.emit(
                     max(0, min(100, int(sent * 100 / total))))
@@ -542,17 +545,25 @@ class FileManager(QObject):
             return False
 
     def _upload_finished(self, op_id: str, reply, generation: int, name: str) -> None:
+        reply._mpf_body_finished = True
         entry = self._upload_replies.get(op_id)
         if entry is not None and entry[0] is reply:
             self._upload_replies.pop(op_id, None)
+        try:
+            response_body = self._take_reply_body(reply, MAX_UPLOAD_REPLY_BYTES)
+        except ValueError:
+            response_body = b""
         if generation != self._generation:
             # The printer changed mid-upload: the popup must resolve
             # with a verdict, not hang.
             self.uploadFinished.emit(False, "The printer changed during the upload.")
+        elif getattr(reply, "_mpf_body_overflow", False):
+            self.uploadFinished.emit(False, "Upload response exceeds the size limit.")
+            self.note.emit("Upload response exceeds the size limit.")
         elif reply.error() != QNetworkReply.NetworkError.NoError:
             detail = reply.errorString()
             try:
-                body = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
+                body = json.loads(response_body.decode("utf-8", errors="replace"))
                 # The refusal words ride two shapes: flat, or nested
                 # under "error" (Moonraker's newer form — the
                 # transport unwraps the same way).
@@ -826,6 +837,7 @@ class FileManager(QObject):
             # target path, generation) binds as a default argument so
             # nothing can be collected mid-flight.
             self._thumb_replies[relpath] = reply
+            self._watch_reply_body(reply, MAX_THUMBNAIL_BYTES)
             reply.finished.connect(
                 lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)
             )
@@ -842,7 +854,41 @@ class FileManager(QObject):
             self._thumb_active = max(0, self._thumb_active - 1)
             self._drain_thumbs()
 
+    def _watch_reply_body(self, reply, limit):
+        reply._mpf_body = bytearray()
+        reply._mpf_body_limit = limit
+        reply._mpf_body_overflow = False
+        reply.setReadBufferSize(256 * 1024)
+        reply.readyRead.connect(self._reply_body_ready)
+
+    def _reply_body_ready(self):
+        reply = self.sender()
+        if reply is not None:
+            self._drain_reply_body(reply, reply._mpf_body_limit)
+
+    @staticmethod
+    def _drain_reply_body(reply, limit):
+        if getattr(reply, "_mpf_body_overflow", False):
+            return
+        body = getattr(reply, "_mpf_body", bytearray())
+        reply._mpf_body = body
+        # Qt 6.6 returns None when an errored/closed reply has no more
+        # readable bytes. Keep any body already drained by readyRead.
+        body.extend(bytes(reply.read(limit - len(body) + 1) or b""))
+        if len(body) > limit:
+            reply._mpf_body_overflow = True
+            body.clear()
+            if not getattr(reply, "_mpf_body_finished", False):
+                reply.abort()
+
+    def _take_reply_body(self, reply, limit):
+        self._drain_reply_body(reply, limit)
+        if getattr(reply, "_mpf_body_overflow", False):
+            raise ValueError("reply exceeds the size cap")
+        return bytes(reply._mpf_body)
+
     def _thumb_finished(self, relpath: str, reply, generation: int, path: str, large: bool) -> None:
+        reply._mpf_body_finished = True
         # The identity check keeps a stale reply (a refresh cleared
         # the cache while it was still in flight) from unregistering
         # its successor's fetch under the same key.
@@ -870,7 +916,7 @@ class FileManager(QObject):
             # enum itself, the transport's form.
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 raise ValueError("thumbnail fetch failed")
-            data = bytes(reply.readAll())
+            data = self._take_reply_body(reply, MAX_THUMBNAIL_BYTES)
             # No thumbnail to display: the hourglass must
             # NEVER spin forever (the live ruling) —
             # an empty or non-PNG body falls back to the
@@ -941,7 +987,7 @@ class FileManager(QObject):
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
             pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self.thumbsChanged.emit()
 
     def _rejoin_history(self) -> None:

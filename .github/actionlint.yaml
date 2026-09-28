@@ -1,0 +1,6 @@
+# The runner label the workflows pin (the Ubuntu-26 migration):
+# actionlint's bundled label set predates it, so it is declared as a
+# self-hosted-style custom label instead of warning on every run.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

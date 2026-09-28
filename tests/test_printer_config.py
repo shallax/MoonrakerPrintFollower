@@ -22,6 +22,18 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_software_renderer_is_persistent_per_machine_and_defaults_to_gpu(self):
+        prefs = FakePreferences()
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        self.assertFalse(store.get().software_follower_renderer)
+        store.set(PrinterConfig(software_follower_renderer=True))
+        self.assertTrue(PrinterConfigStore(prefs, lambda: tuple(active)).get().software_follower_renderer)
+        active[:] = ["machine-b", "Printer B"]
+        self.assertFalse(store.get().software_follower_renderer)
+        active[:] = ["machine-a", "Printer A"]
+        self.assertTrue(store.get().software_follower_renderer)
+
     def test_configs_are_isolated_per_cura_machine(self):
         prefs = FakePreferences()
         active = ["machine-a", "Printer A"]
@@ -83,6 +95,7 @@ class PrinterConfigTests(unittest.TestCase):
             "path_follow": False,
             "trace_layer": False,
             "trace_http": False,
+            "seek_trace": False,
             "memory_diagnostics_log": False,
             "memory_diagnostics_trace": False,
         }
@@ -345,7 +358,7 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("def clearCache(self)", action)
-        self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
+        self.assertIn("refused.append(path)", action)  # failures report, never hide
         self.assertIn('"MoonrakerPrintFollower"', action)
 
     def test_normalise_url_is_the_single_url_rule(self):

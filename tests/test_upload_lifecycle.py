@@ -7,6 +7,7 @@ import pathlib
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -82,6 +83,16 @@ class UploadLifecycleTests(unittest.TestCase):
         client.stop()
         client.transport.close()  # the manager's pooled sockets close with it
 
+    def _wait_upload_idle(self, device):
+        # Cancellation and its terminal signal are deliberately queued.
+        # Ten milliseconds does not guarantee both callbacks have run
+        # under coverage or a loaded CI event loop.
+        deadline = time.monotonic() + 2.0
+        while device._upload.busy and time.monotonic() < deadline:
+            self.qt.events(10)
+        self.assertFalse(device._upload.busy,
+                         "cancelled upload never delivered terminal completion")
+
     @staticmethod
     def install_dialog_factory(app):
         dialogs = []
@@ -128,8 +139,7 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertTrue(dialogs[0].shown)
 
         device.cancelUpload()
-        self.qt.events(10)
-        self.assertFalse(device._upload.busy)
+        self._wait_upload_idle(device)
         self.assertEqual(finished, [device])
         self.assertEqual(errors, [])
         self.assertEqual(successes, [])
@@ -140,8 +150,7 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertEqual(len(dialogs), 2)
         self.assertTrue(dialogs[1].shown)
         device.cancelUpload()
-        self.qt.events(10)
-        self.assertFalse(device._upload.busy)
+        self._wait_upload_idle(device)
         self.assertEqual(finished, [device, device])
 
     def test_cancel_retires_operation_even_if_binding_went_stale(self):
@@ -169,8 +178,7 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertFalse(device._upload._current())
 
         device.cancelUpload()
-        self.qt.events(10)
-        self.assertFalse(device._upload.busy)
+        self._wait_upload_idle(device)
         self.assertFalse(os.path.exists(source_path))
         self.assertEqual(finished, [device])
         self.assertEqual(errors, [])
@@ -252,16 +260,22 @@ class UploadLifecycleTests(unittest.TestCase):
         from PyQt6.QtNetwork import QNetworkReply
 
         class FakeReply(QObject):
+            readyRead = pyqtSignal()
             uploadProgress = pyqtSignal(int, int)
             finished = pyqtSignal()
             def __init__(self):
                 super().__init__()
                 self._deleted = 0
                 self._aborts = 0
+                self._body = json.dumps(body).encode() if body is not None else b""
             def error(self):
                 return QNetworkReply.NetworkError.ContentNotFoundError if error else QNetworkReply.NetworkError.NoError
             def errorString(self): return "simulated"
-            def readAll(self): return json.dumps(body).encode() if body is not None else b""
+            def setReadBufferSize(self, size): self._buffer_size = size
+            def read(self, size):
+                data, self._body = self._body[:size], self._body[size:]
+                return data
+            def readAll(self): return self.read(len(self._body))
             def abort(self):
                 # The faithful Qt 6.6 encoding: abort() emits finished
                 # SYNCHRONOUSLY.

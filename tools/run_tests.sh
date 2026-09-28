@@ -37,11 +37,43 @@ log_dir="${TMPDIR:-/tmp/mpf}"
 mkdir -p "$log_dir"
 log="$(mktemp "$log_dir/mpf-tests.XXXXXX")"
 
+# Elapsed time as a person reads it: seconds while they are still
+# countable, then m/s, then h/m/s — a leg that runs long enough for
+# "3725s" to be unhelpful says "1h02m05s" instead.
+elapsed_text() {
+    seconds="$1"
+    if [ "$seconds" -lt 60 ]; then
+        printf '%ss' "$seconds"
+    elif [ "$seconds" -lt 3600 ]; then
+        printf '%dm %02ds' "$((seconds / 60))" "$((seconds % 60))"
+    else
+        printf '%dh %02dm %02ds' "$((seconds / 3600))" "$(((seconds % 3600) / 60))" "$((seconds % 60))"
+    fi
+}
+
 run_once() {
     name="$1"
     shift
     echo "== $name =="
-    if "$@" >"$log" 2>&1; then
+    heartbeat=0
+    # The leg's output goes to the scratch log (a failing run must not
+    # have to be re-run to be read), which leaves a CI log dead still
+    # for as long as the leg takes — minutes, for the container leg.
+    # A heartbeat every 10 s is the difference between "working" and
+    # "hung" for whoever is watching, and it costs four lines a minute.
+    "$@" >"$log" 2>&1 &
+    leg_pid=$!
+    started=$(date +%s)
+    while kill -0 "$leg_pid" 2>/dev/null; do
+        sleep 2
+        kill -0 "$leg_pid" 2>/dev/null || break
+        now=$(date +%s)
+        if [ $((now - started)) -ge $((heartbeat + 10)) ]; then
+            heartbeat=$((now - started))
+            echo "   ... $name still running ($(elapsed_text "$heartbeat"))"
+        fi
+    done
+    if wait "$leg_pid"; then
         # A green exit that ran nothing is a false pass: an empty worker
         # list or a -p pattern matching no file both exit 0 before
         # 3.12 (which added the "NO TESTS RAN" failure). Demand a count.
@@ -54,8 +86,18 @@ run_once() {
         return 0
     fi
     echo "FAILED — the full output is at $log"
-    grep -B2 -A12 "FAIL:\|ERROR:" "$log" || true
+    # 40 lines, not 12: a shared-helper traceback (mount_window ->
+    # mount, _probe_rig -> _mount_line) spends a dozen lines on frames
+    # alone, and the dropped tail is the exception line itself — the
+    # one thing a leg we cannot re-run locally is read for.
+    grep -B2 -A40 "FAIL:\|ERROR:" "$log" || true
     grep -E "^(Ran|FAILED)" "$log" || true
+    # Native crashes have no unittest failure block. Keep their final test
+    # and faulthandler output visible, and preserve the complete log.
+    tail -n 80 "$log"
+    if [ -n "${HARNESS_SHOT_DIR:-}" ]; then
+        cp "$log" "$HARNESS_SHOT_DIR/suite-failure.log"
+    fi
     return 1
 }
 
@@ -70,11 +112,21 @@ fi
 # shellcheck disable=SC2086  # $files is a deliberate word-split list
 echo "discovered $(printf '%s\n' $files | wc -l | tr -d '[:space:]') test file(s) under $tests_dir/"
 
+# Keep the hard wall-clock benchmark outside CPU-contentious correctness
+# fan-out. Its budget stays unchanged; it measures an idle build host.
+# shellcheck disable=SC2086
+parallel_files="$(printf '%s\n' $files | sed '/^test_follower_seek_performance.py$/d' | tr '\n' ' ')"
+# shellcheck disable=SC2086
+timed_files="$(printf '%s\n' $files | sed -n '/^test_follower_seek_performance.py$/p' | tr '\n' ' ')"
+
 run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -m unittest discover -s $tests_dir -p
+    printf '%s\n' $parallel_files | xargs -P "$jobs" -n1 "$PYTHON" -X faulthandler -m unittest discover -v -s $tests_dir -p
+    for file in $timed_files; do
+        "$PYTHON" -X faulthandler -m unittest discover -v -s "$tests_dir" -p "$file"
+    done
 }
 
 run_files_container() {
@@ -82,14 +134,15 @@ run_files_container() {
     # invocations would race on the image build) with the fan-out
     # inside: each worker runs its own file's discovery.
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s $tests_dir -p"
+    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $parallel_files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s $tests_dir -p && for f in $timed_files; do $PYTHON -m unittest discover -s $tests_dir -p \"\$f\" || exit; done"
 }
 
 run_coverage_container() {
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
-        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
+        printf '%s\n' $parallel_files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
+        for f in $timed_files; do $PYTHON -m unittest discover -s $tests_dir -p \"\$f\" || exit; done && \
         $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
         $PYTHON -m coverage report --include='plugins/*' --fail-under=95 && \
         $PYTHON -m coverage json -o /tmp/mpf/coverage.json && \
@@ -109,6 +162,8 @@ if [ "${LEGS:-all}" = "host" ]; then
     run_once "stdlib suite" run_files
     run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
     run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+    run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
+    run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
     echo "host legs passed"
     exit 0
 fi
@@ -120,6 +175,8 @@ run_once "stdlib suite" run_files
 # directly.
 run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
 run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
+run_once "harness two-boot seeds" "$PYTHON" tests/harness/test_harness_seed.py
+run_once "harness native dispatch" "$PYTHON" tests/harness/test_harness_native.py
 run_once "real-Qt suite (dev container, $jobs workers)" run_files_container
 
 echo "all test suites passed"

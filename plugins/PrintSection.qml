@@ -30,6 +30,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["print"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -59,7 +60,7 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: UM.Theme.getSize("default_margin").width / 2
 
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Pause"
                 enabled: root.printerModel != null && root.printerModel.canPausePrint
@@ -77,7 +78,7 @@ ColumnLayout {
                 }
             }
 
-            Cura.PrimaryButton {
+            CentredPrimaryButton {
                 Layout.fillWidth: true
                 text: "Resume"
                 enabled: root.printerModel != null && root.printerModel.canResumePrint
@@ -92,12 +93,19 @@ ColumnLayout {
                 }
             }
 
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Cancel"
                 enabled: root.printerModel != null && root.printerModel.canCancelPrint
                 onClicked: root.cancelRequested()
             }
+        }
+
+        CentredSecondaryButton {
+            Layout.fillWidth: true
+            text: "Restart last print"
+            enabled: root.printerModel != null && root.printerModel.canRestartLastPrint
+            onClicked: root.printerModel.restartLastPrint()
         }
 
         GridLayout {

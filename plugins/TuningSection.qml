@@ -35,6 +35,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -71,8 +72,8 @@ ColumnLayout {
                     id: speedSlider
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    from: 10
-                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
+                    from: 1
+                    to: Math.min(50000, Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200))
                     stepSize: 1
                     live: false
                     value: 100
@@ -164,8 +165,8 @@ ColumnLayout {
                     id: flowSlider
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    from: 50
-                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
+                    from: 1
+                    to: Math.min(50000, Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200))
                     stepSize: 1
                     live: false
                     value: 100
@@ -264,7 +265,7 @@ ColumnLayout {
                     spacing: zOffsetGrid.buttonSpacing
                     Repeater {
                         model: [0.005, 0.01, 0.025, 0.05]
-                        Cura.SecondaryButton {
+                        CentredSecondaryButton {
                             Layout.fillWidth: true
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
@@ -287,7 +288,7 @@ ColumnLayout {
                     spacing: zOffsetGrid.buttonSpacing
                     Repeater {
                         model: [-0.005, -0.01, -0.025, -0.05]
-                        Cura.SecondaryButton {
+                        CentredSecondaryButton {
                             Layout.fillWidth: true
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
@@ -306,7 +307,7 @@ ColumnLayout {
                     }
                 }
             }
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Clear Z offset"
                 enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""

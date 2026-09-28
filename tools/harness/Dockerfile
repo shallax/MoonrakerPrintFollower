@@ -5,7 +5,7 @@
 #
 # Run it with `docker run --init` (see ui_test.sh): PID 1 here is
 # sleep, which never reaps — docker-init reaps the killed children.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl dbus dbus-user-session ffmpeg fontconfig \
@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-dbus python3-tornado strace unzip x11-xkb-utils xdotool xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# The ubuntu:24.04 base already ships the harness user (ubuntu,
+# The ubuntu:26.04 base already ships the harness user (ubuntu,
 # uid/gid 1000) — Cura boots as it; no extra user setup needed.
 
 CMD ["sleep", "infinity"]

@@ -134,6 +134,22 @@ if tornado is not None:
                 # 8734 bytes / 256-byte chunks ≈ 35 chunks at 30 ms:
                 # the stream must actually take time, not one-shot.
                 self.assertGreaterEqual(elapsed, 0.4)
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"gcode_stream_hold": True}))
+                chunks = []
+                held = client.fetch(self.base + "/server/files/gcodes/scenario1.gcode",
+                                    streaming_callback=chunks.append)
+                deadline = time.monotonic() + 3
+                while not chunks and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+                self.assertEqual(b"".join(chunks), self.sim.printer.gcode_bytes[:256])
+                await asyncio.sleep(0.15)
+                self.assertFalse(held.done())
+                self.assertEqual(len(b"".join(chunks)), 256)
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"gcode_stream_hold": False}))
+                self.assertEqual((await held).code, 200)
+                self.assertEqual(b"".join(chunks), self.sim.printer.gcode_bytes)
             self.io_loop.run_sync(exercise)
 
         def test_device_power_post_real_semantics(self):

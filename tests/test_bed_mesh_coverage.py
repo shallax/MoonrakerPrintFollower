@@ -461,10 +461,10 @@ class BedMeshPresenterTests(BedMeshHarness):
         self.assertIs(node.getParent(), setup.root)
         self.assertEqual(setup.redraws, [node])  # the scene repaints for the new node
         # The plate comes from Cura's container stack, so printer (0, 0) lands on
-        # the bed corner of the harness's 200 mm machine.
+        # the bed corner of the harness's 250 mm machine.
         mesh = node.getMeshData()
-        self.assertAlmostEqual(float(mesh.vertices[0][0]), -100.0, places=4)
-        self.assertAlmostEqual(float(mesh.vertices[0][2]), 100.0, places=4)
+        self.assertAlmostEqual(float(mesh.vertices[0][0]), -125.0, places=4)
+        self.assertAlmostEqual(float(mesh.vertices[0][2]), 125.0, places=4)
         self.assertTrue(node.isVisible())
         self.assertEqual(len(changes), 1)
 

@@ -47,6 +47,13 @@ passes explicit client, configuration and immutable print-state capabilities int
 the single `MoonrakerMonitorModel.py` and the output adapter. It does not expose
 private follower state to either integration.
 
+The output-device plugin retains one asynchronously compiled dashboard component
+per Cura QML engine. It starts after the engine exists and a configured output
+device is selected, creates no controls or camera requests, and releases the
+component on stop or engine replacement. The Monitor shell still constructs its
+dashboard synchronously when opened; the retained compilation removes the cold
+compile wait without changing pane layout or initialization ordering.
+
 ### Ownership map
 
 | Component | Owns | Does not own |
@@ -64,10 +71,11 @@ private follower state to either integration.
 | `NextPausePipeline.py` | The next scheduled pause: the time anchor, the job-boundary layer-index reset, the baked merge and the pause computation | Downloads or the monitor's verdicts |
 | `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
-| `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
+| `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer`/`MotionProgress` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
-| `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
+| `GCodeIndexService.py` | Index lifecycle, bounded worker execution, `IndexView`, and the shared live-motion observation service | Networking or UI |
+| `PlateSplitTracker.py` | Pure shared live-motion boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
@@ -85,6 +93,7 @@ private follower state to either integration.
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `PlateSceneIdentity.py` | Immutable, named navigation scene keys and split-compatible identity projections used to reject obsolete raster work | Qt, rendering, scheduling |
 | `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
@@ -97,6 +106,7 @@ private follower state to either integration.
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection persistence and the bridge URL rewrite | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener relaying the configured stream with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
+| `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
@@ -109,6 +119,29 @@ private follower state to either integration.
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter (the upload-with-start print gate included) | Upload state machine |
 | `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |
 | `WhatsNewOverlay.py` | The overlay's window owner: the boot-wait offer, the main-window/monitor lookup and the Popup's creation on Cura's own engine | Monitor state or networking |
+
+| `ArcGeometry.py` | Geometry and interpolation of one logical straight or arc motion | Qt or tracking policy |
+| `CacheNamespaces.py` | Per-machine cache rebinding and namespace lifetime | Index algorithms |
+| `CachePolicy.py` | Shared print-folder eviction, explicit recency and conservative temporary-writer liveness | Qt or file decoding |
+| `CameraTiming.py` | Opt-in cold-camera timing diagnostics | Camera lifecycle |
+| `FilesViewModel.py` | Stable-identity Qt file-list projection | Networking or file operations |
+| `FollowerColourScheme.py` | Guarded Cura colour-mode, material and theme integration | Geometry or tracking |
+| `FollowerRuntime.py` | Dependency construction and signal wiring at the composition root | Domain policy |
+| `GpuFollower.py` | Retained follower geometry, bounded asynchronous preparation and scene-graph presentation | Motion matching or printer commands |
+| `GpuObjectPicker.py` | Retained object outlines using the shared GPU stroke engine | Exclusion commands |
+| `GpuStrokeMaterial.py` | Shader materials, stroke vertex layout and GPU uniform updates | Print state or networking |
+| `LeakProbe.py` | Opt-in memory-growth diagnostics | Production lifecycle policy |
+| `MoonrakerOutputDevicePlugin.py` | Cura output-device registration and adapter construction | Upload policy |
+| `MoonrakerPrintFollower.py` | Stable Cura extension facade and runtime ownership | Domain algorithms |
+| `PlateProgress.py` | Prepared layer geometry, motion ranges and display payload construction | Qt scene graph or commands |
+| `PlateQt.py` | Qt-facing layer assets and preparation adapters | Printer tracking policy |
+| `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
+| `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
+| `PrintCoordinator.py` | Cross-domain orchestration over injected services and immutable observations | Protocol or geometry algorithms |
+| `PrintIdentity.py` | Pure current-print identity checks | I/O or mutable lifecycle |
+| `PrintStartOwner.py` | Print-start acknowledgement and operation lifetime | HTTP transport |
+| `TravelStates.py` | Per-tool retraction balance and travel classification | Rendering or networking |
+| `UiStateStore.py` | Persistent section-layout UI state through the shared store | Monitor domain state |
 
 ## 3. Binding and migration
 
@@ -248,6 +281,11 @@ The coordinator observes a print through `RemoteJobService`, then resolves its
 physical layer through the one `LayerResolver`. Monitor reads `print_state`; it
 does not run another resolver or advance Preview's extrusion state.
 
+An observed pause preserves the last resolved layer. Parser lookahead and the
+parked nozzle cannot reset its progress identity. After RESUME, an off-model
+nozzle still holds that layer until its queued return reaches a resolvable
+printing height. Resetting the resolver clears this print-local hold.
+
 Resolution prefers exact G-code current-layer mapping, then reported layer numbering,
 then indexed file position. Configured Z fallback requires extrusion advancement,
 so a temporary Z-hop does not move the physical layer. Available metadata/geometry
@@ -272,21 +310,37 @@ G-code byte percentage as time.
 Path smoothing is display-only: `PreviewMotion` animates the displayed path
 toward the newest physical observation using the pure `PreviewSmoothing`
 policy: the head cruises at the estimated physical velocity, never exceeds
-the newest observation and never decreases within a layer. The target itself
+the newest observation and never decreases during ordinary smoothing. The target itself
 is reconstructed between consecutive observations by linear interpolation
 over the measured poll interval, and the velocity window scales with that
 interval, so the glide is continuous at any polling rate the poller actually
 delivers (beyond ~5 s between polls the target saturates at the newest
 observation until the next poll); the newest observation remains the hard
-ceiling. While a compact layer hydrates, the driver is reset so a stale
-animation cannot fight the follower's writes. The refinement itself now
-produces a smooth sub-segment observation (a widened search window plus a
-hold-on-ambiguity fallback that never inflates the monotonic floor once a
-refined value exists; the first observation of a layer seeds the floor from
-the parser-position estimate). Layer transitions are jumped, never animated.
-The physical `path_fraction` that ETA consumes is unchanged, and each
+ceiling. A missing shared observation resets the driver so stale animation
+cannot fight the next physical position. Layer transitions and an authoritative
+backwards correction jump immediately, discarding the old ramp and velocity.
+The physical `path_fraction` that ETA consumes comes from the shared boundary, and each
 animated write re-remembers the plugin-written position so the override
 detector cannot mistake the animation for a manual grab.
+
+`GCodeIndexService.observe_motion()` owns live matching, independently of
+prepared canvas availability. `PrintCoordinator` resolves the physical layer,
+G-code-space toolhead position, attributed byte offset, pause state and extrusion
+evidence once from a telemetry frame, calls the service once, and publishes its
+immutable `MotionProgress` in `PrintSnapshot.motion_progress`. Monitor's live
+payload uses that same split without matching again; Preview converts its
+fraction to Cura's path units without another matcher or monotonic floor.
+Both therefore share layer-entry suppression, pause/resume handling, ambiguity
+holds and evidence-based backwards recovery. `IndexView.fraction()` remains a
+stateless query, not a live tracking API. Manual Monitor scrubbing is separate
+and cannot change the live floor; detaching either view does not stop tracking.
+Hydrated motion arrays work before a renderer's geometry is ready, and a
+compact layer may use the prepared geometry fallback while requesting its arrays.
+
+Compact-layer refinement rejects segment motion ranges outside the search window
+and edges whose bounding boxes cannot improve or tie the current nearest match.
+Its spatial bound includes the existing candidate comparator's tolerance. Search
+windows, travel acceptance and motion tie-breaking remain the same.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -327,7 +381,10 @@ flag — the lane never wedges across a print boundary.
 Failed downloads retry on their own backoff ladder, driven by consumer
 re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
-poll.
+poll. The latch is never silent: the payload carries the refusal, the
+face names it instead of promising a load that is not coming, and an
+explicit re-seek to that layer (a changed anchor, never a poll) clears
+it and tries once more.
 
 The file-manager's one-shot lane (`download_once`) runs on the same operation
 machinery and captures the transport identity at request time. A mid-stream
@@ -354,6 +411,28 @@ the UI thread. Only generation-valid results are published on the Qt thread.
 It does not expose mutable motion arrays or worker handles. Compact layers are used
 only after hydration has published complete arrays. Index algorithms and cache
 format remain in `GCodeIndex.py`; they are not duplicated in runtime components.
+
+One indexed motion is one G-code motion, and its physical geometry is one path:
+a straight edge for G0/G1, and for G2/G3 the circular or helical path its centre
+offsets describe. `ArcGeometry.py` owns that path — the tessellation the payload and
+the printed-object walk read, and the live-position match — so no consumer branches
+on the command word and no consumer re-derives a curve. `PlateProgress.motion_edges`
+is the one expansion of a layer's indexed motions into physical edges: the payload
+builders and the printed-object walk both read it, and a seek into the middle of a
+layer yields the suffix of the very same walk (the travel state is the layer's
+opening state with the boundaries before the seek applied in order). `refined_fraction`
+does not go through that expansion: it searches the index's LOGICAL endpoints around
+the parser position — the motion index is the unit the split, the payload and the
+cache are all counted in — and hands every arc it meets to `ArcGeometry.closest`, so
+the live toolhead is matched against the commanded curve rather than its chord. The
+index carries the arcs sparsely (a descriptor per arc motion keyed by motion index,
+plus the modal plane at each layer's start) and never pre-tessellates them. A
+Klipper-invalid arc (R-form, G91, zero centre offsets) carries no descriptor and
+draws as the straight edge it would have been, which keeps the index usable rather
+than failing the file. The persistent cache is faithful or it is not written: an
+index whose arc descriptors cannot fit the blob's entry budget is not published, and
+a blob offering an over-budget arc column is refused rather than trusted, because a
+cache that restores a commanded curve as a chord is geometry the file never had.
 
 ## 7. Commands and scheduled PAUSE
 
@@ -420,7 +499,7 @@ aborts an in-flight request whose G-code may or may not have executed.
 Live Z-offset nudges stay enabled during prints by design.
 
 Two standing UI rules bound every Monitor control (both pinned in
-`tests/test_monitor.py`). **No reflow**: controls never disappear —
+`tests/test_monitor_qml_contracts.py`). **No reflow**: controls never disappear —
 state gates disable, status lines are permanent single-line slots, and
 reserved space uses opacity; nothing reflows unless the user acts
 (expanding/collapsing, resizing). The reasoning is safety: a control
@@ -623,3 +702,438 @@ check real QML rendering, native nozzle/bed-mesh integration, Cura file-writer
 compatibility, multi-printer interaction and large-file responsiveness. The architecture
 removes the known shared-object migration debt; it cannot guarantee that future Cura
 or Moonraker API changes will never require deliberate boundary changes.
+
+### Software fallback: live plate camera gestures
+
+The following raster, Canvas and prefix delivery contracts describe the
+Diagnostics software fallback. The default GPU renderer retains geometry and
+updates transforms, widths and progress through scene-graph state, as described
+below; it does not request these raster or prefix producers.
+
+The 4x warm raster is an entry-latched presentation buffer. Camera interaction
+may defer new warm composites, but NEVER suppresses live split, layer, exact
+native-checkpoint or render-result publications. After movement settles,
+resume only the latest navigation demand. An exact scene rebuild is allowed
+behind the warm picture throughout the gesture; the presentation controller
+alone decides when a complete frame can replace it.
+
+### Exact scene incarnation
+
+The Monitor publishes a stable print/layer incarnation token alongside the
+volatile printed-motion split. It changes when the print or surface layer
+changes, not on every nozzle poll; consumers must distinguish the static
+scene from within-layer progress. A raster or Canvas completion for a
+previous incarnation must never claim ownership of the current scene.
+
+### Exact-scene compositor
+
+Canonical screenshot captures pin the amd64 container architecture as well
+as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
+native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
+entry point. Native test gates may use the host architecture; `make build`
+regenerates canonical captures afterward rather than copying those test images.
+Byte comparison and independent light/dark determinism checks remain strict.
+
+`PlateExactComposition.js` is the single Qt-free owner of the asynchronous
+Canvas delivery transaction, the attached/detached split acceptance rule and
+the exact-picture readiness policy. The QML face now adapts this policy to
+actual Canvas/Image objects. Printed ink is selected by one composition
+decision, with retained prefix/full assets represented by immutable records
+rather than visibility history or timed holds. The pixel-affecting world identity contains the print/layer
+scene epoch and view. Native incremental prefixes and the 4x warm image remain
+unchanged. Implicit Qt paints can be accepted only with consistent same-world
+receipts; stale/mixed generations are rejected.
+
+Delivered coverage is one immutable composition receipt; its QML coverage,
+split, epoch and texture-readiness projections are read-only. Private paint
+accumulators cannot certify presentation. A delivery notification without a
+new bitmap preserves the standing receipt while any retry remains coalesced.
+The receipt identifies the prefix URL whose interval the tail relies on,
+as well as its boundary. Coalesced paints with different prefix assets are
+ambiguous even when the boundary and split match. A partial printed picture
+has one interval owner: a full-history Canvas, or a Ready prefix plus a
+delivered tail for that same asset and boundary. A previously visible prefix
+cannot overlap a full-history Canvas. A complete Canvas fallback can release
+the warm-to-exact barrier while an optional prefix is still decoding.
+
+### Presentation asset lifetimes
+
+Every `PlateProgressFace` acquires an owner token from its model and replaces
+its set of asset references atomically as Image sources and retained/held
+sources change. The set includes assets loading behind the visible picture,
+the retained prefix, the held full raster and the gesture's entry image.
+Model switches and face destruction release the owner; released tokens cannot
+be reused or resurrected. Independent faces may hold the same file.
+
+Cache pruning protects the union of wrapper references, current navigation
+assets and presentation references. Published navigation assets use this same
+bounded retirement path instead of immediate unlinking on supersede. Released
+files become eligible for the next normal prune; at most 64 unreferenced files
+remain as retirement grace. Snapshot updates perform no directory scans,
+image decoding or model publication in QML callbacks. Obsolete worker results
+are removed on arrival, including completions for vanished surfaces, while
+files still referenced by a presentation owner survive discard cleanup.
+
+The presentation controller selects one printed composition: a complete native
+class/travel pair, a delivered full-history Canvas, or a Ready immutable prefix
+and its matching delivered Canvas tail. Prefix arrival alone cannot change
+interval ownership. The previous full picture remains eligible during partial
+entry until a complete replacement exists. No frame timer authorizes coverage.
+Required base and ghost components have their own delivery transaction and join
+the warm-to-exact barrier. Failed PNG decoding or publication invokes a complete
+vector producer; ordinary full native scenes do not convert their geometry to
+QVariant. The exact scene stays renderable beneath the opaque warm picture so
+Qt can deliver its Canvas textures throughout camera gestures.
+
+While attached, a navigation raster is reusable only when its scene matches and
+its printed boundary does not exceed the live demand. A backward physical
+correction retires future navigation ink and delivered Canvas/prefix compositions;
+in-flight future work cannot promote. Detached scrubbing retains its previous
+complete picture until replacement, preserving that interaction's continuity.
+
+Camera decode uses QImageReader.read on its existing worker to release Python's
+execution lock during native decoding. Periodic ticks and worker completions
+share one dispatch deadline, with a single-shot wake for its remaining interval.
+The mailbox still holds only the latest pending frame, the worker still permits
+one in-flight decode, and stopping or replacing a stream cancels the extra wake.
+The camera requests a framebuffer render target: Qt 6.0-6.8 ignores it, while
+Qt 6.9+ can use accelerated OpenGL painting when the host supports it.
+
+Partial-layer scrub geometry has a dedicated notification for each surface.
+Each face retains it in a separate QML binding, so split advances and raster
+delivery rebuild the small progress object without converting the full Python
+geometry to JavaScript again. Geometry replacement still invalidates that binding.
+An obsolete Canvas upload remains accounted for across a world change. The
+preparing composition covers its buffer while the current paint is queued;
+the old bitmap cannot remain visible merely because its upload has not yet
+delivered. This cover leaves Canvas active, avoiding a readiness cycle caused
+by hiding the producer itself.
+
+The split tracker separates search stalls from corrective physical evidence.
+Only consecutive below-floor physical matches permit backward correction;
+parser progress and missed matches cannot supply that evidence. At adjacent
+layer entry, repeated XY geometry is withheld until distinct physical Z agrees
+with the new layer. Equal-height geometry or missing height metadata remains
+ambiguous and follows ordinary matching rather than claiming height evidence.
+
+Real-engine pixel tests cover interval replacement, full/partial transitions,
+failed assets, camera handover and scene changes. Dense native and publication
+benchmarks retain the incremental rendering and 4x warm backing requirements.
+Cross-platform CI and performance inside a real Windows Cura session remain
+separate validation requirements; offscreen rendering does not certify them.
+
+Backward seeks can restore the nearest earlier native prefix checkpoint from
+the same immutable wrapper and render key, then extend only its remaining
+interval. Each wrapper keeps at most four checkpoints and 16 MiB of cached
+pixels; these bytes participate in the existing surface memory accounting.
+View changes clear the checkpoints, scene changes replace the wrapper, and
+checkpoint URLs join the asset reference set. A later checkpoint never seeds
+a backward target. Once the normal current/ghost renders are hot, a lower
+priority background worker writes independent prefixes at 5% intervals to PNG
+files. This archive belongs only to the popover's current layer and is cleared
+on layer, view, print and surface retirement. Checkpoints do not delay the
+layer's normal render or publish QML updates as they are generated. Only one
+checkpoint image is built at a time; the archive holds URLs rather than decoded
+pixels. Reverse workers decode the nearest earlier file and extend at most 5%
+of the layer, retaining the existing four-image/16 MiB decoded cache limit.
+An unfinished archive or failed PNG falls back to ordinary native rendering.
+Generation starts after a short idle delay, uses the pool's lower queue priority
+and yields between geometry chunks. The worker's planned filenames are pinned
+until completion so ordinary cache sweeps cannot delete an unfinished archive.
+
+During split changes the last complete composition remains presented until its
+replacement delivers, including backward scrubs. Intermediate prefix anchors
+never present alone below the requested split. Static scene changes still
+invalidate incompatible geometry. The standing grid rises above the preparation
+cover while that geometry retires, keeping the grid visible through zero and
+partial transitions. Implicit Canvas paints coalesce while an actual upload is
+outstanding; a rejected delivery forces a fresh bitmap rather than a no-op retry.
+While a native prefix worker or its Image decode is pending, QML keeps the
+standing composition and coalesces progress instead of walking full history as
+a temporary fallback. Completion wakes the painter; failed transport still
+uses the complete vector recovery path.
+
+Pause observations preserve the accepted split without collecting backward
+correction evidence from the macro's parked head. Resuming keeps that floor
+until geometry matches at or beyond it; parked telemetry after RESUME cannot
+erase the layer's already printed history. Pause/resume parser-offset
+rewinds keep the print identity; filename/size changes, an inactive boundary,
+or a reset print duration still establish a new print.
+
+Layer entry also considers `motion_report.live_extruder_velocity` when available.
+A reported zero or negative velocity prevents an unconfirmed new layer from
+accepting an apparent extrusion match during travel over excluded objects.
+Positive extrusion releases the gate when the existing physical entry check
+also succeeds. Missing velocity preserves the existing geometric policy;
+ordinary travel after entry still advances progress. This does not assume that
+the parsed file position identifies the currently executed move. Consistent
+physical matches below an accepted floor retain the existing backward correction.
+
+`GpuFollower` is the default OpenGL scene-graph renderer for both follower
+faces. Worker threads prepare immutable, motion-sorted vertex buffers;
+progress selects a prefix by binary search, while pan and zoom update one
+retained transform shared with the themed 10/50 mm grid. Wide strokes use
+constant-size quads with shader-expanded round caps and joins, independent of
+driver line-width support. `GpuStrokeMaterial` owns the material and the packaged
+Qt shader bundles; width and zoom change uniforms rather than rebuilding strokes.
+The selected width is 1–8 logical pixels, independent of zoom. Previous-layer
+ghosts retain class colours and solid strokes; next-layer ghosts use coloured,
+translucent 0.5 mm dashes separated by 0.5 mm gaps. Flat dash ends preserve the gaps.
+The opt-in antialiasing preference persists in the global follower view document
+and selects analytic edge coverage in the fragment shader. It defaults to crisp
+lines, without an offscreen multisampling pass. A layer change replaces the full
+retained node tree, retiring Qt's old batches; ordinary updates retain that tree.
+The toolhead dot stays above it. The persistent Keep centred preference follows
+the attached toolhead when zoomed; manual panning switches it off, zooming does not.
+
+Cold preparation stores immutable coordinate triples and polylines. Unlike nested
+coordinate lists, CPython can remove these acyclic tuples from its cyclic-GC
+traversal, avoiding long interpreter-wide pauses as the prepared cache grows.
+Qt converts the tuples to the same QML arrays; this representation change alone
+does not alter the binary coordinate layout. The current cache versions are
+documented below. No process-wide GC policy is changed.
+Prepared-file decoding uses immutable triples for GPU consumers too, with
+1,024-point cancellation checkpoints. Software decoding retains the original
+list shape, and software QML conversion is memoised per layer wrapper. GPU
+publication does not convert the unused software vector payload.
+
+GPU faces retire CPU raster, navigation and rewind-checkpoint demand. Shared
+prepared geometry is limited to 48 MB, including conservative accounting for
+source payloads retained by its identity keys. While GPU consumers exist, the
+index service expands its decoded budget from 128 to 256 MB and speculatively
+decodes existing local sources two to four layers beyond visible windows.
+Foreground geometry and live motion-array debt outrank this prefetch. Decode
+checkpoints yield the GIL and let newly selected layers interrupt speculation;
+prefetch never requests a file download or hydrates motion arrays. Consumer
+counts preserve the allowance until the last GPU face retires. Pinned active
+layers retain the existing cache policy's explicit exception to the byte bound.
+Geometry caching is per layer role and source payload, so a late ghost does not
+rebuild the unchanged current layer. Source points are charged once per source;
+synthetic dashed vertices retain their own byte charge. Loading an existing
+prepared distant layer for GPU inspection does not also hydrate its raw motion
+arrays. Followed-layer neighbours still hydrate for physical tracking, and
+software selection keeps the original hydration policy.
+
+Decoded geometry is presentation readiness, not physical-tracking readiness.
+A speculatively decoded layer entering the live window must still request its
+motion arrays, even though no geometry decode is needed. Otherwise compact
+matching can select future geometry during a long excluded-object entry travel;
+live traces captured motion 6,604 with coarse progress near 135, and motion
+11,335 with coarse progress near 147. Extruder velocity below 1e-6 mm/s does
+not confirm extrusion: the connected printer reported positive roundoff of
+3.55e-15 mm/s during travel.
+
+QML software fallback-vector reads and hidden Canvas paint demand are gated
+off while the GPU renderer owns the face. The real-engine isolation regression
+recorded 188 fallback reads before the gate and zero after it; selecting
+Diagnostics software rendering restores those producers. During GPU buffer
+preparation the last native frame may stand frozen until the new generation
+lands. Its old progress remains frozen too: a new layer's split must never
+paint the old buffers. Empty completions and explicit clears retire that frame;
+retired worker generations cannot change it.
+
+`GpuObjectPicker` shares the scene-graph stroke and grid primitives while
+preserving the object picker palette, halo, hover widths, degraded centre
+circles and pointer handling. It always uses four-sample antialiasing and adds
+no controls. The Diagnostics preference `software_follower_renderer` applies
+to both views; unsupported graphics backends also select the original software
+renderers. Software selection resumes the original raster schedulers and
+decoded-cache budget. The existing native/Canvas composition tests continue
+covering the original software stroke contract, with additional coverage for
+the new pixel-width control.
+
+### Renderer measurements and limits
+
+The retired `tools/spikes` prototype demonstrated scene-graph viability and is
+not part of the maintained renderer. On Windows with Qt 6.6, a dense synthetic
+layer measured median node updates of 0.193 ms (p95 0.275 ms) and frame swaps of
+6.325 ms (p95 7.352 ms). Its four-sample antialiasing variant increased swap
+median to 16.201 ms (p95 16.639 ms), motivating analytic follower antialiasing.
+The production stroke shader, with a 42,000-edge synthetic layer over 200
+width-change frames, measured median updates of 0.822 ms (p95 2.163 ms) and swaps
+of 8.662 ms (p95 12.719 ms). These are isolated renderer measurements, not Cura
+camera FPS or end-to-end interaction latency, and different runs are not a
+controlled before/after comparison of the whole application.
+
+Cold preparation of the first twelve layers in a captured large print improved
+from 5.152 s to 3.954 s after immutable coordinate storage; the longest observed
+generation-two collection fell from 311 ms to 26 ms and UI heartbeat delay from
+314 ms to 31 ms. The source and captures are private investigation fixtures.
+These measurements support avoiding cyclic-GC-heavy geometry and retaining GPU
+buffers; no global GC tuning or offscreen follower composition is required.
+
+The motion-line metadata shortcut reduced CPU time for a 20,971,515-byte scan
+from a median 6.188 s to 5.547 s over three paired Python 3.10 runs, with matching
+layer ranges, motion counts, types and travel boundaries. Encoding retains its
+original loop after a proposed flattening shortcut measured slower. On eleven
+captured prepared layers, three paired codec runs per layer measured median
+decode time of 49.766 ms for lists and 46.895 ms for GPU tuples. Repeated
+generation-two scans of those retained layers measured 121.858 ms versus
+8.453 ms. These isolated Python 3.10 measurements identify overhead; they do
+not predict Cura's Python 3.12 cold-index or distant-layer click latency.
+
+Translucent previous, next and current-ghost strokes render opaquely into
+separate viewport-sized GPU textures, then apply layer opacity once. Overlapping
+round caps no longer compound the opacity of the stroke bodies. Anti-alias
+coverage still blends only the one-pixel fringes. The printed prefix, travels,
+glyphs and grid retain direct GPU rendering. GPU consumers share the main item's
+immutable worker buffers through a typed QObject pointer; they submit no extra
+preparation jobs and never activate software geometry. Progress-only changes
+leave the translucent passes' settings and geometry unchanged. Each texture
+pass uses its own item-sized shader viewport, preserving pixel widths under
+zoom; the direct pass uses the window viewport. All passes carry the same
+layer-generation frame hold. Software rendering keeps its existing compositor.
+
+
+Attached GPU motion smoothing uses the existing `path_smoothing` setting.
+The shared accepted motion record includes projection onto its single unfinished
+motion; this never searches ahead or changes the accepted completed-motion floor.
+A linear presentation animation trails observed progress, with immediate resets
+for layer changes, backward corrections, detach and pause. The shader clips the
+unfinished stroke using that animated motion fraction. Arc subdivisions carry
+length-weighted fractional ranges within their motion, so they reveal sequentially.
+The toolhead marker reads those same retained ranges by binary search and follows
+the indexed path rather than interpolating XY telemetry chords across corners.
+Missing geometry falls back to the reported toolhead position. This is a delayed
+presentation of observed progress, not extrapolation of future printer movement.
+Keep-centred animation changes only the displayed transform each frame; the model
+receives its target view at telemetry cadence. Software rendering keeps its
+existing discrete motion presentation.
+
+
+A Windows Cura 5.13 live Preview-load capture (2026-09-27, 50 Hz,
+50 seconds, py-spy GIL-owner sampling, 2,292 samples, zero sampling errors)
+recorded 45.84 seconds of sampled GIL time: 44.00 seconds / 95.99% included
+Cura's `GCodeReader`, versus 0.16 seconds / 0.35% including Print Follower.
+The reader's dominant paths were `FlavorParser._createPolygon` and
+`_calculateLineWidth`. Parsing on a JobQueue worker therefore still contends
+with Python UI callbacks for the shared interpreter lock. Verbose diagnostics
+were enabled; this capture does not support blaming them for the load stall.
+A separate post-parse capture found substantial main-thread time under Cura's
+SimulationPass / RenderBatch, including index-buffer conversion and upload.
+Inclusive timings overlap and must not be added. These captures identify Cura's
+reader and first 3D render as the dominant observed costs, not a measured
+Windows-versus-macOS explanation. The plugin defers its native layer-height
+cache requests and queued height batches until loading / slicing finishes;
+Preview motion writes already suspend during loading.
+
+
+### Extrusion widths and seam markers
+
+The follower can estimate a separate bead width for each depositing motion.
+The index retains signed E deltas as f32 values, filament diameter from slicer
+metadata (1.75 mm when absent), and layer height from the first depositing XY
+move in each layer. Modal E, units, G92 resets, compact hydration and persistent
+index restoration use the same scanner state. Preparation estimates width as
+filament volume divided by XY path length and layer height; arcs use their
+subdivided path length rather than the endpoint chord. This is a rectangular
+cross-section estimate, not a measurement of the printed bead. Missing or
+implausible estimates use a 0.4 mm nominal width. Per-tool filament diameters are retained when metadata provides them.
+Volumetric extrusion and live printer flow overrides are not inferred.
+
+The packed GPU vertex is 40 bytes, including speed and tool ID. The signed end-corner X magnitude
+carries millimetre width; its sign identifies the start/end corner. Pixel mode
+uses that sign alone. True-thickness mode scales the magnitude through a
+material uniform, so mode changes and zoom do not repack or upload geometry.
+The saved 1–8 px override remains independent and an explicit width interaction
+returns to it. Travels and the grid retain their existing widths. The software
+fallback paints per-motion widths through its existing raster and Canvas paths.
+The current index version is 14 and prepared-store version is 6; older
+cache files are invalidated and rebuilt.
+
+Retraction events are separate from travel boundaries: negative E or firmware
+G10 retracts; a subsequent positive E or G11 unretracts. G92 never creates a
+seam event. Independent persisted toggles show small hollow up/down arrows on
+the current layer. Their screen footprint is 4 px at fit, bounded at 8 px when
+zoomed, or 3 px in the mini pane. World-aligned screen cells retain at most one
+of each kind per 12 px cell so dense seams do not obscure the full-bed view.
+Neither marker size nor thinning changes with toolpath width.
+Glyphs reveal only completed event prefixes, following the eased displayed
+motion in GPU mode and withdrawing when scrubbing backwards. The glyph cache
+uses event counts rather than fractional progress, so smoothing within one
+motion does not rebuild marker geometry. Firmware events after the last indexed
+motion are included at full playback.
+
+### Shared Preview colour modes
+
+`FollowerColourScheme` is the Cura boundary for the shared
+`layerview/layer_view_type` preference, theme `layerview_*` colours and
+active extruder material swatches. Either Preview or the follower dropdown
+updates the same preference. Host model access starts after engine creation;
+unavailable host colour interfaces retain the last successful palette (or the
+default palette before the first successful read) without
+preventing plugin registration. Theme and material signals refresh the snapshot.
+
+Index cache version 14 records modal feedrate (mm/s) and tool ID per motion,
+layer-start seeds and per-tool filament diameters. The compact indexing pass
+aggregates whole-print speed, deposited layer-height, bead-width and flow
+limits without retaining every layer's motion arrays. Prepared cache version 6
+stores the profiles in binary columns beside geometry. Distant-layer hydration
+reproduces the original tool and feedrate state; a tool switch is not a motion.
+
+The GPU stroke vertex carries speed and tool ID alongside physical width.
+Cura's Speed, Layer thickness, Line thickness and Flow gradient equations run
+in the vertex shader. Switching mode, palette or range changes uniforms and
+retains the geometry buffers. Material colour selects the motion's tool swatch.
+Previous and next layers use the selected colours with reduced opacity; the
+current layer ghost remains translucent grey. The software renderer uses the
+same projections, with colour state included in asynchronous scene identity.
+The legend shows material swatches, line-type keys or print-wide gradient bounds
+with units. QML-facing profile arrays and range bounds are QVariant lists,
+including freshly prepared data, so first-use legends cannot read `NaN`.
+
+A successful Cura palette snapshot is persisted as a small preference. If the
+host colour API is unavailable on a later launch, the last successfully read
+Cura palette remains available rather than reverting to unrelated colours.
+In True thickness mode travels have a fixed 1 logical-pixel stroke, independent
+of zoom and the saved explicit extrusion width, on GPU and software paths.
+
+The travel channel is split into Cura's Non retracted, Retracting, Retracted
+and Priming categories. Each uses its corresponding host Preview theme colour
+in every colour mode. The single Travels checkbox controls all four, and the
+printed motion boundary clips them identically. Stationary retract/prime moves
+remain glyphs rather than zero-length lines. Positive E that exceeds the
+remaining retraction is deposition, not a priming-only travel. Per-tool filament
+balances and firmware G10/G11 events cross layer boundaries and survive compact
+index hydration; prepared travel classes have a binary TRCL extension. The
+legacy combined travel channel remains available to existing consumers.
+
+### RC review hardening
+
+WebSocket data-message limits apply to the declared frame length before buffering
+a body, including final unfragmented frames and accumulated continuations. The
+initial upgraded connection has the same no-reply deadline as an established
+connection. Camera bridge requests must remain within the configured HTTP origin
+before credentials are attached. Thumbnail bodies are bounded to 16 MiB and
+upload acknowledgements to 1 MiB, including responses without Content-Length.
+
+Live motion remains physical telemetry. Paired `gcode_move.position` and
+`gcode_move.gcode_position` supply only the XYZ origin offset (including G92);
+the queued endpoint never replaces `motion_report.live_position`.
+
+Prepared-cache recency advances only after validation. Dead index temporary
+files are swept, while a folder containing an active writer or indeterminate process-liveness result
+is protected from eviction; the cache may temporarily exceed its budget while
+that writer is alive. Worker preparation failures publish a visible error and
+a diagnostic instead of silently leaving a layer pending.
+
+Native and Linux harnesses use `tests/harness/log_gate.py` to reject plugin
+warnings, errors and QML binding/polish loops. Native first-install and migration
+legs include both boots' logs. Missing evidence fails the gate. Deliberate fault-injection scenarios may declare exact expected log messages; only a fully passing scenario records that allowance, and the shared gate consumes its bounded message count. Repeated authentication-refusal warnings are permitted only inside the successful authentication-fault scenario's recorded time window. Other warnings still fail.
+
+### Object-outline retention
+
+The Exclude Object Picker retains the grid and each object's native outline
+separately. Hover/current-state width changes rebuild only affected outlines;
+colour changes update materials, and pan changes the parent transform. Object
+removal releases its nodes, and geometry/scale changes invalidate the relevant
+outline. The same capsule triangles, round caps, widths and palette are used.
+
+A Windows CPU microbenchmark during RC review measured 49 rectangular objects
+at roughly 7.4 ms to expand the complete bed, versus 1.1 ms for a retained hover
+update. A synthetic stress case (256 objects with 64 edges each, not the user's
+rectangular print) measured roughly 837 ms versus 9.3 ms. These are local CPU
+measurements, not end-to-end FPS guarantees. A separate prefix-copy probe measured
+about 0.15 ms for 10,000 segments and 2.15 ms for 100,000; it does not measure
+Qt allocation or driver upload. Chunking that path remains a profiling-led
+follow-up, not a demonstrated correctness defect or an RC architecture change.

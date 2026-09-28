@@ -13,6 +13,7 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .MonitorPermissions import R_UNKNOWN, Verdict
+from . import MonitorFormatting
 
 
 class MonitorCommands(QObject):
@@ -22,7 +23,7 @@ class MonitorCommands(QObject):
     # A resumed printer may re-heat before it actually resumes; the
     # confirmation must outlive a slow heat-up instead of reporting
     # failure while the printer does exactly what it was asked.
-    EXPECTED_TIMEOUT_S = {"Resume": 300}
+    EXPECTED_TIMEOUT_S = {"Resume": 130}
     MAX_QUEUED_COMMANDS = 16
     # The post-e-stop reconnect delay (the ruling,
     # 2026-09-10, live-proven on their printer): after the stop the
@@ -55,6 +56,9 @@ class MonitorCommands(QObject):
         self._busy = False
         self._status = self._tracked = ""
         self._live = self._receipt = ""
+        self._status_at = self._live_at = self._receipt_at = ""
+        self._job = None
+        self._retired_cancel = False
         self._clicks = 0
         self._queue = []
         self._hold_progress = 0.0
@@ -87,6 +91,32 @@ class MonitorCommands(QObject):
         # expiry reveals the live text or the durable status beneath.
         return self._receipt or self._live or self._status
     @property
+    def status_timestamp(self):
+        if self._receipt: return self._receipt_at
+        if self._live: return self._live_at
+        return self._status_at if self._status else ""
+
+    @staticmethod
+    def _timestamp():
+        return MonitorFormatting.datetime.now().astimezone().strftime("%H:%M:%S")
+
+    def _record_status(self, text):
+        self._status = str(text)
+        self._status_at = self._timestamp() if self._status else ""
+
+    def observe_job(self, job):
+        """Retire the previous print's display without interrupting commands."""
+        if job is None or job == self._job:
+            return
+        self._job = job
+        self._record_status("")
+        self._clear_receipt()
+        # A late cancellation acknowledgement belongs to the old run.
+        # Release its lane normally, but do not label the new print cancelled.
+        if self._tracked == "Cancel":
+            self._retired_cancel = True
+            self._live = ""
+    @property
     def clicks(self): return self._clicks
     @property
     def hold_progress(self): return self._hold_progress
@@ -107,7 +137,7 @@ class MonitorCommands(QObject):
         """A non-command status line for the action pane (the print
         watchdog's failure verdict — the live report: a
         start that never happens must say so where the user looks)."""
-        self._status = str(text)
+        self._record_status(text)
         self.changed.emit()
 
     def _set_busy(self, busy):
@@ -123,6 +153,8 @@ class MonitorCommands(QObject):
         self._queue.clear()
         self._status = self._tracked = ""
         self._live = self._receipt = ""
+        self._job = None
+        self._retired_cancel = False
         self._receipt_timer.stop()
         self._reset_clicks()
         self.changed.emit()
@@ -136,6 +168,8 @@ class MonitorCommands(QObject):
         self._clear_receipt()
         token = self._lifecycle
         self._live = f"{label} requested…"
+        self._live_at = self._timestamp()
+        self._retired_cancel = False
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
         if expected: self._data.track_command(label, expected,
@@ -157,13 +191,17 @@ class MonitorCommands(QObject):
                     # report: a cold extrude showed a bare 400 —
                     # now it reads the server's own words ("Extrude
                     # below minimum temp").
-                    self._status = f"{label} refused: {error}"
+                    self._record_status(f"{label} refused: {error}" if not self._retired_cancel else "")
                 else:
                     # A connection-level error says nothing about whether
                     # the command executed: the script may already have
                     # been accepted by the printer.
-                    self._status = f"{label} outcome unknown: {error}"
-                if expected: self._data.fail_command(label, error)
+                    self._record_status(f"{label} outcome unknown: {error}" if not self._retired_cancel else "")
+                if expected:
+                    # The tracker's signal owns the final display too:
+                    # preserve the refusal/unknown distinction there.
+                    detail = f"refused: {error}" if payload is not None else f"outcome unknown: {error}"
+                    self._data.fail_command(label, detail)
                 self._tracked = ""
             elif expected:
                 self._live = ""
@@ -185,8 +223,11 @@ class MonitorCommands(QObject):
         # Commands get a long transfer timeout: Moonraker accepts the
         # script before responding, so a slow reply must never be
         # misread as a failed command.
+        # RESUME's reply waits for the macro, including M109 heating.
+        # Allow the agreed two-minute heating window, then leave ten
+        # seconds for the state confirmation after an acknowledgement.
         started = self._data.request("control", "POST", path, finished, body=body,
-            category="command", timeout_ms=30000)
+            category="command", timeout_ms=120000 if label == "Resume" else 30000)
         if not started:
             finished(None, "Moonraker is unavailable")
         return started
@@ -208,6 +249,7 @@ class MonitorCommands(QObject):
                 return False
             self._queue.append((label, path, body, rule))
             self._live = f"{label} queued"
+            self._live_at = self._timestamp()
             self.changed.emit()
             return True
         return self.send(label, path, body)
@@ -250,7 +292,8 @@ class MonitorCommands(QObject):
         # banner (the engineering panel's receipt resurrection).
         self._clear_receipt()
         self._live = ""
-        self._status = f"{self._tracked}: {event.get('detail') or outcome}"
+        if not self._retired_cancel:
+            self._record_status(f"{self._tracked}: {event.get('detail') or outcome}")
         if event.get("terminal"):
             # Through the push-in (the phase-6 security re-review,
             # D6): the direct assignment left the record's busy flag
@@ -307,7 +350,7 @@ class MonitorCommands(QObject):
 
     def _fire_emergency(self):
         def finished(payload, error):
-            self._status = f"Emergency stop failed: {error}" if error else "Emergency stop issued"
+            self._record_status(f"Emergency stop failed: {error}" if error else "Emergency stop issued")
             self.changed.emit()
             self._data.force_refresh()
         self._data.request("emergency-stop", "POST", "printer/emergency_stop", finished,
@@ -351,6 +394,7 @@ class MonitorCommands(QObject):
         # command, and the queue must keep its place ahead of that
         # fresh send (an early emit let a queued jog jump Home).
         self._receipt = text
+        self._receipt_at = self._timestamp()
         self._receipt_timer.start()
 
     def _expire_receipt(self) -> None:

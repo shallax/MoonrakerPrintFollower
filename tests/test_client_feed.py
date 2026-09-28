@@ -94,10 +94,11 @@ class ClientFeedTests(unittest.TestCase):
         url, key, core, aux = self.socket.starts[0]
         self.assertEqual(url, "wss://printer.local/websocket")
         self.assertEqual(key, "key")
-        self.assertEqual(core, {"print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume"})
+        self.assertEqual(core, {"print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume", "exclude_object"})
         self.assertEqual(self.socket.subscriptions[0], {
-            "bed_mesh": None, "gcode_move": None, "motion_report": None,
-            "pause_resume": None, "print_stats": None, "virtual_sdcard": None,
+            "bed_mesh": None, "exclude_object": None, "gcode_move": None,
+            "motion_report": None, "pause_resume": None, "print_stats": None,
+            "virtual_sdcard": None,
         })
 
     def test_idle_floor_does_not_gate_the_first_connection(self):
@@ -502,7 +503,7 @@ if QT_AVAILABLE:
             # The retry is the single deferred re-arm: invoking it
             # re-fires the chain (the probe's override counts
             # refresh_discovery calls). The defer re-arm cycle itself
-            # is pinned in test_preview_family_coverage.
+            # is pinned in test_preview_monitor_data.
             discovery_before = self.data.discovery_calls
             callback()
             self.assertEqual(self.data.discovery_calls, discovery_before + 1)

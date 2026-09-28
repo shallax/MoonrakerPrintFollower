@@ -31,6 +31,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
@@ -52,7 +53,7 @@ ColumnLayout {
                 compact: true
                 printer: root.printerModel
                 opacity: root.printerModel != null && root.printerModel.bedMeshAvailable ? 1 : 0
-                tooltipText: root.printerModel != null ? "Click for the full bed mesh map (" + root.printerModel.bedMeshRangeText + ")." : "Click for the full bed mesh map."
+                tooltipText: root.printerModel != null && root.printerModel.bedMeshAvailable ? "Click for the full bed mesh map" + (root.printerModel.bedMeshRangeText !== "" ? " (" + root.printerModel.bedMeshRangeText + ")" : "") + "." : "No bed mesh loaded."
                 onClicked: root.popOverToggleRequested("mesh")
             }
 

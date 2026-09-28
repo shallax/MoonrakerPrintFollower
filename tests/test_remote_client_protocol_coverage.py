@@ -990,6 +990,18 @@ class ClientAdmissionTests(_ClientCase):
                                  generation=self.client._generation)
         self.assertEqual(self.client.status["print_stats"]["state"], "printing")
 
+    def test_two_sync_frames_in_one_clock_tick_both_apply(self):
+        self.client.admit_status(self.status("printing"), origin="sync", stamp=10.0,
+                                 generation=self.client._generation)
+        # The stamp is a wall clock, not a sequence: the platform's own
+        # resolution decides whether two frames can share it, and
+        # Windows' monotonic tick (~16 ms) hands a fast pair the SAME
+        # stamp. Equality is unordered, and dropping the second there
+        # loses the update whole — the state never lands at all.
+        self.client.admit_status(self.status("paused"), origin="sync", stamp=10.0,
+                                 generation=self.client._generation)
+        self.assertEqual(self.client.status["print_stats"]["state"], "paused")
+
     def test_a_fragment_applies_inside_its_generation(self):
         self.client.admit_status(self.status("printing"), origin="sync", stamp=10.0,
                                  generation=self.client._generation)
@@ -1526,6 +1538,79 @@ class _FileServiceCase(_QtCase):
     def finish_download(self, reply):
         reply.finished.emit()
         self.events(60)
+
+
+class RemoteFileServiceRootSweepTests(_QtCase):
+    def test_a_boot_sweeps_stale_session_roots_but_spares_fresh_ones(self):
+        # The disk-leak fix: sessions that end without the shutdown
+        # hook (a kill, a crash, a lease still open at close) leave
+        # their temp roots behind — every downloaded file, thumbnail
+        # and raster inside. A root that carries its creating pid is
+        # swept the moment that pid is dead (any age); a live pid's
+        # root stays (a concurrent session at any age); pid-less
+        # legacy names fall back to the day's age gate.
+        self.mod = self.rt.load("RemoteFileService")
+        transport = _RecordingTransport()
+        import subprocess
+        import sys
+        import tempfile as real_tempfile
+        with real_tempfile.TemporaryDirectory() as tmpdir:
+            old = time.time() - 2 * 24 * 3600
+            stale_roots = []
+            for name in ("cura-moonraker-files-legacy", "mpf-files-stale",
+                         "mpf-thumbs-stale"):
+                path = os.path.join(tmpdir, name)
+                os.makedirs(path)
+                with open(os.path.join(path, "old.bin"), "wb") as handle:
+                    handle.write(b"x" * 64)
+                os.utime(path, (old, old))
+                stale_roots.append(path)
+            child = subprocess.Popen([sys.executable, "-c", "pass"])
+            child.wait()
+            dead_root = os.path.join(tmpdir, "mpf-files-%d-x" % child.pid)
+            os.makedirs(dead_root)
+            with open(os.path.join(dead_root, "new.gcode"), "wb") as handle:
+                handle.write(b"x" * 64)
+            # A FRESH pid-less mpf-* name (the pre-pid builds'
+            # accumulation) cannot belong to a live current-version
+            # session: it goes outright, no age gate.
+            fresh_no_pid = os.path.join(tmpdir, "mpf-upload-fresh")
+            os.makedirs(fresh_no_pid)
+            with open(os.path.join(fresh_no_pid, "new.bin"), "wb") as handle:
+                handle.write(b"x" * 64)
+            legacy_fresh = os.path.join(tmpdir, "cura-moonraker-files-fresh")
+            os.makedirs(legacy_fresh)
+            with open(os.path.join(legacy_fresh, "live.gcode"), "wb") as handle:
+                handle.write(b"x" * 64)
+            live_root = os.path.join(tmpdir, "mpf-raster-%d-y" % os.getpid())
+            os.makedirs(live_root)
+            with open(os.path.join(live_root, "live.bin"), "wb") as handle:
+                handle.write(b"x" * 64)
+            os.utime(live_root, (old, old))
+            real_mkdtemp = real_tempfile.mkdtemp
+
+            def mkdtemp_under_tmpdir(suffix=None, prefix=None, **kwargs):
+                return real_mkdtemp(suffix=suffix, prefix=prefix,
+                                    dir=kwargs.get("dir", tmpdir))
+            with patch.object(real_tempfile, "gettempdir", return_value=tmpdir), \
+                    patch.object(real_tempfile, "mkdtemp",
+                                 side_effect=mkdtemp_under_tmpdir):
+                service = self.mod.RemoteFileService(transport)
+            for path in stale_roots:
+                self.assertFalse(os.path.isdir(path),
+                                 "%s survived the boot sweep" % path)
+            self.assertFalse(os.path.isdir(dead_root),
+                             "a dead session's fresh root survived the sweep")
+            self.assertFalse(os.path.isdir(fresh_no_pid),
+                             "a fresh pid-less mpf- root survived the sweep")
+            self.assertTrue(os.path.isdir(legacy_fresh),
+                            "a fresh legacy root was swept")
+            self.assertTrue(os.path.isdir(live_root),
+                            "a live session's root was swept")
+            self.assertTrue(os.path.isdir(service._root))
+            service.close()
+            self.assertFalse(os.path.isdir(service._root),
+                             "the close left the session's root behind")
 
 
 class RemoteFileServiceMetadataTests(_FileServiceCase):

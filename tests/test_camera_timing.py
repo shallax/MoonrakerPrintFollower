@@ -70,7 +70,7 @@ class CameraTimingContractTests(unittest.TestCase):
         import tempfile
         import types
 
-        config_dir = tempfile.mkdtemp(prefix="mpf-timing-")
+        config_dir = tempfile.mkdtemp(prefix="mpfxtest-timing-")
         um = types.ModuleType("UM")
         um.__path__ = []
         resources = types.ModuleType("UM.Resources")
@@ -111,7 +111,7 @@ class CameraTimingContractTests(unittest.TestCase):
         import tempfile
         import types
 
-        config_dir = tempfile.mkdtemp(prefix="mpf-timing-")
+        config_dir = tempfile.mkdtemp(prefix="mpfxtest-timing-")
         log_calls = []
 
         um = types.ModuleType("UM")

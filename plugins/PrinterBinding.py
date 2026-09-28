@@ -294,6 +294,11 @@ class PrinterBinding(QObject):
         _machine_changed and migrated by mark_ready."""
         if self._ready:
             self._migrate()
+            # The migration moved the settings into the new document:
+            # a cached config (an early boot read — the cache-size
+            # source reads at construction) predates it and must
+            # re-read once — the same clear mark_ready performs.
+            self._config_cache = None
         self._apply()
 
     def mark_ready(self):

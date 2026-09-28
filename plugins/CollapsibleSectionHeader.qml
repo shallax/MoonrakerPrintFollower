@@ -28,7 +28,7 @@ Item {
         id: backgroundRectangle
         anchors.fill: parent
         color: headerRoot.hovered ? UM.Theme.getColor("setting_category_hover") : UM.Theme.getColor("setting_category")
-        Behavior on color  {
+        Behavior on color {
             ColorAnimation {
                 duration: 50
             }

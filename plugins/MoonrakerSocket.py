@@ -35,6 +35,14 @@ from .SocketFraming import (
     verify_handshake,
 )
 
+
+def _now() -> float:
+    """This module's clock, behind a name so a test can substitute it
+    without freezing the shared ``time.monotonic`` that bounds the
+    test's own waits. Same call, same semantics as the stdlib."""
+    return time.monotonic()
+
+
 # The keepalive round-trip cadence (Moonraker itself pings every 10 s;
 # ours is the authenticated application-level check the liveness ruling
 # requires — an idle printer legitimately pushes nothing).
@@ -73,6 +81,7 @@ class MoonrakerSocket(QObject):
         self._request_serial = 0
         self._pending: Dict[int, Tuple[Callable, int]] = {}
         self._last_auth_reply_at = 0.0
+        self._upgraded_at = 0.0
         self._key = ""
         self._upgraded = False
         # The explicit lifecycle (the camera-delay fix): a socket that
@@ -126,6 +135,7 @@ class MoonrakerSocket(QObject):
         self._aux_names = set(aux_names)
         socket = QSslSocket(self) if use_tls else QTcpSocket(self)
         self._socket = socket
+        socket.setReadBufferSize(64 * 1024)
         generation = self._generation
 
         def stale() -> bool:
@@ -157,11 +167,14 @@ class MoonrakerSocket(QObject):
         def on_data() -> None:
             if stale() or self._socket is not socket:
                 return
-            self._buffer += bytes(socket.readAll())
-            if not self._upgraded:
-                self._process_handshake()
-                return
-            self._process_buffer()
+            # Parse bounded chunks so a burst of valid messages is allowed,
+            # while an oversized frame is rejected before buffering its body.
+            while not stale() and self._socket is socket and socket.bytesAvailable():
+                self._buffer += bytes(socket.read(64 * 1024))
+                if not self._upgraded:
+                    self._process_handshake()
+                else:
+                    self._process_buffer()
 
         socket.errorOccurred.connect(on_error)
         socket.readyRead.connect(on_data)
@@ -234,6 +247,7 @@ class MoonrakerSocket(QObject):
         self._core_names = set()
         self._aux_names = set()
         self._last_auth_reply_at = 0.0
+        self._upgraded_at = 0.0
         self._key = ""
         self._upgraded = False
         self._connecting = False
@@ -268,7 +282,7 @@ class MoonrakerSocket(QObject):
             self._aux_names = set(aux_names)
 
         def on_reply(reply: Dict[str, Any]) -> None:
-            self._last_auth_reply_at = time.monotonic()
+            self._last_auth_reply_at = _now()
             error = reply.get("error")
             if isinstance(error, dict):
                 # A structured refusal is a capability failure, not a
@@ -290,7 +304,7 @@ class MoonrakerSocket(QObject):
                     self._aux_stamp = self._issue_stamp
                 self.syncSnapshot.emit(status, self._issue_stamp)
 
-        self._issue_stamp = time.monotonic()
+        self._issue_stamp = _now()
         self.request("printer.objects.subscribe", {"objects": objects}, on_reply)
 
     def drain_core(self) -> Tuple[Optional[Dict[str, Any]], float]:
@@ -326,6 +340,7 @@ class MoonrakerSocket(QObject):
             self.stop()
             return
         self._upgraded = True
+        self._upgraded_at = _now()
         self._connecting = False
         self._buffer = rest
         self._keepalive_timer.start()
@@ -376,7 +391,7 @@ class MoonrakerSocket(QObject):
             if entry is not None:
                 callback, generation = entry
                 if generation == self._generation:
-                    self._last_auth_reply_at = time.monotonic()
+                    self._last_auth_reply_at = _now()
                     callback(message)
             return
         method = message.get("method")
@@ -406,7 +421,7 @@ class MoonrakerSocket(QObject):
         progress-only fragment replaced it and the drain never saw it
         (the live report: M117 invisible while printing, visible when
         idle)."""
-        stamp = time.monotonic()
+        stamp = _now()
         for name, value in patch.items():
             if name in self._core_names:
                 previous = self._core.get(name)
@@ -420,7 +435,8 @@ class MoonrakerSocket(QObject):
     def _send_keepalive(self) -> None:
         if self._socket is None:
             return
-        if self._last_auth_reply_at and time.monotonic() - self._last_auth_reply_at > self._keepalive_deadline_ms / 1000.0:
+        last_reply = self._last_auth_reply_at or self._upgraded_at
+        if last_reply and _now() - last_reply > self._keepalive_deadline_ms / 1000.0:
             self._enter_failed("keepalive reply deadline exceeded")
             self.stop()
             return

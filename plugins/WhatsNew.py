@@ -26,6 +26,49 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.6.0",
+        "headline": "Version 4.6.0 brings your build plate to Monitor, with a "
+            "GPU Print Follower, smooth live motion and Cura Preview colours.",
+        "items": (
+            "The Print Follower and object picker now render on the GPU. "
+            "Pan, smooth zoom, layer scrubbing and width changes stay light; "
+            "the last complete frame stays visible while a layer loads.",
+            "With Smooth path progress enabled, lines draw progressively and the "
+            "toolhead follows the indexed path, including curves. Preview "
+            "and Monitor share live motion tracking. Keep centred follows "
+            "the toolhead until you pan.",
+            "Choose any of Cura Preview's six colour modes, with the same "
+            "palette, print-wide gradients and multi-tool material colours. "
+            "Travels show non-retracted, retracting, retracted and priming "
+            "moves. Previous layers are solid; next layers are dashed; "
+            "Layer ghost stays grey.",
+            "Choose 1–8 px lines or True thickness, which estimates each "
+            "extrusion's width from G-code. Anti-aliasing is optional. "
+            "Retractions and Priming can show small hollow arrows after "
+            "they occur, without crowding the zoomed-out view.",
+            "The object map replaces the old list. Hover to read an object's "
+            "name and state; triple-click to exclude it or restore it. "
+            "The status line counts clicks and reports the outcome.",
+            "Seek a layer to inspect it, scrub its progress, or schedule a "
+            "pause at its end. The schedule shows ETAs and lists pauses "
+            "already baked into the G-code as read-only.",
+            "Indexing and preparation yield to the interface more often. "
+            "Bounded memory caches and nearby-layer prefetch speed browsing; "
+            "per-printer disk caches reuse prepared prints and resume "
+            "interrupted preparation. Diagnostics controls their size and "
+            "offers a software-renderer fallback.",
+            "Webcam zoom is smooth. Restart last print remembers a file "
+            "for this Cura session only and is disabled during an active "
+            "print. Resume allows longer for hotend warming. Speed and "
+            "extrusion multipliers accept 1–50,000%.",
+            "Monitor polish includes two-decimal print progress, timestamps "
+            "on Last action, clearer index-download states, aligned button "
+            "text and legends, and hidden download controls that no longer "
+            "accept clicks. The temperature chart samples once a second.",
+        ),
+    },
+
+    {
         "version": "4.5.0",
         "headline": "Version 4.5.0 moves the plugin's settings into its own "
             "folder, so your configuration and console history carry over "

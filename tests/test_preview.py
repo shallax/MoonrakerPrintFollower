@@ -17,7 +17,7 @@ from plugins.PreviewFormatting import (
     status_text,
 )
 from plugins.PrinterConfig import PrinterConfig
-from plugins.PrintState import PhysicalLayer, PrintSnapshot
+from plugins.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
 from plugins.RemoteJobService import PrintObservation
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
@@ -52,26 +52,43 @@ class CuraPort:
 
 
 class PreviewFollowerServiceTests(unittest.TestCase):
+    def test_shared_motion_is_usable_without_renderer_hydration_and_rejects_other_layers(self):
+        self.index.hydrated = lambda layer: False
+        snapshot = PrintSnapshot(observation=PrintObservation("printing", "part", 100, 20, 12.5),
+                                 layer=PhysicalLayer(4, 21),
+                                 motion_progress=MotionProgress(4, 25, 100))
+        _, hydration = self.service.observe(snapshot, {}, self.config, self.index)
+        self.assertEqual(self.cura.view.path, 25.0)
+        self.assertEqual(hydration, (4, 5))
+        # A replacement view with fewer layers must not apply the live
+        # boundary to a different, locally clamped layer.
+        self.cura.max_layer = 3
+        self.service.observe(snapshot, {}, self.config, self.index)
+        self.assertEqual(self.cura.view.path, 0.0)
+
     def setUp(self):
         self.cura = CuraPort()
         self.service = PreviewFollower(self.cura)
         self.fraction = 0.6
         self.index = SimpleNamespace(ranges=tuple((i, i + 1) for i in range(21)),
             elapsed_times=tuple((i + 1) * 10 for i in range(21)), hydrated=lambda layer: True,
-            fraction=lambda *args: (self.fraction, "test"))
+            fraction=Mock(side_effect=AssertionError("Preview must not match motion")))
         self.config = PrinterConfig(enabled=True, path_follow=True)
 
     def observe(self, layer=4, duration=12.5):
-        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, duration), PhysicalLayer(layer, 21))
+        motion = MotionProgress(layer, round(self.fraction * 1000), 1000, "test") \
+            if self.index.hydrated(layer) else None
+        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, duration),
+                                 PhysicalLayer(layer, 21), motion_progress=motion)
         self.service.observe(snapshot, {"print_stats": {"print_duration": duration}, "virtual_sdcard": {"file_position": 20}}, self.config, self.index)
         return snapshot
 
-    def test_path_progress_is_monotonic_within_a_layer_and_resets_on_layer_change(self):
+    def test_path_progress_honours_shared_corrections_and_resets_on_layer_change(self):
         self.observe()
         self.assertEqual(self.service.state.path_fraction, 0.6)
         self.fraction = 0.4
         self.observe()
-        self.assertEqual(self.service.state.path_fraction, 0.6)
+        self.assertEqual(self.service.state.path_fraction, 0.4)
         self.observe(5)
         self.assertEqual(self.service.state.path_fraction, 0.4)
         self.fraction = 1.2

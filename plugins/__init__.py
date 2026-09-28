@@ -17,6 +17,10 @@ def register(app):
     try:
         from PyQt6.QtQml import qmlRegisterType
         from .MoonrakerMJPGImage import MoonrakerMJPGImage
+        from .GpuFollower import GpuFollower
+        from .GpuObjectPicker import GpuObjectPicker
+        qmlRegisterType(GpuFollower, "MoonrakerPrintFollower", 1, 0, "GpuFollower")
+        qmlRegisterType(GpuObjectPicker, "MoonrakerPrintFollower", 1, 0, "GpuObjectPicker")
         qmlRegisterType(MoonrakerMJPGImage, "MoonrakerPrintFollower", 1, 0, "MoonrakerMJPGImage")
     except ImportError:
         pass

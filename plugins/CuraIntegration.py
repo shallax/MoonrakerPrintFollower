@@ -6,7 +6,6 @@ import os
 import time
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
 from UM.Logger import Logger
 from UM.Backend.Backend import BackendState
 
@@ -160,7 +159,9 @@ class CuraIntegration(QObject):
         except Exception: return None
     @property
     def heights(self):
-        if self._view is None:
+        # Do not ask Cura to build its native layer cache while its reader
+        # or slicer is replacing the toolpath. Refresh resumes after completion.
+        if self._view is None or self.loading or self._slicing:
             return ()
         if self._heights is None:
             # Build the layer-height table progressively: reading it for
@@ -187,6 +188,10 @@ class CuraIntegration(QObject):
         # stale tick from an invalidated build (or a swapped view) must
         # not append into a newer one.
         if self._closed or view is None or self._heights is not batch:
+            return
+        if self.loading or self._slicing:
+            self._heights = None
+            self._heights_built = 0
             return
         total = (self.max_layer or 0) + 1
         target = min(self._heights_built + _HEIGHTS_PER_TICK, total)
@@ -319,17 +324,6 @@ class CuraIntegration(QObject):
             return True
         except Exception:
             return False
-
-    def confirm_replace(self, callback):
-        self.switch_to_preview()
-        def ask():
-            answer = QMessageBox.question(None, "Moonraker Print Follower",
-                "Replace Cura contents?\n\nThis will discard everything currently loaded in Cura and replace it "
-                "with the G-code currently printing in Moonraker.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if answer == QMessageBox.StandardButton.Yes: self.queue(callback)
-        self.queue(ask)
 
     def load(self, lease):
         if self._closed:

@@ -143,6 +143,9 @@ class CameraBridge(QObject):
             socket = self._server.nextPendingConnection()
             if socket is None:
                 continue
+            # A partial JPEG's tail must not wait for TCP's small-write
+            # batching. The loopback relay carries latency-sensitive frames.
+            socket.setSocketOption(QTcpSocket.SocketOption.LowDelayOption, 1)
             req_id = next_actor_id()
             peer = "%s:%d" % (socket.peerAddress().toString(), socket.peerPort())
             self._relays[socket] = (None, bytearray(), False)
@@ -196,8 +199,13 @@ class CameraBridge(QObject):
         if not self._upstream_base:
             socket.abort()
             return
+        base = QUrl(self._upstream_base)
         target = QUrl(self._upstream_base + path)
-        if not target.isValid() or target.scheme() not in ("http", "https"):
+        if (not path.startswith("/") or path.startswith("//")
+                or any(ord(char) < 32 for char in path)
+                or not target.isValid() or target.scheme() not in ("http", "https")
+                or target.scheme() != base.scheme() or target.host() != base.host()
+                or target.port() != base.port() or target.userInfo() or target.hasFragment()):
             socket.abort()
             return
         request = QNetworkRequest(target)

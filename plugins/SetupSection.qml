@@ -23,6 +23,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["setup"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -31,13 +32,13 @@ ColumnLayout {
         RowLayout {
             Layout.fillWidth: true
             spacing: UM.Theme.getSize("default_margin").width / 2
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Home"
                 enabled: root.printerModel != null && root.printerModel.canRunSetup
                 onClicked: root.printerModel.homeAll()
             }
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 // Capability-static gate (the UX panel's ruling): QGL
                 // support never changes mid-session — only on a
                 // printer switch, which is user-initiated — so the
@@ -58,7 +59,7 @@ ColumnLayout {
                     text: "Level the quad gantry."
                 }
             }
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 visible: root.printerModel != null && root.printerModel.hasBedMesh
                 text: "Calibrate mesh"
@@ -94,7 +95,7 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: UM.Theme.getSize("default_margin").width / 2
 
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Load saved mesh"
                 enabled: root.printerModel != null && root.printerModel.canRunSetup && bedMeshProfileSelector.currentText.length > 0
@@ -109,7 +110,7 @@ ColumnLayout {
                 }
             }
 
-            Cura.SecondaryButton {
+            CentredSecondaryButton {
                 Layout.fillWidth: true
                 text: "Clear mesh"
                 enabled: root.printerModel != null && root.printerModel.canRunSetup && root.printerModel.bedMeshAvailable

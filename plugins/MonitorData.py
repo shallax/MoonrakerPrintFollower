@@ -570,6 +570,12 @@ class MonitorData(QObject):
             if name not in wanted: continue
             previous = merged.get(name)
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
+        # Built pre-frozen so freeze() passes it through untouched:
+        # unchanged names keep their identity across ticks and the
+        # model's identity-keyed payload caches can actually hit (the
+        # review's finding: the unconditional re-freeze rebuilt every
+        # level every tick, so those caches could never hit).
+        merged = MappingProxyType({name: freeze(state) for name, state in merged.items()})
         self._update(auxiliary=merged)
         self.auxiliaryChanged.emit()
         # The Preview value block rides the aux clock: the stamp is

@@ -25,6 +25,7 @@ ColumnLayout {
         Layout.topMargin: UM.Theme.getSize("default_margin").height
         Layout.bottomMargin: UM.Theme.getSize("default_margin").height
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
@@ -36,7 +37,7 @@ ColumnLayout {
             elide: Text.ElideRight
             wrapMode: Text.NoWrap
         }
-        Cura.SecondaryButton {
+        CentredSecondaryButton {
             Layout.fillWidth: true
             text: "File manager"
             enabled: root.printerModel != null && root.printerModel.monitorConnected

@@ -20,10 +20,15 @@ from typing import Dict, List, Mapping, Optional
 
 from .MonitorFormatting import chart_label, chart_temperature_objects, number
 
-# 30 minutes of samples at the 2.5 s auxiliary cadence; the count cap
-# only binds at faster cadences (headroom for bursts).
+# 30 minutes at the chart's fixed 1 s sampling cadence (Mainsail's
+# temperature store cadence — decoupled from the auxiliary delivery
+# slider, which drives the pane readouts only). The elapsed trim owns
+# the domain; the count cap is memory insurance against a feed whose
+# clock never advances, so it carries twice the nominal rate's samples
+# — the chart's coarse 1 s Qt timer may fire 5% fast, and a cap at the
+# window boundary would then trim live samples inside the window.
 WINDOW_SECONDS = 1800
-MAX_SAMPLES = 1800
+MAX_SAMPLES = 2 * WINDOW_SECONDS
 
 # The mini sparkline's render budget: the compact chart is at most
 # ~250 px wide at the plugin's smallest supported scale, so 240 kept

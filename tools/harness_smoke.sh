@@ -32,7 +32,7 @@ if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
     docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
 else
     echo "harness smoke: the pull failed — building the image locally"
-    if ! docker build -q -t mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
+    if ! "$root/tools/build_image.sh" mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
         echo "harness smoke: the image build failed:"
         tail -30 "$RUN_ROOT/build.log"
         exit 1
@@ -60,6 +60,22 @@ for run in smoke-1 smoke-2; do
         echo "harness smoke $run PASSED"
     else
         echo "harness smoke $run FAILED"
+        # The leg's own output is inside the run root, which the job
+        # uploads as an artifact — and a CI reader has only this log. A
+        # red unit must say why here: the failed steps and the
+        # renderer-liveness verdicts behind them, or the log's tail when
+        # the leg died before it could report a step (a boot that never
+        # came up, a timeout). A report-only heartbeat miss carries no
+        # failure of its own, so it is named here beside them: on the
+        # leg that cannot judge its screen it is the only record that
+        # the window stopped answering.
+        why="$(grep -E '^ui_test: .*(FAILED|NO FRAMES|HEARTBEAT REPORT-ONLY|FRAMES UNVERIFIED)' \
+                   "$RUN_ROOT/$run.log" | tail -n 20 || true)"
+        if [ -n "$why" ]; then
+            printf '%s\n' "$why"
+        else
+            tail -n 20 "$RUN_ROOT/$run.log"
+        fi
         fail=1
     fi
 done

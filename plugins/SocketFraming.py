@@ -235,6 +235,13 @@ def parse_frames(buffer: bytes, state: FrameState) -> Tuple[List[tuple], bytes, 
         if is_control and (not fin or length > 125):
             events.append(("error", "malformed control frame"))
             return events, buf, state
+        accumulated = len(state.message) if opcode == 0x0 else 0
+        if not is_control and accumulated + length > state.max_bytes:
+            state.fragmented_opcode = None
+            state.message = bytearray()
+            state.decoder = None
+            events.append(("error", "message exceeds the size cap"))
+            return events, buf, state
         if len(buf) < index + length:
             return events, buf, state
         payload = bytes(buf[index:index + length])

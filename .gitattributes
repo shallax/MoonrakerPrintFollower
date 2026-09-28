@@ -1,0 +1,15 @@
+# Every text file is checked out with LF line endings, on every platform.
+#
+# The build is byte-sensitive: the curapackage is compared file for file
+# against the source tree, and qmlformat reads a carriage return as file
+# CONTENT rather than as a line ending. A Windows checkout with
+# core.autocrlf=true therefore produced a working tree whose every QML
+# file failed the format gate and whose package bytes differed from the
+# ones CI builds. Pinning the endings here fixes it for every clone
+# instead of relying on each machine's git config.
+* text=auto eol=lf
+
+# Assets that must never be normalised.
+*.png binary
+*.stl binary
+*.ico binary

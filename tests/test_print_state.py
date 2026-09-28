@@ -5,12 +5,22 @@ from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 import unittest
 
-from plugins.PrintState import LayerResolver, PhysicalLayer, PrintSnapshot
+from plugins.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
 from plugins.PrinterConfig import PrinterConfig
 from plugins.RemoteJobService import RemoteJobService
 
 
 class PrintStateTests(unittest.TestCase):
+    def test_motion_progress_is_an_immutable_bounded_projection(self):
+        motion = MotionProgress(4, 25, 100)
+        self.assertEqual(motion.fraction, 0.25)
+        with self.assertRaises(FrozenInstanceError):
+            motion.split = 30
+        for split, count, expected in ((None, 100, None), (0, 0, None),
+                                       (-1, 100, 0.0), (120, 100, 1.0)):
+            with self.subTest(split=split, count=count):
+                self.assertEqual(MotionProgress(4, split, count).fraction, expected)
+
     def test_physical_snapshot_is_immutable(self):
         snapshot = PrintSnapshot(layer=PhysicalLayer(5, 10))
         with self.assertRaises(FrozenInstanceError): snapshot.layer.index = 4
@@ -64,6 +74,25 @@ class PrintStateTests(unittest.TestCase):
         # is off-model. The physical layer must stay put.
         self.assertEqual(observe(2.8, 4).index, 1)
         self.assertEqual(observe(0.6, 5).index, 2)
+
+    def test_pause_and_queued_resume_lifts_preserve_the_physical_layer_identity(self):
+        resolver = LayerResolver()
+        config = PrinterConfig()
+        heights = (0.2, 0.4, 0.6, 0.8)
+        def observe(state, claim, z):
+            return resolver.resolve(
+                {"print_stats": {"state": state, "info": {"current_layer": claim}}},
+                config, heights=heights, nozzle=(30.0, 40.0, z))
+        accepted = observe("printing", 2, 0.4)
+        self.assertEqual(accepted.index, 1)
+        for _ in range(4):
+            self.assertEqual(observe("paused", 3, 2.8), accepted)
+        for _ in range(3):
+            self.assertEqual(observe("printing", 3, 2.8), accepted)
+        self.assertEqual(observe("printing", 3, 0.4).index, 1)
+        self.assertEqual(observe("printing", 3, 0.6).index, 2)
+        resolver.reset()
+        self.assertEqual(observe("paused", 4, 0.8).index, 3)
 
     def test_metadata_extrapolation_never_jumps_more_than_one_layer(self):
         config = PrinterConfig()

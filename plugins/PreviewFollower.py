@@ -16,7 +16,6 @@ from .CuraAdapter import (
     set_preview_path,
 )
 from .FollowController import decide_layers
-from .MoonrakerProtocol import live_position_in_gcode_space
 
 
 def preview_override_kind(
@@ -223,7 +222,7 @@ class PreviewFollower:
                     or preview_minimum_layer(view) != decision.minimum_layer):
                 apply_preview_decision(view, decision.current_layer, decision.minimum_layer)
             if config.path_follow and decision.follow_path:
-                detail, hydration = self._follow_path(view, min(layer, maximum), status, index,
+                detail, hydration = self._follow_path(view, min(layer, maximum), index, snapshot.motion_progress,
                     smooth=bool(getattr(config, "path_smoothing", True)))
                 self._state = replace(self._state, nozzle_valid=detail.startswith("path "))
         # Re-arm expectations only once the view has actually accepted the
@@ -252,7 +251,7 @@ class PreviewFollower:
         if self._state.nozzle_valid and config.show_toolhead_indicator: self._cura.show_nozzle()
         return "Printer paused" if snapshot.observation.state == "paused" else "Following", hydration
 
-    def _follow_path(self, view, layer, status, index, *, smooth=True):
+    def _follow_path(self, view, layer, index, motion, *, smooth=True):
         if not hasattr(view, "setPath") or not hasattr(view, "getMaxPaths"):
             return "Path tracking unavailable", ()
         state = self._state
@@ -264,25 +263,23 @@ class PreviewFollower:
                 self._motion.reset()
             set_preview_path(view, 0.0)
             return "Waiting for index", ()
-        if not index.hydrated(layer):
+        if motion is None or motion.layer != layer or motion.fraction is None:
             # Stop the animation too: a stale target must not fight the
             # follower's own writes while the layer hydrates.
             if self._motion is not None:
                 self._motion.reset()
             self._state = replace(state, path_fraction=0.0)
             set_preview_path(view, 0.0)
-            return "Hydrating layer", (layer,)
-        try:
-            position = int((status.get("virtual_sdcard") or {}).get("file_position"))
-        except (TypeError, ValueError, AttributeError):
-            return "Waiting for file position", ()
+            return ("Hydrating layer", (layer,)) if not index.hydrated(layer) \
+                else ("Waiting for motion position", ())
         maximum = preview_max_paths(view)
         if maximum is None:
-            return "Waiting for file position", ()
+            return "Waiting for Cura paths", ()
         if maximum <= 0: return "Layer has no paths", ()
-        live = live_position_in_gcode_space(status.get("motion_report") or {}, status.get("gcode_move") or {})
-        fraction, method = index.fraction(layer, position, live, state.path_fraction)
-        fraction = max(state.path_fraction or 0.0, max(0.0, min(1.0, fraction)))
+        # This boundary has already passed the shared layer-entry, pause and
+        # overshoot recovery policy. A second monotonic floor here would
+        # silently discard the service's deliberate backwards corrections.
+        fraction, method = motion.fraction, motion.method
         self._state = replace(state, path_fraction=fraction)
         if preview_minimum_path(view) != 0:
             set_preview_minimum_path(view, 0)
@@ -294,7 +291,8 @@ class PreviewFollower:
                 self._motion.reset()
             current = preview_current_path(view)
             if current is None or abs(current - target) >= 0.5: set_preview_path(view, target)
-        return f"path {round(target)}/{maximum} ({method})", (layer + 1,)
+        hydration = (layer + 1,) if index.hydrated(layer) else (layer, layer + 1)
+        return f"path {round(target)}/{maximum} ({method})", hydration
 
     @staticmethod
     def format_duration(seconds):

@@ -243,6 +243,7 @@ class MachineActionCase(unittest.TestCase):
             "aux_interval_ms": 1000.0,
             "console_interval_ms": "750",
             "z_tolerance": "0.050",
+            "cache_max_mb": "1024",
             "ready_retry_interval_s": 1.0,
             "follow_mode": "lookahead",
             "feed_mode": "http",
@@ -511,6 +512,13 @@ class MachineActionCase(unittest.TestCase):
             with self.subTest(refused=value):
                 self.assertFalse(action.validRetryInterval(value))
 
+        for value in ("16", 512, "4096"):
+            with self.subTest(accepted=value):
+                self.assertTrue(action.validCacheMax(value))
+        for value in ("15", "4097", "soon", None):
+            with self.subTest(refused=value):
+                self.assertFalse(action.validCacheMax(value))
+
     def test_translation_validation_pairs_the_two_sides(self):
         action = self._action()
         self.assertTrue(action.validTranslation("ab", "cd"))
@@ -539,6 +547,7 @@ class MachineActionCase(unittest.TestCase):
         self.assertEqual(saved.aux_interval_ms, 1000)
         self.assertEqual(saved.console_interval_ms, 750)
         self.assertAlmostEqual(saved.z_tolerance, 0.05)
+        self.assertEqual(saved.cache_max_mb, 1024)
         self.assertAlmostEqual(saved.ready_retry_interval_s, 1.0)
         self.assertEqual(saved.follow_mode, "lookahead")
         self.assertEqual(saved.feed_mode.value, "http")
@@ -825,18 +834,44 @@ class MachineActionCase(unittest.TestCase):
     # ---- the cache and the migration mirror -------------------------
 
     def test_clear_cache_removes_the_persistent_index(self):
-        root = os.path.join(self.module.Resources.getCacheStoragePath(),
-                            "MoonrakerPrintFollower")
-        os.makedirs(os.path.join(root, "index"))
-        with open(os.path.join(root, "index", "part.json"), "w", encoding="utf-8") as handle:
-            handle.write("{}")
-        action = self._action()
+        # The sweep covers EVERY generation the plugin ever used —
+        # the legacy package-ID-named directory AND the current
+        # renamed one (the live ruling: never only the cache-v2
+        # subtree) — and leaves foreign directories alone.
+        storage = self.module.Resources.getCacheStoragePath()
+        for name in ("MoonrakerPrintFollower", self.module.CACHE_DIRECTORY_NAME):
+            root = os.path.join(storage, name)
+            os.makedirs(os.path.join(root, "index"))
+            with open(os.path.join(root, "index", "part.json"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+        foreign = os.path.join(storage, "SomeOtherPlugin")
+        os.makedirs(os.path.join(foreign, "index"))
+        # The backing files are gone: the index listeners must reset
+        # to the no-index state (the live ruling), and the invalidate
+        # runs FIRST — the worker and its writer retire before the
+        # sweep deletes anything (the review's ordering finding).
+        follower = self._follower()
+        invalidated = []
+
+        def invalidate_index():
+            # At invalidate time the directories must still stand:
+            # the deletion follows the retirement, never precedes it.
+            invalidated.append([os.path.isdir(os.path.join(storage, name))
+                                for name in ("MoonrakerPrintFollower",
+                                             self.module.CACHE_DIRECTORY_NAME)])
+        follower.invalidateIndex = invalidate_index
+        action = self._action(follower)
         statuses = []
         action.cacheStatusChanged.connect(lambda: statuses.append(action.cacheStatus))
 
         action.clearCache()
 
-        self.assertFalse(os.path.exists(root))
+        for name in ("MoonrakerPrintFollower", self.module.CACHE_DIRECTORY_NAME):
+            self.assertFalse(os.path.exists(os.path.join(storage, name)),
+                             "%s survived the clear" % name)
+        self.assertTrue(os.path.isdir(foreign), "the sweep reached a foreign plugin")
+        self.assertEqual(invalidated, [[True, True]],
+                         "the invalidate ran after the deletion (or never ran)")
         self.assertEqual(action.cacheStatus,
                          "Cache cleared. Restart Cura to also drop the session's downloaded file.")
         self.assertEqual(statuses, [action.cacheStatus])
@@ -847,8 +882,37 @@ class MachineActionCase(unittest.TestCase):
         with patch.object(self.module.shutil, "rmtree", side_effect=OSError("read-only")):
             action.clearCache()
 
-        self.assertEqual(action.cacheStatus, "Could not clear the cache — see Cura's log.")
-        self.assertIn("cache clear failed", self.log.call_args[0][1])
+        # The refusal is REPORTED on the status row (the review's
+        # finding — a silently-ignored deletion failure read as a
+        # full clear), never raised, and never misdescribed as a
+        # file-in-use problem.
+        self.assertEqual(action.cacheStatus,
+                         "Cache partially cleared — some files could not be removed. "
+                         "Restart Cura to also drop the session's downloaded file.")
+
+    def test_an_absent_cache_generation_is_a_successful_clear(self):
+        # The legacy directory does not exist on a fresh install:
+        # its absence is the clear's goal already met, never a
+        # partial failure.
+        action = self._action()
+        storage = self.module.Resources.getCacheStoragePath()
+        legacy = os.path.join(storage, "MoonrakerPrintFollower")
+        if os.path.isdir(legacy):
+            self.module.shutil.rmtree(legacy)
+        action.clearCache()
+        self.assertEqual(action.cacheStatus,
+                         "Cache cleared. Restart Cura to also drop the "
+                         "session's downloaded file.")
+
+    def test_an_absent_current_directory_is_a_successful_clear(self):
+        action = self._action()
+        current = action._cache_root()
+        if os.path.isdir(current):
+            self.module.shutil.rmtree(current)
+        action.clearCache()
+        self.assertEqual(action.cacheStatus,
+                         "Cache cleared. Restart Cura to also drop the "
+                         "session's downloaded file.")
 
     def test_the_migration_surfaces_read_the_persistence_record(self):
         record = {"status": "failed", "backupWritten": True, "backupName": "cura.cfg.20260919"}
@@ -891,7 +955,11 @@ class MachineActionCase(unittest.TestCase):
                           staticmethod(lambda url: opened.append(url.toLocalFile()))):
             action.openMigrationBackupFolder()
 
-        self.assertEqual(opened, [self.module.Resources.getConfigStoragePath()])
+        # QUrl spells a local file with '/' on every platform, while the path
+        # Cura hands out is native ('\' on Windows): normalize both sides.
+        expected = self.module.Resources.getConfigStoragePath()
+        self.assertEqual([os.path.normcase(os.path.normpath(path)) for path in opened],
+                         [os.path.normcase(os.path.normpath(expected))])
 
     # ---- the page's read-only relays ---------------------------------
 

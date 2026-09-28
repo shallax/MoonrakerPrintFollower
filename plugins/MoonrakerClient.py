@@ -522,7 +522,12 @@ class MoonrakerClient(QObject):
             stamp = float(stamp)
         except (TypeError, ValueError):
             stamp = time.monotonic()
-        if origin == "sync" and stamp <= self._last_applied_stamp:
+        # Only a STRICTLY older sync is stale. The stamp is a wall clock,
+        # and the platform's resolution decides whether two frames can
+        # share one: Windows' monotonic tick (~16 ms) hands a fast pair
+        # the same stamp, so an equality test discards a complete frame
+        # the clock cannot order — the state went missing whole there.
+        if origin == "sync" and stamp < self._last_applied_stamp:
             return
         previous_state = self._session.snapshot.printer_state
         merged, changed_commands = self._session.merge_status(patch)

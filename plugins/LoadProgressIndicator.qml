@@ -10,13 +10,13 @@ import Cura 1.1 as Cura
 // clips its children, and the sweep's position is a binding on the
 // 0..1 phase (qualified through the bar's id: unqualified names do
 // NOT resolve through the visual parent).
-RowLayout {
+Item {
     id: root
     property bool busy: false
     property real progress: -1
     property string phase: ""
 
-    spacing: UM.Theme.getSize("narrow_margin").width
+    readonly property real spacing: UM.Theme.getSize("narrow_margin").width
     // A FIXED height (the label's natural line height — stable font
     // metrics, not a layout feedback): the busy flip repaints the
     // content without changing the layout's size. A visible-toggle
@@ -31,6 +31,9 @@ RowLayout {
     // on root's properties track them.
     RowLayout {
         id: content
+        // The fixed outer Item reserves one row without another layout
+        // solver resizing this row as its busy content appears/disappears.
+        anchors.fill: parent
         objectName: "loadIndicatorContent"
         visible: root.busy
         spacing: root.spacing
@@ -44,7 +47,7 @@ RowLayout {
                 color: UM.Theme.getColor("text")
                 // The hourglass flips and rests at each 180-degree stop
                 // while the sand drains, then flips again.
-                SequentialAnimation on rotation  {
+                SequentialAnimation on rotation {
                     running: root.busy
                     loops: Animation.Infinite
                     NumberAnimation {
@@ -74,7 +77,7 @@ RowLayout {
             Layout.preferredHeight: 8 * screenScaleFactor
             clip: true
             property real sweepPhase: 0
-            NumberAnimation on sweepPhase  {
+            NumberAnimation on sweepPhase {
                 running: root.busy && root.progress < 0
                 from: 0
                 to: 1
@@ -117,6 +120,7 @@ RowLayout {
             text: root.phase + (root.progress >= 0 ? " " + (root.progress * 100).toFixed(0) + "%" : "")
             color: UM.Theme.getColor("text_inactive")
             Layout.maximumWidth: 140 * screenScaleFactor
+            wrapMode: Text.NoWrap
             elide: Text.ElideRight
         }
     }

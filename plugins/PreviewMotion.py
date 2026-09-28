@@ -8,8 +8,8 @@ view's live max paths at write time. After every write it re-remembers the
 plugin-written position so Cura's change watcher never mistakes the
 animation for a manual override.
 
-Layer changes are jumped, never smoothed: the head moves to the new layer's
-start exactly as the unsmoothed follower would.
+Layer changes and shared tracking corrections jump, never smooth: stale
+animation state must not prevent the accepted physical position from appearing.
 
 Between observations the target is reconstructed by linear interpolation
 over the measured poll interval, so the glide is continuous at any polling
@@ -94,14 +94,15 @@ class PreviewMotion(QObject):
         fraction = max(0.0, min(1.0, float(fraction)))
         now = time.monotonic()
         self._trace("obs", now, layer, fraction, method)
-        if layer != self._layer or self._displayed is None:
-            # A layer transition (or the first observation): jump, never
-            # animate across layers. Layers print at similar rates, so the
-            # velocity estimate is warm-started rather than reset.
+        corrected = layer == self._layer and self._target is not None and fraction < self._target
+        if layer != self._layer or self._displayed is None or corrected:
+            # A transition, first observation or authoritative correction:
+            # jump. Ordinary layer changes warm-start the rate; corrections
+            # discard the old rate and ramp, which described a false match.
             self._layer = layer
             self._target = fraction
             self._displayed = fraction
-            self._velocity *= VELOCITY_WARM_START
+            self._velocity = 0.0 if corrected else self._velocity * VELOCITY_WARM_START
             self._history.clear()
             self._history.append((now, fraction))
             self._last = now

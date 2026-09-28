@@ -29,6 +29,7 @@ import contextlib
 import ctypes
 import ctypes.util
 import importlib
+import importlib.util
 import os
 import pathlib
 import sys
@@ -352,19 +353,27 @@ class RssReaderTests(unittest.TestCase):
     @unittest.skipIf(leakprobe.resource is None, "no resource module")
     def test_without_procfs_the_rusage_peak_is_labelled_a_peak(self):
         # The review's catch: a peak fallback must never read as current.
-        with _deny_open("/proc/self/status"):
+        # The reader branches on the HOST platform, so the host's own source
+        # is closed off here as well: on macOS mach answers before the
+        # fallback and on Windows psapi after it, and either would leave the
+        # assertion measuring the host rather than the fallback.
+        with _deny_open("/proc/self/status"), _platform("linux"):
             value, source = _rss_kb()
         self.assertEqual(source, "ru_maxrss-peak-fallback")
         self.assertGreater(value, 0)
 
     @unittest.skipIf(leakprobe.resource is None, "no resource module")
     def test_a_failing_rusage_read_reports_unavailable(self):
-        with _deny_open("/proc/self/status"), \
+        with _deny_open("/proc/self/status"), _platform("linux"), \
                 patch.object(leakprobe.resource, "getrusage", side_effect=OSError("no rusage")):
             self.assertEqual(_rss_kb(), (0, "unavailable"))
 
     def test_without_either_source_the_reader_reports_unavailable(self):
-        with _deny_open("/proc/self/status"), patch.object(leakprobe, "resource", None):
+        # Every source denied AND the host's platform branch out of the
+        # picture: on macOS mach would answer and on Windows psapi would,
+        # so without the branch the verdict is the host's, not the reader's.
+        with _deny_open("/proc/self/status"), _platform("linux"), \
+                patch.object(leakprobe, "resource", None):
             self.assertEqual(_rss_kb(), (0, "unavailable"))
 
     @unittest.skipIf(leakprobe.resource is None, "no resource module")
@@ -1130,6 +1139,8 @@ class WindowsImportTests(unittest.TestCase):
         finally:
             # The reload mutates the shared module: put it back.
             importlib.reload(leakprobe)
+        if importlib.util.find_spec("resource") is None:
+            return  # no resource module on this platform: nothing came back
         self.assertIsNotNone(leakprobe.resource)
 
 

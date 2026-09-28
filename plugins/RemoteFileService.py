@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import time
 from types import MappingProxyType
@@ -12,6 +13,131 @@ from PyQt6.QtNetwork import QNetworkReply
 from .MoonrakerProtocol import RemoteFileIdentity
 from .DownloadStream import DownloadOperation, DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
+
+
+# The one-shot lane's two cancel terminals, kept apart on purpose (the
+# lifecycle finding): a user who pressed Cancel did not lose a printer,
+# and an invalidated session must still say why the file went away.
+CANCELLED_BY_USER = "The download was cancelled"
+CANCELLED_BY_SESSION = "The printer connection changed; the download was cancelled"
+
+# A day, for the pid-less legacy names only: the pre-4.6
+# accumulation. A root that carries its creating pid is swept the
+# moment that pid is dead.
+_STALE_ROOT_AGE_S = 24 * 3600
+# The whole plugin temp family plus the legacy names — the download
+# root, the thumbnails, the raster cache and the upload staging all
+# leak on an unclean exit.
+_SWEPT_PREFIXES = ("mpf-", "cura-moonraker-files-", "cura-moonraker-upload-")
+
+
+def _owner_pid(entry):
+    """The creating pid embedded in the mpf-<kind>-<pid>-... shape
+    (the kind segment first, then the digits); None for a pid-less
+    legacy name."""
+    if not entry.startswith("mpf-"):
+        return None
+    parts = entry[len("mpf-"):].split("-")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def _pid_alive(pid):
+    """Whether the process that stamped `pid` may still be alive, read
+    NON-DESTRUCTIVELY. On Windows `os.kill(pid, 0)` is a terminate, not
+    a probe: sweeping a root whose pid belongs to a second live Cura
+    instance — or to a recycled pid — killed that instance outright.
+    Windows therefore reads the native process API, and every verdict
+    that cannot PROVE the owner is gone keeps the root.
+
+    The probe mirrors PreparedStore's `_windows_liveness`: the
+    architecture rule keeps this module's imports to DownloadStream
+    and MoonrakerProtocol, so the native reader is duplicated here
+    rather than imported."""
+    # An impossible pid is not an owner: signalling 0 reaches the whole
+    # process group, and a pid beyond the platform's range names no
+    # process at all (a truncated 64-bit value could name another).
+    if pid <= 0 or pid > 0xFFFFFFFF:
+        return False
+    if sys.platform == "win32":
+        return _windows_liveness(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False  # no such process
+    except PermissionError:
+        return True  # access denied cannot disprove the owner
+    except OSError:
+        return True  # indeterminate — keep the root
+    return True
+
+
+def _windows_liveness(pid: int) -> bool:
+    """The Windows owner-liveness verdict through the native process
+    API, dependency-free: a query-limited handle opens only while the
+    process OBJECT exists, and its exit code leaves STILL_ACTIVE once
+    the process is gone. ERROR_INVALID_PARAMETER names no live process
+    (dead); every other failure is indeterminate and keeps the root."""
+    import ctypes
+    from ctypes import wintypes
+    # Explicit Win32 signatures: a HANDLE is pointer-sized, so the
+    # default c_int restype would truncate it; use_last_error makes the
+    # failure verdict read from ctypes.get_last_error() coherently.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _STILL_ACTIVE = 259
+    _OpenProcess = kernel32.OpenProcess
+    _OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _OpenProcess.restype = wintypes.HANDLE
+    _GetExitCodeProcess = kernel32.GetExitCodeProcess
+    _GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    _GetExitCodeProcess.restype = wintypes.BOOL
+    _CloseHandle = kernel32.CloseHandle
+    _CloseHandle.argtypes = [wintypes.HANDLE]
+    _CloseHandle.restype = wintypes.BOOL
+    handle = _OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ctypes.get_last_error() != 87  # 87: no such process
+    try:
+        code = wintypes.DWORD()
+        if not _GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # indeterminate — keep the root
+        return code.value == _STILL_ACTIVE
+    finally:
+        _CloseHandle(handle)
+
+
+def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
+    """Remove abandoned temp roots (sessions that died without the
+    shutdown hook): every file the session never cleaned lives
+    under these. A live pid's root stays — a concurrent Cura
+    session survives the sweep at any age. A pid-less mpf-* name
+    cannot belong to a live current-version session (the current
+    version always embeds its pid), so it goes outright; the age
+    gate covers only the pid-less LEGACY names."""
+    try:
+        entries = os.listdir(temp_dir)
+    except OSError:
+        return
+    now = time.time()
+    current_name = os.path.basename(current_root)
+    for entry in entries:
+        if not entry.startswith(_SWEPT_PREFIXES) or entry == current_name:
+            continue
+        path = os.path.join(temp_dir, entry)
+        if entry.startswith("mpf-"):
+            pid = _owner_pid(entry)
+            if pid is not None and _pid_alive(pid):
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            continue
+        try:
+            if now - os.path.getmtime(path) < _STALE_ROOT_AGE_S:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _declared_length(reply) -> int:
@@ -165,14 +291,17 @@ class _OneShotDownload:
         self._abort()
         self._deliver(None, error)
 
-    def cancel(self):
-        """The session-invalidation hook: abort and deliver the
-        terminal error. Exactly-once holds through every path,
-        constructor failure included."""
+    def cancel(self, reason=CANCELLED_BY_USER):
+        """Abort and deliver the terminal error. Exactly-once holds
+        through every path, constructor failure included. The reason is
+        the caller's to name: the user's Cancel and an invalidated
+        session are different terminals (`cancel_one_shots` passes the
+        connection-change one), and the quiet shutdown flavour differs
+        only in whether the consumer reports it."""
         if self._done:
             return
         self._abort()
-        self._deliver(None, "The printer connection changed; the download was cancelled")
+        self._deliver(None, reason)
 
     def _abort(self):
         op = self._op
@@ -222,7 +351,13 @@ class RemoteFileService(QObject):
     def __init__(self, transport, parent=None, *, target_factory=DownloadTarget.open):
         super().__init__(parent)
         self._transport = transport
-        self._root = tempfile.mkdtemp(prefix="cura-moonraker-files-")
+        self._root = tempfile.mkdtemp(prefix="mpf-files-%d-" % os.getpid())
+        # Sessions that end without the shutdown hook (a kill, a
+        # crash, a lease still open at close) leave their root
+        # behind — every downloaded file inside. The boot sweep
+        # clears the abandoned siblings; the age gate spares a
+        # concurrent live session's root.
+        _sweep_stale_roots(tempfile.gettempdir(), self._root)
         # Injected so the gated-writer regressions need no private-field
         # patching.
         self._target_factory = target_factory
@@ -305,9 +440,10 @@ class RemoteFileService(QObject):
 
     def cancel_one_shots(self):
         """The session-invalidation hook (wired by the runtime): every
-        in-flight one-shot aborts and delivers its terminal error."""
+        in-flight one-shot aborts and delivers its terminal error —
+        the connection-change terminal, never the user-cancel one."""
         for download in list(self._one_shots):
-            download.cancel()
+            download.cancel(CANCELLED_BY_SESSION)
 
     def _drain_one_shot(self, download, op, reply):
         if download._done or op.aborted:

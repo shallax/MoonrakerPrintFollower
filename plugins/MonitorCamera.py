@@ -1,5 +1,6 @@
 """Webcam selection/transform policy with an explicit configuration capability."""
 from dataclasses import replace
+from math import isfinite
 from urllib.parse import urljoin
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QHostAddress
@@ -8,6 +9,31 @@ from UM.Logger import Logger
 
 from .CameraBridge import CameraBridge
 from .MoonrakerProtocol import same_origin
+
+# The FPS control's bounds. The ceiling is the SELECTED CAMERA's own
+# configured target_fps (Moonraker's webcam entry: 5, 15, 30, 60 —
+# whatever that installation runs at), never a product constant, so
+# MAX_FPS is only the coercion guard for a corrupt record.
+MIN_FPS = 0.5
+MAX_FPS = 120.0
+# The fallback when the camera reports no usable target_fps (an older
+# Moonraker, or a front-end-written entry): the renderer's own idle
+# ceiling (MoonrakerMJPGImage.RENDER_INTERVAL_MS = 33 ms — the number
+# repeats here because the module-layering pin keeps MonitorCamera
+# from importing it).
+DEFAULT_MAX_FPS = 30.0
+
+
+def _clamp_fps(value, fallback):
+    """One coercion for every FPS read: hand-edited configs, Moonraker
+    payloads and QML wheel deltas all land here."""
+    try:
+        fps = float(value)
+    except (TypeError, ValueError):
+        fps = fallback
+    if not isfinite(fps):
+        fps = fallback
+    return max(MIN_FPS, min(MAX_FPS, fps))
 
 
 class MonitorCamera(QObject):
@@ -29,6 +55,9 @@ class MonitorCamera(QObject):
         self._url = ""
         self._last_url_logged = ""
         self._camera_bridge = None
+        # The effective throttle, once published: None until the first
+        # selection lands.
+        self._fps = None
         data.changed.connect(self.observe)
         self.observe()
 
@@ -59,6 +88,9 @@ class MonitorCamera(QObject):
                 str(camera.get("rotation") or ""),
                 bool(camera.get("flip_horizontal", False)),
                 bool(camera.get("flip_vertical", False)),
+                # The throttle's ceiling rides the selection: a camera
+                # whose target_fps was re-configured re-reads it.
+                str(camera.get("target_fps") or ""),
             )
             for index, camera in enumerate(cameras)
         )
@@ -67,6 +99,38 @@ class MonitorCamera(QObject):
     def values(self): return dict(self._values)
     @property
     def url(self): return self._url
+
+    @staticmethod
+    def max_fps(camera):
+        """The camera's own configured ceiling: Moonraker's webcam
+        entries carry the stream's target_fps (the value its streaming
+        service is set to run at), so the control's bar never offers a
+        rate the camera cannot send. Entries without one — an older
+        Moonraker or a front-end-written record — fall back to the
+        renderer's own ceiling."""
+        try:
+            configured = float((camera or {}).get("target_fps"))
+        except (TypeError, ValueError):
+            configured = DEFAULT_MAX_FPS
+        if not isfinite(configured) or configured <= 0.0:
+            configured = DEFAULT_MAX_FPS
+        return max(MIN_FPS, min(MAX_FPS, configured))
+
+    def set_fps(self, fps):
+        """The FPS control's commit: persist the rate and publish it.
+
+        No stream is touched — the throttle is the renderer's decode
+        cadence, so a rate change costs neither a reload nor a
+        reconnect."""
+        cameras = self._data.snapshot.webcams
+        camera = cameras[self._index] if 0 <= self._index < len(cameras) else {}
+        value = min(self.max_fps(camera), _clamp_fps(fps, self._fps or DEFAULT_MAX_FPS))
+        if value == self._fps:
+            return
+        self._apply_config(replace(self._config(), camera_fps=value))
+        self._fps = value
+        self._values = {**self._values, "cameraFps": value}
+        self.changed.emit()
 
     def observe(self):
         config = self._config()
@@ -172,6 +236,11 @@ class MonitorCamera(QObject):
                 Logger.log("i", "Moonraker camera stream: none")
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0
+        # The throttle is the user's preference CAPPED by the selected
+        # camera's own target: switching to a slower camera lowers the
+        # effective rate without rewriting the stored preference.
+        maximum = self.max_fps(camera)
+        self._fps = min(maximum, _clamp_fps(getattr(config, "camera_fps", DEFAULT_MAX_FPS), DEFAULT_MAX_FPS))
         self._values = {
             "webcamNames": [str(item.get("name") or f"Camera {i + 1}") for i, item in enumerate(cameras)],
             "activeWebcamIndex": self._index,
@@ -179,6 +248,9 @@ class MonitorCamera(QObject):
             "cameraRotation": rotation if rotation in {0, 90, 180, 270} else 0,
             "cameraFlipHorizontal": bool(camera.get("flip_horizontal", config.camera_mirror)),
             "cameraFlipVertical": bool(camera.get("flip_vertical", False)),
+            "cameraFps": self._fps,
+            "cameraFpsMin": MIN_FPS,
+            "cameraFpsMax": maximum,
         }
         self.changed.emit()
 
@@ -193,6 +265,22 @@ class MonitorCamera(QObject):
         credential (the 2026-09-19 review's D)."""
         if self._camera_bridge is not None:
             self._camera_bridge.stop()
+
+    def suspend_stream(self):
+        """The stream-off toggle's half (the live request): the bridge
+        stops fetching upstream — the bandwidth actually saved — while
+        the cached object survives for the re-enable."""
+        self._retire_bridge()
+
+    def resume_stream(self):
+        """The re-enable's half: rebuild the bridge for the current
+        camera. The selection-restore early-outs on an unchanged
+        signature — the suspend kept the selection, so the rebuild
+        must run regardless: the key is defeated first, and the URL
+        is re-derived and re-bridged (the live report: only a camera
+        re-select revived the frozen stream)."""
+        self._key = None
+        self._restore_selection(self._config(), self._data.snapshot.webcams)
 
     def _bridge_url(self, config, url):
         # A camera behind the header-auth proxy cannot render through

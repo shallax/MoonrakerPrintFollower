@@ -1,5 +1,17 @@
 # TESTING.md — the real-Cura UI test harness
 
+The `status` group's **b12** plays the README penguin through the GPU
+Print Follower popover; the `preview` group's **p8** follows that same
+G-code in Cura's attached 3D Preview. Each playback takes 20 seconds
+(the simulator caps any requested duration at 30). Byte offsets, layer,
+tool and interpolated positions come from an independent linear-motion
+parser, not the plugin's index or matching results. The scenarios require
+smoothing, attachment, advancing geometry and arrival at layer 3. Their
+normal step screenshots and group videos provide native-screen evidence.
+The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
+exercises its 2D follower. Static README captures deliberately hold a
+complete layer and do not claim to test smoothing.
+
 > **Reconciliation status (2026-09-15, the 4.1.0 release):** this
 > document describes the harness as it IS. Every section below
 > carries its status inline; claims struck or amended in the 4.1.0
@@ -80,7 +92,7 @@ Hard rules, in order:
    plugin's own published values.
 5. Determinism by environment, not by luck: pinned image, pinned Cura
    build with checksum, pinned fonts, software GL, fixed geometry
-   (one display geometry: the 1920x1080 screen, the 1840x1040
+   (one display geometry: the 1920x1080 screen, the 1840x900
    window, the pinned DPI), seeded configuration.
 
 ## 2. Architecture
@@ -144,7 +156,8 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   clicks). Off-viewport controls are scrolled into the rendered
   viewport first, with the containment asserted.
 - **The RPC surface** — **AMENDED (2026-09-15):** the driver
-  exposes 47 verbs, not the ≤ a dozen this line once promised; the
+  exposes 53 verbs (re-counted 2026-09-24), not the ≤ a dozen this
+  line once promised; the
   pinned structural test covers the runner's step-vocabulary (the
   census-pinned ratchet: real-input steps may only grow, direct
   invocation may only shrink), and the real-mode allowlists are
@@ -165,6 +178,11 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   declared SIZE (a truncated or mis-sized frame fails the step), and
   the whole-scenario video records the same display. An assertion's
   capture must postdate the state change it claims.
+
+The shared test printer has a **250 x 250 x 250 mm** print volume in
+all native Cura seeds and the offscreen runtime/capture double. The README
+and native following scenarios use the same penguin G-code, centred at
+X=125, Y=125 on that bed.
 
 ### 2.2 The Moonraker simulator
 
@@ -593,7 +611,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   unpinned apt (the render-stack pinning is a follow-up). The
   launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
   the boot gate pins the window to the one display geometry
-  (1920x1080 screen, 1840x1040 window, pinned DPI) and FAILS unless
+  (1920x1080 screen, 1840x900 window, pinned DPI) and FAILS unless
   the pin reports BOTH the wanted window size AND the wanted screen
   — a window larger than the screen used to pass by self-report
   alone. The container runs with `docker run --init` (docker-init as
@@ -633,6 +651,154 @@ SimulationView is the ACTIVE view (the Preview stage click).
   the z14 scenario (the broken start that stays broken, the fired
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
+- **Native macOS capture and available desktop bounds (2026-09-27).**
+  The shared baseline is 1840×900 on Linux, Windows and macOS; explicit
+  smaller collapse tests retain their own dimensions. Native screenshots
+  and recordings are enabled. The macOS harness fits Cura's
+  complete window frame inside the current screen's Qt `availableGeometry`,
+  including its frame margins. It verifies the resulting size and bounds at
+  boot and before every scenario. A one-second bounds watchdog preserves
+  intentional smaller layout tests and corrects later out-of-bounds changes;
+  corrections and errors are reported with geometry evidence. A desktop
+  smaller than Cura's real minimum fails rather than changing that minimum.
+  Linux and Windows retain their exact requested geometry contract.
+
+  Historically, capture was disabled after macOS recordings remained on
+  Prepare while QML and `frameSwapped` continued answering. Controlled
+  connection runs passed native recording at 1840×900 and failed at
+  1840×1040 on a 1920×1080 desktop. After a resize, Cocoa constrained the
+  latter to 1840×943: the recovery was at a fitted size, not the same
+  oversized size. Repeated Prepare translations, valid Preview layer
+  changes and Monitor updates all present without intermediate resizes at
+  the fitted size. The precise Cocoa/OpenGL presentation defect remains
+  unidentified; the evidence does not establish that software OpenGL alone
+  caused it. Forcing OpenGL 4.1 did not repair it and slowed printing tests.
+
+  `HARNESS_CAPTURE=off` remains an explicit diagnostic override, with its
+  reason recorded in `evidence.json`; it is no longer the native macOS
+  default. Recording-on legs judge native display/static evidence and
+  renderer liveness. An internal frame or heartbeat alone does not prove
+  that WindowServer presented current pixels. These software-rendered CI
+  captures are visual evidence, not a benchmark of a physical Mac's GPU.
+- **The renderer-liveness verdict rides the leg, not the platform
+  (2026-09-25, the visual heartbeat).** Every step assertion is
+  answered from the QML tree, and a tree keeps answering after the
+  renderer has stopped — so on the mac the leg above passed all 45
+  steps of a scenario whose window was frozen. Reading the app's own
+  `frameSwapped` count was the first answer to that, and it was wrong
+  in the other direction: `requestUpdate()` plus a settle proves only
+  that a render was *asked for*, never that a frame was **due**. The
+  release run of 2026-09-25 (`36119887491`) failed 12 gate legs
+  (four groups × three platforms): 29 of that run's judged scenarios
+  were called frozen, every one of them on a window that was visible
+  and exposed with `gained 0` (`swapped 14 -> 14` on status/ubuntu
+  `b6`), and 28 of the 29 painted again later in the same leg. The
+  same false positive reproduces locally on `group-status`
+  (`swapped=11->11 gained=0 platform=xcb`, capture on). The probe
+  therefore makes a frame due. On every sample the driver parents a
+  temporary 4x4 px item (`objectName: mpfLivenessHeartbeat`) into the
+  window's own scene graph, drives its opacity on Cura's GUI thread —
+  the RPC server is served on that thread, so nothing blocks it, and
+  the wait drives the event loop (`QTest.qWait` slices through
+  `_settle`, whose plain-sleep fallback is reachable only where QTest
+  is unavailable) — reads the property back off the item,
+  checks the item is still in the scene and visible, and then awaits
+  a `frameSwapped` past the count it recorded: event-driven `qWait`
+  slices against a monotonic deadline, `FRAME_HEARTBEAT_DEADLINE_MS`
+  (1500 ms) per change, two changes per sample (`opacity 0.0->1.0`,
+  then `1.0->0.0`) because a software rasteriser's frame interval is
+  of the same order as a fixed settle and one missed change is not a
+  stopped renderer. The item is out of the scene before the verb
+  returns (`setParentItem(None)` + `deleteLater()`), so no still can
+  carry it, and its footprint is ~0.002 of the static verdict's
+  frame-mean tolerance (MAD 1.0 of 255), so it cannot mask a still
+  recording.
+  The verdict reads a scenario's two samples. `rendered` when a frame
+  answered the closing heartbeat, or when the window's own count
+  advanced across the scenario (the span a software-rasterised leg
+  needs, measured on the smoke legs at 29-104 frames of real painting
+  under a closing sample that gained 0). `stalled` only where every
+  gate holds: the window is visible and exposed, the forced change
+  verifiably landed on a visible item in that window's own scene, the
+  count did not move, the window was not replaced under the sample,
+  and this window has been **calibrated** — a heartbeat of its own was
+  answered earlier in the run, or it has delivered frames. Calibration
+  is per window: the counter carries its window's identity, the
+  heartbeat sequence and the answered count, and a boot that replaces
+  the window (`fresh_window`) resets all of it, so frames the old
+  window painted are never read as this one's history. Everything the
+  probe cannot tell apart from a stall is its own named outcome in the
+  log and in `evidence.json` (`frames_outcome`), never a silent pass
+  and never a silent freeze: `unverified` with the reason — a window
+  that is not on the display (hidden or minimised, no frame is due
+  from it), a window never seen to present in this run (an
+  initialising renderer and a platform that never emits the signal
+  look identical from here), a change that did not verifiably land
+  (no frame was due from it), a heartbeat that could not be placed (no
+  engine reachable), a sample that carried no heartbeat at all, a
+  probe that did not answer, and a frame signal that could not be
+  attached. `asked`, `attempts`, `verified`, `in_scene`,
+  `is_visible`, `swapped_before/after`, `gained`, `waited_ms`,
+  `deadline_ms`, `sequence`, `window`, `cleaned` and `reason` all ride
+  in the artifact, and every sample prints its own line: `ui_test:
+  heartbeat <scenario>/<phase>: … — a frame answered it|no frame
+  answered it`.
+  **What a miss means is decided per leg, and the decision is
+  recorded rather than implied** (`liveness_gating`, `judged` and
+  `gating` on every outcome): a leg that captures reads the screen
+  beside the app, so a stall is a **failing scenario** — Linux and
+  Windows keep their pixel and video checks, and the verdict fails the
+  scenario through the same `zz-frames` fold whatever the leg
+  captured. A leg that captures nothing has declared its own screen
+  unjudgeable, so a stall there is a **report-only diagnostic**:
+  announced as `ui_test: HEARTBEAT REPORT-ONLY — scenario …`, listed
+  under `frames_report_only` (kept apart from `frames_stalled`), never
+  a functional scenario's verdict, and never renderer coverage the
+  platform has not demonstrated. The failing smoke unit prints both
+  lines into the job log itself rather than only into the uploaded run
+  root.
+  **Remaining limitations, recorded rather than hidden.**
+  No macOS hardware validation is possible here, so the mac leg's
+  presentation is not judged and its report-only misses are the only
+  record — the heartbeat runs and reports there, and does not claim
+  coverage. It measures frame delivery, not pixels: a renderer that
+  swaps buffers while the window stops updating on screen still reads
+  healthy, and that is measured, not theoretical — on the hosted mac
+  (2026-09-24, `4ad8278`) the count ran 0 → 483 over two minutes while
+  the pixels stayed byte-identical, which is why that platform is
+  report-only rather than judged. A window that was never shown reads
+  unverified, and the display guard's stand-down is named in the same
+  breath.
+- **A still span nobody drove is not judged (2026-09-24).** The
+  static rule asks whether the screen moved, and it cannot tell
+  "nothing was supposed to happen" from "the window froze".
+  `group-status` is the measured case: its first 34 steps push
+  simulator state and read models with no input at all, so the screen
+  is correctly still — and Windows failed it at 62 s where ubuntu ran
+  the same leg at 59 s. A one-second margin deciding a verdict is the
+  tell that the span was not the thing being measured.
+  Each step now records `at_s` (seconds from the recorder's start),
+  and a span is judged only if a real input landed **inside it with
+  room to have been answered** — inside the run and at least
+  `STATIC_DRIVEN_RESPONSE_S` (2 s: the decode samples at 1 fps and
+  the offset carries about a second of ffmpeg startup error) before
+  the run ends. That second half is not decoration: a click in a
+  run's last moments is the event that ENDED the stillness, so an
+  input's own duration must not be allowed to stretch it back over a
+  stillness it did not break. Getting that wrong is what failed
+  ubuntu's `group-status` on the first run of this rule — the run
+  covered seconds 7..67, the first click was at 68.4, and reading the
+  input's trailing edge counted that very click as proof the
+  stillness was fine. A genuinely frozen window is driven *while* it
+  freezes, so the rule keeps its teeth; a leg whose steps cannot be
+  aligned (`at_s` absent) keeps the old everything-is-judged
+  behaviour rather than silently losing them. **Known weakness,
+  recorded rather than hidden:** the boundary is a response-latency
+  question, so a click whose response the encoder catches more than
+  two seconds late still reads as "driven"; the rule has now been
+  adjusted three times on one-second margins, which is the argument
+  for replacing it with a per-input response check rather than
+  tuning it again.
 
 ## 5. Phasing (each phase ends with screenshots AND video for review)
 

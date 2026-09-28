@@ -2,6 +2,90 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.6.0
+
+Version 4.6.0 adds an interactive build plate and Print Follower to
+Monitor, with GPU rendering for both the follower and Exclude Object picker.
+The follower shares Cura Preview's colour modes and tracks live motion along
+the indexed toolpath.
+
+- **GPU plate views** — retained geometry keeps pan, smooth zoom, scrubbing
+  and width changes responsive. The themed grid moves with the toolpath,
+  and the last complete frame stays visible while a new layer loads.
+  Diagnostics offers a software-renderer fallback for both plate views.
+- **The object picker** — see included, current, excluded and visited objects
+  on the bed. Triple-click to exclude or restore one object; the status line
+  counts clicks and reports the outcome. Hover to read its name and state.
+- **Smooth live following** — Preview and Monitor share accepted motion
+  progress. With Smooth path progress enabled, the GPU follower reveals each move
+  progressively and moves the toolhead along the indexed path, including
+  curves. Keep centred follows the toolhead; panning switches it off.
+- **Cura Preview colours** — Material colour, Line type, Speed, Layer
+  thickness, Flow rate and Line thickness use Cura's selected palette and
+  print-wide gradient ranges. Material colour supports multiple tools.
+  Travels distinguish non-retracted, retracting, retracted and priming moves.
+- **Readable layers and widths** — choose 1–8 px strokes or True thickness,
+  which estimates each extrusion's width from the G-code. Previous layers
+  are coloured and solid; next layers are coloured and dashed; Layer ghost
+  stays grey. Anti-aliasing is an optional saved setting. Retractions and
+  Priming show small hollow arrows only after those events occur.
+- **Layer inspection and pauses** — seeking a layer detaches live following;
+  scrub its progress, attach again, or schedule a pause at its end. The pause
+  list shows ETAs and read-only pauses already baked into the G-code.
+- **Faster indexing and preparation** — workers yield regularly, publish
+  bounded progress updates and prepare demanded layers off the UI thread.
+  GPU geometry and decoded layers have bounded memory caches and nearby
+  layers are prefetched. Per-printer disk caches reuse prepared prints,
+  checkpoint interrupted preparation and evict whole prints least recently
+  used first; the default limit is 512 MiB per printer.
+- **Webcam and printer controls** — webcam zoom is smooth. Restart last print
+  remembers a file for this Cura session only and is disabled while a print
+  is active. Resume allows 120 seconds for the command to finish. Speed and
+  extrusion multipliers accept 1–50,000%, with bounds enforced on input.
+- **Monitor polish** — print progress has two decimal places, Last action
+  includes a timestamp, and index-download offers disappear once indexing
+  succeeds, including during PRINT_START. Hidden download controls no longer
+  accept clicks or show tooltips. Button text, legends and empty states are
+  aligned consistently. The temperature chart retains its own one-second
+  sampling clock.
+
+- **RC hardening** — bounded WebSocket, thumbnail and upload-response buffers;
+  same-origin authenticated camera forwarding; XYZ G92-aware live coordinates;
+  validated cache recency and abandoned index-temp cleanup. GPU preparation
+  failures are reported, and the picker discloses its 256-object map limit.
+  Object outlines are retained individually, avoiding whole-bed rebuilds on hover.
+
+Implementation and compatibility notes:
+
+- Qt scene-graph geometry and packaged stroke shaders replace the default
+  raster/prefix pipeline. Width, zoom, progress and colour changes update
+  uniforms rather than rebuilding whole strokes. Translucent layer passes
+  apply opacity once to prevent dark dots at overlapping caps and joints.
+  Exclude Object keeps its existing gestures and uses anti-aliasing by default.
+- The software fallback retains its raster and prefix scheduling; those
+  cadences do not describe the default GPU renderer. Layer transitions hold
+  a coherent frame until the incoming geometry is ready, including on macOS.
+- Live tracking hydrates physical motion arrays independently of prepared
+  display geometry. Layer-entry travel, excluded-object jumps and reattachment
+  no longer select progress solely from the parser's byte position.
+- Index cache version 14 and prepared-store version 6 store per-motion
+  extrusion, feedrate, tool and travel state, per-tool filament diameters and
+  whole-print colour ranges. Older caches rebuild automatically.
+- True thickness is a rectangular cross-section estimate, not a measured
+  bead. Missing metadata uses a 1.75 mm filament diameter; invalid estimates
+  use a nominal 0.4 mm width. Volumetric E and live flow overrides are not
+  inferred. Travels remain 1 px; the grid has independent stroke widths.
+- The isolated test suite is split by domain and parallelised, including
+  JUnit generation. Shared Qt fixtures do not create an application at import.
+  Shader generation is part of make all, build, package and release builds.
+- Windows Preview loading was profiled separately: Cura's G-code reader and
+  initial 3D render dominated the observed stalls. Plugin height-cache work
+  waits until loading finishes; this release does not promise to eliminate
+  Cura's own parsing stalls.
+- Rapid X/Y jog limits and settings slider interaction are repaired. The
+  resume confirmation window accommodates hotend warming, and session-only
+  restart state survives cancellation without persisting across Cura launches.
+
 ## 4.5.0
 
 Version 4.5.0 is the persistence release: the plugin's settings leave
