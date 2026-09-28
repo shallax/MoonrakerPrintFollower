@@ -247,8 +247,8 @@ jobs:
           print("platform-safety: {} test(s) executed, none skipped".format(ran.group(1)))
           PY
 
-  native-build-smoke:
-    name: Native build smoke (${{ matrix.os }})
+  native-build:
+    name: Native build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -265,12 +265,19 @@ jobs:
         run: choco install make --yes --no-progress
       - name: Install native toolchain
         run: make dev_install
-      - name: Run lint
-        run: make lint
+      - name: Build and run full test suite
+        run: make build JOBS=8
+      - name: Verify capture determinism
+        run: make verify_captures
       - name: Build and verify packages
         run: make package
-      - name: Run selected tests
-        run: make test_files FILES=tests.test_index
+      - name: Upload native test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-build-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/mpf/mpf-tests.*/*.log
+          if-no-files-found: ignore
 
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against

@@ -259,8 +259,8 @@ Linux image's 2.12.0 pin.
 
 Run `make build`, `make lint`, `make run_tests`, `make test_files FILES="…"`,
 `make verify_captures`, `make package`, and the other standard targets.
-CI runs the same native lint, package and selected-test Make targets on
-`macos-latest` and `windows-latest` without Docker.
+CI runs the same native `make build`, capture determinism and package
+targets on `macos-latest` and `windows-latest` without Docker.
 PyQt runs with the offscreen platform for tests and captures. Packaged
 shaders are compiled by the PySide6 wheel's native `pyside6-qsb`; Cura
 users do not need that compiler. `make generate_screenshots` writes
