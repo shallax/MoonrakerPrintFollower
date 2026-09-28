@@ -803,6 +803,15 @@ High-risk logic is separated into focused modules. The authoritative ownership m
 
 ## Development and release checks
 
+The same Makefile targets drive development on Linux, macOS and Windows:
+`make dev_install`, `make build`, `make lint`, `make run_tests`,
+`make test_files FILES="tests.test_index"`, and `make package`.
+Linux defaults to the pinned Docker toolchain. macOS and Windows default
+to native host toolchains, with no Docker requirement; either can opt
+into the Linux image with `BACKEND=docker` (for example,
+`make BACKEND=docker build`). See [INSTRUCTIONS.md](INSTRUCTIONS.md)
+for setup, capture parity and the complete command list.
+
 The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.
 
 Release auditing also checks that shipped plugin sources do not contain release nicknames in runtime comments/UI, and that the source contains no hard-coded real printer names, local-network addresses or literal sample API keys. Example network values must use reserved non-routable domains.

@@ -12,6 +12,15 @@ The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
 exercises its 2D follower. Static README captures deliberately hold a
 complete layer and do not claim to test smoothing.
 
+For current local runs, `make ui_test MODE=suite CURA_VERSION=5.13.0`
+uses the real-Cura harness on every supported host. Linux stages Cura
+in its headless Docker harness; macOS and Windows stage and drive their
+native desktop Cura installations. `make ui_release_gate` runs the
+corresponding release sequence. Both commands are explicit desktop or
+headless harness work, outside `make all`. The Docker mandate below
+records the original Linux headless harness requirement; it does not
+require Docker for native macOS or Windows development.
+
 > **Reconciliation status (2026-09-15, the 4.1.0 release):** this
 > document describes the harness as it IS. Every section below
 > carries its status inline; claims struck or amended in the 4.1.0
