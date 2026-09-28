@@ -95,6 +95,8 @@ jobs:
       - name: Install native toolchain
         run: make dev_install
       - name: Build and run full test suite
+        env:
+          MPF_SCRATCH: ${{ runner.temp }}/mpf
         run: make build JOBS=2
       - name: Verify capture determinism
         run: make verify_captures
