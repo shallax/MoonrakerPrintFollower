@@ -247,6 +247,41 @@ jobs:
           print("platform-safety: {} test(s) executed, none skipped".format(ran.group(1)))
           PY
 
+  native-macos-build:
+    name: Native macOS build (no Docker)
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the native toolchain and report parity
+        run: make dev_install
+      - name: Run the native build and full test suite
+        run: make build JOBS=8
+      - name: Verify native capture determinism
+        run: make verify_captures
+      - name: Build and verify both release artifacts natively
+        run: make package
+
+  native-windows-make:
+    name: Native Windows Makefile smoke
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install GNU make
+        run: choco install make --yes --no-progress
+      - name: Install the native toolchain
+        run: make dev_install
+      - name: Lint through the shared Makefile targets
+        run: make lint
+      - name: Build and verify both release artifacts
+        run: make package
+      - name: Exercise the selected-file test target
+        run: make test_files FILES=tests.test_index
+
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against
     # the primary pinned Cura (the full gate stays release-time). The
