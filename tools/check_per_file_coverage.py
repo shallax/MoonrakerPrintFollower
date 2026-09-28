@@ -16,14 +16,7 @@ import sys
 
 BAR = 95.0
 
-EXCLUSIONS = {
-    "plugins/__init__.py": {
-        "reason": "the registration guard's ImportError branch is unreachable in the pinned container (PyQt6 is present)",
-        "evidence": "the container's PyQt6 pins; the guard exists for host-suite imports",
-        "date": "2026-09-19",
-        "recheck": "the container's Qt stack changes",
-    },
-}
+EXCLUSIONS = {}
 
 
 def main() -> int:

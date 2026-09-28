@@ -12,6 +12,61 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to test retained geometry")
 class RetainedGeometryTests(unittest.TestCase):
+    def test_data_source_rejects_cycles_and_detaches_cleanly(self):
+        from PyQt6 import sip
+        from plugins.GpuFollower import GpuFollower
+
+        source, consumer, downstream = (GpuFollower() for _ in range(3))
+        try:
+            with self.assertRaises(ValueError):
+                source.dataSource = source
+            with self.assertRaises(ValueError):
+                source.dataSource = object()
+            consumer.dataSource = source
+            consumer.dataSource = source  # Rebinding the same source is harmless.
+            with self.assertRaises(ValueError):
+                downstream.dataSource = consumer
+            source._data = (("current", "SKIN", (), b""),)
+            source.readyChanged.emit()
+            self.assertIs(consumer._data, source._data)
+            consumer.dataSource = None
+            self.assertEqual(consumer._data, ())
+            source.readyChanged.emit()
+            self.assertEqual(consumer._data, (), "detached consumer still receives its old source")
+        finally:
+            sip.delete(downstream)
+            sip.delete(consumer)
+            sip.delete(source)
+
+    def test_source_owned_layers_and_line_width_updates(self):
+        from PyQt6 import sip
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtQuick import QSGTransformNode
+        from plugins.GpuFollower import GpuFollower
+
+        source, consumer = GpuFollower(), GpuFollower()
+        parent = QSGTransformNode()
+        try:
+            source.layers = {"current": object()}
+            self.assertIn("current", source.layers)
+            source.layers = source.layers  # Identical geometry needs no worker.
+            self.assertEqual(source.settings, {})
+            self.assertIsInstance(source.supported, bool)
+            consumer.dataSource = source
+            consumer.layers = {"current": object()}
+            self.assertIs(consumer.layers["current"], source.layers["current"])
+            child = GpuFollower._node(parent, QColor("red"))
+            GpuFollower._vertices(child, b"", 0, 3.5)
+            self.assertEqual(child.geometry().lineWidth(), 3.5)
+            GpuFollower._vertices(child, b"", 0, 1.5)
+            self.assertEqual(child.geometry().lineWidth(), 1.5)
+            from plugins.GpuFollower import prepare
+            self.assertEqual(prepare((("current", None),)), ())
+        finally:
+            sip.delete(parent)
+            sip.delete(consumer)
+            sip.delete(source)
+
     def test_worker_failure_releases_readiness_and_reaches_shared_consumers(self):
         from PyQt6 import sip
         from plugins import GpuFollower as module
@@ -446,6 +501,19 @@ Item {
                         points = array('f')
                         points.frombytes(packed)
                         self.assertAlmostEqual(-min(points[::2]) * 4, actual_width, places=5)
+
+    def test_picker_draws_center_only_objects_as_circles_and_skips_empty_rows(self):
+        from plugins.GpuObjectPicker import object_strokes
+        scene = {
+            'objects': [{'center': [5, 7]}, {}],
+            'plot': {'sx': 2, 'sy': 4}, 'screenScale': 2,
+            'halo': '#000000', 'includedInk': '#ffffff',
+        }
+        strokes = object_strokes(scene)
+        self.assertEqual(len(strokes), 2)
+        # Both halo and ink use the same 32-sided, centre-only fallback.
+        self.assertEqual(len(strokes[0][0]), len(strokes[1][0]))
+        self.assertGreater(len(strokes[0][0]), 0)
 
 
 if __name__ == "__main__":

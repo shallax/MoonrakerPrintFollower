@@ -2,6 +2,20 @@
 from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
+    def test_malformed_physical_telemetry_falls_back_without_advancing_fill(self):
+        from plugins.GCodeIndex import build_index_from_bytes
+
+        index = build_index_from_bytes(
+            b";LAYER:0\nG0 X0 Y0\nG1 X10 Y0 E1\n")
+        coarse = index.refined_fraction(0, 15, None)
+        self.assertEqual(index.refined_fraction(
+            0, 15, None, floor_motion="invalid", stall="invalid"), coarse)
+        split, _method = index.refined_split(
+            0, 15, None, minimum_split="invalid", floor_split=0)
+        self.assertIsNone(split)
+        self.assertEqual(index.partial_motion(0, 0, (float("nan"), 0, 0)), 0)
+        self.assertEqual(index.partial_motion(0, 0, ("invalid", 0, 0)), 0)
+
     def test_indexed_vase_and_flat_gcode_keep_distinct_layer_rules(self):
         """Exercise the parser too: the transition and a flat control use
         the same slicer markers, with only their physical Z paths changed."""

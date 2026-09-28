@@ -59,6 +59,25 @@ class ColourMetricsTests(unittest.TestCase):
         self.assertEqual(gradient(5,4,(4,4)),(.5,1,.5,1))
         self.assertEqual(gradient(4,4,(4,4)),(.5,.5,0,1))
 
+    def test_metric_colours_use_the_indexed_motion_values(self):
+        payload = {
+            "speeds": (10, 20), "widths": (.4, .8), "layerHeight": .25,
+            "colourRanges": {
+                "speed": (10, 20), "height": (.2, .3),
+                "width": (.4, .8), "flow": (1, 4),
+            },
+        }
+        for mode, value, limits in ((2, 20, (10, 20)),
+                                    (3, .25, (.2, .3)),
+                                    (4, .8, (.4, .8)),
+                                    (5, 4, (1, 4))):
+            with self.subTest(mode=mode):
+                self.assertEqual(
+                    motion_colour(payload, "SKIN", 1, {"mode": mode}),
+                    "#ff" + "".join(f"{round(channel * 255):02x}" for channel in
+                                    gradient(mode, value, limits)[:3]),
+                )
+
     @unittest.skipUnless(importlib.util.find_spec("PyQt6") is not None, "PyQt6 is unavailable")
     def test_shader_colour_modes_preserve_buffers_and_pending_grey(self):
         from PyQt6.QtGui import QGuiApplication

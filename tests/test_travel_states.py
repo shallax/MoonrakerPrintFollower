@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 from plugins.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
 from plugins.PlateProgress import prepare_layer, encode_layer, decode_layer
@@ -13,6 +14,15 @@ from plugins.PreviewColours import DEFAULT_CLASSES, motion_colour
 
 
 class TravelStateTests(unittest.TestCase):
+    def test_legacy_layer_start_retraction_keeps_travel_retracted(self):
+        index = SimpleNamespace(
+            motion_extrusion=[(0.0,)], motion_tools=[(0,)],
+            layer_start_retractions=[{}], layer_start_retracted=[True],
+            layer_start_tools=[0], firmware_retractions=[()],
+            motion_count=lambda _layer: 1,
+        )
+        self.assertEqual(list(layer_states(index, 0)), ["TRAVEL_RETRACTED"])
+
     def test_partial_priming_and_retraction_are_modal_across_layers_and_cold_seek(self):
         data = (b"M83\n;LAYER:0\nG0 X1\nG1 X2 E-1\nG0 X3\nG1 X4 E0.4\n"
                 b";LAYER:1\nG0 X5\nG1 X6 E0.6\nG0 X7\n;TYPE:SKIN\nG1 X8 E0.2\n")

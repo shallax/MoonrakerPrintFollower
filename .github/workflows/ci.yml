@@ -282,7 +282,9 @@ jobs:
                           "--coverage-dir", destination, *modules], check=True)
           PY
           coverage combine "$RUNNER_TEMP/coverage"
-          coverage report --include="plugins/*" --fail-under=80
+          coverage report --include="plugins/*" --fail-under=95
+          coverage json -o coverage.json
+          python tools/check_per_file_coverage.py coverage.json
           coverage xml --include="plugins/*"
 
       - name: Upload coverage to Codecov

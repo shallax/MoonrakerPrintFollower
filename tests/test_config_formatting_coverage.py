@@ -3500,10 +3500,21 @@ class PluginPackageCoverageTests(unittest.TestCase):
             lambda runtime, application: probed.append((runtime, application)))
         with patch.dict(sys.modules, fakes):
             wired = plugins.register(app)
+            # Hosts without Qt can still register the nonvisual plugin pieces.
+            original_import = __import__
+
+            def no_qml(name, *args, **kwargs):
+                if name == "PyQt6.QtQml":
+                    raise ImportError("QtQml is unavailable")
+                return original_import(name, *args, **kwargs)
+
+            with patch("builtins.__import__", side_effect=no_qml):
+                without_qml = plugins.register(app)
         self.assertEqual(wired, {"extension": follower, "output_device": output,
                                  "machine_action": action})
+        self.assertEqual(without_qml, wired)
         # The leak probe watches the follower's own runtime.
-        self.assertEqual(probed, [("runtime", app)])
+        self.assertEqual(probed, [("runtime", app), ("runtime", app)])
 
 
 if __name__ == "__main__":
