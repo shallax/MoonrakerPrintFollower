@@ -66,6 +66,12 @@ jobs:
           python tools/check_qml.py plugins
           JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
+      - name: Drop unused third-party apt sources
+        run: |
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com|packages.microsoft.com" "$f"; then sudo rm -f "$f"; fi
+          done
+
       - name: Install Qt test runtime (Cura supplies Qt in production)
         run: |
           sudo apt-get update
