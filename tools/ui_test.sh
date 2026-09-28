@@ -21,13 +21,18 @@ PLUGIN_VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 CONTAINER_WORK_DIR="/tmp/mpf"
+# The host scratch root can differ from the container mount (in CI it is
+# runner.temp/mpf). Create it before taking the per-container lock.
+WORK_DIR="${MPF_WORK_DIR:-/tmp/mpf}"
+mkdir -p "$WORK_DIR"
+export MPF_WORK_DIR="$WORK_DIR"
 # ONE run per container at a time: a second run restages the shared
 # workdir and kills the first run's simulator mid-scenario (the
 # 2026-09-16 census loss). The lock is per-container so the gate's
 # parallel slots (each with its own container) still run together.
 # A holder that died without releasing leaves a stale lock — its pid
 # fails the liveness check and the lock is reclaimed.
-LOCK_DIR="$CONTAINER_WORK_DIR/.ui_test-lock-$CONTAINER"
+LOCK_DIR="$WORK_DIR/.ui_test-lock-$CONTAINER"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
     if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
@@ -94,10 +99,6 @@ scan_cura_log() {
 # under it and is CREATED here, never assumed — /tmp does not
 # survive a reboot, and an unprepared tree must provision itself
 # rather than die halfway through a run.
-WORK_DIR="${MPF_WORK_DIR:-/tmp/mpf}"
-mkdir -p "$WORK_DIR"
-export MPF_WORK_DIR="$WORK_DIR"
-
 # A warm container from another checkout (or an older layout) serves
 # the WRONG harness tree through its tests/harness mount — the same
 # drift class docker_dev.sh guards. Recreate it when the mount

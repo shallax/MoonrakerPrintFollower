@@ -47,6 +47,9 @@ class HarnessSpecTests(unittest.TestCase):
         with open(script, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn(".ui_test-lock-$CONTAINER", source)
+        self.assertIn('LOCK_DIR="$WORK_DIR/.ui_test-lock-$CONTAINER"', source)
+        self.assertLess(source.index('mkdir -p "$WORK_DIR"'),
+                        source.index('if ! mkdir "$LOCK_DIR"'))
         self.assertIn("one run per container at a time", source)
         self.assertIn("trap 'rm -rf \"$LOCK_DIR\"' EXIT", source)
 
