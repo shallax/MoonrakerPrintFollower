@@ -152,7 +152,6 @@ New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $WorkDir = (Resolve-Path -LiteralPath $WorkDir).Path
 # The runner reads the driver's port and token from here.
 $RpcDir = Join-Path $WorkDir 'rpc'
-$LegacyRpcDir = '/tmp/mpf'
 # The gallery root: every still and every video the runner writes goes
 # under HARNESS_RUN_DIR, so this is the path the gate's upload has to find.
 # It comes from the gate's own variable, RUN_DIR_NAME, resolved by the same
@@ -1527,11 +1526,9 @@ Get-Process -Name 'UltiMaker-Cura' -ErrorAction SilentlyContinue | Stop-Process 
 Start-Sleep -Seconds 1
 # The driver's port and token files are per-boot: a stale one would let the
 # wait below pass before Cura is up.
-foreach ($dir in @($RpcDir, $LegacyRpcDir)) {
-    foreach ($f in 'harness_port.txt', 'harness_token.txt') {
-        $p = Join-Path $dir $f
-        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
-    }
+foreach ($f in 'harness_port.txt', 'harness_token.txt') {
+    $p = Join-Path $RpcDir $f
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
 }
 if ($StageOnly) {
     Write-Log "native_harness: -StageOnly: everything is staged and the display is set; Cura was not launched"
@@ -1564,12 +1561,9 @@ $rpcFile = ''
 $started = Get-Date
 $exited = $false
 for ($tick = 1; $tick -le 300; $tick++) {
-    foreach ($dir in @($RpcDir, $LegacyRpcDir)) {
-        $candidate = Join-Path $dir 'harness_port.txt'
-        if ((Test-Path -LiteralPath $candidate) -and ((Get-Item -LiteralPath $candidate).Length -gt 0)) {
-            $rpcFile = $candidate
-            break
-        }
+    $candidate = Join-Path $RpcDir 'harness_port.txt'
+    if ((Test-Path -LiteralPath $candidate) -and ((Get-Item -LiteralPath $candidate).Length -gt 0)) {
+        $rpcFile = $candidate
     }
     if ($rpcFile) { break }
     $p.Refresh()

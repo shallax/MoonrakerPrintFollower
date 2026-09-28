@@ -205,6 +205,10 @@ Getting started (once per machine):
 
 What differs on this leg, and why:
 
+- **Scratch stays on a Windows temp path.** The native build driver uses
+  Python's temporary directory under `mpf/` (`MPF_SCRATCH` overrides it).
+  The desktop harness uses `RUNNER_TEMP` or the Windows temp directory
+  under `mpf-native/` (`MPF_WORK_DIR` overrides it).
 - **The committed screenshots stay container-canonical.**
   `make generate_screenshots` renders `dist/screenshots` for a look;
   it does not copy into `screenshots/`, because the CI sync job
