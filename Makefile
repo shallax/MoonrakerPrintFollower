@@ -43,7 +43,7 @@ help:
 	@echo "Backend: Linux defaults to Docker; macOS/Windows default to native."
 	@echo "Set BACKEND=docker on macOS/Windows to use the pinned Linux image."
 	@echo "dev_install            native setup; on Linux link checkout into Cura"
-	@echo "all                    build, lint, tests, captures, package and snapshot"
+	@echo "all                    verified build, capture determinism, package and snapshot"
 	@echo "build                  all gates plus fresh screenshots"
 	@echo "gates                  lint, full suite and capture smoke tests"
 	@echo "lint                   compile, QML and source/tool checks"
@@ -64,14 +64,16 @@ help:
 	@echo "dev_up/dev_down         manage a Docker dev container (Docker backend)"
 	@echo "docker_exec            run ARGS in the Docker image (Docker backend)"
 
-all: generate_shaders build lint run_tests verify_captures package snapshot_package
+all:
+	$(MAKE) build
+	$(MAKE) verify_captures
+	$(MAKE) snapshot_package
 
-build: gates
-ifneq ($(LEG),posix)
-	$(DEV) refresh
-else
-	./tools/refresh_screenshots.sh
-endif
+build:
+	$(MAKE) generate_shaders
+	$(MAKE) lint
+	$(MAKE) run_tests
+	$(MAKE) generate_screenshots
 
 gates: generate_shaders
 ifneq ($(LEG),posix)
@@ -135,10 +137,11 @@ else
 	./tools/verify_capture_determinism.sh
 endif
 
-package: generate_shaders
+package:
 ifneq ($(LEG),posix)
 	$(DEV) package
 else
+	$(MAKE) generate_shaders
 	# The two artifacts are independent: build them side by side
 	# (the 2026-09-18 parallelism ruling), then verify both.
 	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
@@ -152,7 +155,7 @@ endif
 # first).
 snapshot_package: package
 ifneq ($(LEG),posix)
-	$(DEV) snapshot
+	$(PYTHON) tools/native/dev.py copy_snapshot
 else
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 endif

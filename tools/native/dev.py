@@ -1115,8 +1115,15 @@ def cmd_snapshot(args) -> int:
     root = checkout_root()
     if not _build_artifacts(root, tool_env()):
         return record("snapshot", False, "the package did not build")
+    return cmd_copy_snapshot(args)
+
+
+def cmd_copy_snapshot(args) -> int:
+    root = checkout_root()
     target = Path(args.to) if args.to else Path(tempfile.gettempdir()) / "mpf.curapackage"
     source = root / "dist" / ("MoonrakerPrintFollower-v%s.curapackage" % _version(root))
+    if not source.is_file():
+        return record("snapshot", False, "%s is missing" % source)
     shutil.copyfile(source, target)
     print("wrote %s" % target)
     return record("snapshot", True, str(target))
@@ -1189,7 +1196,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=(
         "bootstrap", "lint", "format", "test", "coverage", "captures", "refresh", "shaders",
-        "determinism", "package", "snapshot", "gates", "hooks", "hook-check", "clean",
+        "determinism", "package", "snapshot", "copy_snapshot", "gates", "hooks", "hook-check", "clean",
         "dev_up", "dev_down", "exec", "ui_test", "ui_release_gate"))
     parser.add_argument("--jobs", type=int, default=default_jobs(),
                         help="parallel test/diagnostic workers (default: JOBS or 16)")
@@ -1211,7 +1218,8 @@ def main(argv=None) -> int:
         "test": cmd_test, "coverage": cmd_coverage, "captures": cmd_captures,
         "refresh": cmd_refresh, "shaders": cmd_shaders,
         "determinism": cmd_determinism, "package": cmd_package,
-        "snapshot": cmd_snapshot, "gates": cmd_gates, "hooks": cmd_hooks,
+        "snapshot": cmd_snapshot, "copy_snapshot": cmd_copy_snapshot,
+        "gates": cmd_gates, "hooks": cmd_hooks,
         "hook-check": cmd_hook_check, "clean": cmd_clean,
         "dev_up": cmd_container_only, "dev_down": cmd_container_only,
         "exec": cmd_container_only,

@@ -1,9 +1,8 @@
 #!/bin/sh
-# The PR-level harness check: the smoke set against the primary pinned
+# The branch and PR harness check: the smoke set against the primary pinned
 # Cura, twice in a row — the second unit proves the boot survives the
 # first unit's debris (Cura's owner-only writes broke the next unit's
-# cleanup on CI). The full gate (smoke + every suite group + the
-# secondary version) remains the release workflow's job.
+# cleanup on CI). The full gate also runs on PRs and tag releases.
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -15,9 +14,12 @@ RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 
-# The harness stages the plugin from dist/, and a fresh CI checkout has
-# no dist/ — the dev loop's make package doesn't exist here. Build it.
-make package >/dev/null
+# CI downloads the one verified package built earlier in the workflow.
+# A local invocation may start from a fresh checkout and builds its own.
+version="$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')"
+if [ ! -f "dist/MoonrakerPrintFollower-v$version.curapackage" ]; then
+    make package >/dev/null
+fi
 
 # Prefer the published image (the release workflow pushes it; the
 # package is private, so CI logs in first). Build locally only when

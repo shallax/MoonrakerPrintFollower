@@ -35,6 +35,7 @@ jobs:
   # keeps offscreen Qt layout measurements comparable with the Linux image.
   native-build:
     name: Native build (${{ matrix.os }})
+    needs: lint
     if: ${{ !inputs.tag_release }}
     strategy:
       fail-fast: false
@@ -130,11 +131,10 @@ jobs:
           if-no-files-found: ignore
 
   harness-smoke:
-    # The PR-level real-Cura check: the smoke set in one boot against
-    # the primary pinned Cura (the full gate stays release-time). The
-    # container brings its own Xvfb and ffmpeg, so the ubuntu runner
-    # needs no display. Galleries upload alongside the other evidence.
-    name: Harness smoke
+    # Two smoke runs in one container verify that Cura still boots after
+    # the first run's owner-only writes. The gate tests one fresh boot.
+    name: Cura repeat-boot smoke
+    needs: [ci-package, native-build, python-compatibility, coverage]
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
@@ -143,6 +143,11 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+      - name: Download tested plugin package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-artifacts
+          path: dist/
       - name: Log in to the container registry
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the smoke set
@@ -221,11 +226,11 @@ jobs:
           chmod +x /tmp/hadolint
           /tmp/hadolint Dockerfile
 
-      - name: Install gitleaks
+      - &install_gitleaks
+        name: Install gitleaks
         run: |
-          # Pinned to the same version as the dev container and the
-          # release workflow; the runner image ships no preinstalled
-          # binary.
+          # Pinned to the dev container; the runner image ships no
+          # preinstalled binary. Artifact scanning reuses this step.
           wget -qO /tmp/gitleaks.tar.gz \
               https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
             && tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
@@ -236,6 +241,7 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: lint
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
@@ -251,11 +257,15 @@ jobs:
       # lint job's steps above.
       - *drop_unused_apt_sources
 
-      - name: Install runtime and tools
+      - &install_qt_runtime
+        name: Install Qt runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0 coverage
+          python -m pip install PyQt6==6.11.0
+
+      - name: Install coverage
+        run: python -m pip install coverage
 
       - name: Run the suite under coverage
         run: |
@@ -265,7 +275,8 @@ jobs:
           import subprocess
           import sys
 
-          modules = ["tests." + path.stem for path in sorted(Path("tests").glob("test_*.py"))]
+          modules = [".".join(path.with_suffix("").parts)
+                     for path in sorted(Path("tests").rglob("test_*.py"))]
           destination = str(Path(os.environ["RUNNER_TEMP"]) / "coverage")
           subprocess.run([sys.executable, "tools/run_some.py", "--jobs", "2",
                           "--coverage-dir", destination, *modules], check=True)
@@ -283,12 +294,14 @@ jobs:
 
   python-compatibility:
     name: Python ${{ matrix.python-version }} and Qt runtime
+    needs: lint
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # Coverage runs the same full Qt suite on Python 3.12.
+        python-version: ["3.10", "3.11"]
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -305,13 +318,7 @@ jobs:
       # lint job's steps above.
       - *drop_unused_apt_sources
 
-      - name: Install Qt system runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1
-
-      - name: Install Qt test runtime (Cura supplies Qt in production)
-        run: python -m pip install PyQt6==6.11.0
+      - *install_qt_runtime
 
       - name: Run all discovered tests with the real Qt runtime
         run: |
@@ -335,7 +342,9 @@ jobs:
           report_type: test_results
 
   ci-package:
-    name: Release
+    name: Package and captures
+    needs: lint
+    if: ${{ !cancelled() && (inputs.tag_release || needs.lint.result == 'success') }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -350,37 +359,20 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - name: QML structural sanity
+        if: inputs.tag_release
         run: python tools/check_qml.py plugins
 
-      - name: Run all discovered tests
-        run: env JOBS=2 LEGS=host tools/run_tests.sh
-
-      - name: Read package and CI metadata
-        id: build_meta
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          package = json.load(open("package.json", encoding="utf-8"))
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={package['package_version']}\n")
-          PY
-          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          BRANCH="${BRANCH//\//-}"
-          BRANCH="$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
-          SHORT_SHA="${GITHUB_SHA:0:8}"
-          echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-
-      # Shared step: the drop_unused_apt_sources anchor defined in the
-      # lint job's steps above.
+      # Use the real Qt runtime for the tag's full-suite gate too. Branch
+      # and PR runs additionally exercise it in the Python-version matrix.
       - *drop_unused_apt_sources
 
-      - name: Install capture runtime
+      - *install_qt_runtime
+
+      - name: Run all discovered tests
+        if: inputs.tag_release
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
       - name: Install package toolchain
         run: python -m pip install PySide6-Addons==6.10.2
@@ -398,28 +390,17 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
 
-      - name: Upload CI artifacts
-        if: ${{ !inputs.tag_release }}
+      - name: Upload package and capture artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.build_meta.outputs.artifact_name }}
-          path: |
-            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
-            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
+          name: package-artifacts
+          path: dist/
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload release gate artifacts
-        if: github.event_name == 'pull_request' || inputs.release_gate
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-artifacts
-          path: dist/
-          if-no-files-found: error
-          retention-days: 1
-
   screenshot-sync:
     name: Screenshot sync
+    needs: lint
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
@@ -465,6 +446,7 @@ jobs:
 
   analyze:
     name: Analyze (CodeQL)
+    needs: lint
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     permissions:
@@ -484,38 +466,6 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
 
-  release:
-    if: github.event_name == 'pull_request' || inputs.release_gate
-    permissions:
-      contents: read
-      packages: read
-    runs-on: ubuntu-26.04
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-
-      - name: Drop unused third-party apt sources
-        run: |
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com|packages.microsoft.com" "$f"; then sudo rm -f "$f"; fi
-          done
-
-      - name: Install Qt test runtime (Cura supplies Qt in production)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1
-          python -m pip install PyQt6==6.11.0
-
-      - name: Run the full suite with the real Qt runtime
-        run: |
-          python -c "from PyQt6.QtCore import QCoreApplication"
-          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
-
   artifact-scan:
     name: Scan release artifacts
     needs: ci-package
@@ -528,18 +478,10 @@ jobs:
       - name: Download built artifacts
         uses: actions/download-artifact@v8
         with:
-          name: release-artifacts
+          name: package-artifacts
           path: dist/
 
-      - name: Install gitleaks
-        run: |
-          # The runner image dropped the preinstalled binary (the 3.5.0
-          # release scan failed with "command not found"); pin the same
-          # version the dev container gates use.
-          wget -qO /tmp/gitleaks.tar.gz \
-              https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            && tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
-            && rm /tmp/gitleaks.tar.gz
+      - *install_gitleaks
 
       - name: Scan the release artifacts for secrets
         run: |
@@ -549,7 +491,18 @@ jobs:
     permissions:
       contents: read
       packages: read
-    needs: [release, artifact-scan]
+    needs: [artifact-scan, native-build, python-compatibility, coverage, harness-smoke]
+    # The PR waits for native builds and all Linux Qt suites, including
+    # Python 3.12 in coverage. Tag releases skip those jobs; ci-package
+    # runs its Python 3.11 Qt suite before artifact-scan succeeds.
+    if: >-
+      ${{ !cancelled() && needs.artifact-scan.result == 'success' &&
+      (inputs.tag_release ||
+      (github.event_name == 'pull_request' &&
+      needs.native-build.result == 'success' &&
+      needs.python-compatibility.result == 'success' &&
+      needs.coverage.result == 'success' &&
+      needs.harness-smoke.result == 'success')) }}
     # Every unit runs on every platform a user can run Cura on. The Linux leg
     # is unchanged; the native legs install Cura themselves and pay for it, so
     # the timeout is sized for a cold install rather than the container's
@@ -607,22 +560,13 @@ jobs:
             echo "MPF_WORK_DIR=$temp/mpf-native" >> "$GITHUB_ENV"
           fi
 
-      # The Linux leg builds both artifacts through the Makefile, as it
-      # always has. `make` is not on the Windows image and the native
-      # legs need only the .curapackage, so they build that one directly.
-      - name: Build the plugin package (Linux)
-        if: runner.os == 'Linux'
-        run: make package >/dev/null
-
-      - name: Build the plugin package (native)
-        if: runner.os != 'Linux'
-        shell: bash
-        run: |
-          py=python3
-          command -v python3 >/dev/null 2>&1 || py=python
-          "$py" -m pip install PySide6-Addons==6.10.2
-          "$py" tools/build_shaders.py
-          "$py" tools/build_curapackage.py
+      # Test exactly the package built and scanned by ci-package. Native
+      # package construction is covered separately by native-build.
+      - name: Download verified plugin package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-artifacts
+          path: dist/
 
       # Everything below is the container leg's alone: the native legs
       # install Cura themselves, so a Cura tree fetch and a harness image

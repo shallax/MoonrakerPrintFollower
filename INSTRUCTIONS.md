@@ -69,6 +69,9 @@ are visible; a Python 3.14 patch release difference is acceptable.
   `make install_hooks`, `make clean`. `make docker_exec ARGS="…"`
   is available with the Docker backend. The targets call the native
   driver or the Linux scripts according to the selected backend.
+- Before pushing, `make all` runs shader compilation, lint, the full suite,
+  fresh captures, capture determinism, package verification and the local
+  package snapshot in that order. Each full suite and package build runs once.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
   `python3 -m unittest tests.a tests.b tests.c` runs those files
@@ -299,7 +302,11 @@ Branch pushes run `ci.yml` with its normal lint, test, build and capture
 stages. Pull requests run that same CI suite plus the full Cura release
 gate in the same workflow. A push to a branch with an open PR also
 runs the normal CI suite, so both events exercise the common checks
-independently and expose intermittent failures. CI also runs on its weekly schedule
+independently and expose intermittent failures. Lint completes before
+the builds and suites; the full Cura gate waits for the native builds,
+Linux Qt suites, repeat-boot smoke, and package scan. CI builds one Linux
+package artifact and uses it for the smoke and gate runs; native package
+builds separately verify macOS and Windows. CI also runs on its weekly schedule
 and when manually dispatched. A version tag runs `release.yml` only when
 it points to the current `main` HEAD. That workflow publishes the harness
 image, calls the shared CI package, test and Cura gate jobs, then publishes
