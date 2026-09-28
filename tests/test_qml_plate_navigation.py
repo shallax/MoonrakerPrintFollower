@@ -238,7 +238,11 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
     def test_detach_is_enabled_before_the_live_layer_resolves(self):
         monitor, window, face = self._follower_popover()
         self._printer.setAnchor(-1)
+        self._printer.setProgressState(
+            False, "Print indexed — waiting for the print to reach an indexed layer.")
         self.pump(20)
+        self.assertFalse(self._printer.plateProgressAvailable)
+        self.assertTrue(self._printer.printIndexReady)
         attach = self.find(monitor, "moonrakerFollowerAttach")
         self.assertEqual(attach.property("text"), "Detach")
         self.assertTrue(attach.property("enabled"),

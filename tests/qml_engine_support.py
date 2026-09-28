@@ -1260,6 +1260,8 @@ if QT_AVAILABLE:
             self._navigation_backing = 4.0
             self._layer_count = 40
             self._index_ready = True
+            self._progress_available = True
+            self._progress_reason = ""
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1383,17 +1385,22 @@ if QT_AVAILABLE:
             self._layer_count = int(count)
             self.plateProgressChanged.emit()
 
+        def setProgressState(self, available, reason):
+            self._progress_available = bool(available)
+            self._progress_reason = str(reason)
+            self.plateProgressChanged.emit()
+
         @pyqtProperty(int, constant=True)
         def plateLayerMotionCount(self):
             return self._motion_count
 
-        @pyqtProperty(bool, constant=True)
+        @pyqtProperty(bool, notify=plateProgressChanged)
         def plateProgressAvailable(self):
-            return True
+            return self._progress_available
 
-        @pyqtProperty(str, constant=True)
+        @pyqtProperty(str, notify=plateProgressChanged)
         def plateProgressReason(self):
-            return ""
+            return self._progress_reason
 
         @pyqtProperty(bool, notify=improvingEtaChanged)
         def improvingEta(self):
