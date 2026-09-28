@@ -95,7 +95,7 @@ jobs:
       - name: Install native toolchain
         run: make dev_install
       - name: Build and run full test suite
-        run: make build JOBS=8
+        run: make build JOBS=2
       - name: Verify capture determinism
         run: make verify_captures
       - name: Build and verify packages
