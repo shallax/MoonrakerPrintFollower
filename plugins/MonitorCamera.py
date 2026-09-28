@@ -15,6 +15,7 @@ from .MoonrakerProtocol import same_origin
 # whatever that installation runs at), never a product constant, so
 # MAX_FPS is only the coercion guard for a corrupt record.
 MIN_FPS = 0.5
+SNAPSHOT_MAX_FPS = 5.0
 MAX_FPS = 120.0
 # The fallback when the camera reports no usable target_fps (an older
 # Moonraker, or a front-end-written entry): the renderer's own idle
@@ -118,7 +119,7 @@ class MonitorCamera(QObject):
         return max(MIN_FPS, min(MAX_FPS, configured))
 
     def set_fps(self, fps):
-        """Persist the rate; crossing 1 FPS switches the camera transport."""
+        """Persist the rate; crossing 5 FPS switches the camera transport."""
         cameras = self._data.snapshot.webcams
         camera = cameras[self._index] if 0 <= self._index < len(cameras) else {}
         value = min(self.max_fps(camera), _clamp_fps(fps, self._fps or DEFAULT_MAX_FPS))
@@ -199,7 +200,7 @@ class MonitorCamera(QObject):
         self._fps = min(maximum, _clamp_fps(getattr(config, "camera_fps", DEFAULT_MAX_FPS), DEFAULT_MAX_FPS))
         snapshot = str(camera.get("snapshot_url") or "").strip()
         snapshot_available = bool(snapshot) and self._valid_camera_url(snapshot)
-        snapshot_mode = snapshot_available and self._fps <= 1.0
+        snapshot_mode = snapshot_available and self._fps <= SNAPSHOT_MAX_FPS
         stream = snapshot if snapshot_mode else str(camera.get("stream_url") or config.camera_url or "")
         # Absolute stream URLs may only be http/https, and
         # protocol-relative inputs ("//host/...") are rejected
@@ -245,6 +246,7 @@ class MonitorCamera(QObject):
             "cameraFps": self._fps,
             "cameraFpsMin": MIN_FPS,
             "cameraFpsMax": maximum,
+            "cameraSnapshotMaxFps": SNAPSHOT_MAX_FPS,
             "cameraSnapshotAvailable": snapshot_available,
             "cameraSnapshotMode": snapshot_mode,
         }

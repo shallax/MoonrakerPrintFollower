@@ -117,13 +117,17 @@ if QT_AVAILABLE:
         def cameraFpsMax(self):
             return self._camera_fps_maximum
 
+        @pyqtProperty(float, notify=cameraFpsChanged)
+        def cameraSnapshotMaxFps(self):
+            return 5.0
+
         @pyqtProperty(bool, notify=cameraFpsChanged)
         def cameraSnapshotAvailable(self):
             return self._snapshot_available
 
         @pyqtProperty(bool, notify=cameraFpsChanged)
         def cameraSnapshotMode(self):
-            return self._snapshot_available and self._camera_fps <= 1.0
+            return self._snapshot_available and self._camera_fps <= 5.0
 
         def set_snapshot_available(self, available):
             self._snapshot_available = bool(available)
@@ -975,7 +979,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         self._pump_ms(300)
         return pane, window, model, image, self.find(pane, "cameraFrame")
 
-    def _wheel(self, window, item, delta=120, modifiers=None, position=None):
+    def _wheel(self, window, item, delta=120, modifiers=None, position=None,
+               pixels=None, horizontal_pixels=0):
         """One real wheel notch over *item*. QTest's QWindow-level
         mouseWheel is unavailable in this Qt build — the event is posted
         directly (the plate zoom suite's own pattern). No modifier is
@@ -988,7 +993,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         scene = item.mapToItem(window.contentItem(), position)
         event = QWheelEvent(
             QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
-            QPoint(0, 0), QPoint(0, delta),
+            QPoint(horizontal_pixels, pixels if pixels is not None else 0),
+            QPoint(0, 0 if pixels is not None or horizontal_pixels else delta),
             Qt.MouseButton.NoButton,
             modifiers if modifiers is not None else Qt.KeyboardModifier.NoModifier,
             Qt.ScrollPhase.NoScrollPhase, False)

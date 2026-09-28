@@ -2,7 +2,7 @@
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
-    def test_snapshot_endpoint_replaces_stream_only_at_one_fps_or_below(self):
+    def test_snapshot_endpoint_replaces_stream_only_at_five_fps_or_below(self):
         model = self.monitor()
         self.deliver()
         model._data._update(webcams=[{
@@ -11,11 +11,12 @@ class MonitorQtTests(harness.MonitorQtTests):
         }])
         self.qt.events()
         self.assertTrue(model.cameraSnapshotAvailable)
+        self.assertEqual(model.cameraSnapshotMaxFps, 5.0)
         self.assertFalse(model.cameraSnapshotMode)
         self.assertEqual(model._camera.url, "http://printer-a/stream")
         self.assertIn("http://printer-a/stream", model.cameraUrl)
 
-        model.setCameraFps(1.0)
+        model.setCameraFps(5.0)
         self.qt.events()
         self.assertTrue(model.cameraSnapshotMode)
         self.assertEqual(model._camera.url, "http://printer-a/snapshot")
@@ -24,7 +25,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events()
         self.assertTrue(model.cameraSnapshotMode)
         self.assertEqual(model._camera.url, "http://printer-a/snapshot")
-        model.setCameraFps(1.5)
+        model.setCameraFps(5.5)
         self.qt.events()
         self.assertFalse(model.cameraSnapshotMode)
         self.assertEqual(model._camera.url, "http://printer-a/stream")

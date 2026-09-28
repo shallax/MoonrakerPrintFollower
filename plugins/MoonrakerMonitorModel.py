@@ -567,7 +567,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
         ("cameraFpsChanged", ("cameraFps", "cameraFpsMin", "cameraFpsMax",
-                              "cameraSnapshotAvailable", "cameraSnapshotMode")),
+                              "cameraSnapshotMaxFps", "cameraSnapshotAvailable", "cameraSnapshotMode")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
@@ -2577,13 +2577,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
     webcamStreamEnabled = value_property(bool, "webcamStreamEnabled", webcamStreamEnabledChanged, True)
     # The webcam rate: the renderer's decode cadence and, when a
-    # snapshot URL is available at 1 FPS or below, its poll cadence.
+    # snapshot URL is available at 5 FPS or below, its poll cadence.
     # The bar's floor and selected camera's own
     # configured ceiling (Moonraker's target_fps from the webcam list).
     # The defaults hold until the first publish lands.
     cameraFps = value_property(float, "cameraFps", cameraFpsChanged, CAMERA_FPS_DEFAULT)
     cameraFpsMin = value_property(float, "cameraFpsMin", cameraFpsChanged, CAMERA_FPS_MIN)
     cameraFpsMax = value_property(float, "cameraFpsMax", cameraFpsChanged, CAMERA_FPS_FALLBACK_MAX)
+    cameraSnapshotMaxFps = value_property(float, "cameraSnapshotMaxFps", cameraFpsChanged, 5.0)
     cameraSnapshotAvailable = value_property(bool, "cameraSnapshotAvailable", cameraFpsChanged, False)
     cameraSnapshotMode = value_property(bool, "cameraSnapshotMode", cameraFpsChanged, False)
 
