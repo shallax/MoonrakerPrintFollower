@@ -26,9 +26,10 @@ from PyQt6.QtQuick import QQuickPaintedItem
 from UM.Logger import Logger
 
 # The render ceiling: one decode and a repaint at most this often
-# while no target rate is set. The source is NEVER throttled — the drain parses
-# everything promptly and the superseded frames count as intentionally
-# dropped. The Precise timer type keeps the presentation cadence even.
+# while no target rate is set. In MJPEG mode the drain parses everything
+# promptly and superseded frames count as intentionally dropped. Snapshot
+# mode uses the target rate for one-shot GETs as well as decoding.
+# The Precise timer type keeps the presentation cadence even.
 RENDER_INTERVAL_MS = 33
 
 # The safety bounds — two SEPARATE concepts, each documented here:
@@ -58,6 +59,7 @@ MAX_HEADER_BYTES = 4096
 # The diagnostics snapshot cadence: the counters ride the QML surface
 # through one low-frequency signal, never per-frame notifications.
 STATS_EMIT_INTERVAL_MS = 1000
+SNAPSHOT_REQUEST_TIMEOUT_MS = 10000
 
 # The interval the trace summary reports on. The counts, the Qt-thread
 # milliseconds and the two ages are all measured over the interval that
@@ -168,6 +170,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
     statsChanged = pyqtSignal()
     traceEnabledChanged = pyqtSignal()
     targetFpsChanged = pyqtSignal()
+    snapshotModeChanged = pyqtSignal()
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -187,10 +190,17 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._mirror = False
         self._multipart_boundary: Optional[bytes] = None
         self._trace_enabled = False
-        # The decode throttle (0 = the ceiling above): the pane's FPS
-        # control writes it, and only the render timer's cadence — the
-        # spot that hands a frame over and repaints — follows it.
+        # The pane's FPS control sets the decode cadence and, in
+        # snapshot mode, the interval between one-shot requests.
         self._target_fps = 0.0
+        self._snapshot_mode = False
+        self._snapshot_timer = QTimer(self)
+        self._snapshot_timer.setSingleShot(True)
+        self._snapshot_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._snapshot_timer.timeout.connect(self._begin_snapshot_request)
+        self._snapshot_timeout_timer = QTimer(self)
+        self._snapshot_timeout_timer.setSingleShot(True)
+        self._snapshot_timeout_timer.timeout.connect(self._on_snapshot_timeout)
 
         # The render scheduler: install-and-paint only while the stream
         # runs, always from the newest pending frame.
@@ -356,12 +366,12 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
                                 notify=traceEnabledChanged)
 
     def setTargetFps(self, fps: float) -> None:
-        """The decode throttle's target, in frames per second.
+        """The requested display rate and, for snapshots, poll rate.
 
-        The saving is the DECODE, not the display: the drain still
-        parses promptly and only the newest frame survives, while the
+        MJPEG drains promptly and keeps only its newest frame. The
         render timer — the one place a JPEG becomes a QImage and the
-        item repaints — follows this rate. The target may sit either
+        item repaints — follows this rate. Snapshot mode also waits
+        this interval after each completed GET. The target may sit either
         side of the idle ceiling above: below it is the throttle the
         idle-load request asks for, above it is a camera configured to
         run faster, which is the user's call. 0 leaves the ceiling.
@@ -377,7 +387,29 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
             return
         self._target_fps = value
         self._render_timer.setInterval(self.getRenderIntervalMs())
+        if self._snapshot_timer.isActive():
+            self._snapshot_timer.start(self.getRenderIntervalMs())
         self.targetFpsChanged.emit()
+
+    def setSnapshotMode(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._snapshot_mode:
+            return
+        self._snapshot_mode = enabled
+        self.snapshotModeChanged.emit()
+        if self._started:
+            # Closing the continuous MJPEG reply is what saves network
+            # bandwidth. Only the selected snapshot endpoint is fetched
+            # after this transition.
+            self._snapshot_timer.stop()
+            self._stop_request()
+            self._begin_request()
+
+    def getSnapshotMode(self) -> bool:
+        return self._snapshot_mode
+
+    snapshotMode = pyqtProperty(bool, fget=getSnapshotMode, fset=setSnapshotMode,
+                                notify=snapshotModeChanged)
 
     def getTargetFps(self) -> float:
         return self._target_fps
@@ -498,7 +530,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         if not self._source_url:
             Logger.log("w", "Unable to start camera stream without target!")
             return
-        if self._started and self._image_reply is not None:
+        if self._started and (self._image_reply is not None or self._snapshot_mode):
             # Already running the desired stream: start() is idempotent,
             # never a destructive restart of a healthy connection.
             return
@@ -520,6 +552,8 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     @pyqtSlot()
     def stop(self) -> None:
+        self._snapshot_timer.stop()
+        self._snapshot_timeout_timer.stop()
         self._stop_request()
         self._stream_buffer = bytearray()
         self._pending_frame = None
@@ -570,6 +604,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # signals disconnect FIRST, so a late finished/error from the
         # old reply can never reach a newer reply's state.
         reply = self._image_reply
+        self._snapshot_timeout_timer.stop()
         self._image_reply = None
         self._image_request = None
         if reply is None:
@@ -601,11 +636,11 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
     def _begin_request(self) -> None:
         # A genuinely new stream: the parser state must not leak from
         # the previous source into this one.
+        self._snapshot_timer.stop()
         self._stream_buffer = bytearray()
         self._pending_frame = None
         self._pending_arrival = 0.0
         self._multipart_boundary = None
-        self._requests_started += 1
         # A result from the previous source must never be installed on
         # this one: the generation is what a late decode is measured
         # against.
@@ -637,12 +672,33 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._recent_incoming = 0.0
         self._recent_displayed = 0.0
         self._recent_bytes_per_sec = 0.0
+        self._open_request()
+
+    def _begin_snapshot_request(self) -> None:
+        if not self._started or not self._snapshot_mode or self._image_reply is not None:
+            return
+        # A snapshot is one independent JPEG. Keep diagnostic counters
+        # and decode state across polls, but never parse a previous
+        # response's tail as part of the next image.
+        self._stream_buffer = bytearray()
+        self._multipart_boundary = None
+        self._open_request()
+
+    def _open_request(self) -> None:
+        self._requests_started += 1
         if self._network_manager is None:
             self._network_manager = QNetworkAccessManager()
         self._image_request = QNetworkRequest(self._source_url)
+        if self._snapshot_mode:
+            self._image_request.setAttribute(QNetworkRequest.Attribute.CacheLoadControlAttribute,
+                                             QNetworkRequest.CacheLoadControl.AlwaysNetwork)
+            self._image_request.setRawHeader(b"Cache-Control", b"no-cache")
         self._image_reply = self._network_manager.get(self._image_request)
+        if self._snapshot_mode:
+            self._snapshot_timeout_timer.start(SNAPSHOT_REQUEST_TIMEOUT_MS)
         reply = self._image_reply
-        self._reply_finished_cb = lambda r=reply: self._on_finished(r)
+        self._reply_finished_cb = (lambda r=reply: self._on_snapshot_finished(r)) if self._snapshot_mode \
+            else (lambda r=reply: self._on_finished(r))
         self._reply_error_cb = lambda _e, r=reply: self._on_error(r)
         self._image_reply.readyRead.connect(self._drain)
         reply.finished.connect(self._reply_finished_cb)
@@ -659,6 +715,32 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._render_timer.stop()
         self._dispatch_timer.stop()
         self._stats_timer.stop()
+
+    def _on_snapshot_finished(self, reply: QNetworkReply) -> None:
+        if reply is not self._image_reply:
+            return
+        # Qt may emit finished with the last bytes still buffered.
+        self._drain()
+        payload = bytes(self._stream_buffer)
+        self._stream_buffer.clear()
+        if payload:
+            # A snapshot is one whole response, not a multipart stream.
+            # Let QImageReader detect its image format on the decoder
+            # thread (some snapshot endpoints return PNG).
+            self._consume_frame(payload)
+            self._dispatch_from_completion()
+        self._stop_request()
+        if self._started and self._snapshot_mode:
+            # Start the next poll only after the previous response has
+            # closed. A slow camera can never accumulate requests.
+            self._snapshot_timer.start(self.getRenderIntervalMs())
+
+    def _on_snapshot_timeout(self) -> None:
+        if not self._started or not self._snapshot_mode or self._image_reply is None:
+            return
+        self._transport_errors += 1
+        self._stop_request()
+        self._snapshot_timer.start(self.getRenderIntervalMs())
 
     def _on_error(self, reply: QNetworkReply) -> None:
         if reply is not self._image_reply:
@@ -714,20 +796,31 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         data = bytes(self._image_reply.readAll())
         if data:
             self._bytes_received += len(data)
-            self._stream_buffer += data
-            self._buffer_high_water = max(self._buffer_high_water, len(self._stream_buffer))
-            if self._multipart_boundary is None:
-                self._detect_boundary()
-            if self._multipart_boundary is not None:
-                self._parse_multipart()
+            if self._snapshot_mode:
+                if len(self._stream_buffer) + len(data) > MAX_IN_PROGRESS_FRAME_BYTES:
+                    self._oversized_drops += 1
+                    self._stream_buffer.clear()
+                    self._stop_request()
+                    if self._started:
+                        self._snapshot_timer.start(self.getRenderIntervalMs())
+                else:
+                    self._stream_buffer += data
+                    self._buffer_high_water = max(self._buffer_high_water, len(self._stream_buffer))
             else:
-                self._parse_scan()
-            self._apply_limits()
-            # Parse the whole read before choosing its latest frame. A frame
-            # arriving just after a periodic tick must not wait an extra
-            # period once the decoder and the shared deadline are free.
-            if self._started:
-                self._dispatch_from_completion()
+                self._stream_buffer += data
+                self._buffer_high_water = max(self._buffer_high_water, len(self._stream_buffer))
+                if self._multipart_boundary is None:
+                    self._detect_boundary()
+                if self._multipart_boundary is not None:
+                    self._parse_multipart()
+                else:
+                    self._parse_scan()
+                self._apply_limits()
+                # Parse the whole read before choosing its latest frame. A frame
+                # arriving just after a periodic tick must not wait an extra
+                # period once the decoder and the shared deadline are free.
+                if self._started:
+                    self._dispatch_from_completion()
         self._last_drain_end = time.perf_counter()
         elapsed = (self._last_drain_end - started) * 1000.0
         self._drain_ms_total += elapsed

@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 4.6.1 (in development)
 
+- Poll a webcam's snapshot URL at 1 FPS or below to reduce camera
+  bandwidth, closing the MJPEG stream while polling. Mark the snapshot
+  range on the FPS control only for webcams that provide a usable URL.
 - Add native macOS development and CI builds. The same Make targets now run
   native builds and tests on macOS and Windows; Linux keeps its Docker default.
   Docker remains an opt-in backend on both desktop platforms.

@@ -2617,6 +2617,9 @@ Item {
             # reserved strip — never layout-shifting elsewhere.
             'visible: root.cameraBarMode === "zoom"',
             'visible: root.cameraBarMode === "fps"',
+            # The green snapshot range is decoration within the FPS
+            # bar and appears only when the webcam offers that mode.
+            "visible: root.cameraSnapshotAvailable",
             # The FPS scale's mirrored graduation edge: decoration
             # inside the bar's own reserved strip (the zoom scope's
             # own !major mirror).

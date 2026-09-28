@@ -107,6 +107,9 @@ Component {
             function onCameraRefreshChanged() {
                 root.scheduleCameraApply();
             }
+            function onCameraFpsChanged() {
+                root.scheduleCameraApply();
+            }
         }
         // One open pop-over at a time ("" | "chart" | "mesh"); every
         // opener and closer writes this, so the shells can never

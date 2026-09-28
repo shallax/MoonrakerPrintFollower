@@ -556,6 +556,8 @@ The unified output device supplies Cura's normal **Monitor** stage with a dedica
 
 The camera panel queries Moonraker's webcam API and automatically uses enabled webcams already configured for Mainsail/Fluidd/Moonraker. Relative stream URLs are resolved against the configured Moonraker host. If more than one webcam is available, Monitor displays a selector. Moonraker rotation plus horizontal/vertical flip settings are applied in Cura. **Refresh** re-reads the current camera and printer capabilities without restarting Cura.
 
+The FPS control limits MJPEG decoding above 1 FPS. At 1 FPS or below, a webcam with a valid `snapshot_url` switches to polling snapshots and closes the MJPEG stream to save bandwidth. The green section of the FPS bar appears only when that webcam has a usable snapshot URL; other webcams continue using `stream_url` at every rate.
+
 If Moonraker does not expose a webcam list, the plugin falls back to camera URL/rotation/mirror settings imported from the standalone Moonraker Connection plugin.
 
 ### Print status and controls

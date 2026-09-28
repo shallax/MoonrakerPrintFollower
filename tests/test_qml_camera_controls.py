@@ -2,6 +2,40 @@
 from tests import qml_engine_support as harness
 
 class CameraFpsControlTests(harness.CameraFpsControlTests):
+    def test_green_snapshot_range_requires_a_supported_url(self):
+        pane, window, model, image, frame = self._fps_pane(700, 700, fps=1.0)
+        self._fps_face(window, frame)
+        region = self.find(pane, "cameraSnapshotRegion")
+        self.assertFalse(region.property("visible"))
+        model.set_snapshot_available(True)
+        self.pump()
+        self.assertTrue(region.property("visible"))
+        self.assertTrue(region.height() > 0)
+        model.set_snapshot_available(False)
+        self.pump()
+        self.assertFalse(region.property("visible"))
+
+    def test_same_path_snapshot_switch_replaces_the_stream(self):
+        from PyQt6.QtCore import QMetaObject, Q_ARG, QVariant
+
+        pane, _window, model, image, _frame = self._fps_pane(700, 700)
+        model.set_snapshot_available(True)
+
+        def apply(url):
+            QMetaObject.invokeMethod(pane, "applyCamera",
+                                     Q_ARG(QVariant, harness.QUrl(url)), Q_ARG(QVariant, True))
+
+        apply("http://127.0.0.1:59999/webcam/?action=stream")
+        before = image.property("stopCount")
+        self.assertFalse(image.property("snapshotMode"))
+        model.setCameraFps(1.0)
+        apply("http://127.0.0.1:59999/webcam/?action=snapshot")
+        self.assertGreater(image.property("stopCount"), before)
+        self.assertTrue(image.property("snapshotMode"))
+        self.assertIn("action=snapshot", image.property("source").toString())
+        apply("http://127.0.0.1:59999/webcam/?action=snapshot&quality=50")
+        self.assertIn("quality=50", image.property("source").toString())
+
     def test_the_gesture_surface_survives_a_stream_off_and_on(self):
         # The live report: disabling then re-enabling the stream left
         # zoom and FPS dead. The blank is a real size change (the
@@ -958,5 +992,3 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._double_click(window, area)
         self.assertEqual(pane.property("cameraZoom"), 1.0,
                          "the left double click is still the fit")
-
-

@@ -103,6 +103,7 @@ if QT_AVAILABLE:
             self._camera_fps = float(fps)
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
+            self._snapshot_available = False
 
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFps(self):
@@ -115,6 +116,18 @@ if QT_AVAILABLE:
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFpsMax(self):
             return self._camera_fps_maximum
+
+        @pyqtProperty(bool, notify=cameraFpsChanged)
+        def cameraSnapshotAvailable(self):
+            return self._snapshot_available
+
+        @pyqtProperty(bool, notify=cameraFpsChanged)
+        def cameraSnapshotMode(self):
+            return self._snapshot_available and self._camera_fps <= 1.0
+
+        def set_snapshot_available(self, available):
+            self._snapshot_available = bool(available)
+            self.cameraFpsChanged.emit()
 
         def set_camera_ceiling(self, maximum, fps=None):
             """A camera re-selected (or re-configured) behind the pane:

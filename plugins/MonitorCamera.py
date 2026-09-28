@@ -85,6 +85,7 @@ class MonitorCamera(QObject):
                 MonitorCamera.identity(camera, index),
                 str(camera.get("name") or ""),
                 str(camera.get("stream_url") or ""),
+                str(camera.get("snapshot_url") or ""),
                 str(camera.get("rotation") or ""),
                 bool(camera.get("flip_horizontal", False)),
                 bool(camera.get("flip_vertical", False)),
@@ -117,20 +118,16 @@ class MonitorCamera(QObject):
         return max(MIN_FPS, min(MAX_FPS, configured))
 
     def set_fps(self, fps):
-        """The FPS control's commit: persist the rate and publish it.
-
-        No stream is touched — the throttle is the renderer's decode
-        cadence, so a rate change costs neither a reload nor a
-        reconnect."""
+        """Persist the rate; crossing 1 FPS switches the camera transport."""
         cameras = self._data.snapshot.webcams
         camera = cameras[self._index] if 0 <= self._index < len(cameras) else {}
         value = min(self.max_fps(camera), _clamp_fps(fps, self._fps or DEFAULT_MAX_FPS))
         if value == self._fps:
             return
         self._apply_config(replace(self._config(), camera_fps=value))
-        self._fps = value
-        self._values = {**self._values, "cameraFps": value}
-        self.changed.emit()
+        if self._fps != value:
+            self._key = None
+            self._restore_selection(self._config(), cameras)
 
     def observe(self):
         config = self._config()
@@ -182,6 +179,7 @@ class MonitorCamera(QObject):
             config.url,
             self._data.active,
             config.camera_disabled,
+            config.camera_fps,
         )
         if key == self._key:
             return
@@ -197,21 +195,19 @@ class MonitorCamera(QObject):
             self._index = -1
 
         camera = cameras[self._index] if self._index >= 0 else {}
-        stream = str(camera.get("stream_url") or config.camera_url or "")
+        maximum = self.max_fps(camera)
+        self._fps = min(maximum, _clamp_fps(getattr(config, "camera_fps", DEFAULT_MAX_FPS), DEFAULT_MAX_FPS))
+        snapshot = str(camera.get("snapshot_url") or "").strip()
+        snapshot_available = bool(snapshot) and self._valid_camera_url(snapshot)
+        snapshot_mode = snapshot_available and self._fps <= 1.0
+        stream = snapshot if snapshot_mode else str(camera.get("stream_url") or config.camera_url or "")
         # Absolute stream URLs may only be http/https, and
         # protocol-relative inputs ("//host/...") are rejected
         # outright: a hostile Moonraker listing could otherwise point
         # Cura's image loader at an arbitrary host (panel security
         # P3). Plain relative paths — the normal webcam case — pass.
-        if stream:
-            # QUrl strips surrounding whitespace, so the guard runs
-            # on the stripped form too: " //evil.example/x" would
-            # otherwise resolve to a real external host (the
-            # adversarial round's catch).
-            parsed = QUrl(stream.strip())
-            if stream.strip().startswith("//") or (parsed.isValid() and parsed.scheme()
-                                                   and parsed.scheme().lower() not in ("http", "https")):
-                stream = ""
+        if stream and not self._valid_camera_url(stream):
+            stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         self._url = self._bridge_url(config, self._url)
         if config.camera_disabled:
@@ -239,8 +235,6 @@ class MonitorCamera(QObject):
         # The throttle is the user's preference CAPPED by the selected
         # camera's own target: switching to a slower camera lowers the
         # effective rate without rewriting the stored preference.
-        maximum = self.max_fps(camera)
-        self._fps = min(maximum, _clamp_fps(getattr(config, "camera_fps", DEFAULT_MAX_FPS), DEFAULT_MAX_FPS))
         self._values = {
             "webcamNames": [str(item.get("name") or f"Camera {i + 1}") for i, item in enumerate(cameras)],
             "activeWebcamIndex": self._index,
@@ -251,8 +245,18 @@ class MonitorCamera(QObject):
             "cameraFps": self._fps,
             "cameraFpsMin": MIN_FPS,
             "cameraFpsMax": maximum,
+            "cameraSnapshotAvailable": snapshot_available,
+            "cameraSnapshotMode": snapshot_mode,
         }
         self.changed.emit()
+
+    @staticmethod
+    def _valid_camera_url(value):
+        # QUrl strips whitespace; reject protocol-relative and non-web
+        # schemes before joining either webcam URL to the Moonraker base.
+        parsed = QUrl(value.strip())
+        return bool(value.strip()) and parsed.isValid() and not value.strip().startswith("//") \
+            and (not parsed.scheme() or parsed.scheme().lower() in ("http", "https"))
 
     @staticmethod
     def _remote_stream(url):
@@ -330,4 +334,3 @@ class MonitorCamera(QObject):
         self._apply_config(config)
         self._key = None
         self._restore_selection(self._config(), cameras)
-

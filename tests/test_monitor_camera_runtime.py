@@ -2,6 +2,49 @@
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def test_snapshot_endpoint_replaces_stream_only_at_one_fps_or_below(self):
+        model = self.monitor()
+        self.deliver()
+        model._data._update(webcams=[{
+            "uid": "cam", "name": "Cam", "stream_url": "/stream",
+            "snapshot_url": "/snapshot", "target_fps": 30,
+        }])
+        self.qt.events()
+        self.assertTrue(model.cameraSnapshotAvailable)
+        self.assertFalse(model.cameraSnapshotMode)
+        self.assertEqual(model._camera.url, "http://printer-a/stream")
+        self.assertIn("http://printer-a/stream", model.cameraUrl)
+
+        model.setCameraFps(1.0)
+        self.qt.events()
+        self.assertTrue(model.cameraSnapshotMode)
+        self.assertEqual(model._camera.url, "http://printer-a/snapshot")
+        self.assertIn("http://printer-a/snapshot", model.cameraUrl)
+        model.setCameraFps(0.5)
+        self.qt.events()
+        self.assertTrue(model.cameraSnapshotMode)
+        self.assertEqual(model._camera.url, "http://printer-a/snapshot")
+        model.setCameraFps(1.5)
+        self.qt.events()
+        self.assertFalse(model.cameraSnapshotMode)
+        self.assertEqual(model._camera.url, "http://printer-a/stream")
+
+    def test_missing_or_unsafe_snapshot_keeps_the_stream_at_low_rate(self):
+        model = self.monitor()
+        self.deliver()
+        for snapshot in ("", "//foreign/snapshot", "file:///etc/passwd"):
+            with self.subTest(snapshot=snapshot):
+                model._data._update(webcams=[{
+                    "uid": "cam", "name": "Cam", "stream_url": "/stream",
+                    "snapshot_url": snapshot, "target_fps": 30,
+                }])
+                self.qt.events()
+                model.setCameraFps(0.5)
+                self.qt.events()
+                self.assertFalse(model.cameraSnapshotAvailable)
+                self.assertFalse(model.cameraSnapshotMode)
+                self.assertEqual(model._camera.url, "http://printer-a/stream")
+
     def test_webcam_list_survives_a_failed_poll(self):
         # Panel ARCH-P3-1: endstops retain last-known states on error;
         # webcams used to blank on ANY failed poll ("no camera" during a
@@ -215,5 +258,3 @@ class MonitorQtTests(harness.MonitorQtTests):
         restored_model._camera.observe()
         self.assertEqual(restored_model.activeWebcamIndex, 1)
         self.assertEqual(restored_model.cameraName, "Rear")
-
-

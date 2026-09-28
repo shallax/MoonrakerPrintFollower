@@ -566,7 +566,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
-        ("cameraFpsChanged", ("cameraFps", "cameraFpsMin", "cameraFpsMax")),
+        ("cameraFpsChanged", ("cameraFps", "cameraFpsMin", "cameraFpsMax",
+                              "cameraSnapshotAvailable", "cameraSnapshotMode")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
@@ -2575,13 +2576,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     traceCameraTimingChanged = pyqtSignal()
     traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
     webcamStreamEnabled = value_property(bool, "webcamStreamEnabled", webcamStreamEnabledChanged, True)
-    # The webcam decode throttle: the effective rate the renderer is
-    # told to decode at, the bar's floor, and the selected camera's own
+    # The webcam rate: the renderer's decode cadence and, when a
+    # snapshot URL is available at 1 FPS or below, its poll cadence.
+    # The bar's floor and selected camera's own
     # configured ceiling (Moonraker's target_fps from the webcam list).
     # The defaults hold until the first publish lands.
     cameraFps = value_property(float, "cameraFps", cameraFpsChanged, CAMERA_FPS_DEFAULT)
     cameraFpsMin = value_property(float, "cameraFpsMin", cameraFpsChanged, CAMERA_FPS_MIN)
     cameraFpsMax = value_property(float, "cameraFpsMax", cameraFpsChanged, CAMERA_FPS_FALLBACK_MAX)
+    cameraSnapshotAvailable = value_property(bool, "cameraSnapshotAvailable", cameraFpsChanged, False)
+    cameraSnapshotMode = value_property(bool, "cameraSnapshotMode", cameraFpsChanged, False)
 
     @pyqtSlot()
     def cameraFirstFrameRendered(self):

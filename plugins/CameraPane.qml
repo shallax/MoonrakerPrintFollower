@@ -55,6 +55,7 @@ Cura.RoundedRectangle {
     // restart.
     property string _appliedUrl: ""
     property bool _appliedVisible: false
+    property bool _appliedSnapshotMode: false
     // The T0-T9 timing chain's T9 gate (the reviewer's cold-start
     // diagnostics): the host mirrors the client's trace flag; the
     // first decoded frame lands on the model's slot so T9 shares the
@@ -132,6 +133,11 @@ Cura.RoundedRectangle {
     function applyCamera(url, visible) {
         var text = url != null ? url.toString() : "";
         var shouldRun = visible && text.length > 0;
+        var snapshotMode = root.printerModel != null && root.printerModel.cameraSnapshotMode;
+        // A snapshot URL names a finite request; its query is part of
+        // the endpoint (often ?action=snapshot). Stream queries still
+        // use the stable key so rotating tokens do not reconnect MJPEG.
+        var desiredKey = snapshotMode ? text : _stateKey(text);
         // The trace strips the query: the nonce is noise and a
         // credential must never ride the diagnostic.
         var shown = text.indexOf("?") >= 0 ? text.slice(0, text.indexOf("?")) : text;
@@ -143,7 +149,7 @@ Cura.RoundedRectangle {
         if (root.printerModel != null) {
             root.printerModel.cameraPaneTrace(paneId, "applyCamera visible=" + visible + " url=" + shown + " (image was visible=" + cameraImage.visible + ")");
         }
-        if (_stateKey(text) === _appliedUrl && visible === _appliedVisible) {
+        if (desiredKey === _appliedUrl && visible === _appliedVisible && snapshotMode === _appliedSnapshotMode) {
             if (root.printerModel != null) {
                 root.printerModel.cameraPaneTrace(paneId, "applyCamera no-op: state unchanged");
             }
@@ -152,6 +158,7 @@ Cura.RoundedRectangle {
         _cameraApplyInProgress = true;
         try {
             cameraImage.stop();
+            cameraImage.snapshotMode = snapshotMode;
             cameraImage.source = url;
             cameraImage.visible = visible;
             if (!shouldRun) {
@@ -166,8 +173,9 @@ Cura.RoundedRectangle {
             // handler forever (the review's hardening note).
             _cameraApplyInProgress = false;
         }
-        _appliedUrl = _stateKey(text);
+        _appliedUrl = desiredKey;
         _appliedVisible = visible;
+        _appliedSnapshotMode = snapshotMode;
         if (shouldRun) {
             if (root.printerModel != null) {
                 root.printerModel.cameraPaneTrace(paneId, "applyCamera starting the stream");
@@ -176,15 +184,16 @@ Cura.RoundedRectangle {
         }
     }
 
-    // ── the control bar: the zoom scale and the decode rate ─────────
-    // The webcam's decode throttle: the renderer decodes at this rate
-    // and no faster, so an idle monitor page stops paying for frames
-    // nobody sees. The rate is the user's, the ceiling is the
+    // ── the control bar: the zoom scale and the camera rate ─────────
+    // Above 1 FPS the renderer decodes at this rate without changing
+    // the MJPEG download. At 1 FPS or below a configured snapshot URL
+    // replaces the stream, reducing network use. The ceiling is the
     // camera's own configured target_fps from Moonraker's webcam
     // list (never a product constant).
     readonly property real cameraFps: root.printerModel != null ? root.printerModel.cameraFps : 0
     readonly property real cameraFpsMin: root.printerModel != null ? root.printerModel.cameraFpsMin : 0.5
     readonly property real cameraFpsMax: root.printerModel != null ? root.printerModel.cameraFpsMax : 30
+    readonly property bool cameraSnapshotAvailable: root.printerModel != null && root.printerModel.cameraSnapshotAvailable
 
     // ONE bar, TWO faces. The wheel is the picture's gesture, so the
     // zoom scale is the face the bar rests on and a Shift notch turns
@@ -899,10 +908,9 @@ Cura.RoundedRectangle {
                     // share the cold-start diagnostic's gate.
                     traceEnabled: root.traceCameraTiming
                     rotation: root.printerModel != null ? root.printerModel.cameraRotation : 0
-                    // The decode throttle (the idle-load request): the
-                    // renderer decodes and repaints no faster than this,
-                    // the stream itself is untouched. 0 is the renderer's
-                    // own ceiling, for a pane without a model.
+                    // Above 1 FPS this caps MJPEG decoding. At 1 FPS
+                    // or below a configured snapshot URL is polled
+                    // instead, closing the continuous stream.
                     targetFps: root.printerModel != null ? root.printerModel.cameraFps : 0
                     anchors.centerIn: parent
 
@@ -1416,6 +1424,17 @@ Cura.RoundedRectangle {
                             anchors.right: parent.right
                             anchors.bottom: parent.bottom
                             anchors.margins: 4 * screenScaleFactor
+
+                            Rectangle {
+                                objectName: "cameraSnapshotRegion"
+                                visible: root.cameraSnapshotAvailable
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: parent.height * root.fpsFraction(1.0)
+                                color: MoonrakerTheme.successGreen
+                                opacity: 0.75
+                            }
 
                             Repeater {
                                 model: root.fpsGraduations
