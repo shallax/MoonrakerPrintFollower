@@ -42,12 +42,10 @@ contract. These decisions supersede the corresponding proposals:
 
 ### Original planning record
 
-- **Codecov test analytics.** The CI already ships coverage; the test
-  RESULTS now follow: the Python legs write a JUnit report
-  (tools/unittest_junit.py) and upload it through
-  codecov/test-results-action@v1 (token `secrets.CODECOV_TOKEN`), so
-  per-test pass/fail history becomes visible in Codecov instead of
-  only in the job logs. Landed on the 4.6.0 branch.
+- **Codecov test analytics (4.6.0).** The Python legs wrote a separate
+  JUnit report through `tools/unittest_junit.py` for per-test history in
+  Codecov. The 4.6.1 CI limits that reporting pass to the Python 3.12
+  matrix leg, which also uploads measured coverage.
 
 - **Exclude objects — the plate at a glance (Phase-0 walk, 2026-09-19/20).**
   The exclude-object surface is rebuilt around one shared 2D plate

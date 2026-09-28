@@ -134,7 +134,7 @@ jobs:
     # Two smoke runs in one container verify that Cura still boots after
     # the first run's owner-only writes. The gate tests one fresh boot.
     name: Cura repeat-boot smoke
-    needs: [ci-package, native-build, python-compatibility, coverage]
+    needs: [ci-package, native-build, python-compatibility]
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
@@ -239,11 +239,15 @@ jobs:
       - name: Scan for secrets
         run: gitleaks detect --no-git --no-banner --redact .
 
-  coverage:
-    name: Coverage
+  python-compatibility:
+    name: Python ${{ matrix.python-version }} and Qt runtime
     needs: lint
     if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -251,7 +255,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python sources
+        run: python -m compileall -q plugins tools tests
 
       # Shared step: the drop_unused_apt_sources anchor defined in the
       # lint job's steps above.
@@ -264,11 +271,24 @@ jobs:
           sudo apt-get install -y libegl1 libxkbcommon0
           python -m pip install PyQt6==6.11.0
 
+      - name: Run all discovered tests with the real Qt runtime
+        if: matrix.python-version != '3.12'
+        run: |
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          env JOBS=2 LEGS=host tools/run_tests.sh
+
       - name: Install coverage
+        if: matrix.python-version == '3.12'
         run: python -m pip install coverage
 
-      - name: Run the suite under coverage
+      - name: Run all discovered tests under coverage
+        if: matrix.python-version == '3.12'
+        env:
+          # The four harness modules are part of this run. Their runner.py
+          # lives beside the tests, and dotted imports otherwise hide it.
+          PYTHONPATH: tests/harness
         run: |
+          python -c "from PyQt6.QtCore import QCoreApplication"
           python - <<'PY'
           import os
           from pathlib import Path
@@ -287,56 +307,20 @@ jobs:
           python tools/check_per_file_coverage.py coverage.json
           coverage xml --include="plugins/*"
 
-      - name: Upload coverage to Codecov
+      - name: Upload Python 3.12 coverage to Codecov
+        if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           fail_ci_if_error: false
 
-  python-compatibility:
-    name: Python ${{ matrix.python-version }} and Qt runtime
-    needs: lint
-    if: ${{ !inputs.tag_release }}
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        # Coverage runs the same full Qt suite on Python 3.12.
-        python-version: ["3.10", "3.11"]
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Compile Python sources
-        run: python -m compileall -q plugins tools tests
-
-      # Shared step: the drop_unused_apt_sources anchor defined in the
-      # lint job's steps above.
-      - *drop_unused_apt_sources
-
-      - *install_qt_runtime
-
-      - name: Run all discovered tests with the real Qt runtime
-        run: |
-          python -c "from PyQt6.QtCore import QCoreApplication"
-          env JOBS=2 LEGS=host tools/run_tests.sh
-
-      - name: Write the JUnit report
-        if: ${{ !cancelled() }}
+      - name: Write Python 3.12 JUnit report
+        if: matrix.python-version == '3.12'
         run: python tools/unittest_junit.py
 
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        # One action, two report types: codecov-action carries both, and
-        # test-results-action says so itself ("being deprecated in favor
-        # of 'codecov-action' ... with 'report_type: test_results'").
-        # Same version as the coverage upload above, deliberately.
+      - name: Upload Python 3.12 test results to Codecov
+        if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -344,7 +328,7 @@ jobs:
           report_type: test_results
 
   ci-package:
-    name: Package and captures
+    name: Build package
     needs: lint
     if: ${{ !cancelled() && (inputs.tag_release || needs.lint.result == 'success') }}
     runs-on: ubuntu-26.04
@@ -382,17 +366,7 @@ jobs:
       - name: Build and verify packages
         run: python tools/native/dev.py package
 
-      - name: Capture deterministic screenshots
-        if: ${{ !inputs.tag_release }}
-        run: |
-          QT_QPA_PLATFORM=offscreen python tools/capture_monitor.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_preview.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
-
-      - name: Upload package and capture artifacts
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v7
         with:
           name: package-artifacts
@@ -493,17 +467,16 @@ jobs:
     permissions:
       contents: read
       packages: read
-    needs: [artifact-scan, native-build, python-compatibility, coverage, harness-smoke]
-    # The PR waits for native builds and all Linux Qt suites, including
-    # Python 3.12 in coverage. Tag releases skip those jobs; ci-package
-    # runs its Python 3.11 Qt suite before artifact-scan succeeds.
+    needs: [artifact-scan, native-build, python-compatibility, harness-smoke]
+    # The PR waits for native builds and all Linux Qt suites; the Python
+    # 3.12 matrix leg also enforces coverage. Tag releases skip those jobs;
+    # ci-package runs its Python 3.11 Qt suite before artifact-scan succeeds.
     if: >-
       ${{ !cancelled() && needs.artifact-scan.result == 'success' &&
       (inputs.tag_release ||
       (github.event_name == 'pull_request' &&
       needs.native-build.result == 'success' &&
       needs.python-compatibility.result == 'success' &&
-      needs.coverage.result == 'success' &&
       needs.harness-smoke.result == 'success')) }}
     # Every unit runs on every platform a user can run Cura on. The Linux leg
     # is unchanged; the native legs install Cura themselves and pay for it, so

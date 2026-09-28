@@ -84,9 +84,9 @@ are visible; a Python 3.14 patch release difference is acceptable.
   workers at a time (native default: core count capped at 16; Linux
   container `test_files` default: 8), one log and one verdict line per
   file, and a non-zero exit if ANY file fails. It never reports a pass for an empty
-  list. JUnit report generation also runs isolated files in parallel
-  (`JOBS`, default 2), then runs the timing benchmark alone. Empty or
-  crashed report children fail the report instead of silently dropping cases.
+  list. CI runs the full suite once per Python version; the 3.12 matrix leg
+  measures coverage during that run. Its optional Codecov JUnit report then
+  repeats the tests on 3.12 only, in isolated files (`JOBS`, default 2).
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
@@ -165,9 +165,9 @@ are visible; a Python 3.14 patch release difference is acceptable.
   job enforces this on every push: it rebuilds the pinned image,
   regenerates the captures inside it and fails byte-for-byte if the
   committed copies are stale (extra hand-captured files are allowed and
-  never checked). CI still runs the capture
-  scripts as a render smoke test (each script fails on a blank capture)
-  but no longer ships the PNGs as artifacts. These capture the 2-D UI
+  never checked). The native build jobs also run capture scripts as a
+  render smoke test (each script fails on a blank capture) and retain their
+  PNGs as artifacts. These capture the 2-D UI
   only: the 3-D Preview (bed-mesh overlay on a rendered model) needs a
   real Cura session. The native harness exercises Preview with screenshots
   and video (see TESTING.md); choose marketing captures deliberately.
@@ -379,9 +379,10 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
   For actual worker, socket and Qt completion, wait on a signal or condition
   with a bounded timeout so a stalled completion fails rather than hanging.
   Keep real elapsed-time measurements isolated from parallel correctness tests.
-- CI coverage and the release workflow also isolate files. The host coverage
-  job uses `tools/run_some.py --coverage-dir <fresh-directory>` and combines its
-  per-worker data; the wall-clock seek benchmark runs without instrumentation.
+- CI coverage and the release workflow also isolate files. The Python 3.12
+  matrix leg uses `tools/run_some.py --coverage-dir <fresh-directory>` and
+  combines its per-worker data; the wall-clock seek benchmark runs without
+  instrumentation. The JUnit analytics pass runs only on Python 3.12.
   Never restore a single-process Qt discovery in either workflow: another
   module's application can silently skip the real-engine cases.
 - Tests that need real Qt are guarded with
