@@ -68,6 +68,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set harness work directory
+        run: |
+          echo "MPF_WORK_DIR=$RUNNER_TEMP/mpf" >> "$GITHUB_ENV"
+          echo "CURA_VERSIONS_DIR=$RUNNER_TEMP/mpf/cura_versions" >> "$GITHUB_ENV"
+
       - name: Build the plugin package
         run: make package >/dev/null
 
@@ -75,7 +80,7 @@ jobs:
         id: cura-cache
         uses: actions/cache@v6
         with:
-          path: /tmp/mpf/cura_versions
+          path: ${{ runner.temp }}/mpf/cura_versions
           key: mpf-cura-${{ matrix.version }}
 
       - name: Fetch the pinned Cura
@@ -90,18 +95,19 @@ jobs:
             ./tools/build_image.sh mpf-cura-harness tools/harness
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          container_dir="$(tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
-              -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
+              -v "$MPF_WORK_DIR:$container_dir" mpf-cura-harness sleep infinity
 
       # One attempt per unit (the gate ruling): a retried unit would
       # hide flakiness. The gallery is the proof.
       - name: Run the unit
         run: |
-          mkdir -p /tmp/mpf
+          mkdir -p "$MPF_WORK_DIR"
           timeout "${{ matrix.unit.budget }}m" env \
               CURA_VERSION="${{ matrix.version }}" \
               MODE="${{ matrix.unit.mode }}" SCENARIO_GROUP="${{ matrix.unit.group }}" \
-              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}" \
+              RUN_DIR_NAME="$MPF_WORK_DIR/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}" \
               ./tools/ui_test.sh
 
       - name: Upload the failed unit's gallery
@@ -109,5 +115,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sweep-${{ matrix.version }}-${{ matrix.unit.name }}
-          path: /tmp/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}
+          path: ${{ runner.temp }}/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}
           if-no-files-found: warn

@@ -72,6 +72,12 @@ def _container(work_dir, path):
 
 
 class ContainerPathMappingTests(unittest.TestCase):
+    def test_runner_temp_gallery_maps_to_the_container_mount(self):
+        self.assertEqual(
+            _container("/runner/_temp/mpf", "/runner/_temp/mpf/ui-artifacts/runs/demo"),
+            "/tmp/mpf/ui-artifacts/runs/demo",
+        )
+
     def test_slot_prefix_rewrites_to_the_mount_root(self):
         # The slot's host dir mounts at the container's /tmp/mpf —
         # a host-form slot path must become the container form.

@@ -315,6 +315,9 @@ classification summary), the Cura log, the simulator's ledger and
 the simulator's scenario log. **AMENDED (2026-09-15):** the
 per-step address record is *planned*, not shipped — the evidence
 record is what the gate cites today.
+That path is the local default. CI puts the host work tree under the
+runner's temp directory, mounts it at `/tmp/mpf` inside Linux harness
+containers, and uploads the corresponding gallery from the host tree.
 
 The runner supervises the app — **AMENDED (2026-09-15):** the
 taxonomy strings and the wedge dump this line once promised were

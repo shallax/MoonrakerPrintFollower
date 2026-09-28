@@ -43,7 +43,7 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # hung boot from inside the container (the host's ptrace_scope
 # otherwise blocks a non-parent tracer).
 docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
-    -v "$HARNESS_DIR:$HARNESS_DIR" mpf-cura-harness sleep infinity >/dev/null
+    -v "$HARNESS_DIR:/tmp/mpf" mpf-cura-harness sleep infinity >/dev/null
 
 export CURA_VERSIONS_DIR="$HARNESS_DIR/cura_versions"
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
