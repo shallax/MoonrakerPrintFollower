@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from unittest.mock import patch
 
-from PyQt6.QtCore import QPointF, QUrl
+from PyQt6.QtCore import QObject, QPointF, QUrl
 from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 
@@ -345,6 +345,21 @@ def main():
         REQUIRED_IDENTICAL_FRAMES = 3
         SETTLE_SPAN_SECONDS = 0.5
 
+        def pending_layout_retries():
+            """The QML readout-fit retries can fire after a quiet frame run.
+
+            Under CI load their 200 ms timers may be delivered late. A
+            screenshot taken while one is armed records the old strip or
+            section layout even when its pixels have been stable so far.
+            """
+            return any(
+                timer.property("running")
+                for timer in item.findChildren(QObject)
+                if timer.metaObject().className() == "QQmlTimer"
+                and timer.property("interval") == 200
+                and timer.property("repeat") is False
+            )
+
         def settled_window(timeout_ms=10000):
             """The capture transaction: pump events, grab the whole
             window, and require three consecutive complete frames to
@@ -367,7 +382,8 @@ def main():
                     if identical == 0:
                         first_identical = time.monotonic()
                     identical += 1
-                    if identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
+                    if not pending_layout_retries() \
+                            and identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
                             and time.monotonic() - first_identical >= SETTLE_SPAN_SECONDS:
                         return image
                 else:
