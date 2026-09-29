@@ -202,7 +202,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
     def test_a_face_leases_held_assets_and_releases_its_model_on_destruction(self):
         from PyQt6.QtCore import QEvent
         component = harness.QQmlComponent(self.engine)
-        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.ROOT / "mpf" / "PlateProgressFace.qml")))
+        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.qml_source("PlateProgressFace.qml"))))
         first = harness.PlatePrinterDouble()
         second = harness.PlatePrinterDouble()
         face = component.createWithInitialProperties({"printerModel": first})

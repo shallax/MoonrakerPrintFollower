@@ -33,12 +33,21 @@ MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encod
 QML_FILES = sorted(str(path.relative_to(PLUGINS.root)) for path in PLUGINS.rglob("*.qml"))
 QML_SOURCES = {str(path.relative_to(PLUGINS.root)): path.read_text(encoding="utf-8")
                for path in PLUGINS.rglob("*.qml")}
-CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
-MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
-CAMERA_PANE_QML = QML_SOURCES["CameraPane.qml"]
-UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
-ACTION_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
-EMPTY_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
+def audited(name):
+    """A named document's source, read at its audited key.
+
+    Asked for by name: these pins name a document, not a directory, so
+    the next move of the tree does not have to find them all.
+    """
+    return QML_SOURCES[str(PLUGINS.path(name).relative_to(PLUGINS.root))]
+
+
+CONFIG_QML = audited("MoonrakerFollowerConfiguration.qml")
+MONITOR_QML = audited("MoonrakerMonitor.qml")
+CAMERA_PANE_QML = audited("CameraPane.qml")
+UPLOAD_QML = audited("MoonrakerUploadDialog.qml")
+ACTION_QML = audited("MoonrakerPreviewCard.qml")
+EMPTY_QML = audited("MoonrakerPreviewCard.qml")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 

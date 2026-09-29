@@ -214,7 +214,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("confirm_replace", integration)
 
         card = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "MoonrakerPreviewCard.qml")
+            os.path.abspath(__file__)))), "mpf", "printer", "MoonrakerPreviewCard.qml")
         with open(card, encoding="utf-8") as handle:
             qml = handle.read()
         self.assertIn('objectName: "moonrakerReplacePrompt"', qml)

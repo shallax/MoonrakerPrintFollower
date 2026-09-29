@@ -45,7 +45,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._application = application
         self._follower = follower
         self._output_plugin = output_plugin
-        self._qml_url = "MoonrakerFollowerConfiguration.qml"
+        self._qml_url = "cura/MoonrakerFollowerConfiguration.qml"
 
         # Connection tests intentionally use a separate transport instance because
         # the URL/API key may be unsaved. They still use the same HTTP utility,

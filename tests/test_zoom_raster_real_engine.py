@@ -103,10 +103,8 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         cls._printer = _parent.PlateFaceRenderTests._printer()  # retained: the GC trap
         from PyQt6.QtQml import QQmlComponent
         from PyQt6.QtCore import QUrl
-        import pathlib
-        ROOT = pathlib.Path(__file__).resolve().parents[1]
         comp = QQmlComponent(cls.engine)
-        comp.loadUrl(QUrl.fromLocalFile(str(ROOT / "mpf" / "PlateProgressFace.qml")))
+        comp.loadUrl(QUrl.fromLocalFile(str(_parent.qml_source("PlateProgressFace.qml"))))
         cls.face = comp.create()
         assert cls.face is not None, _parent.qml_error_report(comp)
         # The model must precede the sizing: PlateCanvas replots on

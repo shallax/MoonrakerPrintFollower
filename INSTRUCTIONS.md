@@ -454,7 +454,7 @@ file, never inline content:
 1. The component (`FooSection.qml`) — a `ColumnLayout` root
    (`id: root`, `spacing: 0`) with `property var printerModel: null`,
    then the shared `CollapsibleSectionHeader`
-   (`mpf/CollapsibleSectionHeader.qml`, instantiated directly —
+   (`mpf/widgets/CollapsibleSectionHeader.qml`, instantiated directly —
    no Loader) with `Layout.fillWidth: true`,
    `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
@@ -526,13 +526,14 @@ binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
 `tests/test_runtime_monitor_composition.py`.
 
-Plugin-drawn glyphs (see `mpf/PadlockLocked.svg`,
+Plugin-drawn glyphs (see `mpf/resources/svg/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
 `UM.ColorImage` injects the theme colour into the root `<svg>` element,
 so the glyph follows Cura's theme and scaling automatically. Reference
-them from a header with `sectionIconUrl: Qt.resolvedUrl("Name.svg")` or
-from a button with `iconSource: Qt.resolvedUrl("Name.svg")`, resolved
-relative to the QML file's directory.
+them from a header with
+`sectionIconUrl: Qt.resolvedUrl("../resources/svg/Name.svg")` or from
+a button with the same `iconSource` — the URL resolves relative to
+the importing document, so the `..` count follows its depth.
 
 ### Persisting monitor panel state
 
@@ -880,7 +881,7 @@ by default — request FAILURES always log a warning regardless.
 
 ### Follower shader maintenance
 
-The release archives include `mpf/shaders/stroke.vert.qsb` and
+The release archives include `mpf/resources/shaders/stroke.vert.qsb` and
 `stroke.frag.qsb`; Cura users need no compiler or additional dependency.
 `make all`, `make build`, and `make package` generate the bundles before
 packaging; CI and release artifact builds do the same. Windows package and

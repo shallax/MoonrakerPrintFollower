@@ -34,7 +34,10 @@ qmlformat="$(command -v qmlformat 2>/dev/null || true)"
 [ -z "$qmlformat" ] && [ -x /usr/lib/qt6/bin/qmlformat ] && qmlformat=/usr/lib/qt6/bin/qmlformat
 # tests/theme_assets is vendored upstream Cura QML, verbatim: it must
 # never be reformatted, so the format gate skips it.
-changed="$(git diff --cached --name-only --diff-filter=ACM | grep '\.qml$' \
+# R is in the filter because a move is a rename: the documents a
+# restructure relocates are exactly the ones whose import and asset
+# lines it rewrites, and ACM alone left them unchecked.
+changed="$(git diff --cached --name-only --diff-filter=ACMR | grep '\.qml$' \
     | grep -v '^tests/theme_assets/' || true)"
 
 check compile python3 -m compileall -q mpf tools tests &

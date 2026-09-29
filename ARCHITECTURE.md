@@ -588,9 +588,10 @@ resize mapping and the host's printer-change resets are structural
 entanglements, not section content.
 
 **The theme singleton (4.4.0).** The plugin's colours live in one
-singleton document (`mpf/theme/MoonrakerTheme.qml`, imported by
-the QML directory as `import "theme"`): the axis identity colours,
-the pause orange, the console palette, the strip accents. No
+singleton document (`mpf/resources/theme/MoonrakerTheme.qml`,
+registered by the `qmldir` beside it and imported from a document
+as `import "../resources/theme"`): the axis identity colours, the
+pause orange, the console palette, the strip accents. No
 document repeats a colour literal; `tests/test_theme.py` scans the
 QML tree and fails any magic colour AND any cited token the
 singleton does not declare (the two directions of the gate), and

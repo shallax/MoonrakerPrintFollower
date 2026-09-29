@@ -306,9 +306,9 @@ def qmlformat_exe():
 
 
 def qml_files(root: Path):
-    files = sorted((root / "mpf").glob("*.qml"))
-    files += sorted((root / "mpf" / "theme").glob("*.qml"))
-    return files
+    # Recursive: the documents nest by domain, and a top-level glob
+    # would find none of them and format nothing.
+    return sorted((root / "mpf").rglob("*.qml"))
 
 
 def first_difference(current: str, formatted: str) -> str:

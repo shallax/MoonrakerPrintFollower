@@ -260,7 +260,7 @@ def main():
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "MoonrakerMonitorBedMesh.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "monitor", "MoonrakerMonitorBedMesh.qml")))
         if component.isError():
             raise RuntimeError("\n".join(str(e) for e in component.errors()))
 
