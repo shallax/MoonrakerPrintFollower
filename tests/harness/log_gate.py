@@ -10,7 +10,7 @@ import sys
 
 def plugin_log_noise(text):
     qml_names = {path.name for path in
-                 (Path(__file__).resolve().parents[2] / "mpf").glob("*.qml")}
+                 (Path(__file__).resolve().parents[2] / "mpf").rglob("*.qml")}
     noisy = re.compile(r"\b(?:WARNING|ERROR|CRITICAL|TypeError|ReferenceError)\b|(?i:(?:polish|binding) loop)")
     owned = re.compile(r"MoonrakerPrintFollower")
     return [(number, line) for number, line in enumerate(text.splitlines(), 1)
