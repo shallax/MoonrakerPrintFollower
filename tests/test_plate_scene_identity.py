@@ -2,7 +2,7 @@
 
 import unittest
 
-from plugins.PlateSceneIdentity import (
+from mpf.PlateSceneIdentity import (
     NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom,
 )
 

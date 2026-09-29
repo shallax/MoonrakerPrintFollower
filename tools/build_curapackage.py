@@ -10,7 +10,7 @@ import zipfile
 from typing import Iterable
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "plugins"
+PLUGIN_ROOT = ROOT / "mpf"
 PACKAGE_JSON = ROOT / "package.json"
 LICENSE_FILE = ROOT / "LICENSE"
 CHANGELOG_FILE = ROOT / "CHANGELOG.md"

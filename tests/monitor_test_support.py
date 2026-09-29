@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from plugins.MonitorFormatting import (
+from mpf.MonitorFormatting import (
     core_values,
     estimate_remaining,
     file_row_payload,
@@ -29,11 +29,11 @@ from plugins.MonitorFormatting import (
     preview_temperature_pair,
     print_job_caption,
 )
-from plugins.MonitorPermissions import Observation
-from plugins.PrintState import LayerResolver, PhysicalLayer
+from mpf.MonitorPermissions import Observation
+from mpf.PrintState import LayerResolver, PhysicalLayer
 from tests.qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 DATA = (PLUGINS / "MonitorData.py").read_text(encoding="utf-8")

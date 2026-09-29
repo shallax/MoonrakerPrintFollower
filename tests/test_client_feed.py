@@ -8,9 +8,9 @@ from tests.qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 
-    from plugins.MonitorData import MonitorData
-    from plugins.MoonrakerClient import MoonrakerClient
-    from plugins.MoonrakerSession import MoonrakerSession, PollPolicy
+    from mpf.MonitorData import MonitorData
+    from mpf.MoonrakerClient import MoonrakerClient
+    from mpf.MoonrakerSession import MoonrakerSession, PollPolicy
 
 
     class ScriptedSocket(QObject):
@@ -273,7 +273,7 @@ class ClientFeedTests(unittest.TestCase):
         self.socket.hold_upgrade = True
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
         self.client.start()
-        from plugins.MonitorData import MonitorData
+        from mpf.MonitorData import MonitorData
         data = MonitorData(self.client, None)
         for timer in data._timers.values():
             timer.stop()
@@ -525,7 +525,7 @@ if QT_AVAILABLE:
             # list, dimmed "passed" (the rows never vanish mid-print),
             # and the user can still remove it by hand.
             from unittest.mock import Mock
-            from plugins.PauseController import PauseController
+            from mpf.PauseController import PauseController
             client = Mock()
             controller = PauseController(client)
             controller.bind(("job-key",))
@@ -547,7 +547,7 @@ if QT_AVAILABLE:
             # dropped BEFORE the new path is written — one cache slot,
             # one reset per transition.
             from contextlib import contextmanager
-            from plugins.PreviewMotion import PreviewMotion
+            from mpf.PreviewMotion import PreviewMotion
 
             class FakeView:
                 def __init__(self):
@@ -592,7 +592,7 @@ if QT_AVAILABLE:
             # repro: the stale flag kept the replacement view's
             # nonzero minimum).
             from contextlib import contextmanager
-            from plugins.PreviewMotion import PreviewMotion
+            from mpf.PreviewMotion import PreviewMotion
 
             class FakeView:
                 def __init__(self):
@@ -636,7 +636,7 @@ if QT_AVAILABLE:
         must MERGE per object."""
 
         def setUp(self):
-            from plugins.MoonrakerSocket import MoonrakerSocket
+            from mpf.MoonrakerSocket import MoonrakerSocket
             self.app = QCoreApplication.instance() or QCoreApplication([])
             self.socket = MoonrakerSocket()
             self.socket._core_names = {"print_stats", "pause_resume"}

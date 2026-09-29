@@ -853,7 +853,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
     def test_a_popover_blocks_camera_gestures_but_the_uncovered_webcam_still_works(self):
         pane, window, model, _image, _frame = self._fps_pane(700, 700)
         component = harness.QQmlComponent(self.engine)
-        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.ROOT / "plugins" / "MonitorPopOver.qml")))
+        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.ROOT / "mpf" / "MonitorPopOver.qml")))
         card = component.create()
         self.assertIsNotNone(card, "\n".join(error.toString() for error in component.errors()))
         card.setParentItem(window.contentItem())

@@ -8,6 +8,7 @@ capture theme live. Each failure prints file + message."""
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -26,7 +27,7 @@ theme_tree = materialise_theme_assets(os.path.join(ROOT, "dist", ".capture-theme
 
 engine = QQmlEngine()
 engine.addImportPath(os.path.join(ROOT, "tests", "qml_stubs"))
-engine.addImportPath(os.path.join(ROOT, "plugins"))
+engine.addImportPath(os.path.join(ROOT, "mpf"))
 engine.addImportPath(theme_tree)
 engine.rootContext().setContextProperty("screenScaleFactor", 1.0)
 
@@ -122,7 +123,7 @@ diagnostics = []
 
 def handler(mode, context, message) -> None:
     text = str(message)
-    if "/plugins/" in text and BAD.search(text):
+    if "/mpf/" in text and BAD.search(text):
         diagnostics.append(text)
 
 
@@ -130,9 +131,10 @@ qInstallMessageHandler(handler)
 
 
 failures = []
-for name in sorted(item for item in os.listdir(os.path.join(ROOT, "plugins")) if item.endswith(".qml")):
+_MPF = os.path.join(ROOT, "mpf")
+for name in sorted(str(f.relative_to(_MPF)) for f in Path(_MPF).rglob("*.qml")):
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", name)))
+    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", name)))
     if component.isError():
         failures.extend(f"{name}: {error.toString()}" for error in component.errors())
     if name == "WhatsNewOverlay.qml":
@@ -155,7 +157,7 @@ failures.extend(f"engine: {text}" for text in diagnostics)
 # (a root-level visible binding never tracked those changes —
 # engine-proven — so the gate lives on an inner row).
 indicator = QQmlComponent(engine)
-indicator.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "LoadProgressIndicator.qml")))
+indicator.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "LoadProgressIndicator.qml")))
 if indicator.isError():
     failures.extend(f"LoadProgressIndicator: {error.toString()}" for error in indicator.errors())
 else:
@@ -178,4 +180,4 @@ if failures:
     for failure in failures:
         print(f"QML engine failure: {failure}")
     sys.exit(1)
-print(f"QML engine check passed for {len([f for f in os.listdir(os.path.join(ROOT, 'plugins')) if f.endswith('.qml')])} files")
+print(f"QML engine check passed for {len(list(Path(_MPF).rglob('*.qml')))} files")

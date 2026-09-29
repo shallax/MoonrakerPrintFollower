@@ -18,10 +18,10 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
-            from plugins.ConsoleController import ConsoleController
-            from plugins.PluginPersistence import PluginPersistence
-            from plugins.PrinterBinding import PrinterBinding
-            from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
+            from mpf.ConsoleController import ConsoleController
+            from mpf.PluginPersistence import PluginPersistence
+            from mpf.PrinterBinding import PrinterBinding
+            from mpf.PrinterConfig import PrinterConfig, PrinterConfigStore
         finally:
             _started.__exit__(None, None, None)
 except ImportError:
@@ -603,7 +603,7 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertNotIn("migration", document["global"])
 
     def test_the_ui_state_stores_boundary_guard_and_the_facade_branch(self):
-        from plugins.UiStateStore import UiStateStore
+        from mpf.UiStateStore import UiStateStore
 
         # NaN cannot survive the JSON round-trip (allow_nan=False) —
         # the boundary guard skips the save with the owner's wording.
@@ -626,7 +626,7 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertEqual(facade.updates[1][0], {"sectionLayout": {"ids": ["toolhead"]}})
 
     def test_the_banner_copy_has_two_flavours_and_the_diagnostics_row_demotes(self):
-        from plugins.MoonrakerMonitorModel import (
+        from mpf.MoonrakerMonitorModel import (
             _migration_banner_text,
             _migration_diagnostics_text,
         )
@@ -655,7 +655,7 @@ class MigrationTriggerTests(unittest.TestCase):
 
         sys.modules["UM.Message"].Message = RecordingMessage
         try:
-            from plugins.FollowerRuntime import _raise_migration_toast
+            from mpf.FollowerRuntime import _raise_migration_toast
             _raise_migration_toast({"backupWritten": True, "backupName": "cura.cfg.2026-09-18-14-30-12"})
             _raise_migration_toast({"backupWritten": False})
         finally:
@@ -705,7 +705,7 @@ class MigrationTriggerTests(unittest.TestCase):
 
         sys.modules["UM.Message"].Message = RecordingMessage
         try:
-            from plugins.FollowerRuntime import _raise_migration_toast
+            from mpf.FollowerRuntime import _raise_migration_toast
             with patch.object(Resources, "getConfigStoragePath", return_value="/tmp/config"), \
                  patch.object(QDesktopServices, "openUrl") as open_mock:
                 _raise_migration_toast({"backupWritten": True, "backupName": "cura.cfg.2026-09-18-14-30-12"})
@@ -746,7 +746,7 @@ class LateActivationTests(unittest.TestCase):
         self.addCleanup(self.config_patcher.stop)
         self.addCleanup(self.cache_patcher.stop)
         self.addCleanup(self.config_patcher.stop)
-        from plugins.FollowerRuntime import FollowerRuntime
+        from mpf.FollowerRuntime import FollowerRuntime
         self.FollowerRuntime = FollowerRuntime
 
     def _app(self, started, with_signal):
@@ -770,7 +770,7 @@ class LateActivationTests(unittest.TestCase):
 
     def test_normal_startup_waits_for_the_boot_edge(self):
         app = self._app(started=False, with_signal=True)
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         # The class patch must be active BEFORE the runtime connects:
         # the signal captures the bound method at connect time, so an
         # instance patch after construction would spy on nothing.
@@ -786,7 +786,7 @@ class LateActivationTests(unittest.TestCase):
 
     def test_a_late_construction_announces_immediately(self):
         app = self._app(started=True, with_signal=True)
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce") as announce:
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -795,7 +795,7 @@ class LateActivationTests(unittest.TestCase):
 
     def test_a_host_without_the_boot_signal_announces_immediately(self):
         app = self._app(started=False, with_signal=False)
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce") as announce:
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -831,7 +831,7 @@ class MachineNamespaceTests(unittest.TestCase):
         self.addCleanup(self.resources_patcher.stop)
         self.addCleanup(self.config_patcher.stop)
         self.addCleanup(self.cache_patcher.stop)
-        from plugins.FollowerRuntime import FollowerRuntime
+        from mpf.FollowerRuntime import FollowerRuntime
         self.FollowerRuntime = FollowerRuntime
 
     def _app(self, started):
@@ -840,7 +840,7 @@ class MachineNamespaceTests(unittest.TestCase):
         return app
 
     def _payload(self, marker):
-        from plugins.PlateProgress import encode_layer
+        from mpf.PlateProgress import encode_layer
         return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0],
                                                    [1.0, float(marker), 1.0]]]},
                              "travels": [], "travelStarts": [], "travelEnds": [],
@@ -857,7 +857,7 @@ class MachineNamespaceTests(unittest.TestCase):
         # to A — A's original persisted state is recovered.
         app = self._app(started=True)
         app.stack = self.qt.Machine("A")
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -874,7 +874,7 @@ class MachineNamespaceTests(unittest.TestCase):
         store_b.finalise("print-key", [self._payload(2)])
         # The isolation: B's write never touched A's store, and vice
         # versa — the same key holds each machine's own payload.
-        from plugins.PlateProgress import decode_layer
+        from mpf.PlateProgress import decode_layer
         table_a = store_a.load_table("print-key")
         table_b = store_b.load_table("print-key")
         self.assertNotEqual(decode_layer(store_a.read("print-key", table_a["table"], 0)),
@@ -898,12 +898,12 @@ class MachineNamespaceTests(unittest.TestCase):
         # real machine's namespace.
         app = self._app(started=True)
         app.stack = None  # unresolved at construction
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         unknown_store = owner.index._prepared
-        from plugins.CacheNamespaces import CacheNamespaces
+        from mpf.CacheNamespaces import CacheNamespaces
         self.assertEqual(owner.cache_namespaces.machine_hash,
                          CacheNamespaces._hash("unknown"),
                          "the unresolved runtime never hashed the unknown id")
@@ -925,7 +925,7 @@ class MachineNamespaceTests(unittest.TestCase):
         # disabled (the byte budget is the user-facing limit).
         app = self._app(started=True)
         app.stack = self.qt.Machine("A")
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -965,7 +965,7 @@ class MachineNamespaceTests(unittest.TestCase):
         # must never retire an active prepared writer needlessly).
         app = self._app(started=True)
         app.stack = self.qt.Machine("A")
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -1006,8 +1006,8 @@ class MachineNamespaceTests(unittest.TestCase):
         # set that fits the machine's budget survives the index
         # prune even when it exceeds the index's OLD 128 MiB
         # standalone default.
-        from plugins.GCodeIndex import PersistentIndexCache
-        from plugins.PreparedStore import PreparedCache
+        from mpf.GCodeIndex import PersistentIndexCache
+        from mpf.PreparedStore import PreparedCache
         machine_budget = 256 * 1024 * 1024
         index = PersistentIndexCache(self.base, max_bytes=machine_budget,
                                      max_entries=None)
@@ -1073,7 +1073,7 @@ class WriterOwnershipTests(unittest.TestCase):
         self.addCleanup(self.resources_patcher.stop)
         self.addCleanup(self.config_patcher.stop)
         self.addCleanup(self.cache_patcher.stop)
-        from plugins.FollowerRuntime import FollowerRuntime
+        from mpf.FollowerRuntime import FollowerRuntime
         self.FollowerRuntime = FollowerRuntime
 
     def _app(self, started):
@@ -1084,7 +1084,7 @@ class WriterOwnershipTests(unittest.TestCase):
     def _owner(self, machine):
         app = self._app(started=True)
         app.stack = self.qt.Machine(machine)
-        from plugins.MigrationNotice import MigrationNotice
+        from mpf.MigrationNotice import MigrationNotice
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
@@ -1101,8 +1101,8 @@ class WriterOwnershipTests(unittest.TestCase):
         (the `entered` event fires only after that append), so the
         cutover below always races a worker that still owns the
         writer."""
-        from plugins.GCodeIndexService import IndexView
-        import plugins.GCodeIndexService as service_module
+        from mpf.GCodeIndexService import IndexView
+        import mpf.GCodeIndexService as service_module
         from tests.test_plate_progress import make_index
 
         service = owner.index
@@ -1152,7 +1152,7 @@ class WriterOwnershipTests(unittest.TestCase):
     def _empty_slots_after(loaded, first_empty):
         """The checkpoint holds exactly the pre-cutover layers: every
         slot after the committed prefix reads EMPTY."""
-        from plugins.PreparedStore import STATE_EMPTY
+        from mpf.PreparedStore import STATE_EMPTY
         return all(entry[0] == STATE_EMPTY
                    for entry in loaded["table"][first_empty:])
 
@@ -1165,7 +1165,7 @@ class WriterOwnershipTests(unittest.TestCase):
         # the released worker's later appends no-op, nothing raises
         # from the closed handle, and A's partial coverage is
         # recoverable on the return.
-        from plugins.PreparedStore import STATE_CACHED
+        from mpf.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
         store_a = service._prepared
@@ -1223,7 +1223,7 @@ class WriterOwnershipTests(unittest.TestCase):
         # budget, the released worker cannot append through the
         # retired writer, and the committed partial stays
         # recoverable.
-        from plugins.PreparedStore import STATE_CACHED
+        from mpf.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
         store_old = service._prepared
@@ -1260,7 +1260,7 @@ class WriterOwnershipTests(unittest.TestCase):
         # the committed layers, the released worker's later appends
         # are refused, and nothing raises from touching the retired
         # (closed) writer.
-        from plugins.PreparedStore import STATE_CACHED
+        from mpf.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
         store_a = service._prepared

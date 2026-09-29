@@ -779,7 +779,7 @@ For development/testing:
 1. Open **Help → Show Configuration Folder** in Cura.
 2. Open that configuration folder's `plugins` directory.
 3. Create a `MoonrakerPrintFollower` directory there if necessary.
-4. Copy the contents of this repository's `plugins` directory into it.
+4. Copy the contents of this repository's `mpf` directory into it.
 5. Restart Cura completely.
 6. Open **Settings → Printer → Manage Printers** and select **Configure Moonraker**.
 

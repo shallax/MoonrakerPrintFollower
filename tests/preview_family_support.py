@@ -34,8 +34,8 @@ from unittest.mock import Mock
 
 from tests.qt_runtime_support import QT_AVAILABLE
 
-from plugins import SocketFraming
-from plugins.SocketFraming import (
+from mpf import SocketFraming
+from mpf.SocketFraming import (
     FrameState,
     FramingError,
     MAX_MESSAGE_BYTES,
@@ -50,7 +50,7 @@ from plugins.SocketFraming import (
     parse_frames,
     verify_handshake,
 )
-from plugins.ToolheadPolicy import (
+from mpf.ToolheadPolicy import (
     CENTER_Z_MM,
     EXTRUDE_SPEED_MAX,
     JOG_DISTANCE_DEFAULT,
@@ -79,13 +79,13 @@ from plugins.ToolheadPolicy import (
     push_op,
     z0_script,
 )
-from plugins.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
-from plugins.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.PreviewFollower import PreviewFollower, preview_override_kind
 
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
-    from plugins.MonitorData import MonitorData, freeze
-    from plugins.PreviewMotion import PreviewMotion
+    from mpf.MonitorData import MonitorData, freeze
+    from mpf.PreviewMotion import PreviewMotion
 
 
 # --------------------------------------------------------------------------
@@ -478,7 +478,7 @@ class PreviewMotionTests(unittest.TestCase):
         from PyQt6.QtCore import QCoreApplication
         # QTimer needs an application object even when it never fires here.
         self.app = QCoreApplication.instance() or QCoreApplication([])
-        self.patch = patch("plugins.PreviewMotion.time", FakeClock())
+        self.patch = patch("mpf.PreviewMotion.time", FakeClock())
         # PreviewMotion resolves `time.monotonic` through its own module global.
         self.clock = self.patch.start()
         self.addCleanup(self.patch.stop)

@@ -11,8 +11,8 @@ compile and the vertex upload inside Cura's OpenGL renderer need a real GL
 context, so those calls are asserted against a recording factory; frames
 are the offscreen harness's job, not a unit test's.
 
-Measured on the last run — plugins/BedMeshSceneNode.py 99%,
-plugins/BedMeshPresenter.py 100%. Leftovers, both defensive code that the
+Measured on the last run — mpf/BedMeshSceneNode.py 99%,
+mpf/BedMeshPresenter.py 100%. Leftovers, both defensive code that the
 public entry points cannot reach:
 
   BedMeshSceneNode.py:87   the trailing `return [*stops[-1][1], alpha]`:
@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
-from plugins.MonitorFormatting import parse_bed_mesh
+from mpf.MonitorFormatting import parse_bed_mesh
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 
 try:  # the stdlib-only host suite runs without numpy

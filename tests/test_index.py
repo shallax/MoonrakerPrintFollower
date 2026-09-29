@@ -10,9 +10,9 @@ import unittest
 from array import array
 from unittest.mock import patch
 
-from plugins import ArcGeometry
-from plugins.MoonrakerProtocol import RemoteFileIdentity
-from plugins.GCodeIndex import (
+from mpf import ArcGeometry
+from mpf.MoonrakerProtocol import RemoteFileIdentity
+from mpf.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,
@@ -72,7 +72,7 @@ class IndexTests(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(folder)), sorted(names[1:]))
 
     def test_eviction_preserves_another_live_writer(self):
-        from plugins.CachePolicy import evict_to_budget
+        from mpf.CachePolicy import evict_to_budget
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, f"index.mpfi.gz.tmp-{os.getpid()}-1-1")
             with open(path, "wb") as handle:
@@ -850,7 +850,7 @@ G00 X2 Y2 Z0.2
         # marker-dense files cap their layer blocks, and a one-layer
         # motion bomb truncates at the per-layer cap instead of loading
         # the whole print into RAM.
-        from plugins.GCodeIndex import _MAX_LAYER_BLOCKS, _MAX_MOTIONS_PER_LAYER
+        from mpf.GCodeIndex import _MAX_LAYER_BLOCKS, _MAX_MOTIONS_PER_LAYER
         giant = build_index_from_bytes(b";LAYER:0\nG1 X1\n" + b"G1 X2 " * 300_000)
         self.assertEqual(giant.layer_count(), 1)
         dense = build_index_from_bytes(b"".join(b";LAYER:%d\nG1 X1\n" % layer
@@ -889,7 +889,7 @@ G00 X2 Y2 Z0.2
     def _scan_beats(self, data: bytes):
         """The build scan's gate asks, progress emissions and line count
         for *data*, with the real yield still running."""
-        import plugins.GCodeIndex as module
+        import mpf.GCodeIndex as module
         lines = data.count(b"\n")
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "scan.gcode")
@@ -1040,7 +1040,7 @@ class SaveHoldTests(unittest.TestCase):
         def gate(path, *args, **kwargs):
             return _GatedStream(real_open(path, *args, **kwargs), at_first_write)
 
-        with patch("plugins.GCodeIndex.gzip.open", gate):
+        with patch("mpf.GCodeIndex.gzip.open", gate):
             worker = threading.Thread(target=cache.save, args=(identity, index))
             worker.start()
             worker.join(10.0)

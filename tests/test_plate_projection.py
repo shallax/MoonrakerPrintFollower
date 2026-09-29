@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-from plugins.MonitorFormatting import MAX_PLATE_OBJECTS, PlateProjectionMemo, plate_values
+from mpf.MonitorFormatting import MAX_PLATE_OBJECTS, PlateProjectionMemo, plate_values
 
 
 class _RaisingEqual:

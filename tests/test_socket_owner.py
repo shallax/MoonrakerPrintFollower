@@ -9,7 +9,7 @@ from tests.ws_loopback import WSServer
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer
 
-    from plugins.MoonrakerSocket import MoonrakerSocket
+    from mpf.MoonrakerSocket import MoonrakerSocket
 
 
 FIVE = {

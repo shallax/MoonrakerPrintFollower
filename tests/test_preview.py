@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import unittest
 
-from plugins.PreviewFollower import PreviewFollower, preview_override_kind
-from plugins.PreviewSmoothing import advance_display, interpolate_target
-from plugins.PreviewFormatting import (
+from mpf.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.PreviewSmoothing import advance_display, interpolate_target
+from mpf.PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
     pause_summary,
@@ -16,11 +16,11 @@ from plugins.PreviewFormatting import (
     status_icon,
     status_text,
 )
-from plugins.PrinterConfig import PrinterConfig
-from plugins.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
-from plugins.RemoteJobService import PrintObservation
+from mpf.PrinterConfig import PrinterConfig
+from mpf.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.RemoteJobService import PrintObservation
 
-PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "mpf"
 BUTTON = (PLUGINS / "PreviewSecondaryButton.qml").read_text(encoding="utf-8")
 PANEL = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 EMPTY = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")

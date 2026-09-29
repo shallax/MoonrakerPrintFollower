@@ -13,17 +13,28 @@ from __future__ import annotations
 
 import ast
 import os
+from pathlib import Path
 import re
 from typing import Dict, List
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PLUGINS = os.path.join(ROOT, "plugins")
+PLUGINS = os.path.join(ROOT, "mpf")
+
+
+def _module_files():
+    """Every source file, at any depth (the tree nests by domain).
+
+    Both kinds: the slot scan reads .py and the objectName scan reads
+    .qml, and they share one pass.
+    """
+    return sorted(str(f.relative_to(PLUGINS)) for f in Path(PLUGINS).rglob("*")
+                  if f.suffix in (".py", ".qml"))
 
 
 def extract() -> Dict[str, List[str]]:
     """Every addressable surface, grouped by kind."""
     surfaces: Dict[str, List[str]] = {"slot": [], "objectName": [], "route": [], "key": []}
-    for name in sorted(os.listdir(PLUGINS)):
+    for name in _module_files():
         path = os.path.join(PLUGINS, name)
         if name.endswith(".py") and os.path.isfile(path):
             with open(path, encoding="utf-8") as handle:
@@ -52,7 +63,7 @@ def extract() -> Dict[str, List[str]]:
     # The key family scans every plugin module: a value_property that
     # moves to an extracted view model must stay in the matrix (the
     # one-file read let moved declarations vanish silently).
-    for name in sorted(os.listdir(PLUGINS)):
+    for name in _module_files():
         path = os.path.join(PLUGINS, name)
         if not (name.endswith(".py") and os.path.isfile(path)):
             continue

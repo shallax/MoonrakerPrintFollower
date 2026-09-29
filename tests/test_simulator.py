@@ -16,7 +16,7 @@ try:
 except ImportError:
     tornado = None  # type: ignore[assignment]
 
-from plugins.MoonrakerProtocol import (
+from mpf.MoonrakerProtocol import (
     delete_endpoint,
     directory_create_endpoint,
     directory_delete_endpoint,

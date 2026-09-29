@@ -5,7 +5,7 @@ consumer. These tests pin the rulings — the fail-closed prelude, the
 shipped state mappings preserved, and the per-action rows."""
 import unittest
 
-from plugins.MonitorPermissions import (
+from mpf.MonitorPermissions import (
     Observation,
     R_BUSY,
     R_DISCONNECTED,
@@ -90,7 +90,7 @@ class PolicyRulingTests(unittest.TestCase):
         # re-review's M-2): the click-time row and the dispatch-time
         # jog_gate must agree over the union of states — one edit to
         # either must fail this.
-        from plugins.ToolheadPolicy import jog_gate
+        from mpf.ToolheadPolicy import jog_gate
         for state in ("printing", "standby", "paused", "complete", "cancelled", "error", "idle", ""):
             verdict = can_jog(obs(state=state))
             gate = jog_gate(state)

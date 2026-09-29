@@ -86,7 +86,7 @@ class SettingsSeekTraceTests(harness.SettingsSeekTraceTests):
 
 class SettingsCacheClearTests(harness.SettingsCacheClearTests):
     def test_the_clear_button_wipes_the_cache_root_and_reports_it(self):
-        from plugins.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.CacheNamespaces import CACHE_DIRECTORY_NAME
         document, window = self.open_settings(tab=self.DIAGNOSTICS_TAB)
         resources = harness.sys.modules["UM.Resources"].Resources
         cache_root = harness.os.path.join(resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)

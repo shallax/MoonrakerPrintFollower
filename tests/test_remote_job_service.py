@@ -3,7 +3,7 @@ identity, the same-file restart detection and the attestation
 cross-check."""
 import unittest
 
-from plugins.RemoteJobService import RemoteJobService
+from mpf.RemoteJobService import RemoteJobService
 
 
 class RemoteJobServiceTests(unittest.TestCase):

@@ -21,7 +21,7 @@ Lines that stay uncovered, and why (the running total moved with the
 modules; the references below are against the current files):
 
 * ConsoleController:45 — the body of the module-level
-  ``_trim_transcript`` helper. Nothing in plugins/ or tests/ calls it;
+  ``_trim_transcript`` helper. Nothing in mpf/ or tests/ calls it;
   it is unreachable without invoking an unused private helper.
 * ToolheadController:410-411 — the ``except ValueError`` guard around
   ``make_extrude_op`` in ``extrude()``. Both arguments reach it only
@@ -59,9 +59,9 @@ from tests.qt_runtime_support import QT_AVAILABLE, runtime
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
 
-    from plugins.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
-    from plugins.MonitorPermissions import Observation
-    from plugins.PrinterConfig import PrinterConfig
+    from mpf.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
+    from mpf.MonitorPermissions import Observation
+    from mpf.PrinterConfig import PrinterConfig
 
     if "UM" not in sys.modules:
         # PrintCoordinator imports UM.Logger; the container has no Cura
@@ -117,7 +117,7 @@ if QT_AVAILABLE:
         """A counter over the plate projection's ring walk — the
         per-vertex work the memo exists to remove. Returns the call
         list and the patch that installs it."""
-        from plugins import MonitorFormatting
+        from mpf import MonitorFormatting
         calls = []
         real_finite_polygon = MonitorFormatting._finite_polygon
 
@@ -135,7 +135,7 @@ if QT_AVAILABLE:
             self.walks = 0
 
         def value(self, exclude_object, job=None):
-            from plugins.MonitorFormatting import plate_values
+            from mpf.MonitorFormatting import plate_values
             self.walks += 1
             return plate_values(exclude_object)
 
@@ -250,7 +250,7 @@ if QT_AVAILABLE:
             self.manual_split = motions
 
         def observe_motion(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
-            from plugins.PrintState import MotionProgress
+            from mpf.PrintState import MotionProgress
             return MotionProgress(anchor, self.plate_split if file_position is not None else None, 100)
 
         def plate_progress(self, anchor, file_position=None, live_position=None, paused=False, extruding=None, *, motion=...):
@@ -536,7 +536,7 @@ if QT_AVAILABLE:
         """The coordinator class, imported once — the lazy UM stub above
         must exist before the module's own import runs."""
         if not _COORDINATOR_CLASS:
-            from plugins.PrintCoordinator import PrintCoordinator
+            from mpf.PrintCoordinator import PrintCoordinator
             _COORDINATOR_CLASS.append(PrintCoordinator)
         return _COORDINATOR_CLASS[0]
 
@@ -647,7 +647,7 @@ class ToolheadCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self._rt.__enter__()
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from plugins.ToolheadController import ToolheadController
+        from mpf.ToolheadController import ToolheadController
         self.controller_class = ToolheadController
 
     def _make(self, state="paused", **kwargs):
@@ -670,7 +670,7 @@ class ConsoleCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self.events = self._rt.__enter__().events
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from plugins.ConsoleController import ConsoleController
+        from mpf.ConsoleController import ConsoleController
         self.controller_class = ConsoleController
         self.data = _ConsoleData()
         self.commands = _ConsoleCommands()

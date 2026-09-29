@@ -11,7 +11,7 @@ from unittest import mock
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
@@ -31,7 +31,7 @@ from verify_marketplace_source import verify as verify_marketplace_source
 class QmlCheckerTests(unittest.TestCase):
     def test_all_qml_pass_structural_checker(self):
         failures = []
-        for path in PLUGINS.glob("*.qml"): failures.extend(check_text(path.read_text(encoding="utf-8"), path.name))
+        for path in PLUGINS.rglob("*.qml"): failures.extend(check_text(path.read_text(encoding="utf-8"), path.name))
         self.assertEqual(failures, [])
 
     def test_qml_checker_rejects_duplicate_property_and_unbalanced_brace(self):

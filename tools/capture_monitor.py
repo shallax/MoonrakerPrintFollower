@@ -123,8 +123,8 @@ def main():
                 return cls(2026, 9, 9, 12, 0, 0)
 
         _frozen_clock_sources = (
-            os.path.join(ROOT, "plugins", "MonitorFormatting.py"),
-            os.path.join(ROOT, "plugins", "PreviewFollower.py"),
+            os.path.join(ROOT, "mpf", "MonitorFormatting.py"),
+            os.path.join(ROOT, "mpf", "PreviewFollower.py"),
         )
 
         def _freeze_plugin_clocks():
@@ -180,7 +180,7 @@ def main():
         from types import SimpleNamespace
         # Patch the module the MODEL INSTANCE actually uses — the Qt
         # runtime registers it under a synthetic name, so importing
-        # "plugins.MoonrakerMonitorModel" again would patch the wrong
+        # "mpf.MoonrakerMonitorModel" again would patch the wrong
         # object and leave all samples at elapsed 0 (filling forever).
         model_module = sys.modules[type(model).__module__]
         tick = [1000.0]
@@ -252,7 +252,7 @@ def main():
         # the materialised real tree must be added LAST and the minimal
         # stubs first (they only serve types the real tree lacks).
         engine.addImportPath(os.path.join(ROOT, "tests", "qml_stubs"))
-        engine.addImportPath(os.path.join(ROOT, "plugins"))
+        engine.addImportPath(os.path.join(ROOT, "mpf"))
         engine.addImportPath(theme_tree)
         verify_capture_tree(engine, theme_backend)
         engine_context = engine.rootContext()
@@ -260,7 +260,7 @@ def main():
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "MoonrakerMonitorBedMesh.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "MoonrakerMonitorBedMesh.qml")))
         if component.isError():
             raise RuntimeError("\n".join(str(e) for e in component.errors()))
 

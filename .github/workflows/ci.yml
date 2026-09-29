@@ -197,16 +197,16 @@ jobs:
         run: python -m pip install ruff
 
       - name: Compile Python sources
-        run: python -m compileall -q plugins tools tests
+        run: python -m compileall -q mpf tools tests
 
       - name: QML structural sanity
-        run: python tools/check_qml.py plugins
+        run: python tools/check_qml.py mpf
 
       - name: QML formatting
-        run: sh tools/check_qml_format.sh plugins/*.qml
+        run: sh tools/check_qml_format.sh 'mpf/**/*.qml'
 
       - name: Ruff
-        run: ruff check plugins tools tests
+        run: ruff check mpf tools tests
 
       - name: Shell scripts
         run: shellcheck tools/*.sh
@@ -258,7 +258,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Compile Python sources
-        run: python -m compileall -q plugins tools tests
+        run: python -m compileall -q mpf tools tests
 
       # Shared step: the drop_unused_apt_sources anchor defined in the
       # lint job's steps above.
@@ -304,10 +304,10 @@ jobs:
                           "--coverage-dir", destination, *modules], check=True)
           PY
           coverage combine "$RUNNER_TEMP/coverage"
-          coverage report --include="plugins/*" --fail-under=95
+          coverage report --include="mpf/*" --fail-under=95
           coverage json -o coverage.json
           python tools/check_per_file_coverage.py coverage.json
-          coverage xml --include="plugins/*"
+          coverage xml --include="mpf/*"
 
       - name: Upload Python 3.12 coverage to Codecov
         if: matrix.python-version == '3.12'
@@ -348,7 +348,7 @@ jobs:
 
       - name: QML structural sanity
         if: inputs.tag_release
-        run: python tools/check_qml.py plugins
+        run: python tools/check_qml.py mpf
 
       # Use the real Qt runtime for the tag's full-suite gate too. Branch
       # and PR runs additionally exercise it in the Python-version matrix.

@@ -12,7 +12,7 @@
 # coverage and the deterministic captures).
 #
 # Usage:  tools/docker_dev.sh <command...>
-#         tools/docker_dev.sh qmlformat -i plugins/Monitor.qml
+#         tools/docker_dev.sh qmlformat -i mpf/Monitor.qml
 #         tools/docker_dev.sh python3 -m unittest discover -s tests
 set -eu
 root="$(git rev-parse --show-toplevel)"

@@ -15,7 +15,7 @@ import struct
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from plugins.SocketFraming import accept_value
+from mpf.SocketFraming import accept_value
 
 
 class WSHandler(socketserver.BaseRequestHandler):

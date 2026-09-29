@@ -617,7 +617,7 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_extrude_and_jog_selection_persists(self):
         # A live report: the chosen extrude options were
         # not saved between sessions.
-        from plugins.MoonrakerMonitorModel import _read_state
+        from mpf.MoonrakerMonitorModel import _read_state
         model = self.monitor()
         self.deliver_state("standby")
         model.setExtrudeDistance(25)
@@ -1121,7 +1121,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(payload["sectionSizes"], {"info": 240.0})
 
     def test_the_store_delete_drops_only_the_named_keys(self):
-        from plugins.StateStore import StateStore
+        from mpf.StateStore import StateStore
         import tempfile
         import os
         with tempfile.TemporaryDirectory() as directory:
@@ -2889,7 +2889,7 @@ Item {
             # control.
             "visible: false",
         }
-        for path in sorted(harness.PLUGINS.glob("*.qml")):
+        for path in sorted(harness.PLUGINS.rglob("*.qml")):
             if path.name in exempt_files:
                 continue  # settings dialogs carve-out (user-opened surfaces)
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

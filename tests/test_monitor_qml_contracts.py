@@ -21,7 +21,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         left = 'Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
         right = 'Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
         carried = []
-        for path in sorted(harness.PLUGINS.glob("*.qml")):
+        for path in sorted(harness.PLUGINS.rglob("*.qml")):
             text = path.read_text(encoding="utf-8")
             if left in text:
                 carried.append(path.name)
@@ -390,13 +390,13 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # native tooltip property or a TooltipArea over a control,
         # either of which can swallow a click when the pointer crosses
         # the popup.
-        for path in harness.PLUGINS.glob("*.qml"):
+        for path in harness.PLUGINS.rglob("*.qml"):
             source = path.read_text(encoding="utf-8")
             for line in source.splitlines():
                 if line.lstrip().startswith("tooltip:"):
                     self.fail("%s carries a native tooltip property: %s"
                               % (path.name, line.strip()[:60]))
-        for path in harness.PLUGINS.glob("*.qml"):
+        for path in harness.PLUGINS.rglob("*.qml"):
             source = path.read_text(encoding="utf-8")
             self.assertNotRegex(
                 source,

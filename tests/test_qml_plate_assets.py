@@ -144,7 +144,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
     def test_ordinary_full_rasters_never_convert_the_fallback_geometry(self):
         from PyQt6.QtCore import pyqtProperty
-        from plugins.PlateQt import PlateLayer
+        from mpf.PlateQt import PlateLayer
 
         class CountingLayer(PlateLayer):
             def __init__(self, payload):

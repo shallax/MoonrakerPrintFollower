@@ -1156,7 +1156,7 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         # A live request: ALL 400-class errors must read
         # like the cold-extrude one — the server's words, one line,
         # never a dict, a code or a whole exception. Pure shapes.
-        from plugins.MoonrakerTransport import _moonraker_error_text
+        from mpf.MoonrakerTransport import _moonraker_error_text
         traceback = ("Traceback (most recent call last):\n\n"
                      "moonraker.utils.exceptions.ServerError: Move out of range\n"
                      "See the 'position_min' config option for details\n"

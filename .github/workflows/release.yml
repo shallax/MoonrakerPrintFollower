@@ -45,7 +45,7 @@ jobs:
 
           expected = os.environ["GITHUB_REF_NAME"].removeprefix("v")
           package = json.loads(pathlib.Path("package.json").read_text(encoding="utf-8"))
-          plugin = json.loads(pathlib.Path("plugins/plugin.json").read_text(encoding="utf-8"))
+          plugin = json.loads(pathlib.Path("mpf/plugin.json").read_text(encoding="utf-8"))
           if package["package_version"] != expected:
               raise SystemExit(f"package.json version {package['package_version']} != tag {expected}")
           if plugin["version"] != expected:

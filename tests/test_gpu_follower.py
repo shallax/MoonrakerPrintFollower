@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 class RetainedGeometryTests(unittest.TestCase):
     def test_data_source_rejects_cycles_and_detaches_cleanly(self):
         from PyQt6 import sip
-        from plugins.GpuFollower import GpuFollower
+        from mpf.GpuFollower import GpuFollower
 
         source, consumer, downstream = (GpuFollower() for _ in range(3))
         try:
@@ -42,7 +42,7 @@ class RetainedGeometryTests(unittest.TestCase):
         from PyQt6 import sip
         from PyQt6.QtGui import QColor
         from PyQt6.QtQuick import QSGTransformNode
-        from plugins.GpuFollower import GpuFollower
+        from mpf.GpuFollower import GpuFollower
 
         source, consumer = GpuFollower(), GpuFollower()
         parent = QSGTransformNode()
@@ -60,7 +60,7 @@ class RetainedGeometryTests(unittest.TestCase):
             self.assertEqual(child.geometry().lineWidth(), 3.5)
             GpuFollower._vertices(child, b"", 0, 1.5)
             self.assertEqual(child.geometry().lineWidth(), 1.5)
-            from plugins.GpuFollower import prepare
+            from mpf.GpuFollower import prepare
             self.assertEqual(prepare((("current", None),)), ())
         finally:
             sip.delete(parent)
@@ -69,7 +69,7 @@ class RetainedGeometryTests(unittest.TestCase):
 
     def test_worker_failure_releases_readiness_and_reaches_shared_consumers(self):
         from PyQt6 import sip
-        from plugins import GpuFollower as module
+        from mpf import GpuFollower as module
 
         class Layer:
             def geometry_payload(self):
@@ -99,7 +99,7 @@ class RetainedGeometryTests(unittest.TestCase):
         from PyQt6.QtCore import QUrl
         from PyQt6.QtQml import QQmlComponent, QQmlEngine, qmlRegisterType
         from PyQt6 import sip
-        from plugins.GpuFollower import GpuFollower
+        from mpf.GpuFollower import GpuFollower
         qmlRegisterType(GpuFollower, "FollowerOpacityTest", 1, 0, "StrokeItem")
         engine = QQmlEngine(); component = QQmlComponent(engine)
         component.setData(b'''import QtQuick 2.15
@@ -122,8 +122,8 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtCore import QObject
         from PyQt6.QtQuick import QQuickWindow
-        from plugins.GpuFollower import GpuFollower, prepare
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf.GpuFollower import GpuFollower, prepare
+        from mpf.GpuStrokeMaterial import pack_shader
         window = QQuickWindow(); window.resize(1000, 800)
         source = GpuFollower(window.contentItem())
         consumer = GpuFollower(window.contentItem()); consumer.setWidth(400); consumer.setHeight(300)
@@ -162,8 +162,8 @@ Item {
         sip.delete(node); sip.delete(window)
 
     def test_extruder_events_follow_completed_playback_and_disappear_on_scrub_back(self):
-        from plugins.GpuFollower import GpuFollower, prepare, marker_counts, marker_geometry
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf.GpuFollower import GpuFollower, prepare, marker_counts, marker_geometry
+        from mpf.GpuStrokeMaterial import pack_shader
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         data = pack_shader(prepare((("current", {"motions": 3,
@@ -197,8 +197,8 @@ Item {
     def test_physical_widths_share_fixed_geometry_with_pixel_override_and_zoom(self):
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from plugins.GpuFollower import GpuFollower, prepare
-        from plugins.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.GpuFollower import GpuFollower, prepare
+        from mpf.GpuStrokeMaterial import pack_shader, _pack_stdlib
         payload = {"classes": {"SKIN": [[(0, 0, 0.0), (10, 0, 0.0), (20, 0, 1.0)]]}, "widths": (.4, .8)}
         raw = prepare((("current", payload),))
         data = pack_shader(raw)
@@ -227,8 +227,8 @@ Item {
     def test_motion_animation_changes_uniforms_without_reuploading_geometry(self):
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from plugins.GpuFollower import GpuFollower
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf.GpuFollower import GpuFollower
+        from mpf.GpuStrokeMaterial import pack_shader
         window = QQuickWindow()
         item = GpuFollower(window.contentItem())
         item._data = pack_shader((("current", "SKIN", (0, 1),
@@ -247,7 +247,7 @@ Item {
         sip.delete(window)
 
     def test_arc_subedges_partition_one_motion_instead_of_growing_together(self):
-        from plugins.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.GpuStrokeMaterial import pack_shader, _pack_stdlib
         raw = (("current", "SKIN", (0, 0), array("f", (0, 0, 3, 0, 3, 0, 3, 1)).tobytes()),)
         self.assertEqual(pack_shader(raw), _pack_stdlib(raw))
         vertices = array("f")
@@ -256,8 +256,8 @@ Item {
         self.assertEqual((vertices[6 * 10 + 6], vertices[6 * 10 + 7]), (.75, .25))
 
     def test_marker_tracks_every_curve_subedge_and_matches_shader_fraction(self):
-        from plugins.GpuFollower import GpuFollower
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf.GpuFollower import GpuFollower
+        from mpf.GpuStrokeMaterial import pack_shader
         item = GpuFollower()
         item._data = pack_shader((("current", "SKIN", (0, 0, 1),
                                   array("f", (0, 0, 3, 0, 3, 0, 3, 1, 3, 1, 5, 1)).tobytes()),
@@ -274,8 +274,8 @@ Item {
         self.assertFalse(item.pointAtMotion(.5)["valid"], "retired geometry must not locate the live marker")
 
     def test_event_glyphs_are_small_zoom_dependent_and_thinned_in_screen_cells(self):
-        from plugins.GpuFollower import marker_geometry, prepare
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf.GpuFollower import marker_geometry, prepare
+        from mpf.GpuStrokeMaterial import pack_shader
         payload = {"retractions": [(i * .001, 0, i) for i in range(1000)],
                    "unretractions": [(0, 0, 1000)]}
         data = pack_shader(prepare((("current", payload),)))
@@ -304,8 +304,8 @@ Item {
         from concurrent.futures import Future
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from plugins import GpuFollower as module
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf import GpuFollower as module
+        from mpf.GpuStrokeMaterial import pack_shader
 
         class Layer:
             def geometry_payload(self):
@@ -342,8 +342,8 @@ Item {
         from concurrent.futures import Future
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from plugins import GpuFollower as module
-        from plugins.GpuStrokeMaterial import pack_shader
+        from mpf import GpuFollower as module
+        from mpf.GpuStrokeMaterial import pack_shader
 
         payload = {"classes": {"SKIN": [[(0, 0, 0), (20, 0, 1)]]}, "travels": []}
         class Layer:
@@ -372,8 +372,8 @@ Item {
     def test_layer_replacement_retires_the_previous_native_tree(self):
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from plugins.GpuFollower import GpuFollower
-        from plugins.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.GpuFollower import GpuFollower
+        from mpf.GpuStrokeMaterial import pack_shader, _pack_stdlib
         window = QQuickWindow()
         item = GpuFollower(window.contentItem())
         edge = array('f', (0, 0, 10, 0)).tobytes()
@@ -395,7 +395,7 @@ Item {
         sip.delete(empty)
 
     def test_next_dashes_continue_through_short_polyline_edges(self):
-        from plugins.GpuFollower import dashed_edges, prepare
+        from mpf.GpuFollower import dashed_edges, prepare
         points = [[i * .25, 0, i] for i in range(41)]
         edges = list(dashed_edges(points))
         self.assertEqual(sum(edge[3] - edge[1] for edge in edges), 5)
@@ -406,7 +406,7 @@ Item {
         self.assertEqual(len(result[1][2]), 20)
 
     def test_every_width_is_constant_in_pixels_across_zoom_and_has_round_caps(self):
-        from plugins.GpuFollower import stroke_geometry, WIDE_VERTICES
+        from mpf.GpuFollower import stroke_geometry, WIDE_VERTICES
         edge = array('f', (0, 0, 10, 0)).tobytes()
         for scale in (1, 5, 20):
             for width in range(1, 9):
@@ -420,7 +420,7 @@ Item {
                 self.assertAlmostEqual(max(vertices[::2]) * scale, 10 * scale + width / 2, places=4)
 
     def test_wide_next_dashes_keep_flat_ends_and_shared_vertex_stride(self):
-        from plugins.GpuFollower import stroke_geometry, WIDE_VERTICES
+        from mpf.GpuFollower import stroke_geometry, WIDE_VERTICES
         edge = array('f', (0, 0, 3, 0)).tobytes()
         packed = stroke_geometry((('next', 'SKIN', (1,), edge),), 8, 1, 1)[0][3]
         vertices = array('f')
@@ -429,7 +429,7 @@ Item {
         self.assertEqual((min(vertices[::2]), max(vertices[::2])), (0, 3))
 
     def test_dense_preparation_cancels_before_publishing_or_caching(self):
-        from plugins.GpuFollower import prepare
+        from mpf.GpuFollower import prepare
         cancel = threading.Event()
         cancel.set()
         payload = {"classes": {"SKIN": [[[i, 0, i] for i in range(100000)]]}}
@@ -437,7 +437,7 @@ Item {
 
     def test_picker_retains_unaffected_geometry_for_hover_pan_and_palette(self):
         from PyQt6 import sip
-        from plugins import GpuObjectPicker as module
+        from mpf import GpuObjectPicker as module
         item = module.GpuObjectPicker()
         node = None
         scene = {
@@ -482,7 +482,7 @@ Item {
             sip.delete(item)
 
     def test_picker_preserves_state_precedence_halo_widths_and_hover(self):
-        from plugins.GpuObjectPicker import object_strokes
+        from mpf.GpuObjectPicker import object_strokes
         polygon = [[0, 0], [10, 0], [10, 10], [0, 10]]
         colours = {'excludedInk': '#ff0000', 'currentInk': '#0000ff',
                    'passedInk': '#00ff00', 'includedInk': '#ffffff', 'halo': '#000000'}
@@ -503,7 +503,7 @@ Item {
                         self.assertAlmostEqual(-min(points[::2]) * 4, actual_width, places=5)
 
     def test_picker_draws_center_only_objects_as_circles_and_skips_empty_rows(self):
-        from plugins.GpuObjectPicker import object_strokes
+        from mpf.GpuObjectPicker import object_strokes
         scene = {
             'objects': [{'center': [5, 7]}, {}],
             'plot': {'sx': 2, 'sy': 4}, 'screenScale': 2,

@@ -400,7 +400,7 @@ def runtime():
         module("cura.PrinterOutput.PrinterOutputDevice", PrinterOutputDevice=OutputDevice,
                ConnectionType=SimpleNamespace(NetworkConnection=1))
         package = module("_moonraker_runtime_test")
-        package.__path__ = [str(ROOT / "plugins")]
+        package.__path__ = [str(ROOT / "mpf")]
 
         def load(name):
             return importlib.import_module(package.__name__ + "." + name)

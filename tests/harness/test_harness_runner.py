@@ -553,7 +553,7 @@ class HarvestCuraLogTests(unittest.TestCase):
         from log_gate import plugin_log_noise
         text = "\n".join((
             "WARNING CuraEngine: unrelated warning",
-            "WARNING file:///Cura/plugins/MonitorStage/MonitorMain.qml: Binding loop detected for property height",
+            "WARNING file:///Cura/mpf/MonitorStage/MonitorMain.qml: Binding loop detected for property height",
             "DEBUG MoonrakerPrintFollower: plate position: virtualSdcard=None statusKeys=[]",
             "INFO MoonrakerPrintFollower: printer reports error state",
             "WARNING file:///plugins/MoonrakerPrintFollower/PlateProgressFace.qml: Layout polish loop detected",

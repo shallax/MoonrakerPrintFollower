@@ -97,7 +97,7 @@ class RendererOnlySeekBenchmarks(harness.RendererOnlySeekBenchmarks):
         # The complete PNG transport (encode + write + atomic
         # rename) on the seek's three sibling sizes — the worker's
         # cost, measured apart from the geometry walk.
-        from plugins.PlateQt import png_file, render_layer_raster
+        from mpf.PlateQt import png_file, render_layer_raster
         plot = {"offsetX": 10.0, "offsetY": 10.0, "sx": 1.0, "sy": 1.0,
                 "bedXMin": 0.0, "bedYMax": 250.0}
         view = {"width": 563, "height": 492, "scale": 1.0, "lineScale": 0.7,

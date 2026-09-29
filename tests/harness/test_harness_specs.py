@@ -165,7 +165,7 @@ class HarnessSpecTests(unittest.TestCase):
         import re
         from pathlib import Path
         plugins = Path(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))))) / "plugins"
+            os.path.abspath(__file__))))) / "mpf"
         addressed = {step["objectName"] for spec in _scenarios.SCENARIOS
                      for step in spec.get("steps", ()) if step.get("objectName")}
         non_items = ("Popup", "Menu", "Dialog", "Window", "ToolTip", "Action",
@@ -174,7 +174,7 @@ class HarnessSpecTests(unittest.TestCase):
         declaration = re.compile(
             r"^\s*(?:[A-Z][\w.]*\.)?(" + "|".join(non_items) + r")\s*\{\s*$")
         offenders = []
-        for path in sorted(plugins.glob("*.qml")):
+        for path in sorted(plugins.rglob("*.qml")):
             lines = path.read_text(encoding="utf-8").split("\n")
             for index, line in enumerate(lines):
                 if not declaration.match(line):
@@ -206,7 +206,7 @@ class HarnessSpecTests(unittest.TestCase):
         #   * the MODEL is the single authority on whether it is up,
         #   * every leg that loads a print presses the button.
         cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "plugins", "CuraIntegration.py")
+            os.path.abspath(__file__)))), "mpf", "CuraIntegration.py")
         with open(cura, encoding="utf-8") as handle:
             integration = handle.read()
         self.assertNotIn("QMessageBox", integration)
@@ -214,7 +214,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("confirm_replace", integration)
 
         card = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "plugins", "MoonrakerPreviewCard.qml")
+            os.path.abspath(__file__)))), "mpf", "MoonrakerPreviewCard.qml")
         with open(card, encoding="utf-8") as handle:
             qml = handle.read()
         self.assertIn('objectName: "moonrakerReplacePrompt"', qml)
@@ -239,7 +239,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("visible: base.replacePromptVisible", qml)
 
         coordinator = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "plugins", "PrintCoordinator.py")
+            os.path.abspath(__file__)))), "mpf", "PrintCoordinator.py")
         with open(coordinator, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('self._presentation.publish({"replacePromptVisible": True})', source)

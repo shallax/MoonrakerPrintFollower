@@ -2,9 +2,9 @@ import json
 import pathlib
 import unittest
 
-from plugins.PrinterConfig import FeedMode, PrinterConfig, PrinterConfigStore, normalise_url
+from mpf.PrinterConfig import FeedMode, PrinterConfig, PrinterConfigStore, normalise_url
 
-PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "mpf"
 
 
 class FakePreferences:
@@ -383,7 +383,7 @@ class PrinterConfigTests(unittest.TestCase):
         # Panel security P3: the dialog applies UploadController.valid_path,
         # but a hand-edited or migrated config must not carry ".." to the
         # upload API either.
-        from plugins.PrinterConfig import upload_path_safe
+        from mpf.PrinterConfig import upload_path_safe
         self.assertEqual(upload_path_safe("PLA"), "PLA")
         self.assertEqual(upload_path_safe("PLA/parts"), "PLA/parts")
         self.assertEqual(upload_path_safe("<root>"), "")

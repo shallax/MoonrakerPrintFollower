@@ -11,8 +11,8 @@ from unittest.mock import patch
 from fake_moonraker import FakeMoonraker
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 if QT_AVAILABLE:
-    from plugins.FileManager import FileManager
-from plugins.FileManagerPolicy import (
+    from mpf.FileManager import FileManager
+from mpf.FileManagerPolicy import (
     DEFAULT_COLUMN_ORDER,
     FileRow,
     ViewState,
@@ -285,7 +285,7 @@ class SortingTests(unittest.TestCase):
         # AttributeError because the column key "status" has no
         # matching FileRow field. Every column key must survive a
         # full row, known values and all.
-        from plugins.FileManagerPolicy import SORTABLE_COLUMNS
+        from mpf.FileManagerPolicy import SORTABLE_COLUMNS
         row = make_row(
             "full.gcode", modified=1.0, size=100, attempts=2, last_status="completed",
             object_height=20.0, layer_height=0.2, estimated_time=1800.0,
@@ -949,7 +949,7 @@ class FileManagerServiceTests(unittest.TestCase):
         # cached rows. The clock is frozen: the minute bucket in the
         # cache key reads the live wall clock, so a run straddling a
         # minute boundary would count a false second evaluation.
-        with patch("plugins.FileManager.time.time", return_value=10.0):
+        with patch("mpf.FileManager.time.time", return_value=10.0):
             self.service.open()
             self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {}), ("c.gcode", {})])
             self.deliver("history/list", {"result": {"jobs": []}})
