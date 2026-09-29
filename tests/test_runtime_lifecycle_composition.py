@@ -469,7 +469,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
                       "the demanded layer never reached the full cache")
 
     def test_service_failure_signals_are_logged(self):
-        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "PrintCoordinator.py").read_text(encoding="utf-8")
+        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "printer" / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("files.failed.connect", source)
         self.assertIn("index.failed.connect", source)
 

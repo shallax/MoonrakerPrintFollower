@@ -72,7 +72,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             self._monitor_qml.deleteLater()
         self._monitor_qml_engine = engine
         self._monitor_qml = QQmlComponent(engine, QUrl.fromLocalFile(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorDashboard.qml")),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MoonrakerMonitorDashboard.qml")),
             QQmlComponent.CompilationMode.Asynchronous)
 
     def _current_monitor(self) -> Optional[Any]:
@@ -261,7 +261,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         # dashboard compiles asynchronously inside the shell, off the
         # startup path.
         device.setMonitorViewQmlPath(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MoonrakerMonitorBedMesh.qml"
         ))
         try:
             monitor.refreshAll()

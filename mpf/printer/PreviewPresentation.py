@@ -166,7 +166,7 @@ class PreviewPresentation(QObject):
             created = False
             if self._booted and self._panel_shell is None:
                 shell = self._application.createQmlComponent(os.path.join(
-                    os.path.dirname(__file__), "MoonrakerPreviewCardPanelHost.qml"))
+                    os.path.dirname(os.path.dirname(__file__)), "MoonrakerPreviewCardPanelHost.qml"))
                 if shell is not None:
                     card = self._inner_card(shell)
                     self._panel_shell = shell
@@ -178,7 +178,7 @@ class PreviewPresentation(QObject):
                     created = True
             if self._booted and self._overlay_shell is None and content is not None:
                 shell = self._application.createQmlComponent(os.path.join(
-                    os.path.dirname(__file__), "MoonrakerPreviewCardOverlayHost.qml"))
+                    os.path.dirname(os.path.dirname(__file__)), "MoonrakerPreviewCardOverlayHost.qml"))
                 if shell is not None:
                     card = self._inner_card(shell)
                     self._overlay_shell = shell

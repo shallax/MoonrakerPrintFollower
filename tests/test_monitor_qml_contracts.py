@@ -91,7 +91,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("Power control is locked by Moonraker while this print is active.", harness.POWER_SECTION_QML)
 
     def test_output_plugin_selects_the_same_dashboard_through_one_model(self):
-        self.assertIn("from .MoonrakerMonitorModel import MoonrakerMonitorModel", harness.OUTPUT_PLUGIN)
+        self.assertIn("from ..monitor.MoonrakerMonitorModel import MoonrakerMonitorModel", harness.OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', harness.OUTPUT_PLUGIN)
         self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', harness.BED_MESH_QML)
 
