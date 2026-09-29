@@ -400,10 +400,31 @@ def runtime():
         module("cura.PrinterOutput.PrinterOutputDevice", PrinterOutputDevice=OutputDevice,
                ConnectionType=SimpleNamespace(NetworkConnection=1))
         package = module("_moonraker_runtime_test")
-        package.__path__ = [str(ROOT / "mpf")]
 
         def load(name):
-            return importlib.import_module(package.__name__ + "." + name)
+            """The module by name, wherever the tree files it.
+
+            Importing it as a submodule of the stand-in package looks
+            equivalent and is not: a module reached that way has its
+            relative imports rewritten against the stand-in, so a
+            cross-domain ``from ..index.Foo import`` climbs above the
+            package root and the import fails. The real dotted module is
+            imported instead — which also means a test that patches what
+            it loaded patches the object the rest of the tree imported,
+            rather than a second copy of it.
+            """
+            candidates = ["mpf." + name] + [
+                "mpf.%s.%s" % (child.name, name)
+                for child in sorted((ROOT / "mpf").iterdir())
+                if child.is_dir() and (child / "__init__.py").is_file()
+            ]
+            for candidate in candidates:
+                try:
+                    return importlib.import_module(candidate)
+                except ModuleNotFoundError as error:
+                    if error.name not in (candidate, candidate.rsplit(".", 1)[0]):
+                        raise
+            raise ModuleNotFoundError("no module %r under mpf" % name)
 
         def process_events(milliseconds=0):
             if milliseconds:

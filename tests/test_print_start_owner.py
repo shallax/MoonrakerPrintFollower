@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from mpf.PrintStartOwner import PrintStartOwner
+from mpf.monitor.PrintStartOwner import PrintStartOwner
 
 
 class _FileManager:
@@ -94,9 +94,9 @@ class PrintStartOwnerTests(unittest.TestCase):
     def test_the_timeout_with_a_remembered_error_carries_the_words(self):
         self.fm.attempt = ("part.gcode", 100.0)
         self.owner.arm("paused")
-        with patch("mpf.PrintStartOwner.time.time", return_value=100.0):
+        with patch("mpf.monitor.PrintStartOwner.time.time", return_value=100.0):
             self._tick("part.gcode", "error", message="cold extruder")
-        with patch("mpf.PrintStartOwner.time.time", return_value=120.0):
+        with patch("mpf.monitor.PrintStartOwner.time.time", return_value=120.0):
             self.owner.tick({"print_stats": {}})
         self.assertIsNone(self.fm.print_attempt)
         self.assertIn("cold extruder", self.console.notes[0])
@@ -104,7 +104,7 @@ class PrintStartOwnerTests(unittest.TestCase):
 
     def test_the_timeout_without_an_error_is_generic(self):
         self.fm.attempt = ("part.gcode", 100.0)
-        with patch("mpf.PrintStartOwner.time.time", return_value=120.0):
+        with patch("mpf.monitor.PrintStartOwner.time.time", return_value=120.0):
             self.owner.tick({"print_stats": {}})
         self.assertIsNone(self.fm.print_attempt)
         self.assertEqual(self.console.notes[0], "Print start failed — The printer did not begin printing.")
@@ -112,7 +112,7 @@ class PrintStartOwnerTests(unittest.TestCase):
 
     def test_arm_resets_the_error(self):
         self._arm()
-        with patch("mpf.PrintStartOwner.time.time", return_value=time.time() + 0.1):
+        with patch("mpf.monitor.PrintStartOwner.time.time", return_value=time.time() + 0.1):
             self._tick("part.gcode", "error", message="cold extruder")
         self.owner.arm("paused")
         self.assertEqual(self.owner._start_error, "")

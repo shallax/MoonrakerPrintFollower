@@ -9,9 +9,10 @@ import tempfile
 import unittest
 from unittest import mock
 import zipfile
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))

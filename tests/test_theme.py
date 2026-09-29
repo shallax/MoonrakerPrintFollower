@@ -7,9 +7,10 @@ a regression this test refuses to let through.
 import pathlib
 import re
 import unittest
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b|#[0-9A-Fa-f]{8}\b")
 NAMED = re.compile(r'color:\s*"(black|white|red|green|blue|grey|gray|darkgrey|darkgray|lightgrey|lightgray)"')
 # The named-literal allowlist (the panel's M2): the two justified
@@ -33,7 +34,7 @@ class ThemeColourGateTests(unittest.TestCase):
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if HEX.search(line):
-                    offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
+                    offenders.append(f"{path.relative_to(PLUGINS.root)}:{number}: {line.strip()[:80]}")
         self.assertEqual(offenders, [],
                          "magic colour hexes outside the theme: %s" % offenders)
 
@@ -49,7 +50,7 @@ class ThemeColourGateTests(unittest.TestCase):
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 match = NAMED.search(line)
                 if match and (path, match.group(0)) not in NAMED_ALLOWED:
-                    offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
+                    offenders.append(f"{path.relative_to(PLUGINS.root)}:{number}: {line.strip()[:80]}")
         self.assertEqual(offenders, [],
                          "named colour literals outside the allowlist: %s" % offenders)
 

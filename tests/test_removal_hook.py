@@ -17,8 +17,8 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
-            from mpf.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
-            from mpf.PrinterConfig import PrinterConfig, PrinterConfigStore
+            from mpf.cura.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
+            from mpf.cura.PrinterConfig import PrinterConfig, PrinterConfigStore
         finally:
             _started.__exit__(None, None, None)
 except ImportError:

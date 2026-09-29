@@ -113,7 +113,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         # The documented overshoot: a tail whose clamp at queue time no
         # longer holds against the re-read position is rewritten, and a
         # refused tail is dropped with it.
-        from mpf.ToolheadPolicy import make_jog_op, make_motors_off_op
+        from mpf.monitor.ToolheadPolicy import make_jog_op, make_motors_off_op
         controller, _, _ = self._make(live=(10.0, 10.0, 10.0, 0.0))
         clamped = controller._clamp_tail((make_jog_op("x", 250.0, True),))
         self.assertEqual([op.distance for op in clamped], [190.0])

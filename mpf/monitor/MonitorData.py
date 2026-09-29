@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .ConsolePolicy import MAX_LINE
 from .MonitorFormatting import number, preview_block, result, wanted_object
 from .MonitorPermissions import Observation
-from .MoonrakerSession import RequestCategory
+from ..moonraker.MoonrakerSession import RequestCategory
 
 
 def freeze(value):
@@ -382,7 +382,7 @@ class MonitorData(QObject):
     def _activate_runtime(self):
         if self._active: return
         self._active = True
-        from .CameraTiming import mark
+        from ..moonraker.CameraTiming import mark
         mark("T0", "monitor active")
         self._intervals()
         for timer in self._timers.values(): timer.start()
@@ -434,7 +434,7 @@ class MonitorData(QObject):
                     # trace shows ONE defer per window, not one per
                     # caller.
                     if not self._discovery_defer_pending:
-                        from .CameraTiming import mark
+                        from ..moonraker.CameraTiming import mark
                         mark("T3-defer", "camera discovery deferred: websocket RPC not ready")
                         self._discovery_defer_pending = True
                         def rearm():
@@ -730,7 +730,7 @@ class MonitorData(QObject):
                 return
         self._webcams_pending = True
         self._webcams_pending_since = time.monotonic()
-        from .CameraTiming import mark_once
+        from ..moonraker.CameraTiming import mark_once
         # Once per trace: the T0-T9 chain answers the COLD start, and
         # the periodic discovery poll would otherwise re-mark every
         # 30 s for the session's lifetime.

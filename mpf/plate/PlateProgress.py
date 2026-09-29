@@ -67,7 +67,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 import weakref
 
 from . import ArcGeometry
-from .GCodeIndex import LayerMotionIndex
+from ..index.GCodeIndex import LayerMotionIndex
 
 # The per-class point budget: the G-code's own vertices are kept up to
 # this ceiling, so a class draws exactly what the slicer commanded. The

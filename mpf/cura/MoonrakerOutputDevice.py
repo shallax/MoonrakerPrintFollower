@@ -11,8 +11,8 @@ from UM.Logger import Logger
 from UM.Message import Message
 from UM.OutputDevice import OutputDeviceError
 
-from .CuraOutputWriter import CuraOutputWriter
-from .UploadController import UploadController
+from ..files.CuraOutputWriter import CuraOutputWriter
+from ..files.UploadController import UploadController
 
 
 class MoonrakerOutputController(PrinterOutputController):
@@ -29,7 +29,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     uploadPathsChanged = pyqtSignal()
 
     def _print_verdict(self):
-        from .MonitorPermissions import can_start_print
+        from ..monitor.MonitorPermissions import can_start_print
         monitor = getattr(self, "activePrinter", None)
         data = getattr(monitor, "_data", None)
         observation = getattr(data, "observation", None) if data is not None else None

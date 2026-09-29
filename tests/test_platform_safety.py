@@ -18,8 +18,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from tests.source_root import SourceRoot
 
-PLUGINS = Path(__file__).resolve().parent.parent / "mpf"
+PLUGINS = SourceRoot(Path(__file__).resolve().parent.parent / "mpf")
 
 # token -> the guard that must appear in the same file when the token
 # does (a file that never uses the token needs no guard).
@@ -39,7 +40,7 @@ GUARDED = {
 }
 
 try:  # the sweep's module is Qt-bound; the stdlib suite runs without it
-    from mpf import RemoteFileService as sweep_module
+    from mpf.index import RemoteFileService as sweep_module
 except Exception:  # noqa: BLE001 — any import failure means no Qt runtime here
     sweep_module = None
 

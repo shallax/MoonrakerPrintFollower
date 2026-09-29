@@ -7,10 +7,10 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-from mpf.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
-from mpf.PlateProgress import prepare_layer, encode_layer, decode_layer
-from mpf.TravelStates import layer_states, TRAVEL_NAMES
-from mpf.PreviewColours import DEFAULT_CLASSES, motion_colour
+from mpf.index.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
+from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
+from mpf.plate.TravelStates import layer_states, TRAVEL_NAMES
+from mpf.plate.PreviewColours import DEFAULT_CLASSES, motion_colour
 
 
 class TravelStateTests(unittest.TestCase):
@@ -72,9 +72,9 @@ class TravelStateTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.GpuFollower import GpuFollower, prepare
-        from mpf.GpuStrokeMaterial import pack_shader
-        from mpf.PlateQt import qml_geometry
+        from mpf.plate.GpuFollower import GpuFollower, prepare
+        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.PlateQt import qml_geometry
         app = QGuiApplication.instance() or QGuiApplication([])
         groups = {name: [((0, i, i), (10, i, i))] for i,name in enumerate(TRAVEL_NAMES)}
         payload = {"motions": 4, "travels": [], "travelClasses": groups}

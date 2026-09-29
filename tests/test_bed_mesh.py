@@ -1,10 +1,11 @@
 import pathlib
 import types
 import unittest
-from mpf.MonitorFormatting import mesh_profiles, parse_bed_mesh
+from mpf.monitor.MonitorFormatting import mesh_profiles, parse_bed_mesh
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 
 TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
 TYPED = "\n".join((PLUGINS / name).read_text(encoding="utf-8") for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))

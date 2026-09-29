@@ -11,8 +11,8 @@ from urllib.parse import urlencode
 from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QTimer, QVariant, pyqtSignal
 from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
 
-from .MoonrakerTransport import _moonraker_error_text
-from .PrinterConfig import PrinterConfig
+from ..moonraker.MoonrakerTransport import _moonraker_error_text
+from ..cura.PrinterConfig import PrinterConfig
 
 
 class UploadController(QObject):

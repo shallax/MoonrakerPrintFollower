@@ -1,8 +1,9 @@
 import pathlib
 import unittest
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
 LIFECYCLE = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
 BASE = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")

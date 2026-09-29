@@ -201,11 +201,11 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         # reuses the worker's own payload instead of decoding a second
         # object .
         index = self._bind(layers=8, hydrated=(5,))
-        from mpf.PlateProgress import encode_layer, prepare_layer
+        from mpf.plate.PlateProgress import encode_layer, prepare_layer
         payload = prepare_layer(index, 5)
         self.assertIsNotNone(payload)
         self.service._full_cache[5] = encode_layer(payload)
-        from mpf.PlateProgress import _prepared_layers
+        from mpf.plate.PlateProgress import _prepared_layers
         _prepared_layers.pop((id(index), 5), None)
         # The worker's commit lands the decoded payload in the hot
         # presentation cache.
@@ -239,7 +239,7 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         self.service.set_manual_anchor(5)
         first = self.service.plate_layers(5)
         self.assertIsNone(first["current"])
-        from mpf.PlateProgress import prepare_layer
+        from mpf.plate.PlateProgress import prepare_layer
         index.hydrated_layers.add(5)
         self.service._decoded_lru[5] = prepare_layer(index, 5)
         second = self.service.plate_layers(5)

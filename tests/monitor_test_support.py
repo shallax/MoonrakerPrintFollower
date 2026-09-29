@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from mpf.MonitorFormatting import (
+from mpf.monitor.MonitorFormatting import (
     core_values,
     estimate_remaining,
     file_row_payload,
@@ -29,11 +29,12 @@ from mpf.MonitorFormatting import (
     preview_temperature_pair,
     print_job_caption,
 )
-from mpf.MonitorPermissions import Observation
-from mpf.PrintState import LayerResolver, PhysicalLayer
+from mpf.monitor.MonitorPermissions import Observation
+from mpf.printer.PrintState import LayerResolver, PhysicalLayer
 from tests.qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
+from tests.source_root import SourceRoot
 
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 DATA = (PLUGINS / "MonitorData.py").read_text(encoding="utf-8")
@@ -72,7 +73,9 @@ POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text(encoding="utf-8")
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text(encoding="utf-8")
 CHART_COLOUR_DIALOG_QML = (PLUGINS / "MoonrakerChartColorDialog.qml").read_text(encoding="utf-8")
 FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text(encoding="utf-8")
-QMLDIR = (PLUGINS / "qmldir").read_text(encoding="utf-8")
+# The plugin root's manifest: the theme ships one of its own, so the
+# bare name is ambiguous now.
+QMLDIR = (PLUGINS.root / "qmldir").read_text(encoding="utf-8")
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
 CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text(encoding="utf-8")
 

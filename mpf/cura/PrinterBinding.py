@@ -422,7 +422,7 @@ class PrinterBinding(QObject):
             Logger.log("w", "Moonraker machine %s removed but its credential wipe could not be saved — the credentials remain on disk.", machine_id)
 
     def _apply(self):
-        from .CameraTiming import begin
+        from ..moonraker.CameraTiming import begin
         # The cold-camera trace rides the SAME preference as the HTTP
         # trace (the diagnostics toggle), never forced on.
         begin(bool(getattr(self.config, "trace_http", False)))

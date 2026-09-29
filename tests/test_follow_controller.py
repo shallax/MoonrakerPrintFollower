@@ -3,7 +3,9 @@ import sys
 import unittest
 from types import SimpleNamespace
 
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mpf"))
+# These two are imported as top-level modules, so the domain
+# directory they live in is what goes on the path.
+PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mpf", "printer"))
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 

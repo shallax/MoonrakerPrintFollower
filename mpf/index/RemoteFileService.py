@@ -10,9 +10,9 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
-from .MoonrakerProtocol import RemoteFileIdentity
+from ..moonraker.MoonrakerProtocol import RemoteFileIdentity
 from .DownloadStream import DownloadOperation, DownloadTarget
-from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
+from ..moonraker.MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
 
 # The one-shot lane's two cancel terminals, kept apart on purpose (the

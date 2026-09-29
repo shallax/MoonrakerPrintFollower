@@ -19,7 +19,7 @@ if QT_AVAILABLE:
     from PyQt6.QtCore import QUrl
     from PyQt6.QtGui import QColor, QImage, QPainter, QPen
 
-    from mpf.PlateQt import (PlateLayer, _paint_segments, png_file,
+    from mpf.plate.PlateQt import (PlateLayer, _paint_segments, png_file,
                                  render_layer_prefix, render_layer_raster,
                                  render_navigation_layer, stamped)
 
@@ -226,7 +226,7 @@ class NativeStrokeParityTests(unittest.TestCase):
         # the ghosts at 0.30, the grey base, the printed prefix at
         # the partial split and the travels below the boundary —
         # with the same stroke as the exact assets.
-        from mpf.PlateQt import render_navigation_layer
+        from mpf.plate.PlateQt import render_navigation_layer
         payload = _payload()
         window = {"prev": payload, "next": payload, "current": payload}
         plot = _plot()
@@ -247,7 +247,7 @@ class NativeStrokeParityTests(unittest.TestCase):
         # progress, never a 100%-complete layer: below the live
         # split the printed portion carries the class colour, beyond
         # it only the grey base's silhouette remains.
-        from mpf.PlateQt import render_navigation_layer
+        from mpf.plate.PlateQt import render_navigation_layer
         payload = {
             "classes": {"SKIN": [[[float(i), 240.0, float(i)]
                                   for i in range(20)]]},
@@ -371,7 +371,7 @@ class NativeStrokeParityTests(unittest.TestCase):
     def test_an_empty_image_never_publishes_a_url(self):
         # A failed/empty save must produce no URL — the transport
         # validity reads an empty source as invalid.
-        from mpf.PlateQt import PlateLayer, png_file
+        from mpf.plate.PlateQt import PlateLayer, png_file
         blank = QImage(0, 0, QImage.Format.Format_ARGB32_Premultiplied)
         self.assertEqual(png_file(blank, "/tmp/mpf/nowhere", "x"), "")
         layer = PlateLayer(_payload())
@@ -387,7 +387,7 @@ class NativeStrokeParityTests(unittest.TestCase):
         # hit).
         import PyQt6.sip as sip
 
-        from mpf.PlateQt import RasterBridge, _bridge_emit
+        from mpf.plate.PlateQt import RasterBridge, _bridge_emit
         bridge = RasterBridge()
         sip.delete(bridge)  # the C++ side dies outright
         self.assertFalse(_bridge_emit(bridge, "done", ("nav",), ("ticket",)),
@@ -455,7 +455,7 @@ class NativeStrokeParityTests(unittest.TestCase):
         import gc
         import weakref
 
-        from mpf.PlateQt import PlateLayer
+        from mpf.plate.PlateQt import PlateLayer
         payload = _payload()
         payload["travels"] = [[[10.0, 50.0, 0.0], [30.0, 50.0, 1.0]]]
         plot = _plot()
@@ -574,10 +574,10 @@ class NativeLayerFallbackTests(unittest.TestCase):
 
     def test_background_budget_yields_and_can_cancel_during_its_wait(self):
         from unittest.mock import Mock, patch
-        from mpf.PlateQt import _CheckpointBudget
+        from mpf.plate.PlateQt import _CheckpointBudget
         cancel = Mock()
         cancel.is_set.return_value = False
-        with patch("mpf.PlateQt.time.monotonic", side_effect=[0, 0.001, 0.009, 0.02]):
+        with patch("mpf.plate.PlateQt.time.monotonic", side_effect=[0, 0.001, 0.009, 0.02]):
             budget = _CheckpointBudget(cancel)
             self.assertFalse(budget.is_set())
             cancel.wait.assert_not_called()
@@ -588,7 +588,7 @@ class NativeLayerFallbackTests(unittest.TestCase):
 
     def test_backward_checkpoint_reuses_only_an_earlier_matching_view(self):
         from PyQt6.QtGui import QImage
-        from mpf.PlateQt import PlateLayer
+        from mpf.plate.PlateQt import PlateLayer
         layer = PlateLayer({"motions": 1000})
         layer.set_expected_key("view")
         images = []
@@ -607,7 +607,7 @@ class NativeLayerFallbackTests(unittest.TestCase):
         self.assertEqual(layer.prefix_references(), [])
 
     def test_a_backward_cached_seed_has_the_same_pixels_as_a_fresh_target(self):
-        from mpf.PlateQt import PlateLayer
+        from mpf.plate.PlateQt import PlateLayer
         payload = {"classes": {"WALL-OUTER": [
             [[10.0, 100.0, 0.0], [30.0, 100.0, 1.0]],
             [[50.0, 100.0, 3.0], [70.0, 100.0, 4.0]],
@@ -628,7 +628,7 @@ class NativeLayerFallbackTests(unittest.TestCase):
 
     def test_checkpoint_count_and_pixel_memory_are_bounded(self):
         from PyQt6.QtGui import QImage
-        from mpf.PlateQt import PlateLayer
+        from mpf.plate.PlateQt import PlateLayer
         layer = PlateLayer({"motions": 1000})
         layer.set_expected_key("view")
         for boundary in range(1, 7):
@@ -983,7 +983,7 @@ class NativeNavigationTravelTests(unittest.TestCase):
         # die in assignment order, the canvas first, so the device is
         # destroyed under a live painter and the process dumps core
         # (the worker's failure lane).
-        import mpf.PlateQt as plate
+        import mpf.plate.PlateQt as plate
 
         original = plate.QPainter
         opened = []

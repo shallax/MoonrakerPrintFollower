@@ -66,10 +66,10 @@ if QT_AVAILABLE:
     from PyQt6.QtQml import QQmlComponent, QQmlEngine
     from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
-    from mpf.GCodeIndex import build_index_from_bytes
-    from mpf.MonitorFormatting import _point_in_polygon, polygon_bounds
-    from mpf.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
-    from mpf.PlateProgress import layer_polylines
+    from mpf.index.GCodeIndex import build_index_from_bytes
+    from mpf.monitor.MonitorFormatting import _point_in_polygon, polygon_bounds
+    from mpf.plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
+    from mpf.plate.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
         """The one context property both documents read for idleness."""
@@ -1767,7 +1767,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         scrub vector's fallback cannot rescue a missing blit.
         `grey=False` leaves the base sibling unset — the pre-arrival
         wrapper the fallback exists for."""
-        from mpf.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
+        from mpf.plate.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
         raster_dir = "/tmp/mpf/raster-probe"
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -2379,7 +2379,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
                 "bedXMin": float(plot_value["bed"]["bedXMin"]),
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
-        from mpf.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateQt import render_navigation_layer, png_file
         nav = render_navigation_layer(
             {"prev": None, "next": None, "current": payload}, plot,
             {"width": int(face.width()), "height": int(face.height()),
@@ -2415,7 +2415,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
 
     def _prefix_for(self, payload, face, split, stem):
-        from mpf.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateQt import render_layer_prefix, png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "dpr": 1.0}
@@ -2427,7 +2427,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         """The 4x interaction raster at the size the model publishes
         it — the transport whose decode is 66 ms at the face's own
         geometry."""
-        from mpf.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateQt import render_navigation_layer, png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "backing": 4.0,
@@ -2913,7 +2913,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
 
 
 if QT_AVAILABLE:
-    from mpf.MonitorFormatting import PlateProjectionMemo
+    from mpf.monitor.MonitorFormatting import PlateProjectionMemo
 
     class PlateJobBoundaryTests(RealEngineTestCase):
         """The picker's payload ties its GEOMETRY to the current job.
@@ -2950,7 +2950,7 @@ if QT_AVAILABLE:
             # only the harness supplies (this file's QGuiApplication is
             # the same instance the harness reuses).
             with runtime():
-                from mpf.MoonrakerMonitorModel import MoonrakerMonitorModel
+                from mpf.monitor.MoonrakerMonitorModel import MoonrakerMonitorModel
             # Bound as a plain function on the class: the unbound method
             # called through the instance would take the test case as
             # its `self`.

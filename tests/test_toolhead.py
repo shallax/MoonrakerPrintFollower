@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from mpf.ToolheadPolicy import (
+from mpf.monitor.ToolheadPolicy import (
     CENTER_Z_MM,
     EXTRUDE_DISTANCES,
     EXTRUDE_DISTANCE_MAX,
@@ -124,7 +124,7 @@ class ToolheadParkTests(unittest.TestCase):
         self.assertEqual(z0_script(absolute_coordinates=False), "G90\nG1 Z0 F600\nG91")
 
     def test_center_and_z0_ops_never_merge(self):
-        from mpf.ToolheadPolicy import make_center_op, make_jog_op, make_z0_op, push_op
+        from mpf.monitor.ToolheadPolicy import make_center_op, make_jog_op, make_z0_op, push_op
         pending = ()
         pending, _ = push_op(pending, make_center_op(100.0, 100.0, True))
         pending, _ = push_op(pending, make_z0_op(True))

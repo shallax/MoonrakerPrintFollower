@@ -335,7 +335,7 @@ change together:
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
-5. `mpf/WhatsNew.py` — a new head entry (headline + user-facing items)
+5. `mpf/cura/WhatsNew.py` — a new head entry (headline + user-facing items)
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
