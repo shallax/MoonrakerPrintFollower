@@ -47,13 +47,13 @@ def _british_spelling() -> bool:
     return False
 
 
-from .MonitorCamera import MonitorCamera
-from .PlateQt import (
+from ..moonraker.MonitorCamera import MonitorCamera
+from ..plate.PlateQt import (
     PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _PLATE_TRAVEL_VISUAL_RATIO,
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer, qml_geometry,
 )
-from .PlateSceneIdentity import NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom
+from ..plate.PlateSceneIdentity import NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
@@ -63,9 +63,9 @@ from .PrintStartOwner import PrintStartOwner
 from .UiStateStore import UiStateStore
 from datetime import datetime
 
-from .FileManager import FileManager
+from ..files.FileManager import FileManager
 from .SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
-from .FileManagerPolicy import (
+from ..files.FileManagerPolicy import (
     delete_candidates,
     is_gcode_name,
     name_collides,
@@ -88,13 +88,13 @@ from .MonitorFormatting import (
 )
 from dataclasses import replace
 
-from .PrinterConfig import (
+from ..cura.PrinterConfig import (
     CAMERA_FPS_DEFAULT,
     CAMERA_FPS_FALLBACK_MAX,
     CAMERA_FPS_MIN,
     normalise_temperature_chart,
 )
-from .StateStore import StateStore
+from ..cura.StateStore import StateStore
 from .MonitorTemperatureHistory import (
     DORMANT_CHART,
     PALETTE,
@@ -110,8 +110,8 @@ from .ToolheadController import ToolheadController
 from .ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
 # The pause gates, shared with the Preview card: the popover's own
 # candidate is re-read, its refusals are not re-worded.
-from .PreviewFormatting import pause_can_toggle, pause_unavailable
-from .WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
+from ..printer.PreviewFormatting import pause_can_toggle, pause_unavailable
+from ..cura.WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
 
 
 # The monitor's panel state lives in a plugin-owned JSON file next to
@@ -984,7 +984,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_stream_failed(self) -> None:
         if not self._webcam_stream_enabled:
             return
-        from .CameraTiming import mark
+        from ..moonraker.CameraTiming import mark
         mark("T6-watchdog", "camera render stalled")
         import time
         now = time.monotonic()
@@ -1804,7 +1804,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self.setCameraUrl(QUrl(url))
         except AttributeError:
             pass
-        from .CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
+        from ..moonraker.CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
         values["traceCameraTiming"] = camera_timing_enabled()
         if first_attach:
             # T5: the FINAL url QML consumes, sanitised to
@@ -2590,7 +2590,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def cameraFirstFrameRendered(self):
-        from .CameraTiming import mark_once
+        from ..moonraker.CameraTiming import mark_once
         mark_once("T9", "first decoded frame")
 
     @pyqtSlot(result=int)
@@ -2598,7 +2598,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The pane's process-wide diagnostic id: every pane instance
         # (one per machine model) draws from the SAME sequence, so
         # pane-side trace lines can never collide across models.
-        from .CameraTiming import next_actor_id
+        from ..moonraker.CameraTiming import next_actor_id
         return next_actor_id()
 
     @pyqtSlot(int, str)
@@ -2606,7 +2606,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The QML side of the cold-start trace: applyCamera calls,
         # visibility start/stops and watchdog firings, labelled with
         # the pane's id and sanitised by the pane itself.
-        from .CameraTiming import mark
+        from ..moonraker.CameraTiming import mark
         mark("T6-qml", "pane %d: %s" % (int(pane_id), str(event)))
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")

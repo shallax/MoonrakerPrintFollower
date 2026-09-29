@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .CuraAdapter import (
+from ..cura.CuraAdapter import (
     apply_preview_decision,
     preview_current_layer,
     preview_current_path,

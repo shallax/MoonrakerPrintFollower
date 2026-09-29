@@ -8,9 +8,9 @@ import unittest
 import importlib.util
 from pathlib import Path
 
-from mpf.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
-from mpf.PlateProgress import prepare_layer, encode_layer, decode_layer
-from mpf.PreviewColours import gradient, motion_colour
+from mpf.index.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
+from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
+from mpf.plate.PreviewColours import gradient, motion_colour
 
 
 class ColourMetricsTests(unittest.TestCase):
@@ -83,8 +83,8 @@ class ColourMetricsTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.GpuFollower import GpuFollower,prepare
-        from mpf.GpuStrokeMaterial import pack_shader,_pack_stdlib
+        from mpf.plate.GpuFollower import GpuFollower,prepare
+        from mpf.plate.GpuStrokeMaterial import pack_shader,_pack_stdlib
         app=QGuiApplication.instance() or QGuiApplication([])
         payload={"classes":{"SKIN":[[(0,0,0),(10,0,0),(20,0,1)]]},"widths":(.4,.8),"speeds":(10,20),"tools":(0,1)}
         packed=prepare((("current",payload),("prev",payload),("next",payload)))
@@ -113,7 +113,7 @@ class ColourMetricsTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("PyQt6") is not None, "PyQt6 is unavailable")
     def test_shared_host_preference_updates_both_directions(self):
         from PyQt6.QtCore import QObject,pyqtSignal
-        from mpf.FollowerColourScheme import FollowerColourScheme
+        from mpf.plate.FollowerColourScheme import FollowerColourScheme
         class Preferences(QObject):
             preferenceChanged=pyqtSignal(str)
             def __init__(self): super().__init__(); self.values={}
@@ -135,7 +135,7 @@ class ColourMetricsTests(unittest.TestCase):
     def test_host_models_are_not_created_during_plugin_registration(self):
         from PyQt6.QtCore import QObject,pyqtSignal
         from PyQt6.QtGui import QColor
-        from mpf.FollowerColourScheme import FollowerColourScheme
+        from mpf.plate.FollowerColourScheme import FollowerColourScheme
         class Preferences(QObject):
             preferenceChanged=pyqtSignal(str)
             def addPreference(self,key,value):
@@ -172,7 +172,7 @@ class ColourMetricsTests(unittest.TestCase):
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QGuiApplication
         from PyQt6.QtQml import QQmlComponent,QQmlEngine
-        from mpf.PlateQt import PlateLayer
+        from mpf.plate.PlateQt import PlateLayer
         app=QGuiApplication.instance() or QGuiApplication([])
         engine=QQmlEngine()
         layer=PlateLayer({"colourRanges":{"speed":(10.,30.)},"layerHeight":.2})
@@ -187,7 +187,7 @@ class ColourMetricsTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("PyQt6") is not None, "PyQt6 is unavailable")
     def test_missing_host_colour_apis_do_not_prevent_registration(self):
-        from mpf.FollowerColourScheme import FollowerColourScheme
+        from mpf.plate.FollowerColourScheme import FollowerColourScheme
         class Preferences:
             def addPreference(self,key,value): pass
             def getValue(self,key): return 2
@@ -204,9 +204,9 @@ class ColourMetricsTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication,QPen
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.GpuFollower import GpuFollower,prepare
-        from mpf.GpuStrokeMaterial import pack_shader
-        from mpf.PlateQt import _travels_pen
+        from mpf.plate.GpuFollower import GpuFollower,prepare
+        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.PlateQt import _travels_pen
         app=QGuiApplication.instance() or QGuiApplication([])
         window=QQuickWindow();item=GpuFollower(window.contentItem())
         item._data=pack_shader(prepare((("current",{"travels":[[(0,0,0),(10,0,0)]]}),)))
@@ -227,7 +227,7 @@ class ColourMetricsTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("PyQt6") is not None, "PyQt6 is unavailable")
     def test_unavailable_colour_api_reuses_last_successful_cura_palette(self):
         from PyQt6.QtGui import QColor
-        from mpf.FollowerColourScheme import FollowerColourScheme
+        from mpf.plate.FollowerColourScheme import FollowerColourScheme
         class Preferences:
             def __init__(self): self.values={}
             def addPreference(self,key,value): self.values.setdefault(key,value)

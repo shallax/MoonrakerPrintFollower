@@ -8,8 +8,8 @@ from PyQt6.QtQml import QQmlComponent
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-from .FollowerColourScheme import FollowerColourScheme
-from .MoonrakerMonitorModel import MoonrakerMonitorModel
+from ..plate.FollowerColourScheme import FollowerColourScheme
+from ..monitor.MoonrakerMonitorModel import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController, MoonrakerOutputDevice
 
 

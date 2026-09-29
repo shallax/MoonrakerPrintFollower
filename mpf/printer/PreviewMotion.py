@@ -23,7 +23,7 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer
 
-from .CuraAdapter import (
+from ..cura.CuraAdapter import (
     preview_max_paths,
     reset_preview_layer_data,
     set_preview_minimum_path,

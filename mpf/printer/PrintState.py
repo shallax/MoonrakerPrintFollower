@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Mapping, Optional, Sequence
 
-from .RemoteJobService import JobKey, PrintObservation
+from ..index.RemoteJobService import JobKey, PrintObservation
 
 
 @dataclass(frozen=True)

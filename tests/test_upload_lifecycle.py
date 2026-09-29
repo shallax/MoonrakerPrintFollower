@@ -12,8 +12,9 @@ import unittest
 from types import SimpleNamespace
 
 from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
+from tests.source_root import SourceRoot
 
-PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "mpf"
+PLUGINS = SourceRoot(pathlib.Path(__file__).resolve().parents[1] / "mpf")
 
 
 class UploadContractTests(unittest.TestCase):

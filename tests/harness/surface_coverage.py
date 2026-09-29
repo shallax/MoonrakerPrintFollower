@@ -17,8 +17,13 @@ from pathlib import Path
 import re
 from typing import Dict, List
 
+from tests.source_root import SourceRoot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGINS = os.path.join(ROOT, "mpf")
+# The tree nests by domain, so a module is found by name rather than by
+# assuming it sits at the top level.
+_SOURCE = SourceRoot(PLUGINS)
 
 
 def _module_files():
@@ -41,7 +46,10 @@ def extract() -> Dict[str, List[str]]:
                 source = handle.read()
             if "@pyqtSlot" not in source:
                 continue
-            module = os.path.splitext(name)[0]
+            # The map addresses a module by name, the way the ownership
+            # table does; the domain it sits in is not part of the key,
+            # or nesting would renumber the whole matrix.
+            module = os.path.splitext(os.path.basename(name))[0]
             tree = ast.parse(source)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.FunctionDef):
@@ -56,7 +64,7 @@ def extract() -> Dict[str, List[str]]:
                 source = handle.read()
             for match in re.finditer(r'objectName:\s*"([^"]+)"', source):
                 surfaces["objectName"].append(match.group(1))
-    with open(os.path.join(PLUGINS, "MoonrakerProtocol.py"), encoding="utf-8") as handle:
+    with open(_SOURCE.path("MoonrakerProtocol.py"), encoding="utf-8") as handle:
         protocol = handle.read()
     for match in re.finditer(r"def (\w*endpoint)\(", protocol):
         surfaces["route"].append(match.group(1))

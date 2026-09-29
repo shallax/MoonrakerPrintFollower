@@ -4,7 +4,7 @@ from tests import index_plate_support as harness
 class FeatureTypeTests(harness.FeatureTypeTests):
     def test_bead_width_profile_is_per_motion_and_survives_compact_cache_and_preparation(self):
         from math import pi
-        from mpf.PlateProgress import prepare_layer, encode_layer, decode_layer
+        from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
         data = (b'; filament_diameter = 2\nM83\n;LAYER:0\nG0 Z0.2\n;TYPE:WALL-OUTER\n'
                 b'G1 X10 E0.2\nG1 X20 E0.4\nG1 E-1\n;LAYER:1\n'
                 b'G0 Z0.5\nG0 X30\nG1 E1\nG1 X40 E0.3\n')
@@ -41,14 +41,14 @@ class FeatureTypeTests(harness.FeatureTypeTests):
 
     def test_arc_width_uses_the_path_length_not_the_endpoint_chord(self):
         from math import pi
-        from mpf.PlateProgress import prepare_layer
+        from mpf.plate.PlateProgress import prepare_layer
         data = b'; filament_diameter = 2\nM83\nG0 X10 Y0 Z0.2\n;LAYER:0\nG3 X-10 Y0 I-10 J0 E1\n'
         index = harness.build_index_from_bytes(data)
         width = prepare_layer(index, 0)["widths"][0]
         self.assertAlmostEqual(width, pi / (pi * 10 * .2), delta=.001)
 
     def test_extruder_events_distinguish_retractions_unretractions_and_resets(self):
-        from mpf.PlateProgress import prepare_layer, encode_layer, decode_layer
+        from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
         data = (b"M83\n;LAYER:0\nG1 X10 E1\nG1 E-1\nG0 X20\nG92 E0\n"
                 b"G1 E1\nG1 X30 E1\nG10\nG0 X40\nG11\n;TIME_ELAPSED:2\n")
         index = harness.build_index_from_bytes(data)

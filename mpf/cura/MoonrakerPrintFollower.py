@@ -2,7 +2,7 @@
 from PyQt6.QtCore import QObject, pyqtSlot
 from UM.Extension import Extension
 
-from .FollowerRuntime import FollowerRuntime
+from ..root.FollowerRuntime import FollowerRuntime
 from .WhatsNewOverlay import WhatsNewOverlay
 
 

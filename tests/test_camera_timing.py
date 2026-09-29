@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from mpf import CameraTiming
-
-
+from mpf.moonraker import CameraTiming
 class CameraTimingContractTests(unittest.TestCase):
 
     def setUp(self):
@@ -90,14 +88,14 @@ class CameraTimingContractTests(unittest.TestCase):
         sys.modules["UM.Resources"] = resources
         sys.modules["UM.Logger"] = logger
         try:
-            import mpf.CameraTiming as timing
+            import mpf.moonraker.CameraTiming as timing
             timing = importlib.reload(timing)
             timing.begin(True)
             timing.mark("T3", "webcam list requested")  # must not raise
         finally:
             for name in ("UM", "UM.Resources", "UM.Logger"):
                 sys.modules.pop(name, None)
-            import mpf.CameraTiming as restored
+            import mpf.moonraker.CameraTiming as restored
             importlib.reload(restored)
 
     def test_the_sinks_write_when_uranium_exists(self):
@@ -132,7 +130,7 @@ class CameraTimingContractTests(unittest.TestCase):
         sys.modules["UM.Resources"] = resources
         sys.modules["UM.Logger"] = logger
         try:
-            import mpf.CameraTiming as timing
+            import mpf.moonraker.CameraTiming as timing
             timing = importlib.reload(timing)
             timing.begin(True)
             timing.mark("T3", "webcam list requested")
@@ -146,5 +144,5 @@ class CameraTimingContractTests(unittest.TestCase):
         finally:
             for name in ("UM", "UM.Resources", "UM.Logger"):
                 sys.modules.pop(name, None)
-            import mpf.CameraTiming as restored
+            import mpf.moonraker.CameraTiming as restored
             importlib.reload(restored)

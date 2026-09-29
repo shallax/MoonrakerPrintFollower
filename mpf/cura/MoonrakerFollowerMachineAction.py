@@ -19,12 +19,12 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
-from .CacheNamespaces import CACHE_DIRECTORY_NAME
-from .FollowController import FollowMode
-from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
-from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
-from .MoonrakerSession import RequestCategory
-from .MoonrakerTransport import MoonrakerHttpTransport
+from ..index.CacheNamespaces import CACHE_DIRECTORY_NAME
+from ..printer.FollowController import FollowMode
+from ..monitor.MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
+from ..moonraker.MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
+from ..moonraker.MoonrakerSession import RequestCategory
+from ..moonraker.MoonrakerTransport import MoonrakerHttpTransport
 from .PrinterConfig import PrinterConfig, normalise_url
 
 

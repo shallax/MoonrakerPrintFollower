@@ -9,8 +9,8 @@ from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
-from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, number, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
-from .MoonrakerProtocol import live_position_in_gcode_space
+from ..monitor.MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, number, parse_bed_mesh, PlateProjectionMemo, preview_eta_text, result
+from ..moonraker.MoonrakerProtocol import live_position_in_gcode_space
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -21,7 +21,7 @@ from .PreviewFormatting import (
 )
 from .PrintIdentity import index_view_for_print
 from .PrintState import LayerResolver, PrintSnapshot
-from .RemoteJobService import RemoteJobService
+from ..index.RemoteJobService import RemoteJobService
 
 
 class PrintCoordinator(QObject):

@@ -50,8 +50,8 @@ from array import array
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import mpf.GCodeIndex as gcode_index
-from mpf.GCodeIndex import (
+import mpf.index.GCodeIndex as gcode_index
+from mpf.index.GCodeIndex import (
     FLOOR_LOOKBACK,
     LayerMotionIndex,
     PersistentIndexCache,
@@ -63,7 +63,7 @@ from mpf.GCodeIndex import (
     build_index_from_file,
     hydrate_layer_from_file,
 )
-from mpf.MoonrakerProtocol import RemoteFileIdentity
+from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
 
 
@@ -873,7 +873,7 @@ class CuraIntegrationTests(unittest.TestCase):
         # disconnects signals by handle, and a host collected first would
         # leave those handles dangling.
         self._hosts = []
-        import mpf.CuraIntegration as module
+        import mpf.cura.CuraIntegration as module
         self.module = module
 
         class SliceBackend(QObject):

@@ -22,7 +22,7 @@ class MonitorPolicyConsistencyTests(harness.MonitorPolicyConsistencyTests):
         self.assertIn(f"(±{radius})", (harness.PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8"))
 
     def test_classification_table_is_the_single_object_policy(self):
-        from mpf.MonitorFormatting import object_kind, wanted_object
+        from mpf.monitor.MonitorFormatting import object_kind, wanted_object
         self.assertEqual(object_kind("fan"), "system")
         self.assertEqual(object_kind("heater_bed"), "system")
         self.assertEqual(object_kind("gcode_macro START_PRINT"), "macro")
@@ -46,7 +46,7 @@ class MonitorPolicyConsistencyTests(harness.MonitorPolicyConsistencyTests):
         # temperature-regulated — SET_FAN_SPEED never sticks — so
         # their rows render read-only. The other fan types register
         # the command.
-        from mpf.MonitorFormatting import fan_writable
+        from mpf.monitor.MonitorFormatting import fan_writable
         for name in ("fan", "fan_generic nevermore"):
             self.assertTrue(fan_writable(name), name)
         for name in ("controller_fan controller_fan1", "controller_fan controller_fan2",

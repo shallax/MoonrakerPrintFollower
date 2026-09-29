@@ -359,7 +359,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         here can explain a judder seen during a scrub: the only
         entries are the wheel and drag handlers, the scope's drag and
         the centre-on-toolhead button."""
-        from mpf.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateQt import render_navigation_layer, png_file
         monitor, window, face, _baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
         self.pump(10)
@@ -491,7 +491,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         wrong scale or off its corner."""
         from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
         from PyQt6.QtGui import QGuiApplication, QMouseEvent
-        from mpf.PlateQt import png_file, render_navigation_layer
+        from mpf.plate.PlateQt import png_file, render_navigation_layer
 
         monitor, window, face, baseline = self._mount_empty()
         face.setProperty("lineScale", 8.0)
@@ -846,7 +846,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         than the rounding helper, so the sibling's failure is a
         measurement of the extent and not an import error.
         """
-        from mpf.PlateQt import _new_canvas
+        from mpf.plate.PlateQt import _new_canvas
 
         payload = {"classes": {"WALL-OUTER": [
                        [[12.0 + i * 3.0, 12.0, float(i)] for i in range(6)]]},

@@ -2,9 +2,10 @@ import json
 import pathlib
 import re
 import unittest
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 PACKAGE = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
 PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text(encoding="utf-8"))
 FOLLOWER_SOURCES = (
@@ -29,8 +30,8 @@ MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encod
 # bypass the Qt6.2 import checks. Keyed by path, not basename: two files
 # sharing a name in different domains would otherwise collide and one
 # would drop out of the audit unnoticed.
-QML_FILES = sorted(str(path.relative_to(PLUGINS)) for path in PLUGINS.rglob("*.qml"))
-QML_SOURCES = {str(path.relative_to(PLUGINS)): path.read_text(encoding="utf-8")
+QML_FILES = sorted(str(path.relative_to(PLUGINS.root)) for path in PLUGINS.rglob("*.qml"))
+QML_SOURCES = {str(path.relative_to(PLUGINS.root)): path.read_text(encoding="utf-8")
                for path in PLUGINS.rglob("*.qml")}
 CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
 MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]

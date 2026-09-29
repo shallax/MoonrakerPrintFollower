@@ -8,9 +8,10 @@ import json
 import pathlib
 import re
 import unittest
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
 RETIRED = {
@@ -29,6 +30,31 @@ RUNTIME_COMPONENTS = (
     "GCodeIndexService.py", "PauseController.py", "BedMeshPresenter.py",
     "PluginPersistence.py", "CacheNamespaces.py",
 )
+
+# The directories the package nests by. Used only to read an import.
+DOMAINS = frozenset({"plate", "monitor", "printer", "moonraker", "index", "files", "cura"})
+
+
+def imported_names(node):
+    """The modules a relative import names, by name and not by domain.
+
+    The tree nests by domain, so a cross-domain edge reads
+    ``from ..monitor.Foo import``. The ownership table, the dependency
+    allowlist and the import graph are all name-keyed; read raw, a
+    ``node.module`` of ``monitor.Foo`` matches no graph node, so the
+    acyclicity walk finds no edge across a boundary and passes having
+    checked nothing. Everything here is case-sensitive module names.
+    """
+    if node.module is None:
+        # ``from . import X`` names its modules in the aliases.
+        return {alias.name for alias in node.names}
+    head, _, tail = node.module.partition(".")
+    if tail:
+        return {tail.partition(".")[0]}
+    if head in DOMAINS:
+        # ``from ..monitor import Foo`` — the aliases carry the module.
+        return {alias.name for alias in node.names}
+    return {head}
 
 
 class ArchitectureDocumentTests(unittest.TestCase):
@@ -233,8 +259,7 @@ class SourceContractTests(unittest.TestCase):
             imported = set()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.ImportFrom) and node.level:
-                    imported |= ({alias.name for alias in node.names} if node.module is None
-                                 else {node.module})
+                    imported |= imported_names(node)
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
                 self.assertNotIn("_follower", source, module)
@@ -271,9 +296,13 @@ class SourceContractTests(unittest.TestCase):
                     self.fail(f"{path.name}: setattr on the Cura/Uranium class {node.args[0].id}")
 
     def test_local_import_graph_is_acyclic(self):
-        graph = {path.stem: {n.module for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-            if isinstance(n, ast.ImportFrom) and n.level and n.module}
-            for path in PLUGINS.rglob("*.py") if path.stem != "__init__"}
+        def dependencies(path):
+            return {name for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+                    if isinstance(node, ast.ImportFrom) and node.level
+                    for name in imported_names(node)}
+
+        graph = {path.stem: dependencies(path)
+                 for path in PLUGINS.rglob("*.py") if path.stem != "__init__"}
         done = set()
         def visit(name, stack):
             if name in done or name not in graph: return
@@ -507,10 +536,9 @@ class CompositionStructureTests(unittest.TestCase):
     def test_runtime_composition_is_complete_and_has_no_private_http_stack(self):
         runtime = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
         tree = ast.parse(runtime)
-        relative_modules = {
-            node.module for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module
-        }
+        relative_modules = set().union(*(
+            imported_names(node) for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.level))
         for name in RUNTIME_COMPONENTS:
             module = name[:-3]
             self.assertIn(module, relative_modules, module)

@@ -31,9 +31,10 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
+from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mpf"
+PLUGINS = SourceRoot(ROOT / "mpf")
 QML_STUBS = ROOT / "tests" / "qml_stubs"
 
 if QT_AVAILABLE:
@@ -47,7 +48,7 @@ if QT_AVAILABLE:
 
         def __init__(self):
             super().__init__()
-            from mpf.WhatsNew import entries
+            from mpf.cura.WhatsNew import entries
             self.checks = 0
             self.dismissals = 0
             self._content = entries()

@@ -3,7 +3,7 @@
 Renders mpf/WhatsNewOverlay.qml the way production opens it: a
 Popup created on Cura's engine and parented into a plain QQuickWindow
 (the window stands in for Cura's main window), with the REAL content
-from mpf/WhatsNew.py and the real cura-light theme through the
+from mpf/cura/WhatsNew.py and the real cura-light theme through the
 shared capture overlay.
 
 Usage:  python3 tools/capture_whatsnew.py <output-directory>
@@ -40,7 +40,7 @@ class WhatsNewModelStub(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from mpf.WhatsNew import entries
+        from mpf.cura.WhatsNew import entries
         self._content = entries()
 
     @pyqtProperty(QVariant, constant=True)

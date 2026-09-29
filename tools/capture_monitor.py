@@ -180,7 +180,7 @@ def main():
         from types import SimpleNamespace
         # Patch the module the MODEL INSTANCE actually uses — the Qt
         # runtime registers it under a synthetic name, so importing
-        # "mpf.MoonrakerMonitorModel" again would patch the wrong
+        # "mpf.monitor.MoonrakerMonitorModel" again would patch the wrong
         # object and leave all samples at elapsed 0 (filling forever).
         model_module = sys.modules[type(model).__module__]
         tick = [1000.0]

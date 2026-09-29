@@ -15,22 +15,22 @@ import os
 from UM.Logger import Logger
 from UM.Resources import Resources
 
-from .BedMeshPresenter import BedMeshPresenter
-from .CacheNamespaces import CACHE_DIRECTORY_NAME
-from .CuraIntegration import CuraIntegration
-from .GCodeIndexService import GCodeIndexService
-from .MigrationNotice import MigrationNotice
-from .MoonrakerClient import MoonrakerClient
-from .PauseController import PauseController
-from .PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
-from .PreviewFollower import PreviewFollower
-from .PreviewMotion import PreviewMotion
-from .PreviewPresentation import PreviewPresentation
-from .PrintCoordinator import PrintCoordinator
-from .PrinterBinding import PrinterBinding
-from .RemoteFileService import RemoteFileService
-from .FileDownload import FileDownload
-from .WhatsNew import should_show as whats_new_should_show
+from .monitor.BedMeshPresenter import BedMeshPresenter
+from .index.CacheNamespaces import CACHE_DIRECTORY_NAME
+from .cura.CuraIntegration import CuraIntegration
+from .index.GCodeIndexService import GCodeIndexService
+from .cura.MigrationNotice import MigrationNotice
+from .moonraker.MoonrakerClient import MoonrakerClient
+from .printer.PauseController import PauseController
+from .cura.PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
+from .printer.PreviewFollower import PreviewFollower
+from .printer.PreviewMotion import PreviewMotion
+from .printer.PreviewPresentation import PreviewPresentation
+from .printer.PrintCoordinator import PrintCoordinator
+from .cura.PrinterBinding import PrinterBinding
+from .index.RemoteFileService import RemoteFileService
+from .index.FileDownload import FileDownload
+from .cura.WhatsNew import should_show as whats_new_should_show
 
 
 def _savefile_write(path, text):
@@ -160,7 +160,7 @@ class FollowerRuntime:
         # changed signal (fired after every identity re-apply, the
         # machine switch included) rebinds them, and a worker from
         # the old machine never commits into the new one's cache.
-        from .CacheNamespaces import CacheNamespaces
+        from .index.CacheNamespaces import CacheNamespaces
         self.index = GCodeIndexService(self.files, None, parent, None)
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .TravelStates import advance
+from ..plate.TravelStates import advance
 
 import gzip
 import hashlib
@@ -34,9 +34,9 @@ def _log(message, *args):
     if _Logger is not None:
         _Logger.log("i", message, *args)
 
-from . import ArcGeometry
-from .PreviewColours import valid_ranges
-from .MoonrakerProtocol import RemoteFileIdentity
+from ..plate import ArcGeometry
+from ..plate.PreviewColours import valid_ranges
+from ..moonraker.MoonrakerProtocol import RemoteFileIdentity
 
 
 _LAYER_COMMENT = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)

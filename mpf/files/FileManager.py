@@ -22,7 +22,7 @@ from urllib.parse import quote
 from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QUrl, QVariant, pyqtSignal
 from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
 
-from .MoonrakerProtocol import (
+from ..moonraker.MoonrakerProtocol import (
     _moonraker_error_text,
     delete_endpoint,
     directory_create_endpoint,

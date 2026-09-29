@@ -25,8 +25,8 @@ from .GCodeIndex import (
     hydrate_layer_from_file,
     passive_yield,
 )
-from .MonitorFormatting import _segment_in_polygon, polygon_bounds
-from .PlateProgress import (
+from ..monitor.MonitorFormatting import _segment_in_polygon, polygon_bounds
+from ..plate.PlateProgress import (
     PreparationYield,
     decode_layer as _decode_layer,
     encode_layer as _encode_layer,
@@ -34,9 +34,9 @@ from .PlateProgress import (
     prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
-from .PlateSplitTracker import PlateSplitTracker
+from ..plate.PlateSplitTracker import PlateSplitTracker
 from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
-from .PrintState import MotionProgress
+from ..printer.PrintState import MotionProgress
 
 
 @dataclass(frozen=True)
