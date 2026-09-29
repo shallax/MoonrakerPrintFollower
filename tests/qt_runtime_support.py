@@ -399,8 +399,6 @@ def runtime():
         module("cura.PrinterOutput.PrinterOutputController", PrinterOutputController=type("Controller", (), {"__init__": lambda self, device: None}))
         module("cura.PrinterOutput.PrinterOutputDevice", PrinterOutputDevice=OutputDevice,
                ConnectionType=SimpleNamespace(NetworkConnection=1))
-        package = module("_moonraker_runtime_test")
-
         def load(name):
             """The module by name, wherever the tree files it.
 
