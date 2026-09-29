@@ -21,6 +21,7 @@ Item {
     // bindings resolve (the throttle's own contracts are measured on
     // the real renderer in test_moonraker_mjpg.py).
     property real targetFps: 0
+    property bool snapshotMode: false
     property real recentDisplayedFPS: 0
     // The ownership counters: the camera start/stop lifecycle tests
     // count every call and every source assignment — Cura's real

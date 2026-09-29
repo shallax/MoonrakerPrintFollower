@@ -8,8 +8,26 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.6.0
+- **Release:** 4.6.1
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 4.6.1
+
+Version 4.6.1 brings smooth following to vase prints. Print Follower tracks
+the nozzle's continuous Z rise through the flat-to-spiral transition, fades
+the previous layer during the handoff, and moves the head toward its first
+observed position on the new layer. Ordinary flat layers keep their existing
+path tracking. You can also detach and scrub before the print reaches its
+first indexed layer.
+
+At 5 FPS and below, webcams with a usable snapshot URL switch from MJPEG to
+snapshot polling, closing the stream to save bandwidth. Camera zoom and FPS
+touchpad scrolling now match follower zoom sensitivity. The auxiliary and
+console interval sliders no longer jump to their maximum when grabbed.
+
+Developers can build and test natively on macOS and Windows through the same
+Make workflow used on Linux. Docker remains available by choice on those two
+platforms; Linux defaults to its pinned Docker toolchain.
 
 ## What changed in 4.6.0
 
@@ -543,6 +561,8 @@ The unified output device supplies Cura's normal **Monitor** stage with a dedica
 
 The camera panel queries Moonraker's webcam API and automatically uses enabled webcams already configured for Mainsail/Fluidd/Moonraker. Relative stream URLs are resolved against the configured Moonraker host. If more than one webcam is available, Monitor displays a selector. Moonraker rotation plus horizontal/vertical flip settings are applied in Cura. **Refresh** re-reads the current camera and printer capabilities without restarting Cura.
 
+The FPS control limits MJPEG decoding above 5 FPS. At 5 FPS or below, a webcam with a valid `snapshot_url` switches to polling snapshots and closes the MJPEG stream to save bandwidth. The green section of the FPS bar appears only when that webcam has a usable snapshot URL; other webcams continue using `stream_url` at every rate. Camera zoom and FPS use the same touchpad scroll-distance sensitivity as Print Follower zoom; mouse wheel steps remain discrete.
+
 If Moonraker does not expose a webcam list, the plugin falls back to camera URL/rotation/mirror settings imported from the standalone Moonraker Connection plugin.
 
 ### Print status and controls
@@ -802,6 +822,15 @@ High-risk logic is separated into focused modules. The authoritative ownership m
 - `DownloadStream.py` — bounded streaming G-code downloads
 
 ## Development and release checks
+
+The same Makefile targets drive development on Linux, macOS and Windows:
+`make dev_install`, `make build`, `make lint`, `make run_tests`,
+`make test_files FILES="tests.test_index"`, and `make package`.
+Linux defaults to the pinned Docker toolchain. macOS and Windows default
+to native host toolchains, with no Docker requirement; either can opt
+into the Linux image with `BACKEND=docker` (for example,
+`make BACKEND=docker build`). See [INSTRUCTIONS.md](INSTRUCTIONS.md)
+for setup, capture parity and the complete command list.
 
 The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.
 

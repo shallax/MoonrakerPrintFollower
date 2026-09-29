@@ -104,7 +104,7 @@ class GateSummaryTests(unittest.TestCase):
         # leaves the job page exactly as unreadable as before.
         root = Path(__file__).resolve().parent.parent
         for name, os_expr in (("gate-leg.yml", "inputs.os"),
-                              ("release.yml", "matrix.os")):
+                              ("ci.yml", "matrix.os")):
             text = (root / ".github" / "workflows" / name).read_text(encoding="utf-8")
             self.assertIn("tools/gate_summary.py", text, name)
             self.assertIn('>> "$GITHUB_STEP_SUMMARY"', text, name)

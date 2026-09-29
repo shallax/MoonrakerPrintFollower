@@ -6,6 +6,7 @@ files — the reopen, the repair and the fraction — consumes the
 semantics pinned here, nowhere else."""
 from __future__ import annotations
 
+import itertools
 import os
 import struct
 import subprocess
@@ -700,16 +701,16 @@ class PreparedStoreTests(unittest.TestCase):
         # exactly two folders, the least recently READ print must go
         # (mmm, the lexical middle) while the most recent survives
         # despite sorting last lexically.
-        cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024)
+        stamps = itertools.count(1_900_000_000_000_000_000, 1_000_000_000)
+        cache = PreparedCache(self._dir.name, max_bytes=256 * 1024 * 1024,
+                              clock_ns=lambda: next(stamps))
         payload = encode_layer(_payload(0))
         for key in ("aaa", "mmm", "zzz"):
             cache.finalise(key, [payload])
         # The reads re-stamp the recency in the OPPOSITE pairing of
         # the write order: mmm first (oldest), zzz last (newest).
         cache.load_table("mmm")
-        time.sleep(0.02)
         cache.load_table("aaa")
-        time.sleep(0.02)
         cache.load_table("zzz")
         folders = {key: os.path.dirname(cache._path(key))
                    for key in ("aaa", "mmm", "zzz")}

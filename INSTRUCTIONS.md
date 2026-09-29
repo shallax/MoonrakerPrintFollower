@@ -5,8 +5,33 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 ## Development environment
 
-- Python 3.10+ with the standard library alone runs everything except the
-  real-Qt tests, which skip automatically when PyQt6 is absent.
+The Makefile is the entry point on every host. Linux defaults to the
+pinned Docker image; macOS and Windows default to native host tools.
+On macOS and Windows, run `make dev_install` once. Linux builds its
+Docker toolchain on demand; its existing `make dev_install` links the
+checkout into a local Cura installation. Then use `make build`, `make lint`,
+`make run_tests`, `make test_files FILES="tests.test_index"`,
+`make generate_screenshots`, `make verify_captures`, and `make package`
+with the same names on each system. Set `BACKEND=docker` on macOS or
+Windows to run those targets in the Linux dev image instead. For example,
+`make BACKEND=docker dev_install` builds the image and
+`make BACKEND=docker build` uses it. Docker Desktop is only needed for
+that opt-in. On Apple Silicon and Windows ARM, the Docker backend uses
+a native arm64 Linux image for checks and packages; screenshot refresh
+uses the amd64 image that defines the committed pixel baseline.
+`make help` lists the complete target set.
+
+Native development uses `tools/native/dev.py` on macOS and Windows.
+The Docker option uses `tools/native/docker.py`, which invokes the pinned
+image without requiring a host shell. Linux continues to use its
+existing `tools/*.sh` procedures. The native driver keeps the PyQt6,
+PySide6, ruff, DejaVu, shellcheck, gitleaks and actionlint pins aligned
+with the image. `make dev_install` prints actual versions so differences
+are visible; a Python 3.14 patch release difference is acceptable.
+
+- Python 3.10+ with the standard library can run individual non-Qt tests
+  directly. The Makefile's full suite requires PyQt6 and fails clearly
+  when it is missing, so a skipped Qt half cannot appear to pass.
 - For the Qt tests, create a venv with PyQt6 (CI pins 6.11.0). Some systems
   lack `libxkbcommon`; if `import PyQt6.QtGui` fails with that library
   missing, obtain it from the distro's binary packages and add its
@@ -20,9 +45,9 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   structure, and the token tests in `tests/test_monitor_qml_contracts.py` must be
   written so the formatter cannot break them (pin semantics, not
   whitespace).
-- The pinned, disposable dev container (`Dockerfile`) carries the whole
+- The Linux-default pinned, disposable dev container (`Dockerfile`) carries the whole
   toolchain — Ubuntu 26.04, git, Qt 6.10.2's qmlformat, Python 3.14,
-  PyQt6 6.11.0, ruff 0.16.6 — and nothing else; the repository is
+  PyQt6 6.11.0, ruff 0.16.6 and the other pinned build tools; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
   (docker layer caching makes unchanged rebuilds instant), so deleting
   the container costs nothing. `tools/docker_dev.sh <command…>` runs
@@ -31,20 +56,22 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   never run `docker run` by hand for this repo).
 - Every procedure has a `make` target (see `make help`):
   `make build` (the full verification build — every gate plus fresh
-  committed screenshots, i.e. what CI checks), `make lint` (structure,
-  qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
-  (stdlib suite on the host, the real-Qt suite in the container),
+  captures; the Docker backend also refreshes committed screenshots),
+  `make lint` (structure, qmlformat, ruff and tool checks), `make run_tests`
+  (the full suite on the selected backend),
   `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
-  (qmlformat in the container), `make coverage` (plugins/ report,
-  the gcov gate), `make snapshot_package` (build + verify + copy to
-  /tmp/mpf.curapackage, ready to SCP), `make snapshot_quick`
+  (qmlformat on the selected backend), `make coverage` (plugins/ report,
+  the coverage gate), `make snapshot_package` (build + verify + copy to
+  `mpf.curapackage` in the host's temporary directory), `make snapshot_quick`
   (the fast iteration path: lint + tests + package, no captures),
-  `make install_hooks`, `make docker_exec ARGS="…"`, `make clean`.
-  The targets are thin
-  wrappers over the `tools/*.sh` scripts, which remain the single
-  source of truth.
+  `make install_hooks`, `make clean`. `make docker_exec ARGS="…"`
+  is available with the Docker backend. The targets call the native
+  driver or the Linux scripts according to the selected backend.
+- Before pushing, `make all` runs shader compilation, lint, the full suite,
+  fresh captures, capture determinism, package verification and the local
+  package snapshot in that order. Each full suite and package build runs once.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
   `python3 -m unittest tests.a tests.b tests.c` runs those files
@@ -53,20 +80,22 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   own their `QGuiApplication` and reject a foreign application.
   `tools/run_some.sh` applies the same per-file fan-out
   `tools/run_tests.sh` already uses for the whole discovery, scoped to
-  the files a change actually touches — one process per file, `JOBS`
-  (default 8) at a time, one log and one verdict line per file, and a
-  non-zero exit if ANY file fails. It never reports a pass for an empty
-  list. JUnit report generation also runs isolated files in parallel
-  (`JOBS`, default 2), then runs the timing benchmark alone. Empty or
-  crashed report children fail the report instead of silently dropping cases.
+  the files a change actually touches — one process per file, up to `JOBS`
+  workers at a time (native default: core count capped at 16; Linux
+  container `test_files` default: 8), one log and one verdict line per
+  file, and a non-zero exit if ANY file fails. It never reports a pass for an empty
+  list. CI runs the full suite once per Python version; the 3.12 matrix leg
+  measures coverage during that run. Its optional Codecov JUnit report then
+  repeats the tests on 3.12 only, in isolated files (`JOBS`, default 2).
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
-  target — a thin wrapper, with the real logic in `tools/*.sh`. Add a
+  target — a thin wrapper, with the real logic in `tools/native/dev.py`
+  or `tools/*.sh` according to the backend. Add a
   target only when it would genuinely benefit other users or
   maintainers of the project; one-off and session-specific commands
   should just be run as-is.
-- Install the pre-commit hook with `tools/install_hooks.sh`; it runs the
+- Install the pre-commit hook with `make install_hooks`; it runs the
   compile, structure, ruff, qmlformat and unit-test gates locally.
 - Builds: `tools/build_curapackage.py` (Cura package) and
   `tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
@@ -95,8 +124,8 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   MonitorFormatting.py because the Qt runtime registers plugin modules
   under synthetic names), the model's time module is patched
   module-scoped during seeding, and the console pane renders no caret.
-  `make verify_captures` runs the full capture suite TWICE in the
-  pinned container and fails on any byte difference — a deterministic
+  `make verify_captures` runs the full capture suite TWICE on the
+  selected backend and fails on any byte difference — a deterministic
   catch for leaks the committed-compare only catches by chance. Run it
   after changing anything the captures render.
 - The capture scripts: `tools/capture_monitor.py` plus the sibling
@@ -136,21 +165,19 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   job enforces this on every push: it rebuilds the pinned image,
   regenerates the captures inside it and fails byte-for-byte if the
   committed copies are stale (extra hand-captured files are allowed and
-  never checked). CI still runs the capture
-  scripts as a render smoke test (each script fails on a blank capture)
-  but no longer ships the PNGs as artifacts. These capture the 2-D UI
+  never checked). The native build jobs also run capture scripts as a
+  render smoke test (each script fails on a blank capture) and retain their
+  PNGs as artifacts. These capture the 2-D UI
   only: the 3-D Preview (bed-mesh overlay on a rendered model) needs a
   real Cura session. The native harness exercises Preview with screenshots
   and video (see TESTING.md); choose marketing captures deliberately.
 
 ## Windows development
 
-Windows has no POSIX shell on PATH and no pinned dev container, so
-every procedure has a native implementation under `tools/windows`,
-driven by the OS switch at the top of the `Makefile`. The target names,
-the arguments and the meaning are the same on both legs; only the
-implementation differs, and the tool versions are pinned to the
-container's so a verdict here means what it means there.
+Windows defaults to the shared native driver under `tools/native`,
+selected by the OS switch at the top of the `Makefile`. The target names,
+arguments and meaning of the build and verification commands match the
+other platforms. The version table makes toolchain deviations explicit.
 
 Getting started (once per machine):
 
@@ -182,27 +209,24 @@ Getting started (once per machine):
 
 What differs on this leg, and why:
 
+- **Scratch stays on a Windows temp path.** The native build driver uses
+  Python's temporary directory under `mpf/` (`MPF_SCRATCH` overrides it).
+  The desktop harness uses `RUNNER_TEMP` or the Windows temp directory
+  under `mpf-native/` (`MPF_WORK_DIR` overrides it).
 - **The committed screenshots stay container-canonical.**
   `make generate_screenshots` renders `dist/screenshots` for a look;
   it does not copy into `screenshots/`, because the CI sync job
   compares against renders made with the container's pinned fonts.
   `make verify_captures` (two runs, byte-compared) does work natively.
-- **`make ui_test` / `make ui_release_gate` have no container leg.**
-  The real-Cura work on Windows is the harness the repo already
-  carries: `tools/native_harness.ps1` stages Cura, the plugin and the
-  driver, then `tests/harness/runner.py` drives them (see TESTING.md).
-  It launches a desktop app, so it is deliberately not a recipe a
-  stray `make all` can reach; run it directly:
+- **`make ui_test MODE=suite` and `make ui_release_gate` use the native
+  desktop harness.** They stage Cura, the plugin and the driver, then
+  invoke `tests/harness/runner.py` using the harness environment (see
+  TESTING.md). These targets need an interactive desktop and are not
+  reached by `make all`.
 
-      powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
-          -CuraVersion 5.13.0 -Scenario suite
-      # then, with the env file it prints:
-      . "$env:TEMP\mpf-native\harness_env.ps1"
-      .venv\Scripts\python.exe tests\harness\runner.py suite
-
-- **`make dev_up`, `dev_down` and `docker_exec` do not exist here** —
-  they exist to manage the container that this leg replaces. They say
-  so and exit non-zero rather than pretending.
+- **`make dev_up`, `dev_down` and `docker_exec` require
+  `BACKEND=docker`.** With the native default, they explain that a
+  container is not running and exit non-zero.
 - **`actionlint` runs with `-shellcheck=`,** because the Windows
   shellcheck binary deadlocks the pipe actionlint feeds it (reproduced
   on this leg: the lint hangs with the pinned shellcheck on PATH and
@@ -214,7 +238,7 @@ What differs on this leg, and why:
 Line endings: `.gitattributes` pins `* text=auto eol=lf`, and the
 build is byte-sensitive (the curapackage is compared file for file,
 and `qmlformat` reads a carriage return as file CONTENT, so a CRLF
-tree fails the format gate on all 52 QML files). A clone made before
+tree fails the format gate on every QML file). A clone made before
 that file landed, or one with `core.autocrlf=true`, should be
 normalised once:
 
@@ -222,10 +246,43 @@ normalised once:
     git add --renormalize .
     git checkout -- .        # re-materialises the working tree as LF
 
-The implementation is `tools/windows/dev.py` — run it directly
+The implementation is shared with macOS in `tools/native/dev.py`;
+`tools/windows/dev.py` remains a compatibility entry point. Run it directly
 (`.venv\Scripts\python.exe tools\windows\dev.py <command>`) when a
 step needs its own options; `make help` lists the procedures and the
 module docstring lists the commands.
+
+## macOS development
+
+The default `make` backend runs natively on macOS and never invokes Docker.
+The Xcode Command Line Tools provide `/usr/bin/make` (`xcode-select
+--install` if needed). Install Homebrew if Python 3.14 or hadolint is
+missing; then run `make dev_install`. It creates `.venv`,
+uses Python 3.14 and installs pinned Qt wheels, downloads native Apple Silicon
+or Intel shellcheck, gitleaks and actionlint binaries, installs DejaVu
+fonts, and obtains a native hadolint from Homebrew. Existing Python
+3.14 patch releases are accepted. The parity table reports the exact
+versions, including Homebrew's hadolint version if it differs from the
+Linux image's 2.12.0 pin.
+
+Run `make build`, `make lint`, `make run_tests`, `make test_files FILES="…"`,
+`make verify_captures`, `make package`, and the other standard targets.
+CI runs the same native `make build`, capture determinism and package
+targets on `macos-latest` and `windows-latest` without Docker.
+PyQt runs with the offscreen platform for tests and captures. Packaged
+shaders are compiled by the PySide6 wheel's native `pyside6-qsb`; Cura
+users do not need that compiler. `make generate_screenshots` writes
+`dist/screenshots`. Committed `screenshots/` remain canonical to the
+pinned Linux image because host rasterisation and fonts can differ;
+`make BACKEND=docker generate_screenshots` refreshes those copies when
+needed. This is the same distinction as the Windows native leg.
+
+`make install_hooks` installs the native checks. `make dev_up`,
+`make dev_down`, and `make docker_exec` are available when
+`BACKEND=docker` is selected. `make ui_test MODE=suite` and
+`make ui_release_gate` use the native real-Cura harness through the
+same targets as the other hosts (see TESTING.md). They need an
+interactive desktop session and are separate from `make all`.
 
 ## Repo hygiene — the standing rule on addresses
 
@@ -241,6 +298,20 @@ merely fixed forward (the 2026-09-11 amendment).
 
 ## Release workflow
 
+Branch pushes run `ci.yml` with its normal lint, test, build and capture
+stages. Pull requests run that same CI suite plus the full Cura release
+gate in the same workflow. A push to a branch with an open PR also
+runs the normal CI suite, so both events exercise the common checks
+independently and expose intermittent failures. Lint completes before
+the builds and suites; the full Cura gate waits for the native builds,
+Linux Qt suites, repeat-boot smoke, and package scan. CI builds one Linux
+package artifact and uses it for the smoke and gate runs; native package
+builds separately verify macOS and Windows. CI also runs on its weekly schedule
+and when manually dispatched. A version tag runs `release.yml` only when
+it points to the current `main` HEAD. That workflow publishes the harness
+image, calls the shared CI package, test and Cura gate jobs, then publishes
+the verified release artifacts.
+
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
 plan with real push-back → one round-1 critic
 before going deep → build with tests → a six-persona panel
@@ -249,8 +320,9 @@ Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
 through the maintainer; a 3D-printer enthusiast/pro-user persona joins
 from 3.6.0 on, feeding next-release feature planning rather than
 gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
-round-3 verification → the snapshot loop (live testing of
-`/tmp/mpf.curapackage`; commits and pushes hold until it is
+round-3 verification → the snapshot loop (live testing of the
+temporary-directory `mpf.curapackage`, normally `/tmp/mpf.curapackage`
+on macOS and Linux; commits and pushes hold until it is
 confirmed good) → ship via PR.
 
 ## Version bump checklist
@@ -267,8 +339,12 @@ change together:
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
-6. Git tag — `v<version>`; the release workflow validates the tag against both
-   version fields and fails on mismatch
+6. `ROADMAP.md` — name the active `release/v<version>` branch and its scope;
+   keep older release plans as history
+7. `TESTING.md` — keep the current-release testing commands and evidence
+   at the top; label older harness audits as historical
+8. At release time, Git tag — `v<version>`; the release workflow validates the
+   tag against both version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
 sync; the release workflow asserts both equal the git tag, so no test edit is
@@ -289,23 +365,30 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 - Shared `*_support.py` modules contain fixtures and doubles, not test methods.
   Construct Qt applications lazily during test setup, never at import time.
   `qml_engine_support.py` owns its application and retains QML context objects;
-  `test_qml_harness_lifecycle.py` verifies import-time ownership, execution without
-  silent skips, and the preserved census of 199 original QML cases. Production
-  model DPI tests run separately from dashboard doubles.
+  `test_qml_harness_lifecycle.py` verifies import-time ownership and execution
+  without silent skips. Production model DPI tests run separately from
+  dashboard doubles.
 - Do not inherit test-bearing classes to reuse fixtures: unittest runs every
   inherited test again. The scheduler split removes 102 such duplicate executions
   while retaining all unique cases. Keep fixtures and assertions separate.
 - The seek performance budget runs alone after the parallel correctness pool in
   both full and subset runners. Its five-second limit measures implementation
   performance, rather than competition with other test processes.
-- CI coverage and the release workflow also isolate files. The host coverage
-  job uses `tools/run_some.py --coverage-dir <fresh-directory>` and combines its
-  per-worker data; the wall-clock seek benchmark runs without instrumentation.
+- For expiry, cadence and recency rules, inject a controllable clock and
+  advance it in the test. Do not use `time.sleep` to make a timestamp change.
+  For actual worker, socket and Qt completion, wait on a signal or condition
+  with a bounded timeout so a stalled completion fails rather than hanging.
+  Keep real elapsed-time measurements isolated from parallel correctness tests.
+- CI coverage and the release workflow also isolate files. The Python 3.12
+  matrix leg uses `tools/run_some.py --coverage-dir <fresh-directory>` and
+  combines its per-worker data; the wall-clock seek benchmark runs without
+  instrumentation. The JUnit analytics pass runs only on Python 3.12.
   Never restore a single-process Qt discovery in either workflow: another
   module's application can silently skip the real-engine cases.
 - Tests that need real Qt are guarded with
   `@unittest.skipUnless(QT_AVAILABLE, ...)`. They skip in stdlib-only local
-  runs and run in CI, where `ci.yml` installs PyQt6.
+  runs and run in CI, where `ci.yml` installs PyQt6 and NumPy for the
+  bed-mesh and GPU geometry cases.
 
 ## Architecture contract
 
@@ -741,7 +824,7 @@ not needed in ordinary operation.
 Local (also run by the pre-commit hook):
 
     make lint        # compileall, check_qml(.py + engine), qmlformat, ruff,
-                     # shellcheck, hadolint, gitleaks — one container pass
+                     # shellcheck, hadolint, gitleaks on the selected backend
     make run_tests   # every suite once, verdict + failures extracted from that single pass
 
 CI runs the same checks (the `lint` job) plus the full suite including the
@@ -776,7 +859,7 @@ look identical to the real artifact by eye.
 
 ## Development install loop
 
-`make dev_install` (tools/install_dev.sh) symlinks this checkout's
+On Linux, `make dev_install` (`tools/install_dev.sh`) symlinks this checkout's
 `plugins/` into Cura's user plugin directory
 (`~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower`), so
 edits appear on the next Cura restart — no package download, unzip or

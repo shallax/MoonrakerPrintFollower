@@ -181,6 +181,7 @@ SCENARIO_MAP = {
     "cameraBarChip": "e2",
     "cameraBarChipText": "e2",
     "cameraFpsBar": "e2",
+    "cameraSnapshotRegion": "e2",
     "cameraFpsMarker": "e2",
     "cameraFpsReadout": "e2",
     "cameraFpsScale": "e2",

@@ -103,6 +103,7 @@ if QT_AVAILABLE:
             self._camera_fps = float(fps)
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
+            self._snapshot_available = False
 
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFps(self):
@@ -115,6 +116,22 @@ if QT_AVAILABLE:
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFpsMax(self):
             return self._camera_fps_maximum
+
+        @pyqtProperty(float, notify=cameraFpsChanged)
+        def cameraSnapshotMaxFps(self):
+            return 5.0
+
+        @pyqtProperty(bool, notify=cameraFpsChanged)
+        def cameraSnapshotAvailable(self):
+            return self._snapshot_available
+
+        @pyqtProperty(bool, notify=cameraFpsChanged)
+        def cameraSnapshotMode(self):
+            return self._snapshot_available and self._camera_fps <= 5.0
+
+        def set_snapshot_available(self, available):
+            self._snapshot_available = bool(available)
+            self.cameraFpsChanged.emit()
 
         def set_camera_ceiling(self, maximum, fps=None):
             """A camera re-selected (or re-configured) behind the pane:
@@ -962,7 +979,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         self._pump_ms(300)
         return pane, window, model, image, self.find(pane, "cameraFrame")
 
-    def _wheel(self, window, item, delta=120, modifiers=None, position=None):
+    def _wheel(self, window, item, delta=120, modifiers=None, position=None,
+               pixels=None, horizontal_pixels=0):
         """One real wheel notch over *item*. QTest's QWindow-level
         mouseWheel is unavailable in this Qt build — the event is posted
         directly (the plate zoom suite's own pattern). No modifier is
@@ -975,7 +993,8 @@ class CameraFpsControlTests(RealEngineTestCase):
         scene = item.mapToItem(window.contentItem(), position)
         event = QWheelEvent(
             QPointF(scene), QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
-            QPoint(0, 0), QPoint(0, delta),
+            QPoint(horizontal_pixels, pixels if pixels is not None else 0),
+            QPoint(0, 0 if pixels is not None or horizontal_pixels else delta),
             Qt.MouseButton.NoButton,
             modifiers if modifiers is not None else Qt.KeyboardModifier.NoModifier,
             Qt.ScrollPhase.NoScrollPhase, False)
@@ -1259,6 +1278,9 @@ if QT_AVAILABLE:
             self._navigation_split = 0
             self._navigation_backing = 4.0
             self._layer_count = 40
+            self._index_ready = True
+            self._progress_available = True
+            self._progress_reason = ""
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1369,21 +1391,35 @@ if QT_AVAILABLE:
             self._anchor = int(anchor)
             self.plateProgressChanged.emit()
 
-        @pyqtProperty(int, constant=True)
+        @pyqtProperty(int, notify=plateProgressChanged)
         def plateLayerCount(self):
             return self._layer_count
+
+        @pyqtProperty(bool, notify=plateProgressChanged)
+        def printIndexReady(self):
+            return self._index_ready
+
+        def setIndexState(self, ready, count):
+            self._index_ready = bool(ready)
+            self._layer_count = int(count)
+            self.plateProgressChanged.emit()
+
+        def setProgressState(self, available, reason):
+            self._progress_available = bool(available)
+            self._progress_reason = str(reason)
+            self.plateProgressChanged.emit()
 
         @pyqtProperty(int, constant=True)
         def plateLayerMotionCount(self):
             return self._motion_count
 
-        @pyqtProperty(bool, constant=True)
+        @pyqtProperty(bool, notify=plateProgressChanged)
         def plateProgressAvailable(self):
-            return True
+            return self._progress_available
 
-        @pyqtProperty(str, constant=True)
+        @pyqtProperty(str, notify=plateProgressChanged)
         def plateProgressReason(self):
-            return ""
+            return self._progress_reason
 
         @pyqtProperty(bool, notify=improvingEtaChanged)
         def improvingEta(self):
@@ -1471,7 +1507,9 @@ if QT_AVAILABLE:
             else:
                 frozen = self._layer_anchor if self._layer_anchor >= 0 else self._anchor
                 if frozen < 0:
-                    return
+                    if self._layer_count <= 0 and not self._index_ready:
+                        return
+                    frozen = 0
                 self._attached = False
                 self._layer_anchor = frozen
                 self._anchor = frozen

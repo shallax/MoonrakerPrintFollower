@@ -5,6 +5,15 @@ on:
     branches:
       - "**"
   pull_request:
+  workflow_call:
+    inputs:
+      tag_release:
+        type: boolean
+        default: false
+      release_gate:
+        type: boolean
+        default: false
+  workflow_dispatch:
   schedule:
     - cron: "23 7 * * 3"
 
@@ -22,35 +31,23 @@ env:
   # their own streams so they hold wherever they are invoked.
   PYTHONUTF8: "1"
 jobs:
-  cross-platform-suites:
-    # The host suites on the OSes the plugin ships to: Windows and
-    # macOS defects (the no-O_NOFOLLOW write failure, the Windows
-    # process-liveness sweep, the boot-storm crashers' siblings) must
-    # not wait for a manual pass. No display is needed with the
-    # offscreen platform plugin, which the pinned PyQt6 wheel ships on
-    # both runners.
-    #
-    # The Qt runtime is INSTALLED here on purpose: without it every
-    # Qt-gated test skips, the leg reports green having run the
-    # platform-relevant half of nothing, and the Windows behaviour
-    # (RC-01's sweep) is never executed on the OS it exists for.
-    name: Suites (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+  # The same native Makefile gate on both desktop OSes. The pinned font
+  # keeps offscreen Qt layout measurements comparable with the Linux image.
+  native-build:
+    name: Native build (${{ matrix.os }})
+    needs: lint
+    if: ${{ !inputs.tag_release }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
-
-      - name: Install the pinned Qt runtime (Cura supplies Qt in production)
-        run: python -m pip install PyQt6==6.11.0
-
+          python-version: "3.14"
       - name: Pin the harness font (the dev container pins fonts-dejavu 2.37)
         shell: bash
         run: |
@@ -103,156 +100,42 @@ jobs:
           test -n "$dir" || { echo "::error::the font pin produced no directory"; exit 1; }
           echo "QT_QPA_FONTDIR=$dir" >> "$GITHUB_ENV"
 
-      - name: Probe the harness environment (what the censuses measure in)
-        shell: bash
+      - name: Install GNU make
+        if: runner.os == 'Windows'
+        run: choco install make --yes --no-progress
+      - name: Install native toolchain
+        run: make dev_install
+      - name: Build and run full test suite
         env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          # The pixel censuses read the geometry and the font this step
-          # reports. It runs HERE, not inside the suite, because
-          # tools/run_tests.sh prints a worker's log only on failure and
-          # only its FAIL:/ERROR: neighbourhood — a probe living in the
-          # tests is discarded on exactly the legs that need it.
-          python - <<'PY'
-          import os
-          from PyQt6.QtGui import QFontDatabase, QGuiApplication
-          from PyQt6.QtQuick import QQuickWindow
-
-          app = QGuiApplication([])
-          families = sorted(QFontDatabase.families())
-          print("probe: default family %r" % QGuiApplication.font().family())
-          print("probe: QT_QPA_FONTDIR %r" % os.environ.get("QT_QPA_FONTDIR", ""))
-          print("probe: %d families, first %r" % (len(families), families[:8]))
-          screen = QGuiApplication.primaryScreen()
-          if screen is not None:
-              print("probe: screen %dx%d dpr %s"
-                    % (screen.size().width(), screen.size().height(),
-                       screen.devicePixelRatio()))
-          for want in ((80, 400), (110, 400), (700, 700)):
-              window = QQuickWindow()
-              window.resize(*want)
-              window.show()
-              app.processEvents()
-              print("probe: asked %dx%d, window got %dx%d"
-                    % (want[0], want[1], window.width(), window.height()))
-              window.close()
-          PY
-
-      - name: Render the mounts the geometry censuses use (artefact)
-        shell: bash
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          # A number in a log says the frame is 108 px; a picture says
-          # WHY. These are the exact mounts the pixel censuses create,
-          # rendered offscreen and published as an artefact, so a leg
-          # that disagrees about geometry can be LOOKED at instead of
-          # inferred from an assertion message.
-          mkdir -p "$RUNNER_TEMP/shots"
-          cat > "$RUNNER_TEMP/mount_shot.py" <<'PY'
-          import os
-          import sys
-          import unittest
-
-          sys.path.insert(0, os.path.join(os.environ["REPO"], "tests"))
-          sys.path.insert(0, os.environ["REPO"])
-
-          import qml_engine_support as _re
-
-
-          class MountShot(_re.CameraFpsControlTests):
-              def test_shot(self):
-                  out = os.environ["SHOT_DIR"]
-                  for width, height, tag in ((80, 400, "tiny"),
-                                             (110, 400, "narrow"),
-                                             (700, 700, "roomy")):
-                      _pane, window, _model, _image, frame = self._fps_pane(width, height)
-                      self._pump_ms(300)
-                      window.grabWindow().save(os.path.join(out, tag + ".png"))
-                      print("shot %s: asked %dx%d, window %dx%d, frame %.1fx%.1f"
-                            % (tag, width, height, window.width(), window.height(),
-                               frame.width(), frame.height()))
-                      sys.stdout.flush()
-
-
-          unittest.TextTestRunner(verbosity=0).run(
-              unittest.TestSuite([MountShot("test_shot")]))
-          PY
-          REPO="$PWD" SHOT_DIR="$RUNNER_TEMP/shots" PYTHONPATH="$PWD/tests" \
-              python "$RUNNER_TEMP/mount_shot.py" || true
-
-      - name: Run the host suites with the real Qt runtime
-        shell: bash
-        env:
-          QT_QPA_PLATFORM: offscreen
-          # Every failing real-engine test publishes the windows it had
-          # open into this directory, named for the test.
-          HARNESS_SHOT_DIR: ${{ runner.temp }}/shots
-        run: |
-          # The sentinel is the guard: this step being PRESENT is not
-          # something the step itself can check, and a leg that never
-          # ran the suites reports exactly the same green as a leg that
-          # passed them. The platform-safety step below requires it.
-          JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
-          touch "$RUNNER_TEMP/host-suites-ran"
-
-      - name: Publish the rendered mounts
+          MPF_SCRATCH: ${{ runner.temp }}/mpf
+        run: make build JOBS=2
+      - name: Verify capture determinism
+        run: make verify_captures
+      - name: Build and verify packages
+        run: make package
+      - name: Upload native capture evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: harness-mounts-${{ matrix.os }}
-          path: ${{ runner.temp }}/shots
+          name: native-captures-${{ matrix.os }}
+          path: |
+            dist/screenshots/
+            .determinism-check/
+          if-no-files-found: ignore
+      - name: Upload native test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-build-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/mpf/mpf-tests.*/*.log
           if-no-files-found: ignore
 
-      - name: Platform-safety suite (the Qt-gated regressions must EXECUTE)
-        shell: bash
-        run: |
-          # A green leg that skipped its Qt-gated tests is the false
-          # pass this step exists to stop, and a leg that ran nothing
-          # at all still exits 0. Demand a positive test count and the
-          # skip-free verdict: `OK` alone, never `OK (skipped=n)`.
-          #
-          # The host-suites sentinel is the same guard one level up: a
-          # leg whose "Run the host suites" step is missing or renamed
-          # reports byte-identical green to one that passed them. Only
-          # the step that runs the suites can leave the marker, so its
-          # absence is the failure.
-          if [ ! -f "${RUNNER_TEMP:-/tmp}/host-suites-ran" ]; then
-            echo "::error::the host suites never ran in this leg (no sentinel)"
-            exit 1
-          fi
-          log="${RUNNER_TEMP:-/tmp}/platform-safety.log"
-          python -m unittest discover -s tests -p "test_platform_safety.py" -v >"$log" 2>&1 || {
-            cat "$log"
-            exit 1
-          }
-          cat "$log"
-          python - "$log" <<'PY'
-          import re
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
-              report = handle.read()
-          # unittest colourises on a forced-colour environment as well as a
-          # tty, and an escape between the line start and `OK` would walk the
-          # verdicts past every pattern below.
-          report = re.sub(r"\x1b\[[0-9;]*m", "", report)
-          ran = re.search(r"^Ran (\d+) tests? in ", report, re.M)
-          if ran is None or int(ran.group(1)) < 1:
-              sys.exit("::error::the platform-safety suite executed no tests")
-          if re.search(r"^OK \(skipped=\d+\)", report, re.M):
-              sys.exit("::error::the platform-safety suite skipped: the Qt runtime is missing")
-          if not re.search(r"^OK", report, re.M):
-              sys.exit("::error::the platform-safety suite did not pass")
-          print("platform-safety: {} test(s) executed, none skipped".format(ran.group(1)))
-          PY
-
   harness-smoke:
-    # The PR-level real-Cura check: the smoke set in one boot against
-    # the primary pinned Cura (the full gate stays release-time). The
-    # container brings its own Xvfb and ffmpeg, so the ubuntu runner
-    # needs no display. Galleries upload alongside the other evidence.
-    name: Harness smoke
+    # Two smoke runs in one container verify that Cura still boots after
+    # the first run's owner-only writes. The gate tests one fresh boot.
+    name: Cura repeat-boot smoke
+    needs: [ci-package, native-build, python-compatibility]
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -260,20 +143,29 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+      - name: Download tested plugin package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-artifacts
+          path: dist/
       - name: Log in to the container registry
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the smoke set
+        env:
+          HARNESS_DIR: ${{ runner.temp }}/mpf
+          MPF_WORK_DIR: ${{ runner.temp }}/mpf
         run: ./tools/harness_smoke.sh
       - name: Collect the smoke galleries
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: harness-smoke-galleries
-          path: /tmp/mpf/ui-artifacts/runs/
+          path: ${{ runner.temp }}/mpf/ui-artifacts/runs/
           if-no-files-found: ignore
 
   lint:
     name: Lint
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -284,23 +176,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Image-specific workaround, defined ONCE here and aliased (YAML
-      # anchor — see *drop_google_apt_sources in the jobs below) into
-      # every other job that runs apt-get update, so the fix cannot
-      # drift between copies: the GitHub-hosted ubuntu runner images
-      # this workflow pins ship Google's apt repos pre-configured, and
-      # one bad index there (2026-09-09: chrome-stable Packages.gz hash
-      # mismatch) fails EVERY apt update. No job needs Chrome or the
-      # Cloud SDK, so drop every source pointing at Google before the
-      # update — the file name varies (google-chrome.list on some
-      # images, deb822 .sources on others). Runner-image specific: the
-      # pinned Dockerfile dev image ships no Google sources, so do not
-      # carry this into container flows.
-      - &drop_google_apt_sources
-        name: Drop Google's broken apt sources
+      # Runner images include third-party apt sources that these jobs do
+      # not need. Their indexes have independently failed apt-get update
+      # (Google Chrome hash mismatch and Microsoft 26.04 HTTP 403), so
+      # remove them before using the Ubuntu archive. Keep the workaround
+      # shared across all jobs that update apt.
+      - &drop_unused_apt_sources
+        name: Drop unused third-party apt sources
         run: |
           for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com|packages.microsoft.com" "$f"; then sudo rm -f "$f"; fi
           done
 
       - name: Install qmlformat and shellcheck
@@ -341,11 +226,11 @@ jobs:
           chmod +x /tmp/hadolint
           /tmp/hadolint Dockerfile
 
-      - name: Install gitleaks
+      - &install_gitleaks
+        name: Install gitleaks
         run: |
-          # Pinned to the same version as the dev container and the
-          # release workflow; the runner image ships no preinstalled
-          # binary.
+          # Pinned to the dev container; the runner image ships no
+          # preinstalled binary. Artifact scanning reuses this step.
           wget -qO /tmp/gitleaks.tar.gz \
               https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
             && tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
@@ -354,54 +239,10 @@ jobs:
       - name: Scan for secrets
         run: gitleaks detect --no-git --no-banner --redact .
 
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-26.04
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      # Shared step: the drop_google_apt_sources anchor defined in the
-      # lint job's steps above.
-      - *drop_google_apt_sources
-
-      - name: Install runtime and tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0 coverage
-
-      - name: Run the suite under coverage
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import subprocess
-          import sys
-
-          modules = ["tests." + path.stem for path in sorted(Path("tests").glob("test_*.py"))]
-          destination = str(Path(os.environ["RUNNER_TEMP"]) / "coverage")
-          subprocess.run([sys.executable, "tools/run_some.py", "--jobs", "2",
-                          "--coverage-dir", destination, *modules], check=True)
-          PY
-          coverage combine "$RUNNER_TEMP/coverage"
-          coverage report --include="plugins/*" --fail-under=80
-          coverage xml --include="plugins/*"
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
-          fail_ci_if_error: false
-
   python-compatibility:
     name: Python ${{ matrix.python-version }} and Qt runtime
+    needs: lint
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -419,41 +260,79 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q plugins tools tests
 
-      # Shared step: the drop_google_apt_sources anchor defined in the
+      # Shared step: the drop_unused_apt_sources anchor defined in the
       # lint job's steps above.
-      - *drop_google_apt_sources
+      - *drop_unused_apt_sources
 
-      - name: Install Qt system runtime
+      - &install_qt_runtime
+        name: Install Qt runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1
-
-      - name: Install Qt test runtime (Cura supplies Qt in production)
-        run: python -m pip install PyQt6==6.11.0
+          sudo apt-get install -y libegl1 libxkbcommon0
+          # Match the native and pinned-container suites: without NumPy,
+          # the bed-mesh tests skip and GPU packing takes only its fallback.
+          python -m pip install PyQt6==6.11.0 numpy
 
       - name: Run all discovered tests with the real Qt runtime
+        if: matrix.python-version != '3.12'
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
           env JOBS=2 LEGS=host tools/run_tests.sh
 
-      - name: Write the JUnit report
-        if: ${{ !cancelled() }}
+      - name: Install coverage
+        if: matrix.python-version == '3.12'
+        run: python -m pip install coverage
+
+      - name: Run all discovered tests under coverage
+        if: matrix.python-version == '3.12'
+        env:
+          # The four harness modules are part of this run. Their runner.py
+          # lives beside the tests, and dotted imports otherwise hide it.
+          PYTHONPATH: tests/harness
+        run: |
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          modules = [".".join(path.with_suffix("").parts)
+                     for path in sorted(Path("tests").rglob("test_*.py"))]
+          destination = str(Path(os.environ["RUNNER_TEMP"]) / "coverage")
+          subprocess.run([sys.executable, "tools/run_some.py", "--jobs", "2",
+                          "--coverage-dir", destination, *modules], check=True)
+          PY
+          coverage combine "$RUNNER_TEMP/coverage"
+          coverage report --include="plugins/*" --fail-under=95
+          coverage json -o coverage.json
+          python tools/check_per_file_coverage.py coverage.json
+          coverage xml --include="plugins/*"
+
+      - name: Upload Python 3.12 coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Write Python 3.12 JUnit report
+        if: matrix.python-version == '3.12'
         run: python tools/unittest_junit.py
 
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        # One action, two report types: codecov-action carries both, and
-        # test-results-action says so itself ("being deprecated in favor
-        # of 'codecov-action' ... with 'report_type: test_results'").
-        # Same version as the coverage upload above, deliberately.
+      - name: Upload Python 3.12 test results to Codecov
+        if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: tests.junit.xml
           report_type: test_results
 
-  release:
-    name: Release
+  ci-package:
+    name: Build package
+    needs: lint
+    if: ${{ !cancelled() && (inputs.tag_release || needs.lint.result == 'success') }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -464,77 +343,43 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set reproducible archive timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
       - name: QML structural sanity
+        if: inputs.tag_release
         run: python tools/check_qml.py plugins
 
+      # Use the real Qt runtime for the tag's full-suite gate too. Branch
+      # and PR runs additionally exercise it in the Python-version matrix.
+      - *drop_unused_apt_sources
+
+      - *install_qt_runtime
+
       - name: Run all discovered tests
-        run: env JOBS=2 LEGS=host tools/run_tests.sh
-
-      - name: Read package and CI metadata
-        id: build_meta
-        shell: bash
+        if: inputs.tag_release
         run: |
-          python - <<'PY'
-          import json
-          import os
-          package = json.load(open("package.json", encoding="utf-8"))
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={package['package_version']}\n")
-          PY
-          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          BRANCH="${BRANCH//\//-}"
-          BRANCH="$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
-          SHORT_SHA="${GITHUB_SHA:0:8}"
-          echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
-      # Shared step: the drop_google_apt_sources anchor defined in the
-      # lint job's steps above.
-      - *drop_google_apt_sources
+      - name: Install package toolchain
+        run: python -m pip install PySide6-Addons==6.10.2
 
-      - name: Install capture runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0
-          python -m pip install PyQt6==6.11.0
+      - name: Build and verify packages
+        run: python tools/native/dev.py package
 
-      - name: Compile packaged GPU shaders
-        run: |
-          python -m pip install PySide6-Addons==6.10.2
-          python tools/build_shaders.py
-
-      - name: Build Cura package
-        run: python tools/build_curapackage.py
-
-      - name: Verify exact Cura package contents
-        run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
-
-      - name: Build Cura Marketplace source ZIP
-        run: python tools/build_marketplace_source.py
-
-      - name: Verify Cura Marketplace source ZIP
-        run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
-
-      - name: Capture deterministic screenshots
-        run: |
-          QT_QPA_PLATFORM=offscreen python tools/capture_monitor.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_preview.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
-          QT_QPA_PLATFORM=offscreen python tools/capture_filemanager.py dist/screenshots
-
-      - name: Upload CI artifacts
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.build_meta.outputs.artifact_name }}
-          path: |
-            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
-            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
+          name: package-artifacts
+          path: dist/
           if-no-files-found: error
           retention-days: 30
 
   screenshot-sync:
     name: Screenshot sync
+    needs: lint
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -574,11 +419,15 @@ jobs:
           name: screenshot-comparison
           path: |
             dist/screenshots/*.png
-            .determinism-check/
+            .determinism-check/run*/*.png
+            .determinism-check/*.log
+          include-hidden-files: true
           if-no-files-found: ignore
 
   analyze:
     name: Analyze (CodeQL)
+    needs: lint
+    if: ${{ !inputs.tag_release }}
     runs-on: ubuntu-26.04
     permissions:
       security-events: write
@@ -596,3 +445,324 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
+
+  artifact-scan:
+    name: Scan release artifacts
+    needs: ci-package
+    if: github.event_name == 'pull_request' || inputs.release_gate
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: package-artifacts
+          path: dist/
+
+      - *install_gitleaks
+
+      - name: Scan the release artifacts for secrets
+        run: |
+          gitleaks detect --no-git --no-banner --redact .
+
+  gate:
+    permissions:
+      contents: read
+      packages: read
+    needs: [artifact-scan, native-build, python-compatibility, harness-smoke]
+    # The PR waits for native builds and all Linux Qt suites; the Python
+    # 3.12 matrix leg also enforces coverage. Tag releases skip those jobs;
+    # ci-package runs its Python 3.11 Qt suite before artifact-scan succeeds.
+    if: >-
+      ${{ !cancelled() && needs.artifact-scan.result == 'success' &&
+      (inputs.tag_release ||
+      (github.event_name == 'pull_request' &&
+      needs.native-build.result == 'success' &&
+      needs.python-compatibility.result == 'success' &&
+      needs.harness-smoke.result == 'success')) }}
+    # Every unit runs on every platform a user can run Cura on. The Linux leg
+    # is unchanged; the native legs install Cura themselves and pay for it, so
+    # the timeout is sized for a cold install rather than the container's
+    # cached image.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-latest, windows-latest]
+        unit:
+          - smoke-primary
+          - group-connection
+          - group-status
+          - group-temperatures
+          - group-console
+          - group-webcams
+          - group-files
+          - group-motion
+          - group-printing
+          - group-settings
+          - group-visual
+          - group-preview
+          - group-probe
+          - group-configure
+          - group-stress
+          - smoke-secondary
+          - firstinstall
+    env:
+      HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.unit }}
+      UNITS: '{"group-connection": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "connection"}, "group-console": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "console"}, "group-files": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "files"}, "group-motion": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "motion"}, "group-preview": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "preview"}, "group-printing": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "printing"}, "group-probe": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "probe"}, "group-settings": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "settings"}, "group-status": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "status"}, "group-configure": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "configure"}, "group-stress": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "stress"}, "group-temperatures": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "temperatures"}, "group-visual": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "visual"}, "group-webcams": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "webcams"}, "smoke-primary": {"mode": "suite", "budget": 20, "cura": "5.13.0", "group": "smoke"}, "smoke-secondary": {"mode": "suite", "budget": 20, "cura": "5.12.0", "group": "smoke"}, "firstinstall": {"mode": "firstinstall", "budget": 10, "cura": "5.13.0"}}'
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      # Where this job's gallery lands. One definition, because the
+      # native scripts write it and the upload reads it back — the two
+      # must not drift. Forward slashes keep the same runner-temp value
+      # valid for Bash, PowerShell and upload-artifact.
+      - name: Set the gallery root
+        shell: bash
+        run: |
+          temp="${RUNNER_TEMP//\\//}"
+          root="$temp/mpf/ui-artifacts"
+          echo "GALLERY=$root/runs/${{ github.run_id }}/${{ matrix.unit }}" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "MPF_WORK_DIR=$temp/mpf" >> "$GITHUB_ENV"
+            echo "CURA_VERSIONS_DIR=$temp/mpf/cura_versions" >> "$GITHUB_ENV"
+          else
+            echo "MPF_WORK_DIR=$temp/mpf-native" >> "$GITHUB_ENV"
+          fi
+
+      # Test exactly the package built and scanned by ci-package. Native
+      # package construction is covered separately by native-build.
+      - name: Download verified plugin package
+        uses: actions/download-artifact@v8
+        with:
+          name: package-artifacts
+          path: dist/
+
+      # Everything below is the container leg's alone: the native legs
+      # install Cura themselves, so a Cura tree fetch and a harness image
+      # would be wasted work (and there is no docker on macOS).
+      - name: Restore the pinned Cura tree
+        if: runner.os == 'Linux'
+        id: cura-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/mpf/cura_versions
+          key: mpf-cura-${{ fromJSON(env.UNITS)[matrix.unit].cura }}
+
+      - name: Fetch the pinned Cura
+        if: runner.os == 'Linux'
+        run: python3 tools/fetch_cura.py "${{ fromJSON(env.UNITS)[matrix.unit].cura }}"
+
+      - name: Pull the harness image and start the container
+        if: runner.os == 'Linux'
+        run: |
+          # PR runs have no pushed image for this sha; the build is the
+          # fallback. The push itself is gated to dispatch/tag runs,
+          # where the token can write packages.
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
+          # Pull the published image rather than rebuilding it. The sha tag
+          # exists only for runs that pushed one, and the push is gated to
+          # non-PR runs, so on a PR that pull could only ever fail and every
+          # Linux leg fell through to a docker build that runs apt-get against
+          # the live archives: seventeen rolls of those dice per run, and one
+          # hiccup killed a leg before it ran anything.
+          #
+          # But pulling always would mean a Dockerfile change is never
+          # exercised, so a PR that touches tools/harness builds regardless.
+          # If the base commit cannot be read, build too - that is the safe
+          # direction, because it keeps the image covered.
+          HARNESS_CHANGED=yes
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            # "unchanged" is only claimed when the base is READABLE and the
+            # diff actually ran. A failed fetch that still resolves locally
+            # would otherwise skip the diff and report unchanged, which is
+            # the unsafe direction.
+            if [ -n "$BASE" ] && git fetch -q --depth=1 origin "$BASE" 2>/dev/null \
+               && git rev-parse -q --verify "$BASE^{commit}" >/dev/null 2>&1; then
+              if git diff --name-only "$BASE" HEAD -- tools/harness | grep -q .; then
+                echo "tools/harness changed in this PR - the image must be built"
+              else
+                echo "tools/harness unchanged in this PR - the published image is used"
+                HARNESS_CHANGED=no
+              fi
+            else
+              echo "could not read the base commit - building, so the image stays covered"
+            fi
+          fi
+          # The build's first line is apt-get against the LIVE archives,
+          # and one hiccup there fails the leg before it has run anything:
+          # measured twice in one matrix at 14:27 and 14:30, "process
+          # apt-get update && apt-get install ... did not complete
+          # successfully: exit code 100", each a 37-second job with no
+          # gallery. The image is deterministic; only the fetch is not, so
+          # the build is retried rather than re-rolled. A failed build
+          # leaves no partial state, which is what makes the retry safe.
+          build_image() {
+            attempt=1
+            while [ "$attempt" -le 3 ]; do
+              if docker build -q -t mpf-cura-harness tools/harness; then
+                return 0
+              fi
+              echo "the harness image build failed (attempt $attempt of 3) - retrying"
+              attempt=$((attempt + 1))
+              sleep $((attempt * 10))
+            done
+            return 1
+          }
+          if [ "$HARNESS_CHANGED" = yes ]; then
+            build_image
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" >/dev/null 2>&1; then
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}" mpf-cura-harness
+          elif docker pull "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" >/dev/null 2>&1; then
+            echo "pulled the published :latest harness image (no image for this sha)"
+            docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" mpf-cura-harness
+          else
+            echo "no published harness image was reachable - building from tools/harness, which needs the apt archive"
+            build_image
+          fi
+          docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          container_dir="$(tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
+          docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
+              -v "$MPF_WORK_DIR:$container_dir" mpf-cura-harness sleep infinity
+
+      # One attempt per unit (the gate ruling): a retried unit would
+      # hide flakiness. The gallery is the proof — every unit's
+      # evidence lands under this workflow run's root.
+      # The Linux leg is the original path, unchanged: the harness container
+      # already holds Cura, so the budget covers the scenario alone.
+      - name: Run the unit (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 30
+        run: |
+          mkdir -p "$MPF_WORK_DIR"
+          timeout "${{ fromJSON(env.UNITS)[matrix.unit].budget }}m" env \
+              CURA_VERSION="${{ fromJSON(env.UNITS)[matrix.unit].cura }}" \
+              MODE="${{ fromJSON(env.UNITS)[matrix.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
+              RUN_DIR_NAME="$GALLERY" \
+              ./tools/ui_test.sh
+
+      # The native legs do their own setup: install Cura, seed it, stage the
+      # plugin and the driver, launch, clamp the window. That is why they get
+      # their own timeout - the gate's per-unit budget bounds the SCENARIO, and
+      # on Linux the equivalent work happened in earlier steps. Charging a cold
+      # 170 MB install to the scenario budget would report a slow network as a
+      # scenario failure.
+      - name: Set up the native harness (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
+        run: |
+          RUN_DIR_NAME="$GALLERY" \
+            bash tools/native_harness.sh macos "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" "$SCENARIO"
+
+      - name: Run the unit (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: ${{ fromJSON(env.UNITS)[matrix.unit].budget }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . "$MPF_WORK_DIR/harness_env.sh"
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          # -u: the step can be killed at its timeout, and block-buffered
+          # stdout dies with the process - the only macOS run so far left
+          # nothing on stdout but ffmpeg's retries, so what the runner was
+          # waiting for could not be read off the log.
+          rc=0
+          python3 -u tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
+          test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
+          exit "$rc"
+
+      # The Windows legs re-downloaded the Cura installer on every one of
+      # the seventeen, and re-probed the release for it: measured at
+      # 134-180 s of a 219-341 s job, more than half of every Windows leg.
+      # The installer is the same file for every unit on a version, so it
+      # is cached beside the machine, exactly as the container leg caches
+      # its pinned Cura tree. native_harness.ps1 still verifies the
+      # signature of whatever it finds, so a cached installer is trusted
+      # no further than a fresh one.
+      - name: Cache the Windows Cura installer
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cura-installers
+          key: mpf-win-installer-${{ fromJSON(env.UNITS)[matrix.unit].cura }}
+
+      - name: Set up the native harness (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        shell: powershell
+        env:
+          SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
+        run: |
+          # The step's shell sets $ErrorActionPreference = 'Stop', under which
+          # a native command's stderr - the setup script's own warnings, for
+          # instance - is a TERMINATING error in PowerShell 5.1. The exit code
+          # below is the verdict, so the preference is relaxed for the call.
+          $ErrorActionPreference = 'Continue'
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          $env:RUN_DIR_NAME = $env:GALLERY
+          & powershell -ExecutionPolicy Bypass -File tools\native_harness.ps1 `
+              -CuraVersion "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" `
+              -Scenario "$env:SCENARIO" -WorkDir $work
+          if ($LASTEXITCODE -ne 0) { throw "native_harness.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Run the unit (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: ${{ fromJSON(env.UNITS)[matrix.unit].budget }}
+        shell: powershell
+        run: |
+          # A 15-minute scenario writes plenty to stderr, and under the
+          # step shell's $ErrorActionPreference = 'Stop' the FIRST such byte
+          # from a native command terminates the step in PowerShell 5.1 -
+          # before the exit code or the gallery guard below are ever read.
+          $ErrorActionPreference = 'Continue'
+          $work = Join-Path $env:RUNNER_TEMP 'mpf-native'
+          . (Join-Path $work 'harness_env.ps1')
+          # The gallery is the runner's own output, so the guard sits after
+          # it: the upload below is `if: always()`, and a run that produced
+          # no gallery would otherwise ship a green job with an empty
+          # artefact. The runner's verdict still decides the exit code.
+          # -u for the same reason as macOS: a step killed at its timeout
+          # takes its block-buffered stdout with it.
+          $rc = 0
+          & python -u tests\harness\runner.py "${{ fromJSON(env.UNITS)[matrix.unit].mode }}" "${{ fromJSON(env.UNITS)[matrix.unit].group }}"
+          if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $env:HARNESS_RUN_DIR 'index.html'))) {
+            Write-Error "EVIDENCE MISSING - no gallery at $env:HARNESS_RUN_DIR"; exit 1
+          }
+          if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
+
+      # The verdict panel for this job's page. GitHub shows a job as a
+      # name and a dot; the leg's own log buries the outcome under a
+      # hundred progress lines, so the summary states it first and the
+      # detail under it. `always()` because a failed leg is exactly when
+      # this matters most.
+      - name: Summarise the unit
+        if: always()
+        shell: bash
+        run: python tools/gate_summary.py "$GALLERY" "${{ matrix.os }} ${{ matrix.unit }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the unit's gallery
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          # the OS is in the name: 51 galleries, and two units of the same
+          # name on different platforms must not collide
+          name: gate-${{ matrix.unit }}-${{ matrix.os }}
+          path: ${{ env.GALLERY }}
+          if-no-files-found: error

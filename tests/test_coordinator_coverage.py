@@ -424,6 +424,27 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertEqual(snapshot.plate_layer_count, len(parts.index.view.ranges),
                          "monitor-only plate rendered with a zero layer-slider range")
 
+    def test_monitor_only_spiral_uses_the_print_index_to_hold_the_tail(self):
+        parts = self._printing(self._make())
+        parts.cura.heights = []  # no Preview toolpath for this printer file
+        view = harness._view(job_key=(), ranges=((0, 1000), (1000, 2000), (2000, 3000)))
+        view.continuous_z_boundary = lambda layer: 0.6 if layer == 2 else None
+        parts.index.view = view
+        status = harness._status(
+            "printing",
+            virtual_sdcard={"file_position": 2200, "file_size": 100000, "progress": 0.5},
+            gcode_move={"gcode_position": [9.0, 0.0, 0.6, 12.0],
+                        "absolute_coordinates": True},
+            motion_report={"live_position": [9.0, 0.0, 0.52, 0.0]})
+        status["print_stats"]["info"] = {"current_layer": 3, "total_layer": 3}
+        parts.client.statusReceived.emit(status)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 1)
+        self.assertEqual(parts.index.plate_anchors[-1], 1)
+        status["motion_report"]["live_position"][2] = 0.6
+        parts.client.statusReceived.emit(status)
+        self.assertEqual(parts.coordinator.snapshot.layer.index, 2)
+        self.assertEqual(parts.index.plate_anchors[-1], 2)
+
     def test_an_unresolved_physical_layer_builds_no_plate_payload(self):
         # The print's own layer never resolved while the index exists:
         # there is no anchor, so the plate APIs are never asked — and
@@ -440,6 +461,32 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertIsNone(snapshot.plate_progress)
         self.assertEqual(parts.index.plate_anchors, [])
         self.assertEqual(parts.index.plate_positions, [])
+
+    def test_manual_plate_is_served_before_the_live_layer_resolves(self):
+        parts = self._make()
+        view = harness._view()
+        view.layer_at = lambda position: None
+        parts.index.view = view
+        status = harness._status()
+        status["print_stats"]["info"] = {}
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.set_popover_open(True)
+        parts.coordinator.set_plate_anchor(0)
+        snapshot = parts.coordinator.snapshot
+        self.assertTrue(snapshot.index_ready)
+        self.assertIsNone(snapshot.layer.index)
+        self.assertIsNone(snapshot.plate_progress,
+                          "the live plate invented a physical layer")
+        self.assertIsNotNone(snapshot.plate_manual_progress,
+                             "manual viewing waited for a physical layer")
+        self.assertEqual(snapshot.plate_manual_progress["anchor"], 0)
+        self.assertEqual(parts.index.plate_anchors[-1], 0)
+        self.assertIsNone(parts.index.plate_positions[-1])
+        self.assertEqual(parts.index.manual_anchor, 0)
+        parts.coordinator.set_plate_anchor(2)
+        self.assertEqual(parts.coordinator.snapshot.plate_manual_progress["anchor"], 2,
+                         "manual layer browsing stopped before the live layer resolved")
+        self.assertIsNone(parts.coordinator.snapshot.plate_progress)
 
     def test_an_unchanged_plate_definition_is_not_re_walked_by_a_position_poll(self):
         # The coordinator's plate projection is per-vertex Python work
@@ -1320,5 +1367,3 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             "info": {"current_layer": 0, "total_layer": 100}}))
         self.assertIsNone(coordinator.snapshot.layer.index)
         self.assertEqual(coordinator._next_pause._last_index, 4)
-
-

@@ -12,6 +12,7 @@ Run directly (like the other harness files):
 `python3 tests/harness/test_harness_seed.py`.
 """
 
+import os
 import pathlib
 import shutil
 import subprocess
@@ -27,6 +28,8 @@ import seed_variants
 
 ROOT = HERE.parent.parent
 FIXTURE = ROOT / "tests" / "harness" / "config" / "config" / "cura" / "5.13"
+SCRATCH_ROOT = pathlib.Path("/tmp/mpf") if os.name != "nt" else pathlib.Path(tempfile.gettempdir()) / "mpf"
+SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
 
 CFG = """[general]
 version = 5
@@ -44,7 +47,7 @@ value = keep me
 
 class TransformTests(unittest.TestCase):
     def setUp(self):
-        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="seed-variants-", dir="/tmp/mpf"))
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="seed-variants-", dir=SCRATCH_ROOT))
         (self.dir / "cura.cfg").write_text(CFG, encoding="utf-8")
         (self.dir / "MoonrakerPrintFollower").mkdir()
         (self.dir / "MoonrakerPrintFollower" / "settings.json").write_text("{}", encoding="utf-8")
@@ -118,7 +121,7 @@ class CliTests(unittest.TestCase):
     would rewrite the seed the whole gate boots from."""
 
     def setUp(self):
-        self.work = pathlib.Path(tempfile.mkdtemp(prefix="seed-cli-", dir="/tmp/mpf"))
+        self.work = pathlib.Path(tempfile.mkdtemp(prefix="seed-cli-", dir=SCRATCH_ROOT))
         self.target = self.work / "cura"
         shutil.copytree(FIXTURE, self.target)
 
@@ -155,7 +158,7 @@ class TheRealFixtureCanBeCleanedTests(unittest.TestCase):
     nothing."""
 
     def test_the_fixture_carries_the_state_the_clean_seed_removes(self):
-        work = pathlib.Path(tempfile.mkdtemp(prefix="seed-fixture-", dir="/tmp/mpf"))
+        work = pathlib.Path(tempfile.mkdtemp(prefix="seed-fixture-", dir=SCRATCH_ROOT))
         try:
             shutil.copytree(FIXTURE, work / "cura")
             target = work / "cura"

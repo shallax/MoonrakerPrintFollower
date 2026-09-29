@@ -63,18 +63,20 @@ jobs:
 
       # Where this job's gallery lands. One definition, because the
       # native scripts write it and the upload reads it back — the two
-      # must not drift, and Windows has no /tmp. The Windows value is
-      # forward-slashed so the same string is valid for the script, for
-      # PowerShell and for upload-artifact.
+      # must not drift. Forward slashes keep the same runner-temp value
+      # valid for Bash, PowerShell and upload-artifact.
       - name: Set the gallery root
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            root="${RUNNER_TEMP//\\//}/ui-artifacts"
-          else
-            root=/tmp/mpf/ui-artifacts
-          fi
+          temp="${RUNNER_TEMP//\\//}"
+          root="$temp/mpf/ui-artifacts"
           echo "GALLERY=$root/runs/${{ github.run_id }}/${{ inputs.unit }}" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "MPF_WORK_DIR=$temp/mpf" >> "$GITHUB_ENV"
+            echo "CURA_VERSIONS_DIR=$temp/mpf/cura_versions" >> "$GITHUB_ENV"
+          else
+            echo "MPF_WORK_DIR=$temp/mpf-native" >> "$GITHUB_ENV"
+          fi
 
       # The Linux leg builds both artifacts through the Makefile, as it
       # always has. `make` is not on the Windows image and the native
@@ -99,7 +101,7 @@ jobs:
         id: cura-cache
         uses: actions/cache@v6
         with:
-          path: /tmp/mpf/cura_versions
+          path: ${{ runner.temp }}/mpf/cura_versions
           key: mpf-cura-${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}
 
       - name: Fetch the pinned Cura
@@ -155,8 +157,9 @@ jobs:
             docker build -q -t mpf-cura-harness tools/harness
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          container_dir="$(tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
-              -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
+              -v "$MPF_WORK_DIR:$container_dir" mpf-cura-harness sleep infinity
 
       # One attempt per unit (the gate ruling): a retried unit would
       # hide flakiness. The gallery is the proof — every unit's
@@ -167,7 +170,7 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 30
         run: |
-          mkdir -p /tmp/mpf
+          mkdir -p "$MPF_WORK_DIR"
           timeout "${{ fromJSON(inputs.UNITS)[inputs.unit].budget }}m" env \
               CURA_VERSION="${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}" \
               MODE="${{ fromJSON(inputs.UNITS)[inputs.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(inputs.UNITS)[inputs.unit].group }}" \
@@ -196,7 +199,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          . /tmp/mpf-native/harness_env.sh
+          . "$MPF_WORK_DIR/harness_env.sh"
           # The gallery is the runner's own output, so the guard sits after
           # it: the upload below is `if: always()`, and a run that produced
           # no gallery would otherwise ship a green job with an empty
@@ -275,8 +278,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$GALLERY"
-          if [ -f /tmp/mpf-native/cura_run.log ]; then
-            cp /tmp/mpf-native/cura_run.log "$GALLERY/cura-run.log"
+          if [ -f "$MPF_WORK_DIR/cura_run.log" ]; then
+            cp "$MPF_WORK_DIR/cura_run.log" "$GALLERY/cura-run.log"
           fi
 
       # The verdict panel for this job's page. GitHub shows a job as a
@@ -298,4 +301,3 @@ jobs:
           name: gate-${{ inputs.unit }}-${{ inputs.os }}
           path: ${{ env.GALLERY }}
           if-no-files-found: error
-

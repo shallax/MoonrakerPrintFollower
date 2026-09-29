@@ -4,17 +4,21 @@ How changes are made here is documented in `INSTRUCTIONS.md`; the
 architecture is in `ARCHITECTURE.md`; the UI test harness in
 `TESTING.md`. Read `INSTRUCTIONS.md` before making changes.
 
-On Windows, every procedure runs natively through the same `make`
-targets (`tools/windows/dev.py` behind them, no container, no POSIX
-shell): start with `make dev_install`. See `INSTRUCTIONS.md`,
-"Windows development", for the pinned toolchain and the differences.
+On macOS and Windows, Makefile procedures default to the shared native
+driver (`tools/native/dev.py`), with no Docker required: start with
+`make dev_install`. Use `BACKEND=docker` to opt into the pinned Linux
+image on either host. Linux defaults to Docker. See `INSTRUCTIONS.md`
+for the toolchain, parity report and platform details.
 
 ## Running a subset of the tests — do this in parallel
 
     make test_files FILES="tests.test_monitor_qml_contracts tests.test_index"
 
-One process per file, `JOBS` (default 8) at a time, a verdict per file,
+One process per file, up to `JOBS` workers at a time, a verdict per file,
 non-zero exit if any file fails.
+The native default is the host's core count capped at 16; Linux's
+container runner defaults to 8 for `test_files`. Use `JOBS=2` on small
+CI runners or when wall-clock-sensitive tests share the host.
 
 **Never** pass several files to a single `python3 -m unittest` call.
 That runs them serially inside one process — which is where the minutes

@@ -964,6 +964,55 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertIsNone(coordinator._plate_anchor)
 
+    def test_an_indexed_print_can_detach_before_its_first_live_layer(self):
+        model = self.monitor()
+        model.setFollowerPopoverOpen(True)
+        coordinator = self.follower._runtime.coordinator
+        coordinator._snapshot = harness.replace(
+            coordinator._snapshot, index_ready=True, plate_progress=None,
+            plate_manual_progress=None, plate_layer_count=12)
+        model._publish()
+        self.assertEqual(model.plateProgressAnchor, -1)
+        self.assertEqual(model.plateProgressReason,
+                         "Print indexed — waiting for the print to reach an indexed layer.")
+        requests = []
+        model._request_plate_anchor = requests.append
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(requests, [0])
+        coordinator._snapshot = harness.replace(
+            coordinator._snapshot,
+            plate_manual_progress={"layers": {"prev": None, "current": {"classes": {}},
+                                              "next": None},
+                                   "split": None, "anchor": 0,
+                                   "method": "unavailable", "motionTotal": 100})
+        model._publish()
+        self.assertTrue(model.plateProgressAvailable)
+        self.assertEqual(model.plateProgressReason, "")
+        self.assertEqual(model.plateProgressAnchor, 0)
+        self.assertEqual(model.plateLayerMotionCount, 100)
+        model.setFollowerLayerAnchor(3)
+        self.assertEqual(model.followerLayerAnchor, 3)
+        self.assertEqual(requests, [0, 3],
+                         "the indexed print refused a manual layer seek")
+
+    def test_detach_can_latch_during_the_ready_to_count_publish_gap(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        coordinator._snapshot = harness.replace(
+            coordinator._snapshot, index_ready=True, plate_progress=None,
+            plate_manual_progress=None, plate_layer_count=0)
+        model._publish()
+        self.assertTrue(model.printIndexReady)
+        self.assertEqual(model.plateLayerCount, 0)
+        requests = []
+        model._request_plate_anchor = requests.append
+        model.setFollowerAttached(False)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 0)
+        self.assertEqual(requests, [0])
+
     def test_a_collapsed_mini_section_freezes_the_live_payload(self):
         model = self.monitor()
         self._with_layers(model, anchor=7, count=12)
@@ -2568,6 +2617,9 @@ Item {
             # reserved strip — never layout-shifting elsewhere.
             'visible: root.cameraBarMode === "zoom"',
             'visible: root.cameraBarMode === "fps"',
+            # The green snapshot range is decoration within the FPS
+            # bar and appears only when the webcam offers that mode.
+            "visible: root.cameraSnapshotAvailable",
             # The FPS scale's mirrored graduation edge: decoration
             # inside the bar's own reserved strip (the zoom scope's
             # own !major mirror).
@@ -2591,7 +2643,7 @@ Item {
             # GPU render passes overlap inside the fixed canvas; visibility
             # changes cannot reflow controls or any surrounding layout.
             "visible: gpuFollower.visible",
-            'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious : root.showNext))',
+            'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))',
             "visible: root.available()",
             # The objects list's current-row bar: a highlight behind
             # the text, never a layout shift.
@@ -3152,5 +3204,3 @@ Item {
         self.qt.events(10)
         self.assertNotEqual(stored(), settling, "the floor clamp is a real change")
         self.assertEqual(model.cameraFps, 0.5)
-
-

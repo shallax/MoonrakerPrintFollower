@@ -2,6 +2,144 @@
 from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
+    def test_malformed_physical_telemetry_falls_back_without_advancing_fill(self):
+        from plugins.GCodeIndex import build_index_from_bytes
+
+        index = build_index_from_bytes(
+            b";LAYER:0\nG0 X0 Y0\nG1 X10 Y0 E1\n")
+        coarse = index.refined_fraction(0, 15, None)
+        self.assertEqual(index.refined_fraction(
+            0, 15, None, floor_motion="invalid", stall="invalid"), coarse)
+        split, _method = index.refined_split(
+            0, 15, None, minimum_split="invalid", floor_split=0)
+        self.assertIsNone(split)
+        self.assertEqual(index.partial_motion(0, 0, (float("nan"), 0, 0)), 0)
+        self.assertEqual(index.partial_motion(0, 0, ("invalid", 0, 0)), 0)
+
+    def test_indexed_vase_and_flat_gcode_keep_distinct_layer_rules(self):
+        """Exercise the parser too: the transition and a flat control use
+        the same slicer markers, with only their physical Z paths changed."""
+        def indexed(spiral):
+            rows = ["M82", "G90", "G92 E0", "G0 Z1.4", ";LAYER:6",
+                    ";TYPE:WALL-OUTER"]
+            extrusion = 0
+            for layer in range(3):
+                if layer:
+                    rows.extend((f";LAYER:{layer + 6}", ";TYPE:WALL-OUTER"))
+                for move in range(1, 33 if layer else 66):
+                    extrusion += 1
+                    height = 1.4 + .2 * layer
+                    if spiral and (layer or move > 33):
+                        ramp_move = move if layer else move - 33
+                        height += .2 * ramp_move / 32
+                    rows.append(f"G1 X{move % 8} Y{move // 8} "
+                                f"Z{height:.4f} E{extrusion}")
+            return harness.build_index_from_bytes(("\n".join(rows) + "\n").encode())
+
+        view_type = self.qt.load("GCodeIndexService").IndexView
+        vase = view_type(self.job, indexed(True))
+        flat = view_type(self.job, indexed(False))
+        self.assertAlmostEqual(vase.continuous_z_boundary(1), 1.6)
+        self.assertTrue(vase.continuous_z_at(1))
+        self.assertGreater(vase.spiral_z_split(1, 1.7), 0)
+        self.assertIsNone(flat.continuous_z_boundary(1))
+        self.assertFalse(flat.continuous_z_at(1))
+        self.assertIsNone(flat.spiral_z_split(1, 1.7))
+
+    def test_flat_first_layer_with_start_and_end_z_moves_is_not_spiral(self):
+        from array import array
+        from plugins.GCodeIndex import LayerMotionIndex
+
+        index = LayerMotionIndex(
+            ranges=[(0, 200)],
+            motion_offsets=[array("Q", range(10, 142, 11))],
+            motion_x=[array("f", range(12))],
+            motion_y=[array("f", [0] * 12)],
+            motion_z=[array("f", [.2] * 11 + [.4])],
+            layer_start_positions=[(0, 0, 0.0)],
+        )
+        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.assertFalse(view.continuous_z_at(0))
+        self.assertIsNone(view.spiral_z_split(0, .05))
+
+    def test_flat_to_spiral_transition_uses_exact_next_boundary(self):
+        from array import array
+        from plugins.GCodeIndex import LayerMotionIndex
+
+        # The real vase file's seventh layer stays at 1.4 for half its
+        # motions, then winds from 1.4 to 1.6. The first half must retain
+        # XY progress, while the eighth layer must wait for Z 1.6.
+        heights = [1.4] * 33 + [1.4 + .2 * n / 32 for n in range(1, 33)]
+        index = LayerMotionIndex(
+            ranges=[(0, 200), (200, 300)],
+            motion_z=[array("f", heights), array("f", [1.602 + n * .018 for n in range(12)])],
+            layer_start_positions=[(0, 0, 1.4), (0, 0, 1.6)],
+        )
+        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.assertFalse(view.continuous_z_at(0))
+        self.assertIsNone(view.spiral_z_split(0, 1.5))
+        self.assertAlmostEqual(view.continuous_z_boundary(1), 1.6)
+
+        # A conventional first layer has two Z jumps but no rising
+        # toolpath, so it must keep the usual flat-layer threshold.
+        index.layer_start_positions[0] = (0, 0, 0.0)
+        index.motion_z[0] = array("f", [.2] * 64 + [.4])
+        self.assertIsNone(view.continuous_z_boundary(1))
+        index.motion_z[0] = array("f", [.2] * 45 + [.3] * 10 + [.4] * 10)
+        self.assertIsNone(view.continuous_z_boundary(1),
+                          "two discrete height changes do not make a spiral")
+
+    def test_spiral_layer_enters_before_halfway_through_its_z_ramp(self):
+        from array import array
+        from plugins.GCodeIndex import LayerMotionIndex
+
+        index = LayerMotionIndex(
+            ranges=[(0, 100), (100, 200), (200, 300)],
+            motion_offsets=[array("Q", [50]), array("Q", [110 + 7 * n for n in range(12)]),
+                            array("Q", [250])],
+            motion_x=[array("f", [0]), array("f", range(12)), array("f", [0])],
+            motion_y=[array("f", [0]), array("f", [0] * 12), array("f", [0])],
+            motion_z=[array("f", [1.6]), array("f", [1.602 + n * .018 for n in range(12)]),
+                      array("f", [1.8])],
+            layer_start_positions=[(0, 0, 1.4), (0, 0, 1.6), (0, 0, 1.8)],
+        )
+        # The parser can enter the new layer before the nozzle does.
+        self.assertFalse(index.layer_entry_confirmed(1, 1, (0, 0, 1.59), previous_z=1.56,
+                                                     continuous_z=True))
+        # Once the nozzle is on its ramp, the completed motion's Z
+        # naturally trails the live Z. It must not hold the fill at zero.
+        self.assertTrue(index.layer_entry_confirmed(1, 1, (1.5, 0, 1.627), previous_z=1.56,
+                                                    continuous_z=True))
+        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.assertTrue(view.continuous_z_at(1))
+        self.assertEqual(view.continuous_z_boundary(2), 1.8)
+        index.motion_z[1] = array("f", [1.6] * 11 + [1.8])
+        self.assertFalse(view.continuous_z_at(1), "one end-of-layer Z move is not a spiral")
+        self.assertIsNone(view.continuous_z_boundary(2))
+        # A flat first layer may start at zero and end with a move to
+        # the next layer's Z. Its two jumps are not continuous motion.
+        index.layer_start_positions[1] = (0, 0, 0.0)
+        index.motion_z[1] = array("f", [.2] * 11 + [.4])
+        self.assertFalse(view.continuous_z_at(1))
+        index.layer_start_positions[1] = (0, 0, 1.6)
+        dipping = [1.602 + n * .018 for n in range(12)]
+        dipping[5] = dipping[4] - .01
+        index.motion_z[1] = array("f", dipping)
+        self.assertFalse(view.continuous_z_at(1), "a nonmonotonic Z path cannot use binary search")
+        index.motion_z[1] = array("f", [1.602 + n * .018 for n in range(12)])
+        self.assertGreater(view.spiral_z_split(1, 1.65), 0)
+        self.assertIsNone(view.spiral_z_split(1, 1.59))
+        self.service._view = view
+        self.service.observe_motion(0, 50, (0, 0, 1.6), extruding=True)
+        first = self.service.observe_motion(1, 140, (3.5, 0, 1.65), extruding=True)
+        self.assertGreater(first.fraction, 0, "physical spiral entry must publish on its first poll")
+        self.assertEqual(first.split, view.spiral_z_split(1, 1.65))
+        self.service._split_tracker.reset()
+        self.service.observe_motion(0, 50, (0, 0, 1.6), extruding=True)
+        missed_xy = self.service.observe_motion(1, 140, (3.5, 4, 1.65), extruding=True)
+        self.assertGreater(missed_xy.fraction, 0, "rising Z must recover a missed XY match")
+        self.assertEqual(missed_xy.split, first.split)
+
     def test_penguin_telemetry_enters_all_three_layers(self):
         from tests.harness.gcodegen import penguin_playback, playback_sample
         data, rows = penguin_playback()
@@ -672,5 +810,3 @@ class PayloadRefinementTests(harness.PayloadRefinementTests):
         payload["classes"]["first"] = [self._row(0.0, 200, 2, x0=-1, step=2)]
         payload["classes"]["earlier"] = [self._row(0.00009, 100, 2, x0=-1, step=2)]
         self.assertEqual(self._refine(payload, 200, (0.0, 0.0, 0.2), floor=90), 100)
-
-

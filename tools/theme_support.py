@@ -143,7 +143,9 @@ class ThemeBackend(QObject):
                  f'bold: {"true" if qfont.bold() else "false"}, italic: {"true" if qfont.italic() else "false"} }})'] = None
         icons = {}
         for name, url in sorted(self._icons.items()):
-            icons[f'            "{name}": "{url.toLocalFile()}"'] = None
+            # QML Image.source needs a URL: a Windows D:\\ path is parsed as
+            # the unsupported "d" protocol when embedded as a plain string.
+            icons[f'            "{name}": "{url.toString()}"'] = None
         return """pragma Singleton
 import QtQuick 2.15
 QtObject {

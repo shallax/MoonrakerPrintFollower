@@ -26,6 +26,31 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.6.1",
+        "headline": "Version 4.6.1 lets Print Follower track vase prints "
+            "smoothly, including the move from flat layers into a spiral.",
+        "items": (
+            "Vase prints now follow the nozzle's rising path through layer "
+            "changes, including the transition from flat layers into "
+            "the spiral. Ordinary flat layers keep their path tracking.",
+            "The previous layer fades as the new layer appears, and the "
+            "toolhead moves toward its first observed position instead "
+            "of jumping there.",
+            "You can detach and scrub the Print Follower while the print "
+            "is waiting to reach its first indexed layer.",
+            "At 5 FPS or below, webcams with a snapshot URL switch off the "
+            "MJPEG stream and poll snapshots to save bandwidth. The green "
+            "FPS range appears only when that option is available.",
+            "Camera zoom and FPS touchpad scrolling match Print Follower "
+            "zoom, and the auxiliary and console interval handles no "
+            "longer jump to their maximum when grabbed.",
+            "Developers can build and test natively on macOS or Windows "
+            "with the same Make commands. Docker is still available by "
+            "choice on either platform.",
+        ),
+    },
+
+    {
         "version": "4.6.0",
         "headline": "Version 4.6.0 brings your build plate to Monitor, with a "
             "GPU Print Follower, smooth live motion and Cura Preview colours.",

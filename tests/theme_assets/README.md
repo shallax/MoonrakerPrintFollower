@@ -37,7 +37,8 @@ a newer Cura release:
    then locate the resources under `squashfs-root/`).
 2. Copy the widget QML files into `Cura/` / `UM/`, the theme JSON into
    `cura-light/` and the icons into `cura-light/icons/default/`.
-3. Regenerate the captures inside the dev container
-   (`tools/docker_gates.sh`) and commit the refreshed `screenshots/`
+3. Regenerate the captures through `make BACKEND=docker generate_screenshots`
+   on macOS or Windows (or `make generate_screenshots` on Linux), then commit
+   the refreshed `screenshots/`
    copies — the Screenshot sync CI job enforces the byte-for-byte match.
 4. Update the attribution in this README.

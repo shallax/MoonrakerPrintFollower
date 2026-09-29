@@ -2,6 +2,70 @@
 from tests import qml_engine_support as harness
 
 class CameraFpsControlTests(harness.CameraFpsControlTests):
+    def test_green_snapshot_range_requires_a_supported_url(self):
+        pane, window, model, image, frame = self._fps_pane(700, 700, fps=5.0)
+        self._fps_face(window, frame)
+        region = self.find(pane, "cameraSnapshotRegion")
+        bar = self.find(pane, "cameraFpsBar")
+        self.assertFalse(region.property("visible"))
+        model.set_snapshot_available(True)
+        self.pump()
+        self.assertTrue(region.property("visible"))
+        self.assertTrue(region.height() > 0)
+        self.assertAlmostEqual(region.height() / bar.height(), (5.0 - 0.5) / (30.0 - 0.5), delta=0.01)
+        model.set_snapshot_available(False)
+        self.pump()
+        self.assertFalse(region.property("visible"))
+
+    def test_same_path_snapshot_switch_replaces_the_stream(self):
+        from PyQt6.QtCore import QMetaObject, Q_ARG, QVariant
+
+        pane, _window, model, image, _frame = self._fps_pane(700, 700)
+        model.set_snapshot_available(True)
+
+        def apply(url):
+            QMetaObject.invokeMethod(pane, "applyCamera",
+                                     Q_ARG(QVariant, harness.QUrl(url)), Q_ARG(QVariant, True))
+
+        apply("http://127.0.0.1:59999/webcam/?action=stream")
+        before = image.property("stopCount")
+        self.assertFalse(image.property("snapshotMode"))
+        model.setCameraFps(5.0)
+        apply("http://127.0.0.1:59999/webcam/?action=snapshot")
+        self.assertGreater(image.property("stopCount"), before)
+        self.assertTrue(image.property("snapshotMode"))
+        self.assertIn("action=snapshot", image.property("source").toString())
+        apply("http://127.0.0.1:59999/webcam/?action=snapshot&quality=50")
+        self.assertIn("quality=50", image.property("source").toString())
+
+    def test_touchpad_camera_zoom_matches_follower_scroll_distance(self):
+        pane, window, _model, _image, frame = self._fps_pane(700, 700)
+        self._wheel(window, frame, pixels=18)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25 ** 0.1, delta=0.002)
+        for _ in range(9):
+            self._wheel(window, frame, pixels=18)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=0.002,
+                               msg="180 touchpad pixels equal one follower zoom notch")
+        self._wheel(window, frame)
+        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25 * 1.25, delta=0.002,
+                               msg="a mouse wheel still moves one discrete notch")
+
+    def test_touchpad_fps_uses_the_same_180_pixel_travel(self):
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        shift = harness.Qt.KeyboardModifier.ShiftModifier
+        self._wheel(window, frame, modifiers=shift, pixels=18)
+        self.assertAlmostEqual(pane.property("cameraFps"), 15.1, delta=0.01)
+        for _ in range(9):
+            self._wheel(window, frame, modifiers=shift, pixels=18)
+        self.assertAlmostEqual(pane.property("cameraFps"), 16.0, delta=0.01)
+        self._wheel(window, frame, modifiers=shift)
+        self.assertAlmostEqual(pane.property("cameraFps"), 17.0, delta=0.01,
+                               msg="a mouse wheel still moves one FPS step")
+        self.assertEqual(model.fps_calls[-1], 17.0)
+        self._wheel(window, frame, modifiers=shift, horizontal_pixels=18)
+        self.assertAlmostEqual(pane.property("cameraFps"), 17.1, delta=0.01,
+                               msg="Shift-remapped horizontal touchpad pixels still drive FPS")
+
     def test_the_gesture_surface_survives_a_stream_off_and_on(self):
         # The live report: disabling then re-enabling the stream left
         # zoom and FPS dead. The blank is a real size change (the
@@ -958,5 +1022,3 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._double_click(window, area)
         self.assertEqual(pane.property("cameraZoom"), 1.0,
                          "the left double click is still the fit")
-
-

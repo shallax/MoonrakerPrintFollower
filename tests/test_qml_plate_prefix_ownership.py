@@ -34,7 +34,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         row = int(origin.y() + plot["offsetY"]
                   + (plot["bedYMax"] - 125.0) * plot["sy"])
 
-        def red_height(bed_x, tolerance=20):
+        def red_height(image, bed_x, tolerance=20):
             col = int(origin.x() + plot["offsetX"]
                       + (bed_x - plot["bedXMin"]) * plot["sx"])
             return sum(
@@ -50,24 +50,22 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # prefix body then reads a full core row deeper than the Canvas
         # body (the CI signature: [4, 2]). Both bodies are measured on
         # every frame; x=155 also proves the Canvas tail landed.
-        tail_landed = False
         frames = 0
-        deadline = harness.time.monotonic() + 5.0
-        while harness.time.monotonic() < deadline and frames < 30:
-            self.app.processEvents()
-            self.pump(1)
+
+        def tail_landed(image):
+            nonlocal frames
             frames += 1
-            image = window.grabWindow()
-            bodies = [red_height(75.0), red_height(155.0)]
+            bodies = [red_height(image, 75.0), red_height(image, 155.0)]
             if min(bodies) > 0:
                 self.assertLessEqual(
                     max(bodies) - min(bodies), 1,
                     "native prefix / Canvas tail stroke widths diverge in "
                     "frame %d: %r" % (frames, bodies))
-            if self._red_in_band(image, face, window, plot, 155.0, 125.0,
-                                 radius=6):
-                tail_landed = True
-        self.assertTrue(tail_landed, "the Canvas tail never landed")
+            return self._red_in_band(image, face, window, plot, 155.0, 125.0,
+                                     radius=6)
+
+        image = self._wait_until(window, tail_landed, timeout=15.0)
+        self.assertTrue(tail_landed(image), "the Canvas tail never landed")
 
         self.pump(20)
         image = window.grabWindow()
@@ -84,9 +82,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # the core band (one column wide), so a core census there would
         # count the joint, not the stroke. A Canvas half drawn at a
         # different thickness diverges in both censuses.
-        bodies = [red_height(75.0), red_height(155.0)]
-        seam = [red_height(75.0, tolerance=60), red_height(110.0, tolerance=60),
-                red_height(155.0, tolerance=60)]
+        bodies = [red_height(image, 75.0), red_height(image, 155.0)]
+        seam = [red_height(image, 75.0, tolerance=60), red_height(image, 110.0, tolerance=60),
+                red_height(image, 155.0, tolerance=60)]
         self.assertGreater(min(bodies), 0, "one side of the partial stroke vanished")
         self.assertLessEqual(max(bodies) - min(bodies), 1,
                              "native prefix / Canvas tail stroke widths diverge: %r" % bodies)
@@ -296,5 +294,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.pump(30)
         self._printer.setLayers(harness.PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
-
-

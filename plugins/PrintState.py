@@ -274,10 +274,27 @@ class LayerResolver:
             # layer's geometry — so the hold has to happen here, before any
             # consumer sees it. A lead past the skew bound is not read-ahead
             # but a height table from another file: the claim keeps it.
-            reached = self._nozzle_layer(nozzle, heights, metadata, config)
-            if reached is not None and reached < layer <= reached + _MAX_LAYER_SKEW:
-                layer = reached
-                source = "nozzle Z (claim held)"
+            # A spiral climbs for the whole layer. Its exact boundary is
+            # the next layer's modal start, not the half-step threshold
+            # used for flat layers (or a possibly unrelated Cura scene).
+            # Only the current print's hydrated index may supply it.
+            boundary_at = getattr(index, "continuous_z_boundary", None)
+            live_z = self._number(nozzle[2]) if nozzle and len(nozzle) >= 3 else None
+            spiral_boundary = boundary_at(layer) if boundary_at is not None and layer > 0 else None
+            if spiral_boundary is not None and live_z is not None:
+                claimed = layer
+                while layer > max(0, claimed - _MAX_LAYER_SKEW):
+                    boundary = boundary_at(layer)
+                    if boundary is None or live_z + 0.001 >= boundary:
+                        break
+                    layer -= 1
+                if layer < claimed:
+                    source = "nozzle Z (spiral claim held)"
+            else:
+                reached = self._nozzle_layer(nozzle, heights, metadata, config)
+                if reached is not None and reached < layer <= reached + _MAX_LAYER_SKEW:
+                    layer = reached
+                    source = "nozzle Z (claim held)"
 
         position = move.get("gcode_position") or ()
         sd_progress = self._number(sd.get("progress"))

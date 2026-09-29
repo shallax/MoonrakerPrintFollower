@@ -67,6 +67,7 @@ if QT_AVAILABLE:
             self._aborted = 0
             self._deleted_later = False
             self._content_type = content_type
+            self._finished = False
 
         def readAll(self) -> QByteArray:
             data = b"".join(self._chunks)
@@ -81,7 +82,13 @@ if QT_AVAILABLE:
             self._aborted += 1
 
         def isFinished(self) -> bool:
-            return False
+            return self._finished
+
+        def complete(self, tail=b"") -> None:
+            if tail:
+                self._chunks.append(tail)
+            self._finished = True
+            self.finished.emit()
 
         def deleteLater(self) -> None:
             self._deleted_later = True
@@ -172,6 +179,93 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
             return reply
         self.nam.get = _get_with_type
         self.item.start()
+
+    def test_snapshot_polling_closes_each_reply_and_never_overlaps_requests(self):
+        self.item.setSourceURL(QUrl("http://127.0.0.1:1/snapshot"))
+        self.item.setTargetFps(1.0)
+        self.item.setSnapshotMode(True)
+        self.item.start()
+        first = self._reply()
+        self.assertEqual(len(self.nam.requests), 1)
+        self.assertEqual(self.item._image_request.url().path(), "/snapshot")
+        self.assertEqual(bytes(self.item._image_request.rawHeader(b"Cache-Control")), b"no-cache")
+        self.item._begin_snapshot_request()
+        self.assertEqual(len(self.nam.requests), 1, "a slow response blocks another GET")
+        first.complete(_jpeg(40, 30))
+        self.assertEqual(self.item.framesParsed, 1)
+        self.assertIsNone(self.item._image_reply)
+        self.assertEqual(first._aborted, 0)
+        self.assertTrue(self.item._snapshot_timer.isActive())
+        self.assertEqual(self.item._snapshot_timer.interval(), 1000)
+        self.item._snapshot_timer.stop()
+        self.item._begin_snapshot_request()
+        self.assertEqual(len(self.nam.requests), 2)
+        self.item.setTargetFps(0.5)
+        self._reply().complete(_jpeg(40, 30))
+        self.assertEqual(self.item._snapshot_timer.interval(), 2000)
+        self.item.stop()
+        self.item._begin_snapshot_request()
+        self.assertEqual(len(self.nam.requests), 2, "stop prevents later polling")
+
+    def test_stale_reply_callbacks_leave_the_current_snapshot_request_alone(self):
+        self.item.setSnapshotMode(True)
+        self.assertTrue(self.item.getSnapshotMode())
+        self.item.setSnapshotMode(True)  # Reapplying the mode cannot reconnect.
+        self.item.start()
+        active = self._reply()
+        stale = FakeReply()
+        self.item._on_finished(stale)
+        self.item._on_snapshot_finished(stale)
+        self.item._on_error(stale)
+        self.assertIs(self.item._image_reply, active)
+        self.assertTrue(self.item._started)
+        self.assertEqual(self.item.transportErrors, 0)
+        self.assertEqual(len(self.nam.requests), 1)
+
+    def test_switching_to_snapshot_mode_aborts_the_mjpeg_connection(self):
+        self._start()
+        stream = self._reply()
+        self.item.setTargetFps(1.0)
+        self.item.setSnapshotMode(True)
+        self.assertEqual(stream._aborted, 1)
+        self.assertTrue(stream._deleted_later)
+        self.assertIsNot(self._reply(), stream)
+        self._reply().complete(_jpeg(40, 30))
+        self.assertTrue(self.item._snapshot_timer.isActive())
+        self.item.setSnapshotMode(False)
+        self.assertFalse(self.item._snapshot_timer.isActive())
+        self.assertEqual(len(self.nam.requests), 3)
+
+    def test_stalled_snapshot_is_aborted_before_retrying(self):
+        self.item.setTargetFps(0.5)
+        self.item.setSnapshotMode(True)
+        self.item.start()
+        first = self._reply()
+        self.assertTrue(self.item._snapshot_timeout_timer.isActive())
+        self.item._on_snapshot_timeout()
+        self.assertEqual(first._aborted, 1)
+        self.assertIsNone(self.item._image_reply)
+        self.assertEqual(self.item.transportErrors, 1)
+        self.assertTrue(self.item._snapshot_timer.isActive())
+        self.assertEqual(self.item._snapshot_timer.interval(), 2000)
+        self.item._snapshot_timer.stop()
+        self.item._begin_snapshot_request()
+        self.assertEqual(len(self.nam.requests), 2)
+
+    def test_snapshot_response_can_be_png_and_is_decoded_once(self):
+        image = QImage(32, 24, QImage.Format.Format_RGB888)
+        image.fill(QColor(20, 120, 60))
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        self.item.setSnapshotMode(True)
+        self.item.setTargetFps(1.0)
+        self.item.start()
+        self._reply().complete(bytes(buffer.data()))
+        self.assertEqual(self.item.framesParsed, 1)
+        self._await(lambda: self.item.framesDisplayed == 1,
+                    "the one-shot PNG never reached the screen")
+        self.assertEqual((self.item.imageWidth, self.item.imageHeight), (32, 24))
 
     def test_a_one_frame_fragmented_across_many_chunks_reconstructs(self):
         self._start()
@@ -1233,10 +1327,7 @@ class DecodeOffTheQtThreadTests(unittest.TestCase):
         # Wait for the worker without running the event loop: the
         # result must still be in flight when the stream stops, which is
         # the case this pins.
-        deadline = time.monotonic() + 4.0
-        while not decoded.is_set() and time.monotonic() < deadline:
-            time.sleep(0.005)
-        self.assertTrue(decoded.is_set(), "the worker never finished the decode")
+        self.assertTrue(decoded.wait(4.0), "the worker never finished the decode")
         self.item.stop()
         self.assertIsNotNone(self.item._decoder,
                              "the worker was orphaned rather than joined")

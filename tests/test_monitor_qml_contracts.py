@@ -1338,7 +1338,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('property bool _cameraApplyPending: false', harness.MONITOR_QML)
         self.assertIn("Qt.callLater(function () {", harness.MONITOR_QML)
         self.assertIn("root.scheduleCameraApply();", harness.MONITOR_QML)
-        self.assertEqual(harness.MONITOR_QML.count("root.scheduleCameraApply();"), 2)
+        self.assertEqual(harness.MONITOR_QML.count("root.scheduleCameraApply();"), 3)
 
     def test_camera_render_watchdogs_are_wired(self):
         # The live reports: a stream that CONNECTED but never
@@ -1533,5 +1533,4 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertIn("fixedWidthMode: true", block)
         self.assertNotIn("scheduledPauseList", harness.MONITOR_QML, "the popover kept the static capped list")
         self.assertNotIn("+ pauseColumn.hiddenRows", harness.MONITOR_QML, "the popover counts a remainder instead of scrolling")
-
 

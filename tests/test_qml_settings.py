@@ -106,6 +106,28 @@ class SettingsCacheClearTests(harness.SettingsCacheClearTests):
 
 
 class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
+    def test_linear_interval_handle_drag_moves_locally_and_regrabs_without_jump(self):
+        document, window = self.open_settings(self.settings_config(
+            aux_interval_ms=2500, console_interval_ms=3000))
+        for caption in self.SLIDERS[1:]:
+            with self.subTest(slider=caption):
+                slider = self.interval_slider(document, caption)
+                before = slider.property("value")
+                left, right = self._painted_handle(slider)
+                self._press_and_release(window, slider, (left + right) / 2.0, dx=1.0)
+                self.assertLess(slider.property("value"), 60000,
+                                "a one-pixel grab jumped to the maximum")
+                left, right = self._painted_handle(slider)
+                self._press_and_release(window, slider, (left + right) / 2.0, dx=20.0)
+                moved = slider.property("value")
+                self.assertGreater(moved, before)
+                self.assertLess(moved, 60000,
+                                "a short handle drag jumped to the maximum")
+                left, right = self._painted_handle(slider)
+                self._press_and_release(window, slider, (left + right) / 2.0)
+                self.assertEqual(moved, slider.property("value"),
+                                 "regrabbing the handle changed its value")
+
     def test_every_interval_slider_grabs_both_halves_of_the_painted_handle(self):
         # The poll slider is asked for its floor: at the track's left end
         # the old centre-window is furthest from the painted handle, so
@@ -143,5 +165,3 @@ class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
         self.press_key(window, harness.Qt.Key.Key_Left)
         self.assertEqual(anchor, slider.property("value"),
                          "the second arrow key never stepped back")
-
-

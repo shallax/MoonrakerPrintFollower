@@ -661,7 +661,8 @@ class LayerMotionIndex:
         except (TypeError, ValueError, IndexError):
             return 0.0
 
-    def layer_entry_confirmed(self, layer, candidate, live_position, previous_z=None):
+    def layer_entry_confirmed(self, layer, candidate, live_position, previous_z=None,
+                              continuous_z=False):
         """Whether physical Z distinguishes this match from the previous layer.
 
         XY can repeat exactly on successive layers while the parser has
@@ -680,6 +681,7 @@ class LayerMotionIndex:
             heights = self.motion_z[layer] if layer < len(self.motion_z) else ()
             if len(heights):
                 target_z = float(heights[min(len(heights) - 1, max(0, candidate - 1))])
+                final_z = float(heights[-1])
             else:
                 # A marker may occur before OR after its layer's Z move.
                 # Compact modal starts alone cannot distinguish these.
@@ -695,6 +697,17 @@ class LayerMotionIndex:
             live_z = float(live_position[2])
         except (IndexError, TypeError, ValueError):
             return True
+        if continuous_z and len(heights) and abs(final_z - previous_z) > 1e-4 \
+                and abs(final_z - target_z) > 1e-4:
+            # Spiralized layers climb throughout the path. The completed
+            # motion's Z is behind the nozzle even for a correct XY match;
+            # comparing the two heights rejects the first half of each
+            # layer. Confirm entry from the layer's Z interval instead.
+            tolerance = max(1e-3, abs(final_z - previous_z) * 0.02)
+            if observed_previous_z is not None \
+                    and abs(live_z - float(observed_previous_z)) <= tolerance:
+                return False
+            return min(previous_z, final_z) - tolerance <= live_z <= max(previous_z, final_z) + tolerance
         step = abs(target_z - previous_z)
         if step < 1e-4:
             return True

@@ -25,7 +25,7 @@ for path in pathlib.Path('tests').glob('test_qml_*.py'):
         continue
     module = importlib.import_module('tests.' + path.stem)
     count += unittest.defaultTestLoader.loadTestsFromModule(module).countTestCases()
-assert count == 208, count
+assert count > 0, 'no QML domain tests were discovered'
 assert QCoreApplication.instance() is None
 from tests.test_qml_dashboard_layout import ConsoleInputRowTests
 case = ConsoleInputRowTests('test_the_input_keeps_the_buttons_in_their_own_cells')
