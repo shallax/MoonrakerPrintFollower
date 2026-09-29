@@ -919,15 +919,15 @@ class ActionTailTests(MonitorModelCase):
         # real change; the second one must not rewrite the record.
         self.model = self.build()
         self.model.setShowTemperatureTargets(False)
-        self.assertFalse(self.model._chart_config["showTargets"])
+        self.assertFalse(self.model._temperature._chart_config["showTargets"])
         self.assertEqual(len(self.applied), 1)
         self.model.setShowTemperatureTargets(False)
         self.assertEqual(len(self.applied), 1)
         self.model.setShowTemperatureTargets(True)
-        self.assertTrue(self.model._chart_config["showTargets"])
+        self.assertTrue(self.model._temperature._chart_config["showTargets"])
         self.assertEqual(len(self.applied), 2)
         self.model.setShowTemperaturePower(True)
-        self.assertTrue(self.model._chart_config["showPower"])
+        self.assertTrue(self.model._temperature._chart_config["showPower"])
         self.assertEqual(len(self.applied), 3)
         self.model.setShowTemperaturePower(True)
         self.assertEqual(len(self.applied), 3)
@@ -972,18 +972,18 @@ class ChartCadenceTests(MonitorModelCase):
         self.assertEqual(self.model._chart_timer.interval(), 1000)
         self.connect()
         self.observe(auxiliary={"extruder": {"temperature": 200.0}})
-        before = len(self.model._history.series("extruder"))
+        before = len(self.model._temperature._history.series("extruder"))
         self.model._on_chart_tick()
-        self.assertEqual(len(self.model._history.series("extruder")), before + 1)
+        self.assertEqual(len(self.model._temperature._history.series("extruder")), before + 1)
 
     def test_auxiliary_arrivals_no_longer_feed_the_history(self):
         self.model = self.build()
         self.connect()
         self.observe(auxiliary={"extruder": {"temperature": 200.0}})
-        count = len(self.model._history.series("extruder"))
+        count = len(self.model._temperature._history.series("extruder"))
         self.observe(auxiliary={"extruder": {"temperature": 205.0}})
         self.observe(auxiliary={"extruder": {"temperature": 210.0}})
-        self.assertEqual(len(self.model._history.series("extruder")), count)
+        self.assertEqual(len(self.model._temperature._history.series("extruder")), count)
 
     def test_a_tick_never_bridges_a_disconnected_snapshot(self):
         self.model = self.build()
@@ -991,9 +991,9 @@ class ChartCadenceTests(MonitorModelCase):
         self.observe(auxiliary={"extruder": {"temperature": 200.0}})
         self.model._on_chart_tick()
         self.client.stop(reset_session=False)
-        count = len(self.model._history.series("extruder"))
+        count = len(self.model._temperature._history.series("extruder"))
         self.model._on_chart_tick()
-        self.assertEqual(len(self.model._history.series("extruder")), count)
+        self.assertEqual(len(self.model._temperature._history.series("extruder")), count)
 
 
 class PlatePayloadTests(MonitorModelCase):
@@ -1442,7 +1442,7 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.model.setPickerPopoverOpen(True)
         self.assertEqual(len(self.publishes), 2,
                          "gesture state alone triggered a full model publish")
-        self.assertTrue(self.model._chart_open)
+        self.assertTrue(self.model._temperature._chart_open)
         self.assertTrue(self.model._follower_interacting)
         self.assertTrue(self.model._picker_popover_open)
 

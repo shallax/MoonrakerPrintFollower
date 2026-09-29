@@ -123,10 +123,10 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
             return chart if isinstance(chart, dict) else chart.value()
 
         # Enough history for a non-empty chart, then open it.
-        monitor_a._history.observe(
+        monitor_a._temperature._history.observe(
             {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
             1000.0, 1000000.0)
-        monitor_a._history.observe(
+        monitor_a._temperature._history.observe(
             {"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
             1002.5, 1000002.5)
         monitor_a.setChartOpen(True)
@@ -134,7 +134,7 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
 
         self._switch(app, follower, plugin, "B")
         self.assertFalse(monitor_a._data._active)
-        self.assertFalse(monitor_a._chart_open,
+        self.assertFalse(monitor_a._temperature._chart_open,
                          "ownership loss must retire the open chart")
         self.assertEqual(chart_of(monitor_a)["series"], [],
                          "the deposed monitor's full payload must be dormant")
@@ -144,7 +144,7 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         self.assertEqual(chart_of(monitor_a_again)["series"], [],
                          "the cached monitor must not rehydrate on reactivation")
         # Further feeds keep it dormant.
-        monitor_a._history.observe(
+        monitor_a._temperature._history.observe(
             {"extruder": {"temperature": 201.0, "target": 210.0, "power": 0.5}},
             1005.0, 1000005.0)
         monitor_a._schedule_publish()
@@ -170,10 +170,10 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
             chart = model.temperatureChartFull
             return chart if isinstance(chart, dict) else chart.value()
 
-        monitor._history.observe(
+        monitor._temperature._history.observe(
             {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
             1000.0, 1000000.0)
-        monitor._history.observe(
+        monitor._temperature._history.observe(
             {"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
             1002.5, 1000002.5)
         monitor.setChartOpen(True)
@@ -185,7 +185,7 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         self.qt.events(10)
         self.assertTrue(monitor._data._owner_active,
                         "the session reset must not revoke ownership")
-        self.assertTrue(monitor._chart_open,
+        self.assertTrue(monitor._temperature._chart_open,
                         "a session reset must not close a visibly open chart")
         self.assertEqual(chart_of(monitor)["series"], [],
                          "the session reset cleared the stale history")
@@ -195,10 +195,10 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         self.qt.events(10)
         # Fresh samples repopulate the open chart automatically — no
         # second setChartOpen(True) anywhere in this test.
-        monitor._history.observe(
+        monitor._temperature._history.observe(
             {"extruder": {"temperature": 202.0, "target": 210.0, "power": 0.5}},
             1005.0, 1000005.0)
-        monitor._history.observe(
+        monitor._temperature._history.observe(
             {"extruder": {"temperature": 202.5, "target": 210.0, "power": 0.5}},
             1007.5, 1000007.5)
         monitor._schedule_publish()

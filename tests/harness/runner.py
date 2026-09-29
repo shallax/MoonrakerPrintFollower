@@ -1856,7 +1856,7 @@ for device in app.getOutputDeviceManager().getOutputDevices():
     if "Moonraker" in type(device).__name__:
         printer = getattr(device, "activePrinter", None)
         if printer is not None:
-            hist = printer._history
+            hist = printer._temperature._history
             result["revision"] = hist.revision
             result["wall_origin"] = hist.wall_origin
             result["samples"] = len(hist.points("extruder"))
