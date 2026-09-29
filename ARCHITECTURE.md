@@ -210,6 +210,10 @@ correct package ownership.
 | `MotionRefinement.py` | Pure motion matching over prepared geometry | Mutable physical state or presentation |
 | `ObjectVisitTracker.py` | Per-print object-visit replay state and bounded incremental polygon walks | Qt, index lifecycle or worker scheduling |
 
+| `FrameDecoder.py` | Native JPEG decode worker and orphan lifetime protection | Qt scene mutation, networking or decode cadence |
+| `CameraStatistics.py` | Per-camera lifetime counters and interval/rate projections | Qt, clocks or network requests |
+| `MJPEGParser.py` | Incremental multipart/JPEG framing, bounded buffering and corruption recovery | Networking, decoding or painting |
+
 ## 3. Binding and migration
 
 `PrinterBinding.start()` performs the legacy migrations before configuring the
@@ -539,6 +543,14 @@ Polling latency, offline periods and short layers can delay observation. That is
 protocol limitation rather than unfinished component architecture.
 
 ## 8. Monitor and bed mesh
+
+The camera receive pipeline is a composition, not a UI superclass stack.
+`MJPEGParser` owns partial framing and snapshot accumulation; `FrameDecoder`
+owns the native decode thread; `CameraStatistics` owns lifetime/interval
+measurements. The `MoonrakerMJPGImage` Qt item retains requests, the single
+decode deadline, stale-result rejection and image installation/painting. The
+parser never reconnects and the decode worker never mutates a QML object.
+
 
 There is one Qt Monitor model, directly derived from Cura's `PrinterOutputModel`.
 Its declared Qt properties/slots retain the existing QML surface. `value_property`

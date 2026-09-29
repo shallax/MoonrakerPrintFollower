@@ -1,119 +1,15 @@
-"""The plugin-owned MJPEG renderer (the fork of Cura's
-NetworkMJPGImage): the receive/parse/latest-wins/render-scheduler
-contracts. Qt-guarded — the container runs them for real against the
-production class with a fake network manager and a fake reply."""
-
-import os
-import threading
+"""Camera pipeline integration contracts, isolated by test-file process."""
 import time
 import unittest
-from unittest import mock
-from types import SimpleNamespace
-
-# The window paint test needs a screen: the offscreen platform,
-# set before any Qt import (the real-engine file's pattern).
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-try:
-    from PyQt6.QtCore import QByteArray, QObject, QThread, QUrl, pyqtSignal
-    from PyQt6.QtGui import QColor, QImage
-    from qt_runtime_support import QT_AVAILABLE, runtime
-    if QT_AVAILABLE:
-        _started = runtime()
-        _started.__enter__()
-        try:
-            from mpf.monitor.camera.MoonrakerMJPGImage import (
-                MAX_HEADER_BYTES,
-                MAX_IN_PROGRESS_FRAME_BYTES,
-                MoonrakerMJPGImage,
-                RENDER_INTERVAL_MS,
-                RETAINED_GARBAGE_LIMIT,
-            )
-        finally:
-            _started.__exit__(None, None, None)
-except ImportError:
-    QT_AVAILABLE = False
-
+from tests.mjpg_test_support import QT_AVAILABLE
 
 if QT_AVAILABLE:
-    from PyQt6.QtCore import QBuffer, QIODevice
-    from PyQt6.QtNetwork import QNetworkRequest
-
-    def _jpeg(width: int, height: int, shade: int = 120) -> bytes:
-        """A small real JPEG (the decode path must accept it). The
-        fill takes a QColor: QImage.fill(int) packs the value into a
-        single channel, which would make the shade assertions read the
-        wrong channel."""
-        image = QImage(width, height, QImage.Format.Format_RGB888)
-        image.fill(QColor(shade, shade, shade))
-        buffer = QBuffer()
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        image.save(buffer, "JPG", 85)
-        return bytes(buffer.data())
-
-    def _multipart(frame: bytes, boundary: bytes = b"mpfboundary") -> bytes:
-        return (b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\n"
-                b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
-                + frame + b"\r\n")
-
-    class FakeReply(QObject):
-        readyRead = pyqtSignal()
-        finished = pyqtSignal()
-        errorOccurred = pyqtSignal(int)
-
-        def __init__(self, content_type=b""):
-            super().__init__()
-            self._chunks = []
-            self._aborted = 0
-            self._deleted_later = False
-            self._content_type = content_type
-            self._finished = False
-
-        def readAll(self) -> QByteArray:
-            data = b"".join(self._chunks)
-            self._chunks = []
-            return QByteArray(data)
-
-        def deliver(self, data: bytes) -> None:
-            self._chunks.append(data)
-            self.readyRead.emit()
-
-        def abort(self) -> None:
-            self._aborted += 1
-
-        def isFinished(self) -> bool:
-            return self._finished
-
-        def complete(self, tail=b"") -> None:
-            if tail:
-                self._chunks.append(tail)
-            self._finished = True
-            self.finished.emit()
-
-        def deleteLater(self) -> None:
-            self._deleted_later = True
-
-        def rawHeader(self, name) -> QByteArray:
-            if name == b"Content-Type":
-                return QByteArray(self._content_type)
-            return QByteArray()
-
-    class FakeNam(QObject):
-        def __init__(self):
-            super().__init__()
-            self.requests = []
-
-        def get(self, request: QNetworkRequest) -> FakeReply:
-            content_type = b""
-            # The reply the test wants: default to multipart so the
-            # framing path runs; a test may swap the type after.
-            reply = FakeReply(content_type)
-            self.requests.append(reply)
-            return reply
-
-    def _chunked(raw: bytes, size: int):
-        for offset in range(0, len(raw), size):
-            yield raw[offset:offset + size]
+    from tests.mjpg_test_support import (
+        QUrl, QColor, QImage,
+        QBuffer, QIODevice, runtime, MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT,
+        MoonrakerMJPGImage, FakeReply, FakeNam,
+        _jpeg, _multipart, _chunked,
+    )
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -166,10 +62,10 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         """Drive one render tick by hand and wait for its frame to reach
         the screen. The decode runs off the Qt thread, so the tick only
         hands the frame over — the install lands on a later Qt turn."""
-        rendered = self.item._decodes_rendered
+        rendered = self.item._stats.decodes_rendered
         self.item._render()
         self.assertTrue(
-            self._drain_until(lambda: self.item._decodes_rendered > rendered),
+            self._drain_until(lambda: self.item._stats.decodes_rendered > rendered),
             "the decoded frame never reached the screen")
 
     def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
@@ -306,7 +202,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
             total += len(body)
         self.assertEqual(len(self.nam.requests), 1)
         self.assertEqual(self._reply()._aborted, 0)
-        self.assertLess(len(self.item._stream_buffer), len(frame) + 4096)
+        self.assertLess(len(self.item._parser.buffer), len(frame) + 4096)
         self._await(lambda: self.item.framesDisplayed >= 1,
                     "the surviving frame never reached the screen")
         self.assertLessEqual(self.item.framesDisplayed, 2,
@@ -321,7 +217,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         for _ in range(int(RETAINED_GARBAGE_LIMIT / 100000) + 2):
             self._reply().deliver(b"x" * 100000)
         self.assertEqual(self.item.parserResyncs, 0)
-        self.assertLess(len(self.item._stream_buffer), 100)
+        self.assertLess(len(self.item._parser.buffer), 100)
         self.assertEqual(len(self.nam.requests), 1)
         self.assertEqual(self._reply()._aborted, 0)
 
@@ -331,10 +227,10 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # prevent) is discarded with a counted resync — the connection
         # is never the response.
         self._start(content_type=b"application/octet-stream")
-        self.item._stream_buffer = bytearray(b"z" * (RETAINED_GARBAGE_LIMIT + 1))
-        self.item._apply_limits()
+        self.item._parser.buffer = bytearray(b"z" * (RETAINED_GARBAGE_LIMIT + 1))
+        self.item._parser.apply_limits()
         self.assertGreater(self.item.parserResyncs, 0)
-        self.assertEqual(len(self.item._stream_buffer), 0)
+        self.assertEqual(len(self.item._parser.buffer), 0)
         self.assertEqual(len(self.nam.requests), 1)
         self.assertEqual(self._reply()._aborted, 0)
 
@@ -501,7 +397,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         for _ in range(int(MAX_IN_PROGRESS_FRAME_BYTES / 1000000) + 2):
             self._reply().deliver(b"x" * 1000000)
         self.assertGreater(self.item.parserResyncs, 0)
-        self.assertLess(len(self.item._stream_buffer), 1000)
+        self.assertLess(len(self.item._parser.buffer), 1000)
         self.assertEqual(len(self.nam.requests), 1)
         self.assertEqual(self._reply()._aborted, 0)
 
@@ -514,7 +410,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._reply().deliver(_multipart(frame))
         self._reply().deliver(b"--mpfboundary--")
         self.assertEqual(self.item.framesParsed, 1)
-        self.assertEqual(len(self.item._stream_buffer), 0)
+        self.assertEqual(len(self.item._parser.buffer), 0)
         self._await(lambda: self.item.framesDisplayed >= 1,
                     "the frame of the quoted-boundary stream never reached "
                     "the screen")
@@ -525,11 +421,11 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # partial frame, buffer or boundary.
         self._start()
         self._reply().deliver(b"--mpfboundary\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8partial")
-        self.assertGreater(len(self.item._stream_buffer), 0)
+        self.assertGreater(len(self.item._parser.buffer), 0)
         self.item.setSourceURL(QUrl("http://127.0.0.1:1/other"))  # running: one transition
-        self.assertEqual(len(self.item._stream_buffer), 0)
+        self.assertEqual(len(self.item._parser.buffer), 0)
         self.assertIsNone(self.item._pending_frame)
-        self.assertIsNone(self.item._multipart_boundary)
+        self.assertIsNone(self.item._parser.boundary)
 
     def test_the_stats_snapshot_emits_when_the_counters_move(self):
         # The diagnostics properties mutate and ride one low-frequency
@@ -578,7 +474,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._reply().deliver(b"--mpfboundary" + b"X" * (MAX_HEADER_BYTES + 100))
         self.assertGreater(self.item.parserResyncs, 0)
         # Only the marker-straddle tail may remain (bounded).
-        self.assertLessEqual(len(self.item._stream_buffer), len(b"--mpfboundary"))
+        self.assertLessEqual(len(self.item._parser.buffer), len(b"--mpfboundary"))
         self.assertEqual(self._reply()._aborted, 0)
         self._reply().deliver(_multipart(_jpeg(40, 30)))
         self._await(lambda: self.item.framesDisplayed >= 1,
@@ -637,19 +533,19 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         huge = b"\xff\xd8" + b"x" * (MAX_IN_PROGRESS_FRAME_BYTES + 10) + b"\xff\xd9"
         # The raw scan path.
         self._start(content_type=b"application/octet-stream")
-        before = self.item._oversized_drops
+        before = self.item._stats.oversized_drops
         self._reply().deliver(huge)
         self.assertEqual(self.item.framesParsed, 0)
-        self.assertEqual(self.item._oversized_drops, before + 1)
+        self.assertEqual(self.item._stats.oversized_drops, before + 1)
         self.assertEqual(len(self.nam.requests), 1)
         self.assertEqual(self._reply()._aborted, 0)
         self.item.stop()
         # The multipart path without Content-Length.
         self._start()
-        before = self.item._oversized_drops
+        before = self.item._stats.oversized_drops
         self._reply().deliver(b"--mpfboundary\r\nContent-Type: image/jpeg\r\n\r\n" + huge)
         self.assertEqual(self.item.framesParsed, 0)
-        self.assertEqual(self.item._oversized_drops, before + 1)
+        self.assertEqual(self.item._stats.oversized_drops, before + 1)
         self.assertEqual(len(self.nam.requests), 2)  # the two starts, no extra
         self.assertEqual(self._reply()._aborted, 0)
         # A healthy frame still parses afterwards.
@@ -666,7 +562,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
             b"--mpfboundary" + b"X" * (MAX_HEADER_BYTES + 100) + b"\r\n\r\n"
             + _jpeg(40, 30))
         self.assertGreater(self.item.parserResyncs, 0)
-        self.assertLessEqual(len(self.item._stream_buffer), len(b"--mpfboundary"))
+        self.assertLessEqual(len(self.item._parser.buffer), len(b"--mpfboundary"))
         self.assertEqual(self._reply()._aborted, 0)
         # The stream stays healthy for the next part.
         self._reply().deliver(_multipart(_jpeg(40, 30)))
@@ -735,7 +631,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         header = b"--mpfboundary\r\nContent-Type: image/jpeg\r\n\r\n"
         self._reply().deliver(header)
         self._reply().deliver(b"x" * (MAX_IN_PROGRESS_FRAME_BYTES + 100))
-        self.assertLessEqual(len(self.item._stream_buffer), len(b"--mpfboundary"))
+        self.assertLessEqual(len(self.item._parser.buffer), len(b"--mpfboundary"))
         self.assertEqual(self._reply()._aborted, 0)
         # A later valid frame still parses.
         self._reply().deliver(_multipart(_jpeg(40, 30)))
@@ -783,7 +679,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
                     "the summary never rode the stats cadence",
                     milliseconds=8000)
         self.assertGreater(self.item._trace_summary_at, before)
-        self.assertGreater(self.item._last_stats_at, 0)
+        self.assertGreater(self.item._stats.last_stats_at, 0)
 
     def test_recent_throughput_tracks_delta_bytes(self):
         self._start()
@@ -811,7 +707,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         reply = self._reply()
         self.item.stop()
         self.assertIsNotNone(self.item._reply_finished_cb)
-        self.item._transport_errors = 0
+        self.item._stats.transport_errors = 0
         reply.finished.emit()
         self.assertEqual(self.item._started, False)
 
@@ -828,11 +724,11 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.item.start()  # a genuinely new request
         self._drain(1100)  # the first emit seeds the new baseline
         self._reply().deliver(body)  # the frame lands in the NEXT interval
-        emitted = self.item._last_stats_at
+        emitted = self.item._stats.last_stats_at
         # The emission that reports the frame is the record, and the
         # stamp moves for every emit: waiting on the interval instead
         # would need a tick to land inside it.
-        self._await(lambda: self.item._last_stats_at > emitted,
+        self._await(lambda: self.item._stats.last_stats_at > emitted,
                     "the interval after the frame never emitted")
         self.assertGreater(self.item.recentIncomingFPS, 0)
 
@@ -844,14 +740,14 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         # complaint's other explanation.
         self._start()
         self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self.assertGreater(self.item._drain_ms_total, 0)
-        self.assertGreater(self.item._drain_ms_max, 0)
+        self.assertGreater(self.item._stats.drain_ms_total, 0)
+        self.assertGreater(self.item._stats.drain_ms_max, 0)
         started = time.monotonic()
         self._drain(300)  # nothing arrives: the Qt thread is elsewhere
         waited = (time.monotonic() - started) * 1000.0
         self.assertGreaterEqual(waited, 250)
         self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self.assertGreaterEqual(self.item._drain_gap_ms_max, waited * 0.8)
+        self.assertGreaterEqual(self.item._stats.drain_gap_ms_max, waited * 0.8)
 
     def test_the_display_lag_is_the_age_of_the_frame_that_reached_the_screen(
             self):
@@ -868,13 +764,13 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         waited = (time.monotonic() - started) * 1000.0
         self.item._decode_in_flight = 0
         self._tick_and_install()
-        held = self.item._display_lag_ms_total
+        held = self.item._stats.display_lag_ms_total
         self.assertGreaterEqual(held, waited * 0.8)
         # A frame rendered at once is a small lag: the measurement is
         # THIS frame's age, not a constant and not a stale stamp.
         self._reply().deliver(_multipart(frame))
         self._tick_and_install()
-        self.assertLess(self.item._display_lag_ms_total - held, waited * 0.5)
+        self.assertLess(self.item._stats.display_lag_ms_total - held, waited * 0.5)
 
     def test_the_stats_interval_separates_parsed_from_displayed(self):
         # The phase diagnosis needs both counts over the SAME interval:
@@ -889,25 +785,25 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         frames = [_jpeg(640, 480, shade=50 + index) for index in range(4)]
         self._reply().deliver(b"".join(_multipart(item) for item in frames))
         self.assertTrue(
-            self._drain_until(lambda: self.item._recent_parsed_count == 4),
+            self._drain_until(lambda: self.item._stats.recent_parsed_count == 4),
             "the stats tick never closed an interval over the burst")
-        self.assertEqual(self.item._recent_displayed_count, 1)
+        self.assertEqual(self.item._stats.recent_displayed_count, 1)
         # The stats timer is a coarse QTimer: 1 s of interval with Qt's
         # 5% tolerance, not a lifetime and not a guess.
-        self.assertGreaterEqual(self.item._recent_interval_s, 0.9)
-        self.assertLessEqual(self.item._recent_interval_s, 1.5)
+        self.assertGreaterEqual(self.item._stats.recent_interval_s, 0.9)
+        self.assertLessEqual(self.item._stats.recent_interval_s, 1.5)
         # A JPEG can decode in less than 0.05 ms on a fast
         # runner. The diagnostic deliberately rounds to tenths, so
         # zero is a valid displayed rate. Check the measured work and
         # the per-frame arithmetic instead of requiring a slow CPU.
-        self.assertGreater(self.item._decode_ms_total, 0)
-        self.assertGreater(self.item._drain_ms_total, 0)
-        self.assertEqual(self.item._recent_decodes, 1)
-        self.assertGreaterEqual(self.item._recent_decode_ms, 0)
-        self.assertEqual(self.item._recent_decode_ms_per_frame,
-                         round(self.item._decode_ms_total, 2))
-        self.assertEqual(self.item._recent_drain_ms_per_frame,
-                         round(self.item._drain_ms_total / 4, 2))
+        self.assertGreater(self.item._stats.decode_ms_total, 0)
+        self.assertGreater(self.item._stats.drain_ms_total, 0)
+        self.assertEqual(self.item._stats.recent_decodes, 1)
+        self.assertGreaterEqual(self.item._stats.recent_decode_ms, 0)
+        self.assertEqual(self.item._stats.recent_decode_ms_per_frame,
+                         round(self.item._stats.decode_ms_total, 2))
+        self.assertEqual(self.item._stats.recent_drain_ms_per_frame,
+                         round(self.item._stats.drain_ms_total / 4, 2))
 
     def test_the_oldest_buffered_frame_reports_its_age(self):
         # A frame that parsed but never rendered is invisible to both
@@ -917,11 +813,11 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.item._decode_in_flight = -1  # the decoder cannot accept the frame
         self._reply().deliver(_multipart(_jpeg(40, 30)))
         self.assertTrue(
-            self._drain_until(lambda: self.item._recent_pending_age_ms > 0),
+            self._drain_until(lambda: self.item._stats.recent_pending_age_ms > 0),
             "the stats tick never reported the buffered frame")
         self.assertEqual(self.item.framesParsed, 1)
         self.assertEqual(self.item.framesDisplayed, 0)
-        self.assertGreaterEqual(self.item._recent_pending_age_ms, 200)
+        self.assertGreaterEqual(self.item._stats.recent_pending_age_ms, 200)
 
     def test_the_interval_maxima_are_reset_by_the_tick(self):
         # A maximum that never reset would report an old spike as the
@@ -933,11 +829,11 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._drain(300)
         self.assertGreaterEqual((time.monotonic() - started) * 1000.0, 250)
         self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self.assertGreaterEqual(self.item._drain_gap_ms_max, 250)
+        self.assertGreaterEqual(self.item._stats.drain_gap_ms_max, 250)
         self.assertTrue(
-            self._drain_until(lambda: self.item._recent_drain_gap_ms >= 250),
+            self._drain_until(lambda: self.item._stats.recent_drain_gap_ms >= 250),
             "the tick never harvested the interval's maxima")
-        self.assertEqual(self.item._drain_gap_ms_max, 0.0)
+        self.assertEqual(self.item._stats.drain_gap_ms_max, 0.0)
 
     def test_the_summary_line_renders_every_number_it_promises(self):
         # The line the owner pastes: the format and its values must
@@ -951,22 +847,22 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.item.setTargetFps(25.0)
         self._reply().deliver(_multipart(_jpeg(40, 30)))
         self.assertTrue(
-            self._drain_until(lambda: self.item._recent_displayed_count >= 1),
+            self._drain_until(lambda: self.item._stats.recent_displayed_count >= 1),
             "the stats tick never reported the displayed frame")
-        fmt, values = self.item._summary_line()
+        fmt, values = self.item._stats.summary(time.monotonic(), self.item.getRenderIntervalMs(), self.item.getTargetFps())
         line = fmt % values
-        self.assertIn(self.item._app_state,
+        self.assertIn(self.item._stats.app_state,
                       ("active", "inactive", "hidden", "suspended", "unknown"))
-        self.assertIn("[%s]" % self.item._app_state, line)
-        self.assertIn("parsed %d frames" % self.item._recent_parsed_count, line)
-        self.assertIn("displayed %d frames" % self.item._recent_displayed_count, line)
+        self.assertIn("[%s]" % self.item._stats.app_state, line)
+        self.assertIn("parsed %d frames" % self.item._stats.recent_parsed_count, line)
+        self.assertIn("displayed %d frames" % self.item._stats.recent_displayed_count, line)
         # The cadence the pane asked for, beside what came out: the pair
         # is what tells a rate capped by the request from a rate the Qt
         # thread could not keep up with.
         self.assertEqual(self.item._render_timer.interval(), 40)
         self.assertIn("render tick 40 ms", line)
         self.assertIn("asked 25.0 fps", line)
-        self.assertIn("pending frame age %.1f ms" % self.item._recent_pending_age_ms,
+        self.assertIn("pending frame age %.1f ms" % self.item._stats.recent_pending_age_ms,
                       line)
         self.assertIn("Qt thread", line)
 
@@ -984,865 +880,6 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.assertEqual(self.item.imageWidth, 40)
 
 
-@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
-class DecodeThrottleTests(unittest.TestCase):
-    """The decode throttle: the render tick is the one place a JPEG
-    becomes a QImage, so the rate the pane asks for IS the render
-    timer's interval. The receive/parse side is deliberately left
-    alone — the drain still runs at the wire's own pace and only the
-    newest frame survives — so a low rate costs decodes, never
-    latency or a reconnect."""
 
-    def setUp(self):
-        self._rt = runtime()
-        self.qt = self._rt.__enter__()
-        self.addCleanup(self._rt.__exit__, None, None, None)
-        self.nam = FakeNam()
-        self.item = MoonrakerMJPGImage()
-        self.item._network_manager = self.nam  # the injection seam
-        self.item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
-        self.addCleanup(self.item.stop)
-
-    def _reply(self):
-        return self.nam.requests[-1]
-
-    def _start(self):
-        def _get_with_type(request):
-            reply = FakeReply()
-            self.nam.requests.append(reply)
-            return reply
-        self.nam.get = _get_with_type
-        self.item.start()
-
-    def test_the_target_round_trips_and_the_render_timer_follows(self):
-        emissions = []
-        self.item.targetFpsChanged.connect(lambda: emissions.append(self.item.targetFps))
-        self.item.targetFps = 5.0
-        self.assertEqual(self.item.getTargetFps(), 5.0)
-        self.assertEqual(self.item.targetFps, 5.0)  # the property read
-        self.assertEqual(self.item.renderIntervalMs, 200)
-        self.assertEqual(self.item._render_timer.interval(), 200,
-                         "the timer's interval is the throttle's own effect")
-        self.assertEqual(emissions, [5.0], "one notify, carrying the new rate")
-        # A second rate moves both again; the same rate is a no-op.
-        self.item.targetFps = 60.0
-        self.assertEqual((self.item.targetFps, self.item.renderIntervalMs), (60.0, 17))
-        self.assertEqual(self.item._render_timer.interval(), 17)
-        self.item.targetFps = 60.0
-        self.assertEqual(emissions, [5.0, 60.0], "an unchanged rate never re-notifies")
-        # Both the getter and the setter are the property's, not a QML-only shim.
-        self.item.setTargetFps(30.0)
-        self.assertEqual(self.item.getTargetFps(), 30.0)
-
-    def test_a_non_positive_target_is_the_idle_ceiling(self):
-        for value in (0, 0.0, -1.0, None, "not a number", float("nan")):
-            with self.subTest(value=value):
-                self.item.setTargetFps(30.0)  # a live throttle first
-                self.item.setTargetFps(value)
-                self.assertEqual(self.item.targetFps, 0.0,
-                                 "a non-positive or unusable target releases the throttle")
-                self.assertEqual(self.item.renderIntervalMs, RENDER_INTERVAL_MS)
-                self.assertEqual(self.item._render_timer.interval(), RENDER_INTERVAL_MS)
-
-    def test_a_corrupt_target_never_spins_the_timer(self):
-        # The 1 ms floor: a rate the interval maths would round to
-        # zero (or an infinity from a corrupt payload) still leaves a
-        # timer with a positive interval.
-        for value in (float("inf"), 1e9, 2000.0):
-            with self.subTest(value=value):
-                self.item.setTargetFps(value)
-                self.assertGreaterEqual(self.item.renderIntervalMs, 1)
-                self.assertEqual(self.item._render_timer.interval(),
-                                 self.item.renderIntervalMs)
-
-    def test_a_low_rate_throttles_the_decode_and_never_the_parse(self):
-        # The saving is the decode. The buffer still drains at the
-        # wire's pace (every frame parses), the tick is what follows
-        # the rate, and the newest frame is the one that decodes. The
-        # rate is read off the timer's own interval, "not yet" is read
-        # with no event loop run at all, and the single tick is driven
-        # through the timer's signal — a wall-clock wait would let a
-        # loaded runner land the tick inside it.
-        self.item.setTargetFps(2.0)  # one render tick every 500 ms
-        self._start()
-        self.assertEqual(self.item._render_timer.interval(), 500,
-                         "the render tick follows the requested rate")
-        self.assertTrue(self.item._render_timer.isActive(),
-                        "and the tick runs for as long as the stream does")
-        frames = [_jpeg(40, 30, shade=40 + index) for index in range(9)]
-        self._reply().deliver(b"".join(_multipart(frame) for frame in frames))
-        self.assertEqual(self.item.framesParsed, 9, "the parse is never throttled")
-        # No event loop has run since the timer started, so no tick can
-        # have landed: this zero is the parser's own doing.
-        self.assertEqual(self.item.framesDisplayed, 0,
-                         "a parsed frame is not a decode")
-        self.assertEqual(self.item.framesDropped, 8,
-                         "the superseded eight are counted as dropped")
-        # The tick itself, through the timer's signal with the timer
-        # stopped by its first fire: exactly one lands, however loaded
-        # the machine is and however long this loop runs.
-        self.item._render_timer.timeout.connect(self.item._render_timer.stop)
-        self.item._render_timer.start(0)
-        self.qt.events(100)
-        self.assertEqual(self.item.framesDisplayed, 1, "and decodes one frame")
-        self.assertFalse(self.item._render_timer.isActive(),
-                         "the tick was driven, not waited out")
-        self.assertEqual(self.item.framesDropped, 8, "the tick drops nothing")
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
-                         "the newest frame wins the display")
-        self.assertEqual(self._reply()._aborted, 0, "no reconnect anywhere")
-
-    def test_the_throttle_survives_a_restart_and_releases_with_zero(self):
-        # The throttle is item state, not stream state: a source
-        # restart must not silently restore the idle ceiling, and
-        # zero must give it back.
-        self.item.setTargetFps(10.0)
-        self._start()
-        self.assertEqual(self.item._render_timer.interval(), 100)
-        self.item.stop()
-        self.item.start()
-        self.assertEqual(self.item.targetFps, 10.0)
-        self.assertEqual(self.item._render_timer.interval(), 100)
-        self.item.setTargetFps(0)
-        self.assertEqual(self.item._render_timer.interval(), RENDER_INTERVAL_MS)
-
-
-@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
-class DecodeOffTheQtThreadTests(unittest.TestCase):
-    """The decode worker: the Qt thread keeps the hand-over and the
-    install, and the JPEG decode — the one large piece of per-frame work
-    — happens on a thread of the renderer's own. What these pin is that
-    the split holds: which thread decodes, that at most one decode is in
-    flight (the rate cap and the memory budget), that a superseded or
-    post-shutdown result is never installed, and that the Qt thread's
-    share per frame is the hand-over rather than the decode."""
-
-    def setUp(self):
-        self._rt = runtime()
-        self.qt = self._rt.__enter__()
-        self.addCleanup(self._rt.__exit__, None, None, None)
-        self.nam = FakeNam()
-        self.item = MoonrakerMJPGImage()
-        self.item._network_manager = self.nam  # the injection seam
-        self.item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
-        self.addCleanup(self.item.stop)
-
-    def _reply(self):
-        return self.nam.requests[-1]
-
-    def _drain(self, milliseconds):
-        self.qt.events(milliseconds)
-
-    def _drain_until(self, predicate, milliseconds=4000):
-        deadline = time.monotonic() + milliseconds / 1000.0
-        while time.monotonic() < deadline:
-            if predicate():
-                return True
-            self.qt.events(25)
-        return predicate()
-
-    def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
-        def _get_with_type(request):
-            reply = FakeReply(content_type)
-            self.nam.requests.append(reply)
-            return reply
-        self.nam.get = _get_with_type
-        self.item.start()
-
-    def _patch_decode(self, replacement):
-        """Patch the module-level decode seam the worker resolves. The
-        patch targets the function's own globals — the binding the
-        worker actually calls — because the unittest runtime's double
-        entry can alias the module."""
-        globals_dict = MoonrakerMJPGImage._render.__globals__
-        old = globals_dict.get("_decode_jpeg")
-        globals_dict["_decode_jpeg"] = replacement
-        self.addCleanup(globals_dict.__setitem__, "_decode_jpeg", old)
-
-    def _tick_and_install(self):
-        """Drive one render tick by hand and wait for its frame to reach
-        the screen: the tick hands the frame over, and the install lands
-        on a later Qt turn."""
-        rendered = self.item._decodes_rendered
-        self.item._render()
-        self.assertTrue(
-            self._drain_until(lambda: self.item._decodes_rendered > rendered),
-            "the decoded frame never reached the screen")
-
-    def test_the_decode_runs_off_the_qt_thread(self):
-        # The whole job: the JPEG decode must not run on the Qt thread.
-        # The seam is module-level for exactly this — the worker's call
-        # is observable, and what it observes is which thread ran it.
-        threads = []
-
-        def recording(frame):
-            threads.append((threading.get_ident(), QThread.currentThread()))
-            return QImage.fromData(frame)
-
-        self._patch_decode(recording)
-        main_ident = threading.get_ident()
-        main_thread = QThread.currentThread()
-        self._start()
-        self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self.assertTrue(
-            self._drain_until(lambda: self.item.framesDisplayed == 1),
-            "the frame never reached the screen")
-        self.assertTrue(threads, "the worker never called the decode seam")
-        self.assertNotIn(main_ident, [ident for ident, _ in threads],
-                         "the decode ran on the thread the test runs on")
-        self.assertEqual(len({ident for ident, _ in threads}), 1,
-                         "the decodes did not all run on the one worker")
-        for _ident, thread in threads:
-            self.assertIsNot(thread, main_thread,
-                             "the decode ran on the Qt thread the item was made on")
-            self.assertIsNot(thread, self.item.thread(),
-                             "the decode ran on the thread the item lives on")
-        self.assertEqual(self.item.imageWidth, 40,
-                         "the frame on screen is the one the worker decoded")
-
-    def test_native_decode_allows_python_callbacks_during_the_decode(self):
-        decode = MoonrakerMJPGImage._render.__globals__["_decode_jpeg"]
-        frame = _jpeg(4096, 4096)
-        intervals = []
-        callbacks = []
-        images = []
-
-        def work():
-            for _ in range(3):
-                started = time.perf_counter()
-                images.append(decode(frame))
-                intervals.append((started, time.perf_counter()))
-
-        worker = threading.Thread(target=work)
-        worker.start()
-        while worker.is_alive():
-            callbacks.append(time.perf_counter())
-            self.qt.events(1)
-        worker.join()
-        self.assertEqual(len(images), 3)
-        self.assertTrue(all(image.width() == 4096 for image in images))
-        # Observe progress INSIDE native work, excluding hand-over edges.
-        # A worker calling QImage.fromData holds the GIL and permits none.
-        self.assertTrue(any(start + 0.003 < callback < stop - 0.003
-                            for start, stop in intervals for callback in callbacks),
-                        "native JPEG work monopolised the Python execution lock")
-
-    def test_native_decode_preserves_pixels_and_rejects_invalid_data(self):
-        decode = MoonrakerMJPGImage._render.__globals__["_decode_jpeg"]
-        frame = _jpeg(40, 30, shade=83)
-        self.assertEqual(decode(frame), QImage.fromData(frame))
-        self.assertTrue(decode(b"not an image").isNull())
-
-    def test_a_burst_keeps_one_decode_in_flight_and_installs_the_newest(self):
-        # The rate cap survives the move: the tick hands over at most one
-        # frame per decode, so a fast source can neither pile decodes up
-        # nor hold more than one decoded image outside the Qt thread.
-        # What arrives during a decode stays pending — the picture that
-        # lands is the one the decode started on, and the newest arrival
-        # takes the very next tick.
-        gate = threading.Event()
-        entered = threading.Event()
-        calls = []
-
-        def blocking(frame):
-            calls.append(frame)
-            if not entered.is_set():
-                entered.set()
-                gate.wait(2.0)
-            return QImage.fromData(frame)
-
-        self._patch_decode(blocking)
-        self.item.setTargetFps(50.0)  # a 20 ms cap
-        self._start()
-        self.item._render_timer.stop()  # every tick from here is by hand
-        first = [_jpeg(40, 30, shade=40 + index) for index in range(5)]
-        self._reply().deliver(b"".join(_multipart(frame) for frame in first))
-        self.item._render()  # one tick: one frame handed over, held there
-        self.assertTrue(self._drain_until(entered.is_set),
-                        "the worker never picked the frame up")
-        # The stream keeps delivering while that decode is out — the
-        # case the cap exists for: the newer frames must wait, not
-        # queue another decode (or another decoded image) behind it.
-        later = [_jpeg(40, 30, shade=45 + index) for index in range(4)]
-        self._reply().deliver(b"".join(_multipart(frame) for frame in later))
-        self.assertEqual(self.item.framesParsed, 9)
-        for _ in range(4):
-            self.item._render()  # ticks while that decode is still out
-            self._drain(5)
-        self.assertEqual(self.item._decodes_rendered, 0,
-                         "a frame reached the screen before its decode returned")
-        # Nothing queued behind it: one frame in the worker plus the
-        # newest arrival is the whole memory, and the decodes stay at
-        # the cap's rate rather than the stream's.
-        self.assertEqual(self.item._decoder._queue.qsize(), 0,
-                         "a second decode was queued behind the one in flight")
-        # A decode that has outlasted the cap: the completion is allowed
-        # to hand the newest arrival over itself, which is what stops
-        # the display costing two ticks per frame.
-        time.sleep(0.06)
-        gate.set()
-        self.assertTrue(
-            self._drain_until(lambda: self.item.framesDisplayed == 2),
-            "the held decode and the frame behind it did not both reach "
-            "the screen")
-        self.assertEqual(len(calls), 2,
-                         "the completion handed over more than the newest frame")
-        # Nine parsed: two through the worker, the other seven superseded
-        # in the buffer (four before the first hand-over, three after).
-        self.assertEqual(self.item.framesDropped, 7)
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 48,
-                         "the installed frame is not the newest arrival")
-        self.assertEqual(self.item._decode_in_flight, 0,
-                         "the in-flight slot never came back")
-        self._drain(50)  # anything further queued would land in here
-        self.assertEqual(self.item.framesDisplayed, 2)
-        self.assertEqual(len(calls), 2,
-                         "a frame was handed over with nothing asking for it")
-
-    def test_a_decode_in_flight_at_shutdown_is_never_installed(self):
-        # Cancellation and teardown together: a decode that started
-        # before the stream stopped belongs to a stream that no longer
-        # exists, so its result is discarded on arrival — and the worker
-        # is joined rather than left running behind the item.
-        gate = threading.Event()
-        entered = threading.Event()
-        decoded = threading.Event()
-
-        def blocking(frame):
-            if not entered.is_set():
-                entered.set()
-                gate.wait(2.0)
-            image = QImage.fromData(frame)
-            decoded.set()
-            return image
-
-        self._patch_decode(blocking)
-        self._start()
-        self.item._render_timer.stop()
-        self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self.item._render()
-        self.assertTrue(self._drain_until(entered.is_set),
-                        "the worker never picked the frame up")
-        gate.set()
-        # Wait for the worker without running the event loop: the
-        # result must still be in flight when the stream stops, which is
-        # the case this pins.
-        self.assertTrue(decoded.wait(4.0), "the worker never finished the decode")
-        self.item.stop()
-        self.assertIsNotNone(self.item._decoder,
-                             "the worker was orphaned rather than joined")
-        self.assertFalse(self.item._decoder.isRunning(),
-                         "a worker outlived the item's stop()")
-        self._drain(50)  # the queued result arrives, and is dropped
-        self.assertEqual(self.item._decodes_rendered, 0)
-        self.assertEqual(self.item.framesDisplayed, 0)
-        self.assertTrue(self.item._image.isNull(),
-                        "a decode superseded by stop() reached the screen")
-        self.assertEqual(self.item._decode_in_flight, 0)
-
-    def test_the_tick_hands_the_frame_over_instead_of_decoding_it(self):
-        # What the Qt thread pays per frame is the hand-over plus the
-        # install; the decode's own milliseconds are the worker's, and
-        # the two are accounted separately. A span of wall time carries
-        # the machine with it, so the cost is the minimum of four: the
-        # code is in every sample, and so is a tick that decoded.
-        self._start()
-        self.item._render_timer.stop()
-        hand_overs = []
-        for _ in range(4):
-            before = self.item._tick_ms_total
-            self._reply().deliver(_multipart(_jpeg(400, 300)))
-            self._tick_and_install()
-            hand_overs.append(self.item._tick_ms_total - before)
-        self.assertEqual(self.item._decodes_rendered, len(hand_overs))
-        self.assertGreater(self.item._decode_ms_total, 0.0)
-        self.assertGreater(min(hand_overs), 0.0,
-                           "a tick that handed nothing over was measured")
-        self.assertLess(min(hand_overs),
-                        self.item._decode_ms_total / len(hand_overs) / 4.0,
-                        "the Qt-thread tick cost as much as the decode")
-
-    def test_a_tick_without_a_worker_leaves_the_frame_pending(self):
-        # The worker is built with the stream and joined with it, so a
-        # tick that finds none is the shutdown race's own shape: the
-        # frame must stay where it is, not be consumed by nothing.
-        item = MoonrakerMJPGImage()
-        self.addCleanup(item.stop)
-        item._network_manager = self.nam
-        item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
-        item._pending_frame = _jpeg(40, 30)
-        # The arrival meter is a perf_counter span; seed it on its own clock.
-        item._pending_arrival = time.perf_counter()
-        item._render()
-        self.assertIsNotNone(item._pending_frame,
-                             "a tick with no worker consumed the frame")
-        self.assertEqual(item._decode_in_flight, 0)
-        self.assertEqual(item._decodes_rendered, 0)
-
-    def test_a_decode_slower_than_the_tick_displays_once_per_decode(self):
-        # A decode that outlasts its tick must not cost the NEXT tick too.
-        # Dispatch quantised to the tick is one display per two ticks at a
-        # 20 ms tick and a 22 ms decode, and a frame that arrived just after
-        # the wasted tick then waits out another whole period, which is the
-        # lag the live report names. The display rate belongs to the decode,
-        # bounded by the cap, not to a multiple of the tick.
-        #
-        # The pin is a pair of counts rather than a rate, since a rate read
-        # off a fixed window measures the machine as much as the scheduler:
-        # a starved run reaches the same counts later, and cannot reach
-        # different ones. Each decode is held open until the frame the next
-        # hand-over needs is in hand, so the interleaving is the test's to
-        # fix rather than the machine's.
-        frames = 6
-        real = QImage.fromData
-        # One slot per decode, claimed under the lock: the worker settles the
-        # order, and each release is held until the test is ready for it.
-        entered = [threading.Event() for _ in range(frames + 2)]
-        release = [threading.Event() for _ in range(frames + 2)]
-        claim = threading.Lock()
-        claimed = []
-
-        def slow(frame):
-            with claim:
-                index = len(claimed)
-                claimed.append(index)
-            time.sleep(0.022)  # a decode a hair longer than one tick
-            entered[index].set()
-            # The timeout only stops a broken run from hanging the suite:
-            # every release the test reaches is set within a tick of it.
-            release[index].wait(2.0)
-            return real(frame)
-
-        self._patch_decode(slow)
-        self.item.setTargetFps(50.0)  # a 20 ms tick
-        self._start()
-        self.item._render_timer.stop()  # every tick from here is by hand
-        self.assertEqual(self.item._render_timer.interval(), 20)
-        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
-        self.item._render()  # the run's only tick: it hands the first frame over
-        for index in range(frames):
-            self.assertTrue(
-                self._drain_until(entered[index].is_set),
-                "frame %d never reached the worker: the run's one tick is "
-                "spent, so the hand-over had to come from the decode" % index)
-            if index + 1 < frames:
-                # The source stays a frame ahead of the decode, so every
-                # completion has something to hand over.
-                self._reply().deliver(
-                    _multipart(_jpeg(40, 30, shade=41 + index)))
-            release[index].set()
-            self.assertTrue(
-                self._drain_until(
-                    lambda shown=index: self.item.framesDisplayed > shown),
-                "frame %d never reached the screen" % index)
-        self.assertEqual(len(claimed), frames,
-                         "a frame was decoded more than once")
-        self.assertEqual(self.item._decodes_rendered, frames,
-                         "the run cost a tick per frame: a decode's successor "
-                         "waited for a tick that never came")
-        self.assertEqual(self.item.framesDropped, 0,
-                         "a frame was superseded rather than displayed")
-        self.assertGreater(self.item._decode_ms_max, 20.0,
-                           "the decode did not outlast the tick")
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 45,
-                         "the frame on screen is not the last one decoded")
-
-    def test_the_completion_dispatch_never_shortens_the_cap(self):
-        # The hand-over a completion makes must clear the same interval
-        # the tick does, or the cap stops being a cap: a fast source
-        # against a fast decode would display as fast as the source
-        # delivers instead of at the rate the pane asked for.
-        #
-        # The completion only gets a say when a successor is already
-        # pending as a decode returns — otherwise the tick hands every
-        # frame over and this measures the tick, not the hand-over it
-        # names. So the source must outrun the decode: 15 ms against a
-        # 200 fps source, still well inside the 50 ms cap, and the
-        # displayed rate is the tick's 20/s. Take the interval test out
-        # of the hand-over and the same window runs at the decode's own
-        # 63/s.
-        def slow(frame):
-            time.sleep(0.015)
-            return QImage.fromData(frame)
-
-        self._patch_decode(slow)
-        self.item.setTargetFps(20.0)  # a 50 ms cap: 20 hand-overs a second
-        self._start()
-        self.assertEqual(self.item._render_timer.interval(), 50)
-        frame = _jpeg(40, 30)
-        # The window is the item's own count of displays and the bound
-        # is the cap's allowance for the time that window took, so a
-        # starved runner reaches the same count later and its allowance
-        # grows with it: a fixed second read the machine instead, and
-        # at a two-percent quota it went red having tested nothing.
-        required = 12
-        delivered = 0
-        started = time.perf_counter()
-        next_frame = started
-        while self.item.framesDisplayed < required and \
-                time.perf_counter() - started < 10.0:
-            if time.perf_counter() >= next_frame:
-                self._reply().deliver(_multipart(frame))
-                delivered += 1
-                next_frame += 0.005  # a 200 fps source, 10x the cap
-            self.qt.events(5)
-        elapsed = time.perf_counter() - started
-        self.assertGreaterEqual(
-            self.item.framesDisplayed, required,
-            "the cap's own rate was not reached: the display never ran")
-        # The premise, and it is about the SOURCE rather than the
-        # runner: a window that delivered no more frames than it
-        # displayed would pass the bound below having tested nothing.
-        # Counted against the displays actually made, a starved loop
-        # shrinks both sides together.
-        self.assertGreaterEqual(
-            delivered, 2 * self.item.framesDisplayed,
-            "the source did not outrun the display: the bound below was "
-            "vacuous")
-        # The cap's own arithmetic: hand-overs are a whole interval
-        # apart, so a window of this length holds at most its rate plus
-        # the one that straddles the start.
-        self.assertLessEqual(
-            self.item.framesDisplayed, elapsed * 20.0 + 1,
-            "the cap was exceeded: a completion hand-over outran the tick")
-
-    def test_a_completion_inside_the_cap_leaves_the_frame_for_the_tick(self):
-        # The completion hands over AT the cap, not merely after its
-        # decode: a decode that finished inside the interval must leave
-        # the frame behind it for the tick, or a fast decode would set
-        # the display rate instead of the rate the pane asked for.
-        def fast(frame):
-            return QImage.fromData(frame)
-
-        self._patch_decode(fast)
-        # The cap is wide on purpose: "inside the interval" has to hold
-        # by construction. A loaded runner stretches a decode past a
-        # narrow cap, and the hand-over that follows is legal by the
-        # cap's own rule — the pin would fail having tested nothing.
-        self.item.setTargetFps(1.0)  # a 1000 ms cap
-        self._start()
-        self.assertEqual(self.item._render_timer.interval(), 1000)
-        self.item._render_timer.stop()  # every tick from here is by hand
-        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
-        self.item._render()  # handed over; this decode is a few ms
-        # The next frame lands well inside the interval, so it is pending
-        # when the decode returns.
-        self._reply().deliver(_multipart(_jpeg(40, 30, shade=41)))
-        # A wait, not a sample: an install is all this waits for, and the
-        # count is asserted below where a second one is the failure.
-        self.assertTrue(
-            self._drain_until(lambda: self.item._decodes_rendered >= 1),
-            "the first decode never reached the screen")
-        # The premise, checked rather than assumed: the decode returned
-        # with the interval still running, which is the case this pin is
-        # about and the case a stalled runner can silently turn into its
-        # opposite.
-        self.assertLess(
-            time.perf_counter() - self.item._last_dispatch_at,
-            self.item._render_timer.interval() / 1000.0,
-            "the completion landed outside the cap: the pin's premise "
-            "(a completion inside the interval) never held")
-        # 30 ms of draining is long past a decode of a few ms, and the
-        # frame must still be pending.
-        self._drain(30)
-        self.assertEqual(self.item._decodes_rendered, 1,
-                         "the completion handed a frame over inside the cap")
-        self.assertIsNotNone(self.item._pending_frame,
-                             "the held frame was consumed by nothing")
-        # Held, not lost: the next tick displays it.
-        self._tick_and_install()
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 41)
-        self.assertEqual(self.item.framesDisplayed, 2)
-
-    def test_the_tick_does_not_stack_a_hand_over_on_a_completion(self):
-        # A completion's hand-over is this period's extra one, not a
-        # second cadence: the tick behind it must not hand another frame
-        # over inside the interval — even when the decode that followed
-        # the completion was quick enough to have freed the worker again.
-        # A delivery that lands long after its own decode is the shape a
-        # busy Qt thread produces, and it is where the interval test
-        # alone would let the tick stack.
-        submitted = []
-        self.item._decoder = SimpleNamespace(submit=lambda *args: submitted.append(args),
-                                             stop=lambda: True)
-        self.item.setTargetFps(50.0)
-        clock = SimpleNamespace(perf_counter=lambda: now[0])
-        now = [100.0]
-        with mock.patch.dict(self.item._render.__globals__, time=clock):
-            self.item._pending_frame = b"first"
-            self.item._render()
-            self.item._decode_in_flight = 0
-            self.item._pending_frame = b"second"
-            now[0] += 0.031  # the completion is later than the cap
-            self.item._dispatch_from_completion()
-            self.item._decode_in_flight = 0
-            self.item._pending_frame = b"third"
-            now[0] += 0.001
-            self.item._render()
-            self.assertEqual(len(submitted), 2, "the tick shortened the cap")
-            self.assertEqual(self.item._pending_frame, b"third")
-            now[0] += 0.020
-            self.item._render()
-            self.assertEqual(len(submitted), 3, "an eligible tick was wasted")
-            self.assertEqual(submitted[-1][1], b"third")
-
-    def test_a_frame_arriving_after_completion_does_not_wait_for_a_tick(self):
-        self._start()
-        self.item._render_timer.stop()
-        submitted = []
-        self.item._decoder.stop()
-        self.item._decoder = SimpleNamespace(submit=lambda *args: submitted.append(args),
-                                             stop=lambda: True)
-        first = _jpeg(40, 30, shade=40)
-        self._reply().deliver(_multipart(first))
-        self.assertEqual(submitted[-1][1], first)
-        self.item._decode_in_flight = 0
-        # No frame was pending at completion. The next arrival alone
-        # must wake the idle decoder after the cap has elapsed.
-        self.item._last_dispatch_at = time.perf_counter() - 1.0
-        second = _jpeg(40, 30, shade=41)
-        self._reply().deliver(_multipart(second))
-        self.assertEqual(len(submitted), 2)
-        self.assertEqual(submitted[-1][1], second)
-        self.assertIsNone(self.item._pending_frame)
-
-    def test_a_pending_successor_wakes_at_the_deadline_without_another_tick(self):
-        self.item.setTargetFps(10.0)
-        self._start()
-        self.item._render_timer.stop()
-        self._reply().deliver(_multipart(_jpeg(40, 30, shade=40)))
-        self.item._render()
-        # The queued completion cannot run until events are pumped,
-        # so the successor is guaranteed to be waiting when it lands.
-        self._reply().deliver(_multipart(_jpeg(40, 30, shade=41)))
-        self.assertTrue(self._drain_until(lambda: self.item.framesDisplayed == 2),
-                        "the successor waited for a periodic tick that never came")
-        self.assertEqual(self.item._image.pixelColor(0, 0).red(), 41)
-        self.assertFalse(self.item._dispatch_timer.isActive())
-
-    def test_the_round_trip_is_reported_split_by_where_it_stalls(self):
-        # The submit-to-install trip is the number the display rate is
-        # a symptom of, so it is reported per frame and split into the
-        # shares that stall independently: the wait for the worker, the
-        # decode, and the trip back to a Qt thread that may be busy.
-        real = QImage.fromData
-
-        def slow(frame):
-            time.sleep(0.03)
-            return real(frame)
-
-        self._patch_decode(slow)
-        self._start()
-        self.item._render_timer.stop()
-        self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self._tick_and_install()
-        self.assertEqual(self.item._decodes_rendered, 1)
-        self.item._emit_stats()
-        round_trip = self.item._recent_round_trip_ms
-        # The injected decode is the floor: the trip carries it plus
-        # whatever the hand-over and the return cost.
-        self.assertGreaterEqual(round_trip, 30.0)
-        # The three shares are the trip, and each is accounted where it
-        # happens: a split that dropped a share would not sum back. The
-        # four readings share one precision, so their sums differ by
-        # rounding alone — 0.02 at the worst, against the 0.05 here.
-        self.assertAlmostEqual(
-            round_trip,
-            self.item._recent_queue_wait_ms + self.item._recent_decode_ms_per_frame
-            + self.item._recent_delivery_ms,
-            places=1,
-            msg="the round trip's shares do not add up to the round trip")
-        # Both meters are accumulated from perf_counter: the trip is the
-        # queue wait, the decode and the Qt thread's own return, and the
-        # lag is that trip plus the parse-to-dispatch gap in front of it,
-        # every term a span of the one clock. Only the reporting
-        # separates them — a decimal for the lag, a hundredth for the
-        # trip — so 0.055, half of each, is all rounding can show; the
-        # 1.0 it replaces was wider than the real inversion it hid.
-        self.assertGreaterEqual(
-            self.item._recent_display_lag_ms,
-            round_trip - 0.055,
-            "the frame's age at the screen is younger than the trip "
-            "that put it there")
-        # The interval's own maximum, which the stats tick consumes: the
-        # trip carries the decode, so it cannot be the shorter of the two.
-        # Both sides at ONE precision: the reported maximum is rounded to
-        # a decimal and the raw decode maximum is not, and rounding only
-        # one side of a comparison breaks its monotonicity — 30.6 against
-        # 30.6279 is a red leg that measured nothing. Rounding both keeps
-        # the ordering exact, since a >= b implies round(a) >= round(b),
-        # so this costs the assertion none of its power.
-        self.assertGreaterEqual(self.item._recent_round_trip_ms_max,
-                                round(self.item._decode_ms_max, 1))
-
-
-@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
-class RendererPathCoverageTests(unittest.TestCase):
-    """The renderer's QPainter/sink/teardown paths (the 2026-09-19
-    per-file coverage tightening): paint, the diagnostic getters, the
-    disconnect/teardown except branches, the finished/error handlers,
-    the boundary-detection guards, the scan-mode cleanup, the decode
-    failure, the trace line and the destructor."""
-
-    def setUp(self):
-        self._rt = runtime()
-        self.qt = self._rt.__enter__()
-        self.addCleanup(self._rt.__exit__, None, None, None)
-        self.nam = FakeNam()
-        self.item = MoonrakerMJPGImage()
-        self.item._network_manager = self.nam  # the injection seam
-        self.item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
-        self.addCleanup(self.item.stop)
-
-    def _reply(self):
-        return self.nam.requests[-1]
-
-    def _drain(self, milliseconds):
-        self.qt.events(milliseconds)
-
-    def _start(self, content_type=b"multipart/x-mixed-replace; boundary=mpfboundary"):
-        def _get_with_type(request):
-            reply = FakeReply(content_type)
-            self.nam.requests.append(reply)
-            return reply
-        self.nam.get = _get_with_type
-        self.item.start()
-
-    def test_the_mirror_and_source_accessors_answer(self):
-        # The QML-facing accessors (paint itself is the scene
-        # graph's callback and cannot run under this file's
-        # QCoreApplication runtime).
-        self.item.setMirror(True)
-        self.item.setMirror(True)  # the no-op path
-        self.assertTrue(self.item.getMirror())
-        self.assertEqual(self.item.getSourceURL().toString(), "http://127.0.0.1:1/webcam")
-
-    def test_the_diagnostic_getters_read_before_and_after_traffic(self):
-        self.assertEqual(self.item.incomingFPS, 0.0)  # the epoch-0 branch
-        self.assertEqual(self.item.displayedFPS, 0.0)
-        self._start()
-        self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self._drain(80)
-        self.assertGreaterEqual(self.item.bufferHighWaterMark, 0)
-        self.assertGreaterEqual(self.item.maximumFrameSize, 0)
-        self.assertGreaterEqual(self.item.incomingFPS, 0)
-        self.assertGreaterEqual(self.item.displayedFPS, 0)
-        self.assertGreaterEqual(self.item.averageFrameSize, 0)
-        self.assertGreaterEqual(self.item.averageDecodeMs, 0)
-        self.assertGreaterEqual(self.item.maximumDecodeMs, 0)
-
-    def test_stop_survives_raising_disconnects_and_a_raising_finished_check(self):
-        class Broken:
-            def disconnect(self, *args):
-                raise RuntimeError("gone")
-
-        self._start()
-        reply = self._reply()
-        reply.readyRead = Broken()
-        reply.finished = Broken()
-        reply.errorOccurred = Broken()
-        reply.isFinished = lambda: (_ for _ in ()).throw(RuntimeError("gone"))
-        self.item.stop()  # every except branch runs; nothing escapes
-        self.assertTrue(reply._deleted_later)
-
-    def test_a_current_finished_retires_the_stream_and_a_stale_one_is_ignored(self):
-        self._start()
-        stale = self._reply()
-        self.item.stop()
-        self._start()
-        current = self._reply()
-        stale.finished.emit()  # the stale guard returns first
-        self.assertTrue(self.item._started)
-        current.finished.emit()
-        self.assertFalse(self.item._started)
-        self.assertGreaterEqual(current._aborted, 1)
-
-    def test_a_current_error_counts_and_a_stale_error_is_ignored(self):
-        self._start()
-        stale = self._reply()
-        self.item.stop()
-        self._start()
-        before = self.item.transportErrors
-        stale.errorOccurred.emit(1)
-        self.assertEqual(self.item.transportErrors, before)
-        self._reply().errorOccurred.emit(1)
-        self.assertEqual(self.item.transportErrors, before + 1)
-
-    def test_detect_boundary_survives_a_raising_header_and_an_empty_type(self):
-        self._start()
-        reply = self._reply()
-        reply.rawHeader = lambda name: (_ for _ in ()).throw(RuntimeError("gone"))
-        reply.deliver(b"garbage")
-        self._drain(1)
-        self._start(b"")  # an empty content type falls to the scan
-        self._reply().deliver(_multipart(_jpeg(40, 30)))
-        self._drain(80)
-        self.assertGreaterEqual(self.item.framesParsed, 1)
-
-    def test_drain_is_inert_without_a_reply_or_data(self):
-        self.item._image_reply = None
-        self.item._drain()
-        self._start()
-        self._reply().deliver(b"")
-        self.item._drain()
-        self.assertEqual(self.item.bytesReceived, 0)
-
-    def test_a_boundary_with_no_frame_inside_is_dropped(self):
-        self._start()
-        self._reply().deliver(b"--mpfboundary\r\n--mpfboundary")
-        self.assertEqual(self.item.framesParsed, 0)
-        self.assertEqual(self.item.parserResyncs, 0)
-
-    def test_scan_mode_trims_leading_and_trailing_garbage(self):
-        self._start(b"")
-        self._reply().deliver(b"abc")  # no SOI: keep only the tail pair
-        self._drain(1)
-        self._reply().deliver(b"junk" + _jpeg(40, 30))  # a leading-garbage SOI
-        self._drain(80)
-        self.assertGreaterEqual(self.item.framesParsed, 1)
-
-    def test_an_undecodable_frame_counts_a_decode_failure(self):
-        self._start()
-        self.item._pending_frame = b"\xff\xd8\xff\xd9"
-        self.item._pending_arrival = time.perf_counter()
-        before = self.item._decode_failures
-        self.item._render()
-        # The decode runs off the Qt thread now: the failure is counted
-        # when the worker's empty result is delivered back.
-        deadline = time.monotonic() + 4.0
-        while self.item._decode_failures == before and time.monotonic() < deadline:
-            self._drain(25)
-        self.assertEqual(self.item._decode_failures, before + 1)
-
-    def test_the_trace_line_logs_when_enabled(self):
-        # The unittest runtime's double entry can alias the module, so
-        # the patch targets the function's own globals — the binding
-        # _trace actually resolves.
-        calls = []
-
-        class Logger:
-            @staticmethod
-            def log(level, message, *args):
-                calls.append(message % args if args else message)
-
-        globals_dict = self.item._trace.__globals__
-        old = globals_dict.get("Logger")
-        globals_dict["Logger"] = Logger
-        try:
-            self.item._trace_enabled = True
-            self.item._trace("probe")
-        finally:
-            globals_dict["Logger"] = old
-        self.assertEqual(len(calls), 1)
-
-    def test_destruction_survives_a_raising_stop(self):
-        item = MoonrakerMJPGImage()
-        item.stop = lambda: (_ for _ in ()).throw(RuntimeError("gone"))
-        del item  # must not raise
-
-    def test_begin_request_creates_a_manager_when_none_is_injected(self):
-        item = MoonrakerMJPGImage()
-        self.addCleanup(item.stop)
-        item.setSourceURL(QUrl("http://127.0.0.1:1/webcam"))
-        item._begin_request()
-        self.assertIsNotNone(item._image_reply)
+if __name__ == "__main__":
+    unittest.main()
