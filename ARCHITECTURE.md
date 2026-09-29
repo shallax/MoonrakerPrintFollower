@@ -129,7 +129,7 @@ correct package ownership.
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution, `IndexView`, and the shared live-motion observation service | Networking or UI |
 | `PlateSplitTracker.py` | Pure shared live-motion boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
-| `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
+| `GCodeIndex.py` | One bounded G-code scan, delegating header parsing and completed-record assembly | Cache files, hydration or application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
 | `CuraAdapter.py` | Typed Cura view access, machine identity, Preview write decisions | Policy or networking |
@@ -194,6 +194,21 @@ correct package ownership.
 | `PrintStartOwner.py` | Print-start acknowledgement and operation lifetime | HTTP transport |
 | `TravelStates.py` | Per-tool retraction balance and travel classification | Rendering or networking |
 | `UiStateStore.py` | Persistent section-layout UI state through the shared store | Monitor domain state |
+| `FeatureTracker.py` | Slicer feature, extrusion and travel state while scanning a layer | Files, caches or scheduling |
+| `GCodeParser.py` | G-code token/marker parsing and bounded fast-path recognition | Modal state, files or Qt |
+| `IndexAssembly.py` | Projection of completed scan records into a motion index, pause/marker maps and metric ranges | File reads or scheduling |
+| `IndexCache.py` | Persistent index cache files, atomic writes and eviction | Parsing or Qt |
+| `IndexCodec.py` | Cache format, bounds and validation of event/feature/arc columns | File lifetime or scheduling |
+| `IndexHeader.py` | Slicer marker sniffing and filament metadata | Motion state or the hot scan loop |
+| `IndexHydrator.py` | Hydration of one compact layer from its saved modal seed | Index lifecycle or worker scheduling |
+| `IndexLimits.py` | Input and allocation bounds shared by the scanner and hydrator | Mutable state |
+| `IndexTasks.py` | Immutable submission records and worker-local hydration/preparation execution | Service lifecycle, signal publication or coordinator references |
+| `IndexView.py` | Read-only query capability over one index and spiral-Z projections | Index lifecycle or workers |
+| `IndexWork.py` | Cooperative cancellation/yield vocabulary and wall-clock gates | Worker pools or Qt |
+| `LayerCache.py` | Byte-bounded layer LRU and explicit payload memory charging | Worker scheduling or store lifetime |
+| `MotionIndex.py` | Layer/motion query data and physical position matching | File reading or persistence |
+| `MotionRefinement.py` | Pure motion matching over prepared geometry | Mutable physical state or presentation |
+| `ObjectVisitTracker.py` | Per-print object-visit replay state and bounded incremental polygon walks | Qt, index lifecycle or worker scheduling |
 
 ## 3. Binding and migration
 
@@ -402,6 +417,20 @@ Its spatial bound includes the existing candidate comparator's tolerance. Search
 windows, travel acceptance and motion tie-breaking remain the same.
 
 ## 6. Remote files, leases and bounded indexing
+
+The index implementation has three explicit boundaries. `GCodeIndex` owns the
+one-pass modal scan; `IndexHeader`, `GCodeParser`, `FeatureTracker` and
+`IndexAssembly` handle distinct input/projection stages. `MotionIndex` and
+`IndexView` own queries, while `IndexCodec`, `IndexCache` and `IndexHydrator`
+keep persistence and lazy hydration independent of the scanner.
+
+`GCodeIndexService` remains the single scheduling/generation owner. Its worker
+records in `IndexTasks` capture the index, lease, stores and cancellation events
+at submission; a prepared reader cannot follow a later machine rebind. The
+byte-bounded LRU, pure payload refinement and bounded object-visit replay live
+in `LayerCache`, `MotionRefinement` and `ObjectVisitTracker`. No task receives a
+service or coordinator object, and only the service publishes completions.
+
 
 `RemoteFileService` binds metadata/cache identity to a job token. Same-filename
 restarts invalidate old metadata and downloads. A streamed download is a

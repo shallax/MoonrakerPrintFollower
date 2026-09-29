@@ -1,4 +1,5 @@
 """Executable index features contracts."""
+from mpf.gcode import IndexCodec as index_codec, IndexCache as index_cache
 from tests import index_plate_support as harness
 
 class FeatureTypeTests(harness.FeatureTypeTests):
@@ -432,7 +433,7 @@ class FeatureCacheTests(harness.FeatureCacheTests):
     def test_the_feature_columns_are_dropped_rather_than_refused_past_the_budget(self):
         index = self._featured_index()
         identity = self._identity()
-        with harness.patch.object(harness.gcode_index, "_MAX_CACHE_FEATURE_ENTRIES", 0):
+        with harness.patch.object(index_codec, "_MAX_CACHE_FEATURE_ENTRIES", 0):
             self.cache.save(identity, index)
             restored = self.cache.load(identity)
         # The geometry is what the cache is for: a fragmented file keeps
@@ -441,14 +442,14 @@ class FeatureCacheTests(harness.FeatureCacheTests):
         self.assertEqual(restored.travel_starts, [[]])
         self.assertEqual(list(restored.motion_offsets[0]), list(index.motion_offsets[0]))
         self._write_raw(identity, self._header(identity, type_runs=[[[1, 0]]]))
-        with harness.patch.object(harness.gcode_index, "_MAX_CACHE_FEATURE_ENTRIES", 0):
+        with harness.patch.object(index_codec, "_MAX_CACHE_FEATURE_ENTRIES", 0):
             # Budget measured across the whole blob: a layer's runs that
             # arrived over it are dropped here too, never half-restored.
             self.assertEqual(self.cache.load(identity).motion_types, [[[1, harness._TYPE_NONE]]])
 
     def test_an_over_long_header_is_not_written_at_all(self):
         identity = self._identity()
-        with harness.patch.object(harness.gcode_index, "_MAX_CACHE_HEADER_BYTES", 8):
+        with harness.patch.object(index_cache, "_MAX_CACHE_HEADER_BYTES", 8):
             # The reader would refuse this blob, so publishing it would
             # only spend the cache's byte budget on a dead file.
             self.cache.save(identity, self._featured_index())

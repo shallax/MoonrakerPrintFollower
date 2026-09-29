@@ -13,7 +13,7 @@ import os
 
 from UM.Logger import Logger
 
-from .GCodeIndex import PersistentIndexCache
+from .IndexCache import PersistentIndexCache
 from .PreparedStore import PreparedCache
 
 # The persistent cache's directory name (the 2026-09-22 ruling): it

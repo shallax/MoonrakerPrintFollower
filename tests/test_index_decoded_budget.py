@@ -1,4 +1,5 @@
 """Executable index decoded budget contracts."""
+from mpf.gcode import LayerCache as layer_cache
 from tests import index_plate_support as harness
 
 class DecodedBudgetTests(harness.DecodedBudgetTests):
@@ -78,7 +79,7 @@ class DecodedBudgetTests(harness.DecodedBudgetTests):
             "travels": [], "travelStarts": [], "travelEnds": [],
             "motions": 20000}
         start = harness.time.monotonic()
-        size = self.module._deep_size(payload)
+        size = layer_cache._deep_size(payload)
         walked = harness.time.monotonic() - start
         print("deep_size: %d bytes walked in %.1f ms" % (size, walked * 1000.0))
         lru = self.service._decoded_lru
@@ -122,7 +123,7 @@ class DecodedBudgetTests(harness.DecodedBudgetTests):
         for cycle in range(6):
             for layer, payload in enumerate(cycle_payloads()):
                 lru.set(cycle * 100 + layer, payload,
-                        self.module._deep_size(payload))
+                        layer_cache._deep_size(payload))
             lru.clear()
             gc.collect()
             if cycle == 1:
@@ -136,19 +137,19 @@ class DecodedBudgetTests(harness.DecodedBudgetTests):
         # A layer whose encode failed has no bytes to measure: the charge
         # comes from the payload's own motion count, so the byte budget
         # stays bounded without a second geometry walk.
-        charge = self.module._decoded_charge
+        charge = layer_cache._decoded_charge
         self.assertEqual(charge(payload={"motions": 100}), 100 * 256)
         # A count that is absent, unusable or negative is no count at all:
         # the floor is what keeps the accounting honest.
-        self.assertEqual(charge(payload={"motions": 0}), self.module._DECODED_CHARGE_FLOOR)
-        self.assertEqual(charge(payload={"motions": -5}), self.module._DECODED_CHARGE_FLOOR)
-        self.assertEqual(charge(payload={"motions": "many"}), self.module._DECODED_CHARGE_FLOOR)
-        self.assertEqual(charge(payload=[1, 2]), self.module._DECODED_CHARGE_FLOOR)
-        self.assertEqual(charge(), self.module._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload={"motions": 0}), layer_cache._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload={"motions": -5}), layer_cache._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload={"motions": "many"}), layer_cache._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(payload=[1, 2]), layer_cache._DECODED_CHARGE_FLOOR)
+        self.assertEqual(charge(), layer_cache._DECODED_CHARGE_FLOOR)
         # A packed payload is charged by its expansion, not by a walk of
         # the decoded points it stands for.
         self.assertEqual(charge(raw=b"x" * 1000),
-                         1000 * self.module._DECODED_PACKED_EXPANSION)
+                         1000 * layer_cache._DECODED_PACKED_EXPANSION)
 
     def test_a_value_that_refuses_its_size_leaves_the_walk(self):
         # A host object may refuse the size probe; the walk drops that one

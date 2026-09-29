@@ -82,8 +82,9 @@ if QT_AVAILABLE:
     _QT = _RUNTIME.__enter__()
 
     from mpf.monitor.camera.CameraBridge import CameraBridge
-    from mpf.gcode.GCodeIndexService import GCodeIndexService, IndexView
-    from mpf.gcode.GCodeIndex import LayerMotionIndex
+    from mpf.gcode.GCodeIndexService import GCodeIndexService
+    from mpf.gcode.IndexView import IndexView
+    from mpf.gcode.MotionIndex import LayerMotionIndex
     from mpf.monitor.camera.MonitorCamera import MonitorCamera
     from mpf.monitor.controls.MonitorCommands import MonitorCommands
     from mpf.monitor.controls.MonitorTuning import MonitorTuning
@@ -2590,7 +2591,7 @@ if QT_AVAILABLE:
             # included: the pass's own hydration hands the interpreter
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
-            with patch("mpf.gcode.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
                        side_effect=lambda index, path, layer, should_stop=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
@@ -2629,7 +2630,7 @@ if QT_AVAILABLE:
                 return original(kind, work, lease)
 
             self.service._submit = counted
-            with patch("mpf.gcode.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
                        side_effect=OSError("the file went away")):
                 self.service._advance()
                 self.assertEqual(submitted, ["fullprep"],

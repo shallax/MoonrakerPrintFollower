@@ -630,7 +630,7 @@ class PreparedStoreTests(unittest.TestCase):
         # The review's unified-lifecycle finding: the index and the
         # prepared table live as siblings under ONE print folder —
         # an entire print's cache is one folder to delete.
-        from mpf.gcode.GCodeIndex import PersistentIndexCache
+        from mpf.gcode.IndexCache import PersistentIndexCache
         index_cache = PersistentIndexCache(self._dir.name)
         identity = type("Identity", (), {"stable_key": staticmethod(lambda: "print-1")})()
         self.assertEqual(os.path.dirname(index_cache._path(identity)),
@@ -646,7 +646,7 @@ class PreparedStoreTests(unittest.TestCase):
         # finding): a print past the budget loses the WHOLE folder —
         # the index AND the prepared table — never an orphaned half,
         # and a missing half reads gracefully on the other store.
-        from mpf.gcode.GCodeIndex import PersistentIndexCache
+        from mpf.gcode.IndexCache import PersistentIndexCache
         from mpf.gcode.GCodeIndex import build_index_from_bytes
         index_cache = PersistentIndexCache(self._dir.name)
 

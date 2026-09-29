@@ -1006,7 +1006,7 @@ class MachineNamespaceTests(unittest.TestCase):
         # set that fits the machine's budget survives the index
         # prune even when it exceeds the index's OLD 128 MiB
         # standalone default.
-        from mpf.gcode.GCodeIndex import PersistentIndexCache
+        from mpf.gcode.IndexCache import PersistentIndexCache
         from mpf.gcode.PreparedStore import PreparedCache
         machine_budget = 256 * 1024 * 1024
         index = PersistentIndexCache(self.base, max_bytes=machine_budget,
@@ -1101,8 +1101,8 @@ class WriterOwnershipTests(unittest.TestCase):
         (the `entered` event fires only after that append), so the
         cutover below always races a worker that still owns the
         writer."""
-        from mpf.gcode.GCodeIndexService import IndexView
-        import mpf.gcode.GCodeIndexService as service_module
+        from mpf.gcode.IndexView import IndexView
+        import mpf.gcode.IndexTasks as task_module
         from tests.test_plate_progress import make_index
 
         service = owner.index
@@ -1118,7 +1118,7 @@ class WriterOwnershipTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
         self.addCleanup(release.set)
-        real_prepare = service_module._prepare_layer
+        real_prepare = task_module._prepare_layer
         calls = []
         def blocking_prepare(*args, **kwargs):
             calls.append(1)
@@ -1127,8 +1127,8 @@ class WriterOwnershipTests(unittest.TestCase):
                 if not release.wait(30.0):
                     raise RuntimeError("the test never released the blocked worker")
             return real_prepare(*args, **kwargs)
-        service_module._prepare_layer = blocking_prepare
-        self.addCleanup(setattr, service_module, "_prepare_layer", real_prepare)
+        task_module._prepare_layer = blocking_prepare
+        self.addCleanup(setattr, task_module, "_prepare_layer", real_prepare)
 
         service._advance()
         self.assertTrue(entered.wait(10.0),

@@ -213,7 +213,7 @@ def _transition_index():
     sits exactly on a point of layer 1's toolpath — the coincidence that
     turned an early anchor into a published half-layer."""
     from array import array
-    from mpf.gcode.GCodeIndex import LayerMotionIndex
+    from mpf.gcode.MotionIndex import LayerMotionIndex
 
     def offsets(count):
         return array("Q", [m * 10 for m in range(count)])
@@ -272,7 +272,7 @@ class PlateAnchorAtTheTransitionTests(unittest.TestCase):
         self.job = ("part.gcode", 200, 1)
         service.bind(self.job)
         index = _transition_index()
-        service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        service._view = self.qt.load("IndexView").IndexView(self.job, index)
         from mpf.gcode.PlateProgress import prepare_layer
         for layer in range(2):
             service._decoded_lru[layer] = prepare_layer(index, layer)

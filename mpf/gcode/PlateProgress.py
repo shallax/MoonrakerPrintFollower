@@ -67,7 +67,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 import weakref
 
 from . import ArcGeometry
-from .GCodeIndex import LayerMotionIndex
+from .MotionIndex import LayerMotionIndex
 
 # The per-class point budget: the G-code's own vertices are kept up to
 # this ceiling, so a class draws exactly what the slicer commanded. The
@@ -784,7 +784,6 @@ def _prepare(index: LayerMotionIndex, layer: int,
             marks["retractions" if retract else "unretractions"].append((x, y, motion))
         result.update(marks)
     return result
-
 
 
 def encode_layer(payload: dict) -> bytes:

@@ -404,8 +404,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
-        module = self.qt.load("GCodeIndexService")
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         files._path = target
         files._want_file = True
 
@@ -442,8 +442,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
-        module = self.qt.load("GCodeIndexService")
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         files._path = target
         files._want_file = True
         service._busy = "fullprep"  # a pass batch is in flight at the seek
