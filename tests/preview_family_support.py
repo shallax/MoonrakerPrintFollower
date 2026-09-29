@@ -50,7 +50,7 @@ from mpf.moonraker.SocketFraming import (
     parse_frames,
     verify_handshake,
 )
-from mpf.monitor.ToolheadPolicy import (
+from mpf.monitor.toolhead.ToolheadPolicy import (
     CENTER_Z_MM,
     EXTRUDE_SPEED_MAX,
     JOG_DISTANCE_DEFAULT,
@@ -79,13 +79,13 @@ from mpf.monitor.ToolheadPolicy import (
     push_op,
     z0_script,
 )
-from mpf.printer.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
-from mpf.printer.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.printing.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.preview.PreviewFollower import PreviewFollower, preview_override_kind
 
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
     from mpf.monitor.MonitorData import MonitorData, freeze
-    from mpf.printer.PreviewMotion import PreviewMotion
+    from mpf.preview.PreviewMotion import PreviewMotion
 
 
 # --------------------------------------------------------------------------
@@ -478,7 +478,7 @@ class PreviewMotionTests(unittest.TestCase):
         from PyQt6.QtCore import QCoreApplication
         # QTimer needs an application object even when it never fires here.
         self.app = QCoreApplication.instance() or QCoreApplication([])
-        self.patch = patch("mpf.printer.PreviewMotion.time", FakeClock())
+        self.patch = patch("mpf.preview.PreviewMotion.time", FakeClock())
         # PreviewMotion resolves `time.monotonic` through its own module global.
         self.clock = self.patch.start()
         self.addCleanup(self.patch.stop)

@@ -31,30 +31,18 @@ RUNTIME_COMPONENTS = (
     "PluginPersistence.py", "CacheNamespaces.py",
 )
 
-# The directories the package nests by. Used only to read an import.
-DOMAINS = frozenset({"plate", "monitor", "printer", "moonraker", "index", "filemanager", "cura"})
+# Resolve names at arbitrary nesting depth: monitor.camera.Foo is Foo,
+# not camera. Package imports name their modules through the aliases.
+MODULE_NAMES = frozenset(path.stem for path in PLUGINS.rglob("*.py")
+                         if path.stem != "__init__")
 
 
 def imported_names(node):
-    """The modules a relative import names, by name and not by domain.
-
-    The tree nests by domain, so a cross-domain edge reads
-    ``from ..monitor.Foo import``. The ownership table, the dependency
-    allowlist and the import graph are all name-keyed; read raw, a
-    ``node.module`` of ``monitor.Foo`` matches no graph node, so the
-    acyclicity walk finds no edge across a boundary and passes having
-    checked nothing. Everything here is case-sensitive module names.
-    """
-    if node.module is None:
-        # ``from . import X`` names its modules in the aliases.
-        return {alias.name for alias in node.names}
-    head, _, tail = node.module.partition(".")
-    if tail:
-        return {tail.partition(".")[0]}
-    if head in DOMAINS:
-        # ``from ..monitor import Foo`` — the aliases carry the module.
-        return {alias.name for alias in node.names}
-    return {head}
+    """Module-level ownership edges, including nested relative imports."""
+    leaf = (node.module or "").rsplit(".", 1)[-1]
+    if leaf in MODULE_NAMES:
+        return {leaf}
+    return {alias.name for alias in node.names}
 
 
 class ArchitectureDocumentTests(unittest.TestCase):
@@ -154,6 +142,10 @@ class SourceContractTests(unittest.TestCase):
 
     def test_components_import_only_their_declared_dependencies(self):
         allowed = {
+            "Polygons": set(),
+            "MotionRanges": set(),
+            "MigrationPresentation": set(),
+            "PluginPaths": set(),
             "BedMeshPresenter": {"BedMeshSceneNode"},
             "BedMeshSceneNode": set(),
             "CameraBridge": {"CameraTiming"},
@@ -174,29 +166,29 @@ class SourceContractTests(unittest.TestCase):
                 "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreparedStore", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "ArcGeometry": set(),
-            "GCodeIndex": {"ArcGeometry", "CachePolicy", "MoonrakerProtocol", "PreviewColours", "TravelStates"},
-            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "PlateSplitTracker", "MonitorFormatting", "PreparedStore", "PrintState"},
+            "GCodeIndex": {"ArcGeometry", "CachePolicy", "MoonrakerProtocol", "MotionRanges", "TravelStates"},
+            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "PlateSplitTracker", "Polygons", "PreparedStore", "PrintState"},
             "PlateSplitTracker": set(),
             "CacheNamespaces": {"GCodeIndex", "PreparedStore"},
             "CachePolicy": set(),
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
             "GpuFollower": {"GpuStrokeMaterial", "PreviewColours", "TravelStates"},
-            "GpuStrokeMaterial": set(),
+            "GpuStrokeMaterial": {"PluginPaths"},
             "GpuObjectPicker": {"GpuFollower"},
             "MonitorCommands": {"MonitorPermissions", "MonitorFormatting"},
             "MonitorControls": {"MonitorFormatting", "MonitorPermissions"},
             "MonitorData": {"CameraTiming", "ConsolePolicy", "MonitorFormatting", "MonitorPermissions", "MoonrakerSession"},
-            "MonitorFormatting": {"MonitorPermissions"},
+            "MonitorFormatting": {"MonitorPermissions", "Polygons"},
             "MonitorPermissions": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"CameraTiming", "MoonrakerProtocol", "MoonrakerSession"},
-            "MoonrakerFollowerMachineAction": {"CacheNamespaces", "FollowController", "MoonrakerMonitorModel", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"CameraTiming", "ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PlateQt", "PlateSceneIdentity", "PreviewFormatting", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
+            "MoonrakerFollowerMachineAction": {"CacheNamespaces", "FollowController", "MigrationPresentation", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
+            "MoonrakerMonitorModel": {"CameraTiming", "ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MigrationPresentation", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PlateQt", "PlateSceneIdentity", "PreviewFormatting", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "PersistenceMigration": {"PrinterConfig"},
             "MigrationNotice": set(),
             "PluginPersistence": {"PrinterConfig", "StateStore"},
-            "PlateProgress": {"ArcGeometry", "GCodeIndex", "PreviewColours", "TravelStates"},
+            "PlateProgress": {"ArcGeometry", "GCodeIndex", "MotionRanges", "TravelStates"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
             "UiStateStore": set(),
@@ -206,8 +198,8 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTemperatureHistory": {"MonitorFormatting"},
             "ConsolePolicy": set(),
             "ToolheadPolicy": set(),
-            "MoonrakerOutputDevice": {"CuraOutputWriter", "MonitorPermissions", "UploadController"},
-            "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice", "FollowerColourScheme"},
+            "MoonrakerOutputDevice": {"CuraOutputWriter", "MonitorPermissions", "UploadController", "PluginPaths"},
+            "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice", "FollowerColourScheme", "PluginPaths"},
             "MoonrakerPrintFollower": {"FollowerRuntime", "LeakProbe", "WhatsNewOverlay"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
@@ -226,7 +218,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewFollower": {"CuraAdapter", "FollowController"},
             "PreviewFormatting": set(),
             "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
-            "PreviewPresentation": set(),
+            "PreviewPresentation": {"PluginPaths"},
             "PreviewSmoothing": set(),
             "PrintCoordinator": {"CuraAdapter", "LoadStateTracker", "MonitorFormatting", "MoonrakerProtocol", "NextPausePipeline", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
             "PrintIdentity": set(),
@@ -238,7 +230,7 @@ class SourceContractTests(unittest.TestCase):
             "RemoteJobService": set(),
             "UploadController": {"MoonrakerTransport", "PrinterConfig"},
             "WhatsNew": set(),
-            "WhatsNewOverlay": set(),
+            "WhatsNewOverlay": {"PluginPaths"},
         }
         # Cura adapters sanctioned to import cura APIs.
         cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}

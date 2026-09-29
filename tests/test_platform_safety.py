@@ -40,7 +40,7 @@ GUARDED = {
 }
 
 try:  # the sweep's module is Qt-bound; the stdlib suite runs without it
-    from mpf.index import RemoteFileService as sweep_module
+    from mpf.files.transfers import RemoteFileService as sweep_module
 except Exception:  # noqa: BLE001 — any import failure means no Qt runtime here
     sweep_module = None
 

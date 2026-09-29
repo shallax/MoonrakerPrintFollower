@@ -4,9 +4,13 @@ import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "../resources/theme"
+import "../bedmesh"
 import "../plate"
 import "../widgets"
+import "camera"
+import "controls"
+import "temperature"
+import "../resources/theme"
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader
 // (setMonitorViewQmlPath) creates this document and expects a
@@ -591,7 +595,7 @@ Component {
         function openChartColorDialog() {
             if (chartColorDialog === null) {
                 if (chartColorDialogComponent === null) {
-                    chartColorDialogComponent = Qt.createComponent("MoonrakerChartColorDialog.qml");
+                    chartColorDialogComponent = Qt.createComponent("temperature/MoonrakerChartColorDialog.qml");
                 }
                 if (chartColorDialogComponent.status !== Component.Ready) {
                     console.log("Moonraker colour picker unavailable: " + chartColorDialogComponent.errorString());

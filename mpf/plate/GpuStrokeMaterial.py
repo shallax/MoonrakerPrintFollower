@@ -1,10 +1,12 @@
 """Pixel-width capsule strokes expanded and antialiased by the GPU."""
 
+
 from array import array
-from pathlib import Path
 import struct
 from PyQt6.QtGui import QColor
 from PyQt6.QtQuick import QSGMaterial, QSGMaterialType, QSGMaterialShader, QSGGeometry
+
+from ..resources.PluginPaths import plugin_path
 
 TYPE = QSGMaterialType()
 # Qt owns the native shader; retain its Python virtual-method wrapper.
@@ -14,8 +16,11 @@ SHADERS = []
 class FollowerStrokeShader(QSGMaterialShader):
     def __init__(self):
         super().__init__()
-        for stage, name in ((self.Stage.VertexStage, "stroke.vert.qsb"), (self.Stage.FragmentStage, "stroke.frag.qsb")):
-            self.setShaderFileName(stage, str(Path(__file__).parent.parent / "resources" / "shaders" / name))
+        for stage, path in (
+            (self.Stage.VertexStage, plugin_path("resources", "shaders", "stroke.vert.qsb")),
+            (self.Stage.FragmentStage, plugin_path("resources", "shaders", "stroke.frag.qsb")),
+        ):
+            self.setShaderFileName(stage, path)
 
     def updateUniformData(self, state, new, old):
         m = state.combinedMatrix()

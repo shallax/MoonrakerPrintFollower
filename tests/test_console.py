@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from mpf.monitor.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, normalise_line, trim_history
+from mpf.monitor.console.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, normalise_line, trim_history
 
 
 class ConsolePolicyTests(unittest.TestCase):

@@ -15,8 +15,8 @@ import tempfile
 import time
 import unittest
 
-from mpf.plate.PlateProgress import decode_layer, encode_layer
-from mpf.index.PreparedStore import STATE_CACHED, STATE_EMPTY, PreparedCache, _FORMAT_VERSION
+from mpf.gcode.PlateProgress import decode_layer, encode_layer
+from mpf.gcode.PreparedStore import STATE_CACHED, STATE_EMPTY, PreparedCache, _FORMAT_VERSION
 
 # The on-disk layout the hand-built files below must match byte for
 # byte (the writer's own constants, restated here so the malformed
@@ -291,7 +291,7 @@ class PreparedStoreTests(unittest.TestCase):
         # alive, so the adoption never destroys a file whose owner
         # may still hold it.
         from unittest.mock import patch
-        import mpf.index.CachePolicy as store_module
+        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
         with patch.object(store_module.sys, "platform", "linux"), \
                 patch.object(store_module.os, "kill", side_effect=PermissionError()):
@@ -312,7 +312,7 @@ class PreparedStoreTests(unittest.TestCase):
         # is fabricated.
         from unittest.mock import patch
         import ctypes
-        import mpf.index.CachePolicy as store_module
+        import mpf.gcode.CachePolicy as store_module
 
         def verdict(open_handle, open_error, exit_ok, exit_code):
             closed = []
@@ -372,7 +372,7 @@ class PreparedStoreTests(unittest.TestCase):
         # through the probe. (The probe's own kernel calls run on
         # the Windows host suite; this wiring is platform-pinned.)
         from unittest.mock import patch
-        import mpf.index.CachePolicy as store_module
+        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
         with patch.object(store_module.sys, "platform", "win32"), \
                 patch.object(store_module, "_windows_liveness",
@@ -390,7 +390,7 @@ class PreparedStoreTests(unittest.TestCase):
         # dead on ProcessLookupError, conservative alive on
         # PermissionError and on any indeterminate OSError.
         from unittest.mock import patch
-        import mpf.index.CachePolicy as store_module
+        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
         with patch.object(store_module.sys, "platform", "linux"), \
                 patch.object(store_module.os, "kill", return_value=None):
@@ -630,7 +630,7 @@ class PreparedStoreTests(unittest.TestCase):
         # The review's unified-lifecycle finding: the index and the
         # prepared table live as siblings under ONE print folder —
         # an entire print's cache is one folder to delete.
-        from mpf.index.GCodeIndex import PersistentIndexCache
+        from mpf.gcode.GCodeIndex import PersistentIndexCache
         index_cache = PersistentIndexCache(self._dir.name)
         identity = type("Identity", (), {"stable_key": staticmethod(lambda: "print-1")})()
         self.assertEqual(os.path.dirname(index_cache._path(identity)),
@@ -646,8 +646,8 @@ class PreparedStoreTests(unittest.TestCase):
         # finding): a print past the budget loses the WHOLE folder —
         # the index AND the prepared table — never an orphaned half,
         # and a missing half reads gracefully on the other store.
-        from mpf.index.GCodeIndex import PersistentIndexCache
-        from mpf.index.GCodeIndex import build_index_from_bytes
+        from mpf.gcode.GCodeIndex import PersistentIndexCache
+        from mpf.gcode.GCodeIndex import build_index_from_bytes
         index_cache = PersistentIndexCache(self._dir.name)
 
         class Identity:
@@ -970,7 +970,7 @@ class PreparedStoreRejectionTests(unittest.TestCase):
         # not survive as a half-written orphan for the startup to
         # arbitrate over.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         with patch.object(store_module.os, "replace",
                           side_effect=OSError(28, "No space left on device")):
             self.assertIsNone(
@@ -984,7 +984,7 @@ class PreparedStoreRejectionTests(unittest.TestCase):
         # volume): nothing legal remains to do — the publish reports
         # failure rather than raising out of the cleanup.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         with patch.object(store_module.os, "replace",
                           side_effect=OSError(28, "No space left on device")), \
                 patch.object(store_module.os, "unlink",
@@ -1080,7 +1080,7 @@ class PreparedStoreArbitrationTests(unittest.TestCase):
         # file wins — the adoption never crashes on an unreadable
         # stamp.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         writer = self.cache.open_for_write("print-1", 4)
         for layer in range(2):
             self.cache.append(writer, layer, encode_layer(_payload(layer)))
@@ -1106,7 +1106,7 @@ class PreparedStoreArbitrationTests(unittest.TestCase):
         # supersedes a partial the log names both counts, so a restore
         # that resumed from a crash is explained.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         calls = []
 
         class Recorder:
@@ -1202,7 +1202,7 @@ class PreparedStoreWriterFailureTests(unittest.TestCase):
         # cache, the pass carries on, and every layer still round-trips
         # once the writer finishes.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         writer = self.cache.open_for_write("print-1", 40)
         with patch.object(store_module.os, "fsync",
                           side_effect=OSError(5, "Input/output error")):
@@ -1233,7 +1233,7 @@ class PreparedStoreWriterFailureTests(unittest.TestCase):
         # The rename refused at the finish: no published file, no temp
         # left behind, and the writer retired by the abort.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         writer = self.cache.open_for_write("print-1", 2)
         self.cache.append(writer, 0, encode_layer(_payload(0)))
         temp = writer["temp"]
@@ -1252,7 +1252,7 @@ class PreparedStoreWriterFailureTests(unittest.TestCase):
         # The checkpoint's fsync hardens the publish but is not a
         # precondition: a refused sync still publishes the layers.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         writer = self.cache.open_for_write("print-1", 2)
         self.cache.append(writer, 0, encode_layer(_payload(0)))
         with patch.object(store_module.os, "fsync",
@@ -1269,7 +1269,7 @@ class PreparedStoreWriterFailureTests(unittest.TestCase):
         # failure and the abort owns the cleanup — no temp is left for
         # the next startup to arbitrate over.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         writer = self.cache.open_for_write("print-1", 2)
         self.cache.append(writer, 0, encode_layer(_payload(0)))
         temp = writer["temp"]
@@ -1424,7 +1424,7 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # os.kill itself may refuse the pid (a narrow pid_t): an owner
         # that cannot exist is dead, not an error.
         from unittest.mock import patch
-        import mpf.index.CachePolicy as store_module
+        import mpf.gcode.CachePolicy as store_module
         with patch.object(store_module.sys, "platform", "linux"), \
                 patch.object(store_module.os, "kill",
                              side_effect=OverflowError()):
@@ -1446,7 +1446,7 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # The unlink refused (a read-only directory): the adoption
         # keeps going — a leftover temp must never stop the print.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         self.cache.finalise("print-1", [encode_layer(_payload(0))])
         stale = os.path.join(self.cache.directory, "stray.mpfp.tmp-99999-1")
         with open(stale, "wb") as handle:
@@ -1464,7 +1464,7 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # finds nothing and the store still comes up with every
         # published print intact.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         path = self.cache.finalise("print-1", [encode_layer(_payload(0))])
         with patch.object(store_module.os, "walk",
                           side_effect=OSError(5, "Input/output error")):
@@ -1492,7 +1492,7 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # the volume): the walk skips that folder and still brings the
         # rest of the directory back to budget.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         real_stat = store_module.os.stat
         broken = os.path.join(self.cache.directory, "p-broken")
         os.makedirs(broken, exist_ok=True)
@@ -1520,7 +1520,7 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # is already published — the size policy never costs a print
         # its cache.
         from unittest.mock import patch
-        import mpf.index.PreparedStore as store_module
+        import mpf.gcode.PreparedStore as store_module
         with patch.object(store_module.os, "walk",
                           side_effect=OSError(5, "Input/output error")):
             path = self.cache.finalise("print-1", [encode_layer(_payload(0))])

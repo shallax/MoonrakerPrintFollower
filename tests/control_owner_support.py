@@ -59,9 +59,9 @@ from tests.qt_runtime_support import QT_AVAILABLE, runtime
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
 
-    from mpf.monitor.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
+    from mpf.monitor.console.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
     from mpf.monitor.MonitorPermissions import Observation
-    from mpf.cura.PrinterConfig import PrinterConfig
+    from mpf.settings.PrinterConfig import PrinterConfig
 
     if "UM" not in sys.modules:
         # PrintCoordinator imports UM.Logger; the container has no Cura
@@ -250,7 +250,7 @@ if QT_AVAILABLE:
             self.manual_split = motions
 
         def observe_motion(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
-            from mpf.printer.PrintState import MotionProgress
+            from mpf.printing.PrintState import MotionProgress
             return MotionProgress(anchor, self.plate_split if file_position is not None else None, 100)
 
         def plate_progress(self, anchor, file_position=None, live_position=None, paused=False, extruding=None, *, motion=...):
@@ -542,7 +542,7 @@ if QT_AVAILABLE:
         under test. The lazy UM stub above must exist before the
         module's own import runs.
         """
-        from mpf.printer.PrintCoordinator import PrintCoordinator
+        from mpf.application.PrintCoordinator import PrintCoordinator
         return PrintCoordinator
 
 
@@ -652,7 +652,7 @@ class ToolheadCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self._rt.__enter__()
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from mpf.monitor.ToolheadController import ToolheadController
+        from mpf.monitor.toolhead.ToolheadController import ToolheadController
         self.controller_class = ToolheadController
 
     def _make(self, state="paused", **kwargs):
@@ -675,7 +675,7 @@ class ConsoleCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self.events = self._rt.__enter__().events
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from mpf.monitor.ConsoleController import ConsoleController
+        from mpf.monitor.console.ConsoleController import ConsoleController
         self.controller_class = ConsoleController
         self.data = _ConsoleData()
         self.commands = _ConsoleCommands()

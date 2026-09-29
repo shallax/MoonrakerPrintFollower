@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 
-from mpf.cura.StateStore import StateStore
+from mpf.settings.StateStore import StateStore
 
 
 class _Recording:

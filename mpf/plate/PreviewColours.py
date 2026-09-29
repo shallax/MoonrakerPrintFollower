@@ -5,9 +5,7 @@ come from the host's Preview theme and active extruder material model.
 """
 from __future__ import annotations
 
-import math
-
-from .TravelStates import is_travel
+from ..gcode.TravelStates import is_travel
 
 MODE_KEYS = {2: "speed", 3: "height", 4: "width", 5: "flow"}
 CLASS_THEME_KEYS = {
@@ -40,13 +38,6 @@ def gradient(mode, value, limits):
     else:
         rgb = (v, .5 if v > .375 else 1 - abs(1 - 4*v), max(1 - 4*v, 0))
     return (*rgb, 1.0)
-
-
-def valid_ranges(value):
-    return (isinstance(value, dict) and set(value) <= set(MODE_KEYS.values())
-            and all(isinstance(bounds, (list, tuple)) and len(bounds) == 2
-                    and all(isinstance(v, (int, float)) and math.isfinite(v) and 0 <= v <= 1e9 for v in bounds)
-                    and bounds[0] <= bounds[1] for bounds in value.values()))
 
 
 def motion_value(payload, motion, mode):

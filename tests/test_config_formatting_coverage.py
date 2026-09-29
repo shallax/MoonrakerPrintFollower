@@ -47,20 +47,20 @@ from mpf.monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALR
                                         can_restart, can_resume, can_set_absolute,
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
-from mpf.monitor.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
+from mpf.monitor.temperature.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
                                                chart_payload, series_metadata)
-from mpf.printer.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
-from mpf.cura.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
+from mpf.printing.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
+from mpf.settings.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
                                           _record, _remove_old_state_file, _verify_new_files,
                                           _write_new_files, read_source, run_migration,
                                           split_record, write_backup)
-from mpf.cura.PluginPersistence import PluginPersistence
-from mpf.printer.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
+from mpf.settings.PluginPersistence import PluginPersistence
+from mpf.preview.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
                                        pause_unavailable, status_icon, status_text)
-from mpf.cura.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
+from mpf.settings.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
                                    PrinterConfig, PrinterConfigStore, normalise_url,
                                    normalise_temperature_chart, upload_path_safe)
-from mpf.cura.StateStore import StateStore
+from mpf.settings.StateStore import StateStore
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 from tests.source_root import SourceRoot
 
@@ -81,15 +81,15 @@ if QT_AVAILABLE:
     _RUNTIME = runtime()
     _QT = _RUNTIME.__enter__()
 
-    from mpf.moonraker.CameraBridge import CameraBridge
-    from mpf.index.GCodeIndexService import GCodeIndexService, IndexView
-    from mpf.index.GCodeIndex import LayerMotionIndex
-    from mpf.moonraker.MonitorCamera import MonitorCamera
-    from mpf.monitor.MonitorCommands import MonitorCommands
-    from mpf.monitor.MonitorTuning import MonitorTuning
-    from mpf.printer.PauseController import PauseController
+    from mpf.monitor.camera.CameraBridge import CameraBridge
+    from mpf.gcode.GCodeIndexService import GCodeIndexService, IndexView
+    from mpf.gcode.GCodeIndex import LayerMotionIndex
+    from mpf.monitor.camera.MonitorCamera import MonitorCamera
+    from mpf.monitor.controls.MonitorCommands import MonitorCommands
+    from mpf.monitor.controls.MonitorTuning import MonitorTuning
+    from mpf.printing.PauseController import PauseController
     from mpf.cura.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
-    from mpf.monitor.UiStateStore import UiStateStore
+    from mpf.monitor.layout.UiStateStore import UiStateStore
 
 
 def observation(**overrides):
@@ -1546,7 +1546,7 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
             with open(destination, "wb") as handle:
                 handle.write(b"[general]\n")
 
-        with patch("mpf.cura.PersistenceMigration.os.replace", side_effect=truncate):
+        with patch("mpf.settings.PersistenceMigration.os.replace", side_effect=truncate):
             self.assertFalse(write_backup(self.cura_cfg, target))
         with open(target, "rb") as handle:
             self.assertEqual(handle.read(), b"[general]\n")
@@ -2590,7 +2590,7 @@ if QT_AVAILABLE:
             # included: the pass's own hydration hands the interpreter
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
-            with patch("mpf.index.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.gcode.GCodeIndexService.hydrate_layer_from_file",
                        side_effect=lambda index, path, layer, should_stop=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
@@ -2629,7 +2629,7 @@ if QT_AVAILABLE:
                 return original(kind, work, lease)
 
             self.service._submit = counted
-            with patch("mpf.index.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.gcode.GCodeIndexService.hydrate_layer_from_file",
                        side_effect=OSError("the file went away")):
                 self.service._advance()
                 self.assertEqual(submitted, ["fullprep"],
@@ -3491,13 +3491,13 @@ class PluginPackageCoverageTests(unittest.TestCase):
         action = SimpleNamespace(name="action")
         fakes = {name: ModuleType(name) for name in (
             "mpf.cura.MoonrakerPrintFollower", "mpf.cura.MoonrakerOutputDevicePlugin",
-            "mpf.cura.MoonrakerFollowerMachineAction", "mpf.cura.LeakProbe")}
+            "mpf.cura.MoonrakerFollowerMachineAction", "mpf.diagnostics.LeakProbe")}
         fakes["mpf.cura.MoonrakerPrintFollower"].MoonrakerPrintFollower = lambda app: follower
         fakes["mpf.cura.MoonrakerOutputDevicePlugin"].MoonrakerOutputDevicePlugin = (
             lambda app, owner: output)
         fakes["mpf.cura.MoonrakerFollowerMachineAction"].MoonrakerFollowerMachineAction = (
             lambda app, owner, output_plugin: action)
-        fakes["mpf.cura.LeakProbe"].start_leak_probe = (
+        fakes["mpf.diagnostics.LeakProbe"].start_leak_probe = (
             lambda runtime, application: probed.append((runtime, application)))
         with patch.dict(sys.modules, fakes):
             wired = mpf.register(app)

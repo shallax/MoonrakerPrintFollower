@@ -5,7 +5,7 @@ and the record's toastShown latch. The Qt import guards the host run
 import unittest
 
 try:
-    from mpf.cura.MigrationNotice import MigrationNotice
+    from mpf.settings.MigrationNotice import MigrationNotice
     QT_AVAILABLE = True
 except ImportError:
     QT_AVAILABLE = False

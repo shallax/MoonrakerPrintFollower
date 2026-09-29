@@ -11,6 +11,11 @@ the URL against the CALLING DOCUMENT's directory, a path against the
 tree root — and failing on anything that is not a file.
 """
 import ast
+import json
+import subprocess
+import sys
+import tempfile
+import zipfile
 import pathlib
 import re
 import unittest
@@ -150,6 +155,48 @@ def plugin_paths():
                 yield source, node.lineno, root.joinpath(*parts[parts.index("mpf") + 1:])
 
 
+def runtime_paths(root=None):
+    """Read the literal paths used by actual Python resource-loading callers.
+
+    Unlike the old literal-mpf scan, this includes __file__-independent
+    plugin_path calls and Cura's relative Machine Action QML registration.
+    Dynamic arguments fail rather than silently disappearing from the gate.
+    """
+    root = pathlib.Path(root) if root is not None else PLUGINS.root
+    for source in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            parts = None
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "plugin_path":
+                if node.keywords or not node.args or not all(
+                        isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in node.args):
+                    raise AssertionError(f"{source}:{node.lineno}: resource path is not explicit")
+                parts = [arg.value for arg in node.args]
+            elif isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Attribute) and target.attr == "_qml_url" for target in node.targets):
+                if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+                    raise AssertionError(f"{source}:{node.lineno}: QML registration is not explicit")
+                parts = [node.value.value]
+            if parts is not None:
+                target = root.joinpath(*parts).resolve()
+                if not target.is_relative_to(root.resolve()):
+                    raise AssertionError(f"{source}:{node.lineno}: resource escapes plugin root")
+                yield source, node.lineno, target
+
+
+def qml_file_paths():
+    for source in documents():
+        body = strip_comments(source.read_text(encoding="utf-8"))
+        for match in LITERAL.finditer(body):
+            value = match.group(1)
+            if value.endswith((".qml", ".js", ".svg", ".qsb")) and not SCHEME.match(value):
+                yield source, body.count("\n", 0, match.start()) + 1, (source.parent / value).resolve()
+    for registration in sorted(PLUGINS.rglob("qmldir")):
+        for line, text in enumerate(registration.read_text(encoding="utf-8").splitlines(), 1):
+            words = text.split("#", 1)[0].split()
+            if words and words[-1].endswith((".qml", ".js")):
+                yield registration, line, (registration.parent / words[-1]).resolve()
+
+
 class ResourceReferenceTests(unittest.TestCase):
     def test_every_referenced_svg_resolves_from_its_document(self):
         missing = []
@@ -170,6 +217,74 @@ class ResourceReferenceTests(unittest.TestCase):
                 missing.append(f"{source}:{line}: {where}")
         self.assertEqual(missing, [],
                          "plugin files named by path that are not there: %s" % missing)
+
+    def test_python_entrypoints_and_qml_registrations_resolve(self):
+        paths = list(runtime_paths()) + list(qml_file_paths())
+        self.assertTrue(paths)
+        for source, line, target in paths:
+            self.assertTrue(target.is_file(), f"{source}:{line}: no resource at {target}")
+        # Inventory the real loading callers: reverting one to unscanned
+        # dirname(__file__) arithmetic cannot silently remove it from this gate.
+        entrypoints = {(source.relative_to(PLUGINS.root).as_posix(), target.relative_to(PLUGINS.root).as_posix())
+                       for source, _line, target in runtime_paths()}
+        self.assertEqual(entrypoints, {
+            ("cura/MoonrakerOutputDevice.py", "files/transfers/MoonrakerUploadDialog.qml"),
+            ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorDashboard.qml"),
+            ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorBedMesh.qml"),
+            ("cura/MoonrakerFollowerMachineAction.py", "settings/MoonrakerFollowerConfiguration.qml"),
+            ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardPanelHost.qml"),
+            ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardOverlayHost.qml"),
+            ("whatsnew/WhatsNewOverlay.py", "whatsnew/WhatsNewOverlay.qml"),
+            ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
+            ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
+        })
+
+    def test_stale_upload_dialog_path_is_detected(self):
+        source = (PLUGINS.root / "cura/MoonrakerOutputDevice.py").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            caller = root / "cura/MoonrakerOutputDevice.py"
+            caller.parent.mkdir()
+            caller.write_text(source, encoding="utf-8")
+            dialog = root / "files/transfers/MoonrakerUploadDialog.qml"
+            dialog.parent.mkdir(parents=True)
+            dialog.write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+            self.assertTrue(all(target.is_file() for _, _, target in runtime_paths(root)))
+            old = 'plugin_path("files", "transfers", "MoonrakerUploadDialog.qml")'
+            self.assertIn(old, source)
+            caller.write_text(source.replace(old, 'plugin_path("monitor", "MoonrakerUploadDialog.qml")'),
+                              encoding="utf-8")
+            missing = [target for _, _, target in runtime_paths(root) if not target.is_file()]
+            self.assertEqual(missing, [root / "monitor/MoonrakerUploadDialog.qml"])
+
+    def test_missing_shader_and_unreadable_runtime_path_are_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            caller = root / "Shader.py"
+            caller.write_text('path = plugin_path("resources", "shaders", "missing.qsb")\n', encoding="utf-8")
+            targets = [target for _, _, target in runtime_paths(root)]
+            self.assertEqual(targets, [root / "resources/shaders/missing.qsb"])
+            self.assertFalse(targets[0].exists())
+            caller.write_text('path = plugin_path(dynamic_name)\n', encoding="utf-8")
+            with self.assertRaisesRegex(AssertionError, "not explicit"):
+                list(runtime_paths(root))
+
+    def test_entrypoints_and_resources_ship_in_both_archive_formats(self):
+        package_id = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["package_id"]
+        targets = {target for _, _, target in (*runtime_paths(), *qml_file_paths())}
+        self.assertGreater(len(targets), 20)
+        with tempfile.TemporaryDirectory() as directory:
+            for script, extension, prefix in (
+                    ("build_curapackage.py", ".curapackage", f"files/plugins/{package_id}/"),
+                    ("build_marketplace_source.py", ".zip", f"{package_id}/")):
+                archive = pathlib.Path(directory) / ("plugin" + extension)
+                subprocess.run([sys.executable, str(ROOT / "tools" / script), "--output", str(archive)],
+                               cwd=ROOT, check=True, capture_output=True, text=True)
+                with zipfile.ZipFile(archive) as package:
+                    for target in targets:
+                        entry = prefix + target.relative_to(PLUGINS.root).as_posix()
+                        self.assertIn(entry, package.namelist())
+                        self.assertEqual(package.read(entry), target.read_bytes(), entry)
 
     def test_the_scan_is_not_vacuous(self):
         # The failure this guards is the one the nesting already caused

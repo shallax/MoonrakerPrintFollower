@@ -22,7 +22,7 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
-            from mpf.moonraker.MoonrakerMJPGImage import (
+            from mpf.monitor.camera.MoonrakerMJPGImage import (
                 MAX_HEADER_BYTES,
                 MAX_IN_PROGRESS_FRAME_BYTES,
                 MoonrakerMJPGImage,

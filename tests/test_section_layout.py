@@ -13,14 +13,14 @@ sys.modules.setdefault(
     types.SimpleNamespace(Logger=types.SimpleNamespace(log=lambda *args: None)),
 )
 
-from mpf.monitor.SectionLayoutPolicy import (
+from mpf.monitor.layout.SectionLayoutPolicy import (
     PANE_NAMES,
     PANE_SECTION_ORDER,
     SECTION_LAYOUT_KEY,
     layout_for,
     normalise_section_layout,
 )
-from mpf.monitor.UiStateStore import UiStateStore
+from mpf.monitor.layout.UiStateStore import UiStateStore
 
 import pathlib
 import re

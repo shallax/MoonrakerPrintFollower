@@ -7,9 +7,9 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-from mpf.index.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
-from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
-from mpf.plate.TravelStates import layer_states, TRAVEL_NAMES
+from mpf.gcode.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
+from mpf.gcode.PlateProgress import prepare_layer, encode_layer, decode_layer
+from mpf.gcode.TravelStates import layer_states, TRAVEL_NAMES
 from mpf.plate.PreviewColours import DEFAULT_CLASSES, motion_colour
 
 

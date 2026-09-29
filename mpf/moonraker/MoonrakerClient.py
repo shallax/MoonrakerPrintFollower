@@ -174,7 +174,7 @@ class MoonrakerClient(QObject):
             self.force_refresh()
 
     def _start_socket(self) -> None:
-        from .CameraTiming import mark
+        from ..diagnostics.CameraTiming import mark
         mark("T1", "socket start")
         socket = self._session.socket
         generation = self._generation
@@ -252,7 +252,7 @@ class MoonrakerClient(QObject):
         socket.klippyReady.connect(on_klippy_ready)
         socket.klippyLost.connect(on_klippy_lost)
         def on_upgraded():
-            from .CameraTiming import mark
+            from ..diagnostics.CameraTiming import mark
             mark("T2", "socket upgraded")
             if self._socket_started_at is not None:
                 if Logger is not None:

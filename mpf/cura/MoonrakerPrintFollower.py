@@ -3,7 +3,7 @@ from PyQt6.QtCore import QObject, pyqtSlot
 from UM.Extension import Extension
 
 from ..FollowerRuntime import FollowerRuntime
-from .WhatsNewOverlay import WhatsNewOverlay
+from ..whatsnew.WhatsNewOverlay import WhatsNewOverlay
 
 
 class MoonrakerPrintFollower(QObject, Extension):
@@ -64,6 +64,6 @@ class MoonrakerPrintFollower(QObject, Extension):
     def deinitialize(self):
         self._whats_new.close()
         # The leak probe stops with the plugin (no dead runtime, no re-stacked timer).
-        from .LeakProbe import stop_leak_probe
+        from ..diagnostics.LeakProbe import stop_leak_probe
         stop_leak_probe()
         self._runtime.close()

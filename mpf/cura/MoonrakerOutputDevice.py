@@ -1,6 +1,6 @@
 """Cura output-device adapter. Upload policy and file preparation are composed."""
+
 from dataclasses import replace
-import os
 
 from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
@@ -11,8 +11,10 @@ from UM.Logger import Logger
 from UM.Message import Message
 from UM.OutputDevice import OutputDeviceError
 
-from ..filemanager.CuraOutputWriter import CuraOutputWriter
-from ..filemanager.UploadController import UploadController
+from .CuraOutputWriter import CuraOutputWriter
+from ..files.transfers.UploadController import UploadController
+
+from ..resources.PluginPaths import plugin_path
 
 
 class MoonrakerOutputController(PrinterOutputController):
@@ -143,8 +145,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             self._upload.prepared(self._writer.prepare(config, fileName))
             if config.upload_dialog:
                 try:
-                    path = os.path.join(os.path.dirname(os.path.dirname(
-                        os.path.abspath(__file__))), "monitor", "MoonrakerUploadDialog.qml")
+                    path = plugin_path("files", "transfers", "MoonrakerUploadDialog.qml")
                     self._dialog = self._application.createQmlComponent(path, {"manager": self})
                     self._dialog.show()
                     self._upload.discover()

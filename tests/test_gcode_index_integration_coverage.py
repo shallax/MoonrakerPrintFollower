@@ -50,8 +50,8 @@ from array import array
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import mpf.index.GCodeIndex as gcode_index
-from mpf.index.GCodeIndex import (
+import mpf.gcode.GCodeIndex as gcode_index
+from mpf.gcode.GCodeIndex import (
     FLOOR_LOOKBACK,
     LayerMotionIndex,
     PersistentIndexCache,

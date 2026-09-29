@@ -525,7 +525,7 @@ if QT_AVAILABLE:
             # list, dimmed "passed" (the rows never vanish mid-print),
             # and the user can still remove it by hand.
             from unittest.mock import Mock
-            from mpf.printer.PauseController import PauseController
+            from mpf.printing.PauseController import PauseController
             client = Mock()
             controller = PauseController(client)
             controller.bind(("job-key",))
@@ -547,7 +547,7 @@ if QT_AVAILABLE:
             # dropped BEFORE the new path is written — one cache slot,
             # one reset per transition.
             from contextlib import contextmanager
-            from mpf.printer.PreviewMotion import PreviewMotion
+            from mpf.preview.PreviewMotion import PreviewMotion
 
             class FakeView:
                 def __init__(self):
@@ -592,7 +592,7 @@ if QT_AVAILABLE:
             # repro: the stale flag kept the replacement view's
             # nonzero minimum).
             from contextlib import contextmanager
-            from mpf.printer.PreviewMotion import PreviewMotion
+            from mpf.preview.PreviewMotion import PreviewMotion
 
             class FakeView:
                 def __init__(self):

@@ -19,13 +19,14 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
-from ..index.CacheNamespaces import CACHE_DIRECTORY_NAME
-from ..printer.FollowController import FollowMode
-from ..monitor.MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
+from ..gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+from ..preview.FollowController import FollowMode
 from ..moonraker.MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from ..moonraker.MoonrakerSession import RequestCategory
 from ..moonraker.MoonrakerTransport import MoonrakerHttpTransport
-from .PrinterConfig import PrinterConfig, normalise_url
+from ..settings.PrinterConfig import PrinterConfig, normalise_url
+
+from ..settings.MigrationPresentation import migration_banner_text, migration_diagnostics_text
 
 
 class MoonrakerFollowerMachineAction(MachineAction):
@@ -45,7 +46,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._application = application
         self._follower = follower
         self._output_plugin = output_plugin
-        self._qml_url = "cura/MoonrakerFollowerConfiguration.qml"
+        self._qml_url = "settings/MoonrakerFollowerConfiguration.qml"
 
         # Connection tests intentionally use a separate transport instance because
         # the URL/API key may be unsaved. They still use the same HTTP utility,
@@ -117,7 +118,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=migrationChanged)
     def migrationBannerText(self) -> str:
         record = self._migration_record()
-        return _migration_banner_text(record) if record.get("status") == "failed" else ""
+        return migration_banner_text(record) if record.get("status") == "failed" else ""
 
     @pyqtProperty(bool, notify=migrationChanged)
     def migrationBackupAvailable(self) -> bool:
@@ -132,7 +133,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=migrationChanged)
     def migrationDiagnosticsText(self) -> str:
         record = self._migration_record()
-        return _migration_diagnostics_text(record) if record.get("status") == "failed" else ""
+        return migration_diagnostics_text(record) if record.get("status") == "failed" else ""
 
     @pyqtSlot()
     def dismissMigrationBanner(self) -> None:

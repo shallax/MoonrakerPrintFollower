@@ -2,10 +2,10 @@ MoonrakerMonitor 1.0 monitor/MoonrakerMonitor.qml
 MoonrakerMonitorDashboard 1.0 monitor/MoonrakerMonitorDashboard.qml
 MoonrakerMonitorBedMesh 1.0 monitor/MoonrakerMonitorBedMesh.qml
 CollapsibleSectionHeader 1.0 widgets/CollapsibleSectionHeader.qml
-BedMeshMap 1.0 monitor/BedMeshMap.qml
+BedMeshMap 1.0 bedmesh/BedMeshMap.qml
 MonitorPopOver 1.0 widgets/MonitorPopOver.qml
-TemperatureChart 1.0 monitor/TemperatureChart.qml
-FileManager 1.0 filemanager/FileManager.qml
+TemperatureChart 1.0 monitor/temperature/TemperatureChart.qml
+FileManager 1.0 files/browser/FileManager.qml
 PlateCanvas 1.0 plate/PlateCanvas.qml
 PlateExcludeFace 1.0 plate/PlateExcludeFace.qml
 PlateSection 1.0 plate/PlateSection.qml

@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import unittest
 
-from mpf.printer.PreviewFollower import PreviewFollower, preview_override_kind
-from mpf.printer.PreviewSmoothing import advance_display, interpolate_target
-from mpf.printer.PreviewFormatting import (
+from mpf.preview.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.preview.PreviewSmoothing import advance_display, interpolate_target
+from mpf.preview.PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
     pause_summary,
@@ -16,9 +16,9 @@ from mpf.printer.PreviewFormatting import (
     status_icon,
     status_text,
 )
-from mpf.cura.PrinterConfig import PrinterConfig
-from mpf.printer.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
-from mpf.index.RemoteJobService import PrintObservation
+from mpf.settings.PrinterConfig import PrinterConfig
+from mpf.printing.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.printing.RemoteJobService import PrintObservation
 from tests.source_root import SourceRoot
 
 PLUGINS = SourceRoot(pathlib.Path(__file__).resolve().parents[1] / "mpf")

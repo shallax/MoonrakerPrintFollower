@@ -8,8 +8,8 @@ import unittest
 import importlib.util
 from pathlib import Path
 
-from mpf.index.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
-from mpf.plate.PlateProgress import prepare_layer, encode_layer, decode_layer
+from mpf.gcode.GCodeIndex import build_index_from_file, hydrate_layer_from_file, PersistentIndexCache, RemoteFileIdentity
+from mpf.gcode.PlateProgress import prepare_layer, encode_layer, decode_layer
 from mpf.plate.PreviewColours import gradient, motion_colour
 
 

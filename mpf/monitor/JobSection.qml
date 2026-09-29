@@ -3,8 +3,8 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "../resources/theme"
 import "../widgets"
+import "../resources/theme"
 
 // The Print-job section (4.3.0 extraction): the status, progress,
 // layer, ETA and Improve-ETA rows out of the monitor as one
