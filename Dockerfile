@@ -62,7 +62,7 @@ RUN chmod +x /usr/local/bin/check_qml_format \
 CMD ["sh", "-c", "python3 -m compileall -q mpf tools tests \
     && python3 tools/build_shaders.py \
     && python3 tools/check_qml.py mpf \
-    && check_qml_format 'mpf/**/*.qml' \
+    && check_qml_format mpf \
     && ruff check mpf tools tests \
     && shellcheck tools/*.sh \
     && hadolint Dockerfile \
