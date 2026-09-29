@@ -242,7 +242,8 @@ class ResourceReferenceTests(unittest.TestCase):
     def test_stale_upload_dialog_path_is_detected(self):
         source = (PLUGINS.root / "cura/MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
+            # Compare canonical paths on macOS (/var -> /private/var) and Windows (8.3 aliases).
+            root = pathlib.Path(directory).resolve()
             caller = root / "cura/MoonrakerOutputDevice.py"
             caller.parent.mkdir()
             caller.write_text(source, encoding="utf-8")
@@ -259,7 +260,8 @@ class ResourceReferenceTests(unittest.TestCase):
 
     def test_missing_shader_and_unreadable_runtime_path_are_detected(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
+            # Compare canonical paths on macOS (/var -> /private/var) and Windows (8.3 aliases).
+            root = pathlib.Path(directory).resolve()
             caller = root / "Shader.py"
             caller.write_text('path = plugin_path("resources", "shaders", "missing.qsb")\n', encoding="utf-8")
             targets = [target for _, _, target in runtime_paths(root)]
