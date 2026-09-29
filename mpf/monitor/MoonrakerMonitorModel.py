@@ -63,9 +63,9 @@ from .PrintStartOwner import PrintStartOwner
 from .UiStateStore import UiStateStore
 from datetime import datetime
 
-from ..files.FileManager import FileManager
+from ..filemanager.FileManager import FileManager
 from .SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
-from ..files.FileManagerPolicy import (
+from ..filemanager.FileManagerPolicy import (
     delete_candidates,
     is_gcode_name,
     name_collides,

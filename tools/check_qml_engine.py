@@ -132,12 +132,13 @@ qInstallMessageHandler(handler)
 
 failures = []
 _MPF = os.path.join(ROOT, "mpf")
-for name in sorted(str(f.relative_to(_MPF)) for f in Path(_MPF).rglob("*.qml")):
+for _path in sorted(Path(_MPF).rglob("*.qml")):
+    name = str(_path.relative_to(_MPF))
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", name)))
+    component.loadUrl(QUrl.fromLocalFile(str(_path)))
     if component.isError():
         failures.extend(f"{name}: {error.toString()}" for error in component.errors())
-    if name == "WhatsNewOverlay.qml":
+    if _path.name == "WhatsNewOverlay.qml":
         created = component.createWithInitialProperties({"model": whats_new_model})
     else:
         created = component.create()
@@ -157,7 +158,7 @@ failures.extend(f"engine: {text}" for text in diagnostics)
 # (a root-level visible binding never tracked those changes —
 # engine-proven — so the gate lives on an inner row).
 indicator = QQmlComponent(engine)
-indicator.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "LoadProgressIndicator.qml")))
+indicator.loadUrl(QUrl.fromLocalFile(str(next(Path(_MPF).rglob("LoadProgressIndicator.qml")))))
 if indicator.isError():
     failures.extend(f"LoadProgressIndicator: {error.toString()}" for error in indicator.errors())
 else:

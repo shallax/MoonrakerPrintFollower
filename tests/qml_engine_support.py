@@ -382,6 +382,24 @@ def qml_error_report(component, tail=40):
     return "\n".join(lines) or "<no errors reported>"
 
 
+def qml_source(name):
+    """A plugin document by name, wherever the tree files it.
+
+    The QML nests by domain the way the Python does, and the nesting
+    keeps changing. A test that wants a document should name the
+    document: ``mount("CameraPane.qml")`` has to keep working after the
+    file moves into ``monitor/``, or every future move rewrites the
+    suite again — the same rule tests/source_root.py states for
+    modules. Ambiguity raises rather than resolving to a guess.
+    """
+    matches = [path for path in sorted((ROOT / "mpf").rglob(name)) if path.name == name]
+    if not matches:
+        raise FileNotFoundError("no plugin document %r under mpf/" % name)
+    if len(matches) > 1:
+        raise AssertionError("%r is ambiguous under mpf/" % name)
+    return matches[0]
+
+
 def _start_application():
     """The application, engine and capture theme — built once for the
     whole file (the application cannot be replaced mid-process)."""
@@ -483,7 +501,7 @@ class RealEngineTestCase(unittest.TestCase):
 
     def mount(self, filename):
         component = QQmlComponent(self.engine)
-        component.loadUrl(QUrl.fromLocalFile(str(ROOT / "mpf" / filename)))
+        component.loadUrl(QUrl.fromLocalFile(str(qml_source(filename))))
         document = component.create()
         self.assertIsNotNone(document, qml_error_report(component))
         if isinstance(document, QQmlComponent):

@@ -11,8 +11,8 @@ from UM.Logger import Logger
 from UM.Message import Message
 from UM.OutputDevice import OutputDeviceError
 
-from ..files.CuraOutputWriter import CuraOutputWriter
-from ..files.UploadController import UploadController
+from ..filemanager.CuraOutputWriter import CuraOutputWriter
+from ..filemanager.UploadController import UploadController
 
 
 class MoonrakerOutputController(PrinterOutputController):
@@ -143,7 +143,8 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             self._upload.prepared(self._writer.prepare(config, fileName))
             if config.upload_dialog:
                 try:
-                    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "MoonrakerUploadDialog.qml")
+                    path = os.path.join(os.path.dirname(os.path.dirname(
+                        os.path.abspath(__file__))), "monitor", "MoonrakerUploadDialog.qml")
                     self._dialog = self._application.createQmlComponent(path, {"manager": self})
                     self._dialog.show()
                     self._upload.discover()

@@ -382,7 +382,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         # a name the theme does not export fails here, not at offer
         # time. Instantiation is the capture and QML gates' job.
         engine = self._engine(stubs=True)
-        path = os.path.join(str(PLUGINS), "WhatsNewOverlay.qml")
+        path = str(PLUGINS / "WhatsNewOverlay.qml")
         component = QQmlComponent(engine)
         with open(path, encoding="utf-8") as handle:
             component.setData(handle.read().encode("utf-8"), QUrl.fromLocalFile(path))
@@ -411,7 +411,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         # QUrl spells a local file with '/' on every platform; the pinned
         # path is native, so both sides are normalized.
         self.assertEqual(os.path.normcase(os.path.normpath(component.url.toLocalFile())),
-                         os.path.normcase(os.path.normpath(os.path.join(str(PLUGINS), "WhatsNewOverlay.qml"))))
+                         os.path.normcase(os.path.normpath(str(PLUGINS / "WhatsNewOverlay.qml"))))
         self.assertIn("Popup {", component.source.decode("utf-8"))
         # The monitor supplies the content through the initial property.
         self.assertIs(component.properties["model"], model)

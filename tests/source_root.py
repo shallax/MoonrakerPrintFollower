@@ -3,8 +3,8 @@
 The plugin tree nests by domain, and the nesting is expected to keep
 changing. A test that wants a module's source should name the module:
 ``PLUGINS / "UploadController.py"`` has to keep working after the file
-moves from the top level into ``files/``, or every future move rewrites
-the suite again.
+moves from the top level into ``filemanager/``, or every future move
+rewrites the suite again.
 
 ``SourceRoot`` answers that lookup, and refuses an ambiguous or absent
 name rather than quietly returning the wrong file — a suite that

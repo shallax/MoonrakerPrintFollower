@@ -30,13 +30,13 @@ from unittest.mock import MagicMock, patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedSocket, ScriptedTransport, runtime
 
-from mpf.files import CuraOutputWriter as cura_output_writer
+from mpf.filemanager import CuraOutputWriter as cura_output_writer
 from mpf.cura.CuraAdapter import (active_machine_identity, apply_preview_decision,
                                  preview_current_layer, preview_current_path, preview_max_paths,
                                  preview_minimum_layer, preview_minimum_path, reset_preview_layer_data,
                                  set_preview_minimum_path, set_preview_path)
 from mpf.cura.CuraLifecycleBridge import CuraLifecycleBridge
-from mpf.files.CuraOutputWriter import CuraOutputWriter
+from mpf.filemanager.CuraOutputWriter import CuraOutputWriter
 from mpf.index.DownloadStream import DownloadOperation, DownloadTarget
 from mpf.printer.FollowController import FollowController, FollowMode, FollowState, decide_layers
 from mpf.cura.PrinterConfig import PrinterConfig

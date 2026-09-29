@@ -511,7 +511,7 @@ class ReExpansionGuardTests(harness.ReExpansionGuardTests):
 
 class SectionOrderArrivalTests(harness.SectionOrderArrivalTests):
     def test_the_wiring_pins_the_arrival_apply_and_bans_the_timer(self):
-        source = (harness.ROOT / "mpf" / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
+        source = harness.qml_source("MoonrakerMonitor.qml").read_text(encoding="utf-8")
         # The arrival trigger: the model's change handler applies both
         # panes, reading the CURRENT effective layout.
         arrival = source[source.index("onPrinterChanged:"):source.index("onPrinterChanged:") + 2400]

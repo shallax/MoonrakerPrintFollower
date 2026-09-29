@@ -21,6 +21,9 @@ NAMED_ALLOWED = {
     (PLUGINS / "MoonrakerMonitorDashboard.qml", 'color: "white"'),
     (PLUGINS / "VisibilitySelector.qml", 'color: "white"'),
 }
+# The theme document by name: the resources tree has moved once
+# already and the exemption below has to follow it.
+THEME_DIR = PLUGINS.path("MoonrakerTheme.qml").parent
 
 
 class ThemeColourGateTests(unittest.TestCase):
@@ -30,7 +33,7 @@ class ThemeColourGateTests(unittest.TestCase):
         # document itself is the one explicit exemption.
         offenders = []
         for path in sorted(PLUGINS.rglob("*.qml")):
-            if path.parent == PLUGINS / "theme":
+            if path.parent == THEME_DIR:
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if HEX.search(line):
@@ -45,7 +48,7 @@ class ThemeColourGateTests(unittest.TestCase):
         # justified whites exempted explicitly.
         offenders = []
         for path in sorted(PLUGINS.rglob("*.qml")):
-            if path.parent == PLUGINS / "theme":
+            if path.parent == THEME_DIR:
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 match = NAMED.search(line)
@@ -58,7 +61,7 @@ class ThemeColourGateTests(unittest.TestCase):
         # The cross-check (the panel's catch): a hand-pinned list
         # cannot rot — every MoonrakerTheme.* token the documents
         # cite must exist in the theme document.
-        theme = (PLUGINS / "theme" / "MoonrakerTheme.qml").read_text(encoding="utf-8")
+        theme = PLUGINS.path("MoonrakerTheme.qml").read_text(encoding="utf-8")
         declared = set(re.findall(r"readonly property \w+ (\w+)", theme))
         cited = set()
         for path in PLUGINS.rglob("*.qml"):

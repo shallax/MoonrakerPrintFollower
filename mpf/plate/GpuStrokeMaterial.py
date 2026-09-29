@@ -15,7 +15,7 @@ class FollowerStrokeShader(QSGMaterialShader):
     def __init__(self):
         super().__init__()
         for stage, name in ((self.Stage.VertexStage, "stroke.vert.qsb"), (self.Stage.FragmentStage, "stroke.frag.qsb")):
-            self.setShaderFileName(stage, str(Path(__file__).parent / "shaders" / name))
+            self.setShaderFileName(stage, str(Path(__file__).parent.parent / "resources" / "shaders" / name))
 
     def updateUniformData(self, state, new, old):
         m = state.combinedMatrix()

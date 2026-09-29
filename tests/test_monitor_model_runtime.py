@@ -1574,7 +1574,7 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_endstop_and_eta_surfaces(self):
         # The Improve-ETA action is a small download glyph beside the
         # Remaining value, not a full-width button row.
-        improve = harness.JOB_SECTION_QML[harness.JOB_SECTION_QML.index('Qt.resolvedUrl("Download.svg")'):harness.JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
+        improve = harness.JOB_SECTION_QML[harness.JOB_SECTION_QML.index('Qt.resolvedUrl("../resources/svg/Download.svg")'):harness.JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
         self.assertIn("Download.svg", improve)
         self.assertNotIn("Improve ETA — download", harness.MONITOR_QML)
         for token in ("endstopItems", "endstopSummary",

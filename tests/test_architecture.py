@@ -32,7 +32,7 @@ RUNTIME_COMPONENTS = (
 )
 
 # The directories the package nests by. Used only to read an import.
-DOMAINS = frozenset({"plate", "monitor", "printer", "moonraker", "index", "files", "cura"})
+DOMAINS = frozenset({"plate", "monitor", "printer", "moonraker", "index", "filemanager", "cura"})
 
 
 def imported_names(node):

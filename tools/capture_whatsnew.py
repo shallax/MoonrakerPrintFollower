@@ -1,9 +1,9 @@
 """Deterministic offscreen capture of the what's-new overlay.
 
-Renders mpf/WhatsNewOverlay.qml the way production opens it: a
+Renders mpf/cura/WhatsNewOverlay.qml the way production opens it: a
 Popup created on Cura's engine and parented into a plain QQuickWindow
 (the window stands in for Cura's main window), with the REAL content
-from mpf/cura/WhatsNew.py and the real cura-light theme through the
+from mpf.cura.WhatsNew and the real cura-light theme through the
 shared capture overlay.
 
 Usage:  python3 tools/capture_whatsnew.py <output-directory>
@@ -103,7 +103,7 @@ def main():
     window.show()
 
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "WhatsNewOverlay.qml")))
+    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "cura", "WhatsNewOverlay.qml")))
     if component.isError():
         raise RuntimeError("\n".join(e.toString() for e in component.errors()))
 
