@@ -159,6 +159,7 @@ correct package ownership.
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation and bounded snapshot polling; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
+| `TemperaturePresentation.py` | Per-printer chart configuration, history ownership and independently cached mini/full/latest/legend projections | Monitor publication, networking or toolhead state |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |

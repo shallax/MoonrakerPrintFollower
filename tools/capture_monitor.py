@@ -212,7 +212,7 @@ def main():
                 # catches: the axis clock text carried the capture's
                 # own minute, and the curve's extent carried the
                 # pump's duration).
-                model._history.observe(auxiliary, tick[0],
+                model._temperature._history.observe(auxiliary, tick[0],
                                        1700000000.0 + tick[0])
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")

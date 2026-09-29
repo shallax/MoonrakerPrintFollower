@@ -1191,9 +1191,9 @@ class MonitorQtTests(harness.MonitorQtTests):
         # Two samples: a one-sample track never forms a drawable
         # segment (the lone-setpoint rule), and the toggle contract
         # needs a real one.
-        model._history.observe({"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
+        model._temperature._history.observe({"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
                                1000.0, 1000000.0)
-        model._history.observe({"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
+        model._temperature._history.observe({"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
                                1002.5, 1000002.5)
         model._schedule_publish()
         self.qt.events(1)
@@ -1248,7 +1248,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model = self.monitor()
         self.feed_chart(model, {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         writes = []
-        model._apply_chart_config = lambda: writes.append(1)
+        model._temperature._apply_chart_config = lambda: writes.append(1)
         # Re-applying the same value must not rewrite the state file
         # (the legend re-binds every second and used to re-save each
         # time).
@@ -3003,9 +3003,9 @@ Item {
         model = self.monitor()
         model._data._update(auxiliary={"extruder": {"temperature": 200.0}})
         model._data.auxiliaryChanged.emit()
-        revision = model._history.revision
+        revision = model._temperature._history.revision
         model._data._update(core={"print_stats": {"state": "printing"}})
-        self.assertEqual(model._history.revision, revision)
+        self.assertEqual(model._temperature._history.revision, revision)
 
     def test_connect_transition_fires_every_lane_immediately(self):
         # A live report: after the connect the aux lanes
