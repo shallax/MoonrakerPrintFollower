@@ -134,7 +134,7 @@ class WhatsNewOverlay:
             # the source string instead. The base URL keeps the
             # component's own directory on the engine's path for its
             # imports.
-            path = os.path.join(os.path.dirname(__file__), "WhatsNewOverlay.qml")
+            path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "WhatsNewOverlay.qml")
             with open(path, encoding="utf-8") as handle:
                 source = handle.read()
             component = QQmlComponent(engine)

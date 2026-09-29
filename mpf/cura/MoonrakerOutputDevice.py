@@ -143,7 +143,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             self._upload.prepared(self._writer.prepare(config, fileName))
             if config.upload_dialog:
                 try:
-                    path = os.path.join(os.path.dirname(__file__), "MoonrakerUploadDialog.qml")
+                    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "MoonrakerUploadDialog.qml")
                     self._dialog = self._application.createQmlComponent(path, {"manager": self})
                     self._dialog.show()
                     self._upload.discover()
