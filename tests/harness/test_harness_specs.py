@@ -206,7 +206,7 @@ class HarnessSpecTests(unittest.TestCase):
         #   * the MODEL is the single authority on whether it is up,
         #   * every leg that loads a print presses the button.
         cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "CuraIntegration.py")
+            os.path.abspath(__file__)))), "mpf", "cura", "CuraIntegration.py")
         with open(cura, encoding="utf-8") as handle:
             integration = handle.read()
         self.assertNotIn("QMessageBox", integration)
@@ -239,7 +239,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("visible: base.replacePromptVisible", qml)
 
         coordinator = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "PrintCoordinator.py")
+            os.path.abspath(__file__)))), "mpf", "printer", "PrintCoordinator.py")
         with open(coordinator, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('self._presentation.publish({"replacePromptVisible": True})', source)

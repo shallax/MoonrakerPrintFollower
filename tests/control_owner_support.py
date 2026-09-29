@@ -530,15 +530,20 @@ if QT_AVAILABLE:
             self.busy = False
             self.changed.emit()
 
-    _COORDINATOR_CLASS = []
-
     def _coordinator_class():
-        """The coordinator class, imported once — the lazy UM stub above
-        must exist before the module's own import runs."""
-        if not _COORDINATOR_CLASS:
-            from mpf.printer.PrintCoordinator import PrintCoordinator
-            _COORDINATOR_CLASS.append(PrintCoordinator)
-        return _COORDINATOR_CLASS[0]
+        """The coordinator class for the fixture in force, imported here.
+
+        The host doubles are rebuilt for every test and the plugin
+        modules imported against them leave sys.modules with the
+        fixture, so a class held across fixtures runs on against a
+        module the next test cannot reach by name: its own
+        ``from mpf.printer import PrintCoordinator`` then builds a
+        second copy, and a patch on that copy never reaches the class
+        under test. The lazy UM stub above must exist before the
+        module's own import runs.
+        """
+        from mpf.printer.PrintCoordinator import PrintCoordinator
+        return PrintCoordinator
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
@@ -698,4 +703,4 @@ class ConsoleCoverageTests(unittest.TestCase):
 
 # Explicit exports retain dependencies used by extracted cases. Importing this
 # module creates no Qt application; setUpClass owns application startup.
-__all__ = ['ConsoleCoverageTests', 'CoordinatorCoverageTests', 'MAX_HISTORY', 'MAX_LINE', 'MAX_PENDING', 'MAX_TRANSCRIPT', 'ModuleType', 'Observation', 'PrinterConfig', 'QObject', 'QT_AVAILABLE', 'SimpleNamespace', 'ToolheadCoverageTests', '_AlwaysWalk', '_BedMesh', '_Binding', '_COORDINATOR_CLASS', '_Client', '_ConsoleCommands', '_ConsoleData', '_Cura', '_FakePersistence', '_Files', '_Index', '_Pauses', '_Presentation', '_Preview', '_ToolheadCommands', '_ToolheadData', '_coordinator_class', '_normalisation_spy', '_plate_geometry', '_plate_ring', '_ranges', '_status', '_um', '_um_logger', '_view', 'annotations', 'copy', 'json', 'math', 'os', 'patch', 'pyqtSignal', 'replace', 'runtime', 'sys', 'tempfile', 'time', 'unittest']
+__all__ = ['ConsoleCoverageTests', 'CoordinatorCoverageTests', 'MAX_HISTORY', 'MAX_LINE', 'MAX_PENDING', 'MAX_TRANSCRIPT', 'ModuleType', 'Observation', 'PrinterConfig', 'QObject', 'QT_AVAILABLE', 'SimpleNamespace', 'ToolheadCoverageTests', '_AlwaysWalk', '_BedMesh', '_Binding', '_Client', '_ConsoleCommands', '_ConsoleData', '_Cura', '_FakePersistence', '_Files', '_Index', '_Pauses', '_Presentation', '_Preview', '_ToolheadCommands', '_ToolheadData', '_coordinator_class', '_normalisation_spy', '_plate_geometry', '_plate_ring', '_ranges', '_status', '_um', '_um_logger', '_view', 'annotations', 'copy', 'json', 'math', 'os', 'patch', 'pyqtSignal', 'replace', 'runtime', 'sys', 'tempfile', 'time', 'unittest']

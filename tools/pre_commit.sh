@@ -71,7 +71,18 @@ if [ -n "$changed" ]; then
         echo "pre-commit: qmlformat not found — skipping (see INSTRUCTIONS.md)"
     fi
 fi
-check unit-tests env LEGS=host tools/run_tests.sh &
+if python3 -c "import PyQt6" >/dev/null 2>&1; then
+    check unit-tests env LEGS=host tools/run_tests.sh &
+elif [ "$have_docker" = "1" ]; then
+    # No host PyQt6: the module-guarded QML files discover no tests
+    # there, and unittest exits 5 on an empty discovery — a failure the
+    # host cannot tell from a real one. The pinned container has the
+    # runtime the suite expects, and the other legs already fall back
+    # to it for the same reason.
+    check unit-tests tools/docker_dev.sh sh -c "cd /work && LEGS=host tools/run_tests.sh" &
+else
+    echo "pre-commit: PyQt6 not found and no docker — the unit leg cannot run (see INSTRUCTIONS.md)" >&2
+fi
 
 wait
 
