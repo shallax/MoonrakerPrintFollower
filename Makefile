@@ -89,7 +89,7 @@ else
 	./tools/docker_dev.sh sh -c "python3 -m compileall -q mpf tools tests \
 	    && python3 tools/check_qml.py mpf \
 	    && python3 tools/check_qml_engine.py \
-	    && check_qml_format 'mpf/**/*.qml' \
+	    && check_qml_format mpf \
 	    && ruff check mpf tools tests \
 	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
@@ -180,7 +180,7 @@ format:
 ifneq ($(LEG),posix)
 	$(DEV) format
 else
-	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i 'mpf/**/*.qml'
+	./tools/docker_dev.sh sh -c "find mpf -name '*.qml' -type f -print0 | xargs -0 /usr/lib/qt6/bin/qmlformat -i"
 endif
 
 coverage:

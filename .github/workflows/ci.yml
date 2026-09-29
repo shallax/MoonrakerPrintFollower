@@ -203,7 +203,7 @@ jobs:
         run: python tools/check_qml.py mpf
 
       - name: QML formatting
-        run: sh tools/check_qml_format.sh 'mpf/**/*.qml'
+        run: sh tools/check_qml_format.sh mpf
 
       - name: Ruff
         run: ruff check mpf tools tests
