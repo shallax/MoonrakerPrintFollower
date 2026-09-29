@@ -60,9 +60,9 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.assertIsNone(service.view)
 
     def test_index_view_does_not_expose_motion_arrays(self):
-        module = self.qt.load("GCodeIndexService")
-        index = self.qt.load("GCodeIndex").LayerMotionIndex(ranges=[(0, 100)], current_layer_map={1: 0})
-        view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        index = self.qt.load("MotionIndex").LayerMotionIndex(ranges=[(0, 100)], current_layer_map={1: 0})
+        view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         self.assertEqual(view.layer_at(50), 0)
         self.assertIsInstance(view.ranges, tuple)
         with self.assertRaises(TypeError): view.current_layer_map[2] = 1
@@ -151,11 +151,11 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # the view, the prepared tables, the decoded and full caches,
         # the manual anchor and the memos all go, the changed signal
         # fires, and nothing rebuilds on its own.
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         service = self.parts.index
-        index = self.qt.load("GCodeIndex").LayerMotionIndex(
+        index = self.qt.load("MotionIndex").LayerMotionIndex(
             ranges=[(0, 100)], current_layer_map={1: 0})
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         service._job = ("part.gcode", 100, 1)
         service._wanted = service._restored = service._save = True
         service._prepared_table = {"layer": 0}
@@ -173,10 +173,10 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         service._split_tracker.begin(("part.gcode", 100, 1), 4)
         service._split_tracker.floor = 7
         service._split_tracker.refined = 9
-        service._visited = {1, 2}
-        service._visited_upto = 5
-        service._visited_settled = frozenset({1})
-        service._visited_key = ("part.gcode", 100, 1)
+        service._objects._visited = {1, 2}
+        service._objects._visited_upto = 5
+        service._objects._visited_settled = frozenset({1})
+        service._objects._visited_key = ("part.gcode", 100, 1)
         service._hydrate = {4}
         service._hydrating = 4
         service._failed_hydrate = {2}
@@ -205,10 +205,10 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.assertIsNone(service._split_tracker.floor)
         self.assertIsNone(service._split_tracker.refined)
         self.assertIsNone(service._split_tracker.key)
-        self.assertEqual(service._visited, set())
-        self.assertEqual(service._visited_upto, -1)
-        self.assertEqual(service._visited_settled, frozenset())
-        self.assertIsNone(service._visited_key)
+        self.assertEqual(service._objects._visited, set())
+        self.assertEqual(service._objects._visited_upto, -1)
+        self.assertEqual(service._objects._visited_settled, frozenset())
+        self.assertIsNone(service._objects._visited_key)
         self.assertEqual(service._hydrate, set())
         self.assertIsNone(service._hydrating)
         self.assertEqual(service._failed_hydrate, set())
@@ -227,8 +227,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.addCleanup(harness.os.remove, handle.name)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(handle.name, compact=True)
-        module = self.qt.load("GCodeIndexService")
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         files._path = harness.os.path.join(files._root, "job-1", "part.gcode")
         files._want_file = True
 
@@ -236,7 +236,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
             for _ in range(200):
                 self.qt.events(5)
                 if not service._busy and not service._hydrate: break
-        with harness.patch.object(module, "hydrate_layer_from_file", return_value=False) as hydrate:
+        with harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", return_value=False) as hydrate:
             service.request_hydration(0)
             wait_idle()
             # A second poll re-requests the same layer; the latch must stop
@@ -248,7 +248,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.assertEqual(service._busy, "")
         # A new file invalidates the latch: hydration is attempted again.
         files.changed.emit()
-        with harness.patch.object(module, "hydrate_layer_from_file", return_value=True) as hydrate2:
+        with harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", return_value=True) as hydrate2:
             service.request_hydration(0)
             wait_idle()
         self.assertEqual(hydrate2.call_count, 2)
@@ -274,8 +274,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         target = self.plant_download(files, layers)
         gci = self.qt.load("GCodeIndex")
         index = gci.build_index_from_file(target, compact=True)
-        module = self.qt.load("GCodeIndexService")
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         files._path = target
         files._want_file = True
         # The live print stands on layer 1; the follower is frozen on 9.
@@ -296,7 +296,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
             self.assertIn(layer, service._full_cache,
                           "layer %d outside both windows never cached" % layer)
             raw = service._full_cache[layer]
-            self.assertEqual(module._decode_layer(raw)["motions"], 3,
+            self.assertEqual(self.qt.load("IndexTasks")._decode_layer(raw)["motions"], 3,
                              "layer %d's cache entry lost its geometry" % layer)
         # The retention still holds the arrays down to the two windows
         # plus the last hydrated layer's own — the cache, not the
@@ -314,8 +314,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         index = gci.build_index_from_bytes(b"".join(
             b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\n" % layer
             for layer in range(10)))
-        module = self.qt.load("GCodeIndexService")
-        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        self.qt.load("GCodeIndexService")
+        service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         self.assertEqual(service.plate_pass_fraction(), 0.0)
         service._full_cache.update({0: b"x", 1: b"x", 2: b"x", 3: b"x"})
         self.assertAlmostEqual(service.plate_pass_fraction(), 0.4)

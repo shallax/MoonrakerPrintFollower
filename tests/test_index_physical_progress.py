@@ -1,4 +1,5 @@
 """Executable index physical progress contracts."""
+from mpf.gcode.MotionIndex import better_candidate
 from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
@@ -36,7 +37,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
                                 f"Z{height:.4f} E{extrusion}")
             return harness.build_index_from_bytes(("\n".join(rows) + "\n").encode())
 
-        view_type = self.qt.load("GCodeIndexService").IndexView
+        view_type = self.qt.load("IndexView").IndexView
         vase = view_type(self.job, indexed(True))
         flat = view_type(self.job, indexed(False))
         self.assertAlmostEqual(vase.continuous_z_boundary(1), 1.6)
@@ -48,7 +49,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
 
     def test_flat_first_layer_with_start_and_end_z_moves_is_not_spiral(self):
         from array import array
-        from mpf.gcode.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.MotionIndex import LayerMotionIndex
 
         index = LayerMotionIndex(
             ranges=[(0, 200)],
@@ -58,13 +59,13 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             motion_z=[array("f", [.2] * 11 + [.4])],
             layer_start_positions=[(0, 0, 0.0)],
         )
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.assertFalse(view.continuous_z_at(0))
         self.assertIsNone(view.spiral_z_split(0, .05))
 
     def test_flat_to_spiral_transition_uses_exact_next_boundary(self):
         from array import array
-        from mpf.gcode.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.MotionIndex import LayerMotionIndex
 
         # The real vase file's seventh layer stays at 1.4 for half its
         # motions, then winds from 1.4 to 1.6. The first half must retain
@@ -75,7 +76,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             motion_z=[array("f", heights), array("f", [1.602 + n * .018 for n in range(12)])],
             layer_start_positions=[(0, 0, 1.4), (0, 0, 1.6)],
         )
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.assertFalse(view.continuous_z_at(0))
         self.assertIsNone(view.spiral_z_split(0, 1.5))
         self.assertAlmostEqual(view.continuous_z_boundary(1), 1.6)
@@ -91,7 +92,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
 
     def test_spiral_layer_enters_before_halfway_through_its_z_ramp(self):
         from array import array
-        from mpf.gcode.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.MotionIndex import LayerMotionIndex
 
         index = LayerMotionIndex(
             ranges=[(0, 100), (100, 200), (200, 300)],
@@ -110,7 +111,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         # naturally trails the live Z. It must not hold the fill at zero.
         self.assertTrue(index.layer_entry_confirmed(1, 1, (1.5, 0, 1.627), previous_z=1.56,
                                                     continuous_z=True))
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.assertTrue(view.continuous_z_at(1))
         self.assertEqual(view.continuous_z_boundary(2), 1.8)
         index.motion_z[1] = array("f", [1.6] * 11 + [1.8])
@@ -144,7 +145,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         from tests.harness.gcodegen import penguin_playback, playback_sample
         data, rows = penguin_playback()
         index = harness.build_index_from_bytes(data)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
         best = [0.0, 0.0, 0.0]
         for tick in range(1, 81):
             sample = playback_sample(rows, tick / 80)
@@ -155,7 +156,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             self.assertGreater(progress, .9, f"layer {layer + 1} never followed: {best}")
 
     def test_partial_motion_projects_only_onto_the_accepted_unfinished_move(self):
-        from mpf.gcode.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.MotionIndex import LayerMotionIndex
         from array import array
         index = LayerMotionIndex(ranges=[(0, 100)], motion_x=[array("f", [10, 20])],
             motion_y=[array("f", [0, 0])], motion_z=[array("f", [.2, .2])],
@@ -369,10 +370,10 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             1, positions[1], (5.0, 0.0, 0.4))["split"], 0)
 
     def test_float_noise_cannot_choose_a_future_repeated_pass(self):
-        best = harness.gcode_index.better_candidate(1e-12, 5, float("inf"), None, 4)
-        self.assertEqual(harness.gcode_index.better_candidate(0.0, 500, *best, 4)[1], 5)
-        reverse = harness.gcode_index.better_candidate(0.0, 500, float("inf"), None, 4)
-        self.assertEqual(harness.gcode_index.better_candidate(1e-12, 5, *reverse, 4)[1], 5)
+        best = better_candidate(1e-12, 5, float("inf"), None, 4)
+        self.assertEqual(better_candidate(0.0, 500, *best, 4)[1], 5)
+        reverse = better_candidate(0.0, 500, float("inf"), None, 4)
+        self.assertEqual(better_candidate(1e-12, 5, *reverse, 4)[1], 5)
 
     def test_a_late_floor_reaches_back_to_the_nozzle_after_a_wrong_match(self):
         # An off-path hop whose XY lands on a LATER pass's stroke is a
@@ -569,7 +570,7 @@ class RepeatedGeometrySplitTests(harness.RepeatedGeometrySplitTests):
         # whenever the worker gets to them — and it is not a new layer:
         # the fill must not jump, blank or lose the pass it was on.
         index = harness.build_index_from_bytes(harness._repeated_layer_gcode(passes=6))
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.job, index)
         from mpf.gcode.PlateProgress import prepare_layer
         self.service._decoded_lru[0] = prepare_layer(index, 0)

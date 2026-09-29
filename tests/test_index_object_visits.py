@@ -106,7 +106,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
             0, 9, self._rows(("Widget", self.POLYGON), ("Box", self.BOX))),
             frozenset({"Widget", "Box"}))
         self.assertEqual(walked, [], "the all-printed advance drew edges")
-        self.assertEqual(self.service._visited_upto, 9,
+        self.assertEqual(self.service._objects._visited_upto, 9,
                          "the all-printed advance did not advance the cursor")
         # A later object turns the walk back on: it is judged against
         # the consumed range — for its own geometry alone, and the
@@ -196,7 +196,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
         walked = self._counting_walk()
         self.assertEqual(self.service.plate_visited(0, 100000, []), frozenset())
         self.assertEqual(walked, [], "the geometry-free poll walked the dense layer")
-        self.assertEqual(self.service._visited_upto, 100000,
+        self.assertEqual(self.service._objects._visited_upto, 100000,
                          "the cursor did not advance over the consumed range")
         polls, verdict = self._drive(0, 100000, [("Part", self._strip(5000))])
         self.assertEqual(verdict, frozenset({"Part"}),
@@ -217,7 +217,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
                          frozenset({"Near", "Far"}),
                          "the all-printed advance changed a verdict")
         self.assertEqual(walked, [], "the all-printed advance drew the dense layer")
-        self.assertEqual(self.service._visited_upto, self.DENSE_MOTIONS)
+        self.assertEqual(self.service._objects._visited_upto, self.DENSE_MOTIONS)
 
     def test_a_dense_replay_is_spread_over_bounded_polls(self):
         # The cut walk: each poll draws at most one check step, and the
@@ -232,14 +232,14 @@ class PlateVisitedTests(harness.PlateVisitedTests):
             verdict = self.service.plate_visited(0, 5000, self._rows(part))
             counts.append(len(walked))
             edges.extend(edge[0] for edge in walked)
-            if (self.service._visited_upto >= 5000
-                    and self.service._visited_replay_upto >= self.service._visited_upto):
+            if (self.service._objects._visited_upto >= 5000
+                    and self.service._objects._visited_replay_upto >= self.service._objects._visited_upto):
                 break
         else:
             self.fail("the dense walk never settled")
         self.assertEqual(verdict, frozenset({"Part"}))
         self.assertGreater(len(counts), 1, "the walk was not cut")
-        self.assertTrue(all(count <= self.service._VISITED_WALK_STEP for count in counts),
+        self.assertTrue(all(count <= self.service._objects._VISITED_WALK_STEP for count in counts),
                         "a poll drew more than the check step: %s" % counts)
         self.assertTrue(all(edge < 5000 for edge in edges),
                         "the walk drew past its own range")
@@ -263,7 +263,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
             verdict = self.service.plate_visited(0, 5000, self._rows(part))
             counts.append(len(walked))
             edges.extend(edge[0] for edge in walked)
-            if self.service._visited_replay_upto >= self.service._visited_upto:
+            if self.service._objects._visited_replay_upto >= self.service._objects._visited_upto:
                 break
         else:
             self.fail("the late polygon was never judged against the consumed range")
@@ -274,7 +274,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
                       "the replay did not reach the extrusion it had to judge")
         self.assertEqual(edges, sorted(set(edges)),
                          "the frontier replay re-walked a consumed edge")
-        self.assertEqual(self.service._visited_replay_upto, 5000,
+        self.assertEqual(self.service._objects._visited_replay_upto, 5000,
                          "the replay did not finish on the consumed range")
 
     def test_a_changed_polygon_on_a_printed_object_costs_no_walk(self):
@@ -328,16 +328,16 @@ class PlateVisitedTests(harness.PlateVisitedTests):
     def test_a_bounded_walk_agrees_with_an_unbounded_one(self):
         # The cut is a scheduling detail, never a semantic one: the
         # chunked verdict equals the one-pass verdict.
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("ObjectVisitTracker")
         objects = [("Obj%02d" % i, self._strip(700 + 900 * i)) for i in range(4)]
         self._bind_dense(8000)
         self._pin_budget(0.0)
         _polls, bounded = self._drive(0, 8000, objects)
-        other = module.GCodeIndexService(self.files, object())
+        other = self.qt.load("GCodeIndexService").GCodeIndexService(self.files, object())
         self.addCleanup(other.close)
         other.bind(self.job)
-        other._view = module.IndexView(self.job, harness.make_index(layers=1, motions=8000))
-        other._VISITED_WALK_BUDGET_S = 60.0
+        other._view = self.qt.load("IndexView").IndexView(self.job, harness.make_index(layers=1, motions=8000))
+        other._objects._VISITED_WALK_BUDGET_S = 60.0
         unbounded = other.plate_visited(0, 8000, self._rows(*objects))
         self.assertEqual(bounded, unbounded,
                          "the chunked walk read differently from the one-pass walk")
@@ -358,7 +358,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
                              frozenset(),
                              "an anchor flip claimed a verdict it never walked")
             counts.append(len(walked))
-        self.assertTrue(all(0 < count <= self.service._VISITED_WALK_STEP for count in counts),
+        self.assertTrue(all(0 < count <= self.service._objects._VISITED_WALK_STEP for count in counts),
                         "an anchor flip overspent its poll: %s" % counts)
         _polls, verdict = self._drive(0, 5000, [part])
         self.assertEqual(verdict, frozenset({"Part"}),
@@ -373,7 +373,7 @@ class PlateVisitedTests(harness.PlateVisitedTests):
         self._pin_budget(0.0)
         _polls, verdict = self._drive(0, 5000, [("Part", self._strip(1500))])
         self.assertEqual(verdict, frozenset(), "the travel marked the object")
-        self.assertEqual(self.service._visited_upto, 5000,
+        self.assertEqual(self.service._objects._visited_upto, 5000,
                          "the travel run was not walked")
         # The control: an object where the extrusion resumes is marked.
         _polls, after = self._drive(0, 5000, [("Part", self._strip(2500))])
@@ -405,8 +405,8 @@ class PlateVisitedTests(harness.PlateVisitedTests):
             verdict = self.service.plate_visited(0, 100000, self._rows(*objects))
             worst = max(worst, harness.time.monotonic() - start)
             polls += 1
-            if (self.service._visited_upto >= 100000
-                    and self.service._visited_replay_upto >= self.service._visited_upto):
+            if (self.service._objects._visited_upto >= 100000
+                    and self.service._objects._visited_replay_upto >= self.service._objects._visited_upto):
                 break
         else:
             self.fail("the dense walk never settled")

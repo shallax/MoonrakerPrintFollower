@@ -15,7 +15,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertNotIn(5, self.service._hydrate, "live handover re-decoded hot geometry")
         self.assertIs(self.service._decoded_lru.peek(5), payload)
         captured = self._capture_submit()
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         self.service._foreground_pending.set()  # A prior foreground demand settled.
         def hydrate(target, path, layer, should_stop):
             self.assertIs(target, index)
@@ -23,7 +23,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             self.assertFalse(should_stop(), "the array worker cancelled on an old demand")
             target.hydrated_layers.add(layer)
             return True
-        with harness.patch.object(module, "hydrate_layer_from_file", side_effect=hydrate):
+        with harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", side_effect=hydrate):
             self.assertTrue(self.service._drain_arrays_debt(index))
             self.assertEqual(captured[0][1](), ([], {}))
         self.assertIn(5, index.hydrated_layers)
@@ -36,10 +36,10 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             self.service.set_gpu_rendering("popover", True)
             self.service.set_manual_anchor(10)
         captured = self._capture_submit()
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         with harness.patch.object(self.service, "_prepared_open"), \
                 harness.patch.object(self.files, "lease", side_effect=AssertionError("distant cache requested raw file")), \
-                harness.patch.object(module, "hydrate_layer_from_file", side_effect=AssertionError("distant cache hydrated motion arrays")):
+                harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", side_effect=AssertionError("distant cache hydrated motion arrays")):
             self.service._advance()
             self.assertEqual(captured[0][0], "hydrate")
             self.assertIsNone(captured[0][2])
@@ -79,11 +79,11 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         with harness.patch.object(self.service, "_advance"):
             self.service.set_gpu_rendering("popover", True)
         work = []
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         with harness.patch.object(self.service, "_prepared_open"), \
                 harness.patch.object(self.service, "_submit", side_effect=lambda kind, task, *args: work.append((kind, task))), \
                 harness.patch.object(self.files, "lease", side_effect=AssertionError("prefetch requested the file")), \
-                harness.patch.object(module, "hydrate_layer_from_file", side_effect=AssertionError("prefetch hydrated motion arrays")):
+                harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", side_effect=AssertionError("prefetch hydrated motion arrays")):
             self.service._advance()
             self.assertEqual(work[0][0], "hydrate")
             failed, stash = work[0][1]()
@@ -246,8 +246,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # RESOLVED as one it held — the fraction must reach 100%
         # once the pass has given every layer its attempt.
         self._view(3)
-        module = self.qt.load("GCodeIndexService")
-        real_encode = module._encode_layer
+        self.qt.load("GCodeIndexService")
+        real_encode = self.qt.load("IndexTasks")._encode_layer
         calls = []
 
         def refusing(payload):
@@ -258,7 +258,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             if len(calls) == 2:
                 raise ValueError("refused")
             return real_encode(payload)
-        with harness.patch.object(module, "_encode_layer", refusing):
+        with harness.patch.object(self.qt.load("IndexTasks"), "_encode_layer", refusing):
             self.service._prepared_open(self.files.identity)
             self._pump()
         self.assertEqual(self.service.plate_pass_fraction(), 1.0,
@@ -361,7 +361,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
     def test_an_index_with_no_layers_has_no_fraction(self):
         # No layers is no fraction: the pass bar reads empty, never a
         # division by a zero total.
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, harness.make_index(layers=0))
         self.assertIsNone(self.service.plate_pass_fraction())
 
@@ -378,15 +378,15 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.files.lease = lambda: None
         self.files.request_file = lambda: requests.append(set(self.service._decoded_lru))
 
-        module = self.qt.load("GCodeIndexService")
-        real_prepare = module._prepare_layer
+        self.qt.load("GCodeIndexService")
+        real_prepare = self.qt.load("IndexTasks")._prepare_layer
         prepared = []
 
         def recording_prepare(index_arg, layer):
             prepared.append(layer)
             return real_prepare(index_arg, layer)
 
-        with harness.patch.object(module, "_prepare_layer", recording_prepare):
+        with harness.patch.object(self.qt.load("IndexTasks"), "_prepare_layer", recording_prepare):
             self.service.request_hydration(2)
             for _ in range(200):
                 self.qt.events(5)
@@ -448,7 +448,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertTrue(index.compact)
         self.assertEqual(index.hydrated_layers, set(), "the compact scan hydrated a layer")
         self.store.finalise("print-key", [self._payload(layer) for layer in range(3)])
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         self.service._adopt_prepared()
@@ -628,13 +628,13 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # let CURRENT commit before background work resumes.
         index = harness.make_index(layers=40, motions=20000)
         index.followed_layer = 0
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         module = self.qt.load("GCodeIndexService")
         entered = harness.threading.Event()
         interrupted = harness.threading.Event()
-        real_prepare = module._prepare_layer
+        real_prepare = self.qt.load("IndexTasks")._prepare_layer
 
         def controlled_prepare(index_arg, layer, should_yield=None):
             if should_yield is not None and not interrupted.is_set():
@@ -647,7 +647,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                     harness.time.sleep(0.001)
             return real_prepare(index_arg, layer)
 
-        with harness.patch.object(module, "_prepare_layer", controlled_prepare):
+        with harness.patch.object(self.qt.load("IndexTasks"), "_prepare_layer", controlled_prepare):
             self.service._advance()
             self.assertEqual(self.service._busy, "fullprep")
             self.assertTrue(entered.wait(1.0),
@@ -676,7 +676,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # the pass was still walking. The dense index stretches the
         # pass across several batches so the seek lands mid-walk.
         index = harness.make_index(layers=60, motions=20000)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         self.service._advance()
@@ -704,14 +704,14 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # descheduled worker cannot hand back a GIL it is not holding,
         # so a floor on fires per unit of time pins the machine's load
         # rather than the gate.
-        module = self.qt.load("GCodeIndexService")
-        self.assertTrue(hasattr(module, "passive_yield"),
+        self.qt.load("GCodeIndexService")
+        self.assertTrue(hasattr(self.qt.load("IndexTasks"), "passive_yield"),
                         "the background workers have no passive yield at all")
         # 20,000 layers: the deadline is what ends the walk, never an
         # exhausted frontier — a batch that ran out of layers would stop
         # asking the gate before the window closed.
         index = harness.make_index(layers=20000, motions=20)
-        self.service._view = module.IndexView(self.files.job_key, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         captured = []
         original = self.service._submit
@@ -722,7 +722,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                          "the first submission was not the pass")
         asked = []
         yields = []
-        real = module.passive_yield
+        real = self.qt.load("IndexTasks").passive_yield
 
         def recorded(now, last):
             # The gate is asked far more often than it fires — the
@@ -735,7 +735,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             return updated
 
         started = harness.time.monotonic()
-        with harness.patch.object(module, "passive_yield", recorded):
+        with harness.patch.object(self.qt.load("IndexTasks"), "passive_yield", recorded):
             frontier, _encoded, _uncacheable = captured[0][1]()
         elapsed = harness.time.monotonic() - started
         self.assertGreaterEqual(
@@ -763,7 +763,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # back" by that measure — measured, both integration pins passed
         # with only time.sleep(_YIELD_SLEEP_S) deleted. This is the pin
         # that fails on that mutation.
-        module = self.qt.load("GCodeIndex")
+        module = self.qt.load("IndexWork")
         slept = []
         stub = harness.SimpleNamespace(monotonic=lambda: 123.0,
                                sleep=lambda seconds: slept.append(seconds))
@@ -791,9 +791,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # from wall clock pins the runner, not the gate — measured: the
         # same tree passed on one leg and failed another with 19 beats
         # against a minimum of 25.
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         index = harness.make_index(layers=8000, motions=20)
-        self.service._view = module.IndexView(self.files.job_key, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         beats = []
         heartbeat = self.qt.QTimer()
@@ -802,7 +802,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.addCleanup(heartbeat.stop)
         asked = []
         fires = []
-        real = module.passive_yield
+        real = self.qt.load("IndexTasks").passive_yield
 
         def recorded(now, last):
             # The gate is asked far more often than it fires; only the
@@ -815,7 +815,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
 
         heartbeat.start()
         started = harness.time.monotonic()
-        with harness.patch.object(module, "passive_yield", recorded):
+        with harness.patch.object(self.qt.load("IndexTasks"), "passive_yield", recorded):
             self._pump(timeout=30.0)
         elapsed = harness.time.monotonic() - started
         heartbeat.stop()
@@ -848,7 +848,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # can reach it.
         from mpf.gcode.PreparedStore import PreparedCache
         index = harness.make_index(layers=6, motions=40)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         ui_thread = harness.threading.get_ident()
@@ -880,7 +880,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # must stop at the first loop-top check instead of running
         # its whole deadline.
         index = harness.make_index(layers=5, motions=2)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared_open(self.files.identity)
         captured = []
@@ -913,15 +913,15 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self._view(5)
         self.service._prepared_open(self.files.identity)
         self.service._adopt_prepared()
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         prepared_walks = []
-        real_prepare = module._prepare_layer
+        real_prepare = self.qt.load("IndexTasks")._prepare_layer
 
         def spied(index_arg, layer, should_yield=None):
             prepared_walks.append(layer)
             return real_prepare(index_arg, layer, should_yield)
 
-        with harness.patch.object(module, "_prepare_layer", spied):
+        with harness.patch.object(self.qt.load("IndexTasks"), "_prepare_layer", spied):
             self._pump()
         loaded = self.store.load_table("print-key")
         self.assertIsNotNone(loaded)
@@ -1120,7 +1120,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.service._wanted = True
         self.files.identity.uuid = "uB"
         index_b = harness.make_index(layers=5, motions=40)
-        self.service._view = module.IndexView(self.files.job_key, index_b)
+        self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index_b)
         # The rejection is read BEFORE the pass is submitted: the old
         # file on disk holds five resolved layers, and the weak identity
         # may seed neither the table nor the coverage from them. Read
@@ -1155,8 +1155,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         new_payload = self.store.read("print-key", new_table["table"], 0)
         self.assertNotEqual(new_payload, old_payload,
                             "the old geometry survived the rebuild")
-        expected = module._encode_layer(
-            module._prepare_layer(index_b, 0, lambda: False))
+        expected = self.qt.load("IndexTasks")._encode_layer(
+            self.qt.load("IndexTasks")._prepare_layer(index_b, 0, lambda: False))
         self.assertEqual(new_payload, expected,
                          "the published layer is not the new geometry's bytes")
 
@@ -1209,15 +1209,15 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # : the packed tier is pure bytes,
         # the decoded tier holds its slot floor under pressure, and a
         # read refreshes recency.
-        module = self.qt.load("GCodeIndexService")
-        packed = module._ByteBoundedLru(max_bytes=200)
+        self.qt.load("GCodeIndexService")
+        packed = self.qt.load("LayerCache")._ByteBoundedLru(max_bytes=200)
         packed.set(0, b"x" * 100, 100)
         packed.set(1, b"y" * 50, 50)
         self.assertIsNotNone(packed.get(0))  # the read refreshes recency
         packed.set(2, b"z" * 70, 70)  # 220 > 200: the least recent (1) goes
         self.assertIn(0, packed)
         self.assertNotIn(1, packed)
-        decoded = module._ByteBoundedLru(max_bytes=100, min_entries=2)
+        decoded = self.qt.load("LayerCache")._ByteBoundedLru(max_bytes=100, min_entries=2)
         decoded.set("a", object(), 90)
         decoded.set("b", object(), 90)
         self.assertEqual(len(decoded), 2, "the floor evicted under pressure")
@@ -1230,8 +1230,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The inspection surface (keys, popitem) and a bulk update that
         # rewrites an entry: the old size leaves the total before the new
         # one is charged, or the budget drifts from the truth.
-        module = self.qt.load("GCodeIndexService")
-        lru = module._ByteBoundedLru(max_bytes=100000)
+        self.qt.load("GCodeIndexService")
+        lru = self.qt.load("LayerCache")._ByteBoundedLru(max_bytes=100000)
         lru.set(0, b"x" * 100, 100)
         lru.set(1, b"y" * 50, 50)
         self.assertEqual(list(lru.keys()), [0, 1])
@@ -1302,12 +1302,12 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self._view(3)
         self.service._hydrate = {1}
         captured = self._capture_submit()
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
 
         def refusing(payload):
             raise ValueError("refused")
 
-        with harness.patch.object(module, "_encode_layer", refusing):
+        with harness.patch.object(self.qt.load("IndexTasks"), "_encode_layer", refusing):
             self.service._advance()
             self.assertEqual([kind for kind, _, _ in captured], ["hydrate"])
             failed, stash = captured[0][1]()
@@ -1366,12 +1366,12 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.store.finish_write(writer)
         self.service._prepared_open(self.files.identity)
         captured = self._capture_submit()
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         clock = harness._HeldClock()
-        with harness.patch.object(module, "time", clock):
+        with harness.patch.object(self.qt.load("IndexTasks"), "time", clock):
             self.service._advance()
             self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
-            clock.spend(module._FULL_PREP_BATCH_S * 1.25)
+            clock.spend(self.qt.load("IndexTasks")._FULL_PREP_BATCH_S * 1.25)
             frontier, _encoded, _uncacheable = captured[0][1]()
         self.assertEqual(frontier, 3,
                          "a queued pass spent its queue delay as its budget")
@@ -1383,22 +1383,22 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The slice is spent inside the first layer's own preparation,
         # so the cut lands on an exact frontier rather than on whatever
         # the runner's clock did meanwhile.
-        module = self.qt.load("GCodeIndexService")
+        self.qt.load("GCodeIndexService")
         self._compact_view(2000, hydrated=range(2000))
         self.service._prepared_open(self.files.identity)
         captured = self._capture_submit()
         clock = harness._HeldClock()
-        real_prepare = module._prepare_layer
+        real_prepare = self.qt.load("IndexTasks")._prepare_layer
 
         def spend_the_slice(index, layer, should_yield=None):
             payload = real_prepare(index, layer, should_yield)
-            clock.spend(module._FULL_PREP_BATCH_S)
+            clock.spend(self.qt.load("IndexTasks")._FULL_PREP_BATCH_S)
             return payload
 
-        with harness.patch.object(module, "time", clock):
+        with harness.patch.object(self.qt.load("IndexTasks"), "time", clock):
             self.service._advance()
             self.assertEqual([kind for kind, _, _ in captured], ["fullprep"])
-            with harness.patch.object(module, "_prepare_layer", spend_the_slice):
+            with harness.patch.object(self.qt.load("IndexTasks"), "_prepare_layer", spend_the_slice):
                 frontier, _encoded, _uncacheable = captured[0][1]()
         self.assertEqual(frontier, 1, "the walk ran on past a spent budget")
 
@@ -1453,10 +1453,10 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         lines = 60000
         self.assertEqual(len(index.ranges), 1, "the fixture is not one layer")
         self.assertNotIn(0, index.hydrated_layers)
-        module = self.qt.load("GCodeIndex")
+        module = self.qt.load("IndexHydrator")
         asked = []
         fires = []
-        real = module.passive_yield
+        real = self.qt.load("IndexWork").passive_yield
 
         def recorded(now, last):
             asked.append(now)
@@ -1472,7 +1472,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             return len(stops) >= 2          # abandon on the second gate
 
         with harness.patch.object(module, "passive_yield", recorded):
-            with self.assertRaises(module.HydrationYield):
+            with self.assertRaises(self.qt.load("IndexWork").HydrationYield):
                 module.hydrate_layer_from_file(index, path, 0, should_stop=stop)
         # A heartbeat sibling for this walk was withdrawn rather than
         # shipped: on this platform the interpreter's own 5 ms switch
@@ -1532,7 +1532,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         module = self.qt.load("GCodeIndex")
         asked = []
         fires = []
-        real = module.passive_yield
+        real = self.qt.load("IndexWork").passive_yield
 
         def recorded(now, last):
             asked.append(now)

@@ -1,3 +1,4 @@
+from mpf.gcode import IndexWork as index_work_module
 import gzip
 import os
 import pathlib
@@ -12,13 +13,10 @@ from unittest.mock import patch
 
 from mpf.gcode import ArcGeometry
 from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
-from mpf.gcode.GCodeIndex import (
-    LayerMotionIndex,
-    PersistentIndexCache,
-    build_index_from_bytes,
-    build_index_from_file,
-    hydrate_layer_from_file,
-)
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.GCodeIndex import build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures" / "gcode"
 
@@ -850,7 +848,7 @@ G00 X2 Y2 Z0.2
         # marker-dense files cap their layer blocks, and a one-layer
         # motion bomb truncates at the per-layer cap instead of loading
         # the whole print into RAM.
-        from mpf.gcode.GCodeIndex import _MAX_LAYER_BLOCKS, _MAX_MOTIONS_PER_LAYER
+        from mpf.gcode.IndexLimits import _MAX_LAYER_BLOCKS, _MAX_MOTIONS_PER_LAYER
         giant = build_index_from_bytes(b";LAYER:0\nG1 X1\n" + b"G1 X2 " * 300_000)
         self.assertEqual(giant.layer_count(), 1)
         dense = build_index_from_bytes(b"".join(b";LAYER:%d\nG1 X1\n" % layer
@@ -897,7 +895,7 @@ G00 X2 Y2 Z0.2
                 handle.write(data)
             asks = []
             emissions = []
-            real_yield = module.passive_yield
+            real_yield = index_work_module.passive_yield
             real_emit = module._emit_progress
 
             def recorded_yield(now, last):
@@ -1040,7 +1038,7 @@ class SaveHoldTests(unittest.TestCase):
         def gate(path, *args, **kwargs):
             return _GatedStream(real_open(path, *args, **kwargs), at_first_write)
 
-        with patch("mpf.gcode.GCodeIndex.gzip.open", gate):
+        with patch("mpf.gcode.IndexCache.gzip.open", gate):
             worker = threading.Thread(target=cache.save, args=(identity, index))
             worker.start()
             worker.join(10.0)

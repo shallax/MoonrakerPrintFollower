@@ -1,170 +1,33 @@
+"""Index lifecycle and scheduling. One in-flight job; observations and caches have explicit owners."""
 from __future__ import annotations
+
+from .IndexTasks import LayerHydrationTask, LayerPreparationTask, LayerArrayTask, PreparedLayerReader
+
+from .ObjectVisitTracker import ObjectVisitTracker
+from .MotionRefinement import refine_payload
 
 from UM.Logger import Logger
 
 
 from concurrent.futures import ThreadPoolExecutor
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from bisect import bisect_left
-from itertools import pairwise
-import math
-import sys
 import threading
 import time
-from types import MappingProxyType
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .GCodeIndex import (
-    HydrationYield,
-    LayerMotionIndex,
-    better_candidate,
-    candidate_distance_limit_sq,
-    build_index_from_file,
-    hydrate_layer_from_file,
-    passive_yield,
-)
+from .MotionIndex import LayerMotionIndex
+from .GCodeIndex import build_index_from_file
 from .PlateProgress import (
-    PreparationYield,
-    decode_layer as _decode_layer,
-    encode_layer as _encode_layer,
-    motion_edges as _motion_edges,
-    prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
 from .PlateSplitTracker import PlateSplitTracker
 from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
 from ..printing.PrintState import MotionProgress
 
-from ..geometry.Polygons import segment_in_polygon, polygon_bounds
 
+from .IndexView import IndexView
+from .LayerCache import _ByteBoundedLru, _DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES, _FULL_CACHE_MAX_BYTES, _GPU_DECODED_LRU_MAX_BYTES
 
-@dataclass(frozen=True)
-class IndexView:
-    """Read-only query capability, never mutable arrays or worker state."""
-    job_key: tuple
-    _index: LayerMotionIndex
-    _spiral_cache: dict = field(default_factory=dict, repr=False, compare=False)
-
-    @property
-    def ranges(self): return tuple(self._index.ranges)
-    @property
-    def current_layer_map(self): return MappingProxyType(self._index.current_layer_map)
-    @property
-    def elapsed_times(self): return tuple(self._index.layer_elapsed_times)
-    @property
-    def compact(self): return self._index.compact
-    @property
-    def pause_layers(self): return tuple(self._index.pauses)
-
-    def hydrated(self, layer):
-        return not self.compact or layer in self._index.hydrated_layers
-
-    def fraction(self, layer, position, live, minimum=None):
-        """Stateless index query; live renderers consume snapshot motion progress."""
-        return self._index.refined_fraction(layer, position, live, minimum_fraction=minimum)
-
-    def _z_pattern(self, layer):
-        """Return (whole-layer spiral, distributed late rise).
-
-        A transition layer may print a flat region before winding upward.
-        Its own progress still needs XY matching, but its *next* boundary
-        must wait for the nozzle to reach the rising path's final height.
-        """
-        with self._index.cache_lock:
-            if not 0 <= layer < len(self._index.motion_z) \
-                    or layer >= len(self._index.layer_start_positions):
-                return False, False
-            heights = self._index.motion_z[layer]
-            if len(heights) < 8:
-                return False, False
-            start = self._index.layer_start_positions[layer][2]
-            finish = heights[-1]
-            signature = (id(heights), len(heights), start, finish)
-            cached = self._spiral_cache.get(layer)
-            if cached is not None and cached[0] == signature:
-                return cached[1]
-            rise = finish - start
-            quarter = heights[(len(heights) - 1) // 4]
-            halfway_index = (len(heights) - 1) // 2
-            halfway = heights[halfway_index]
-            three_quarters = heights[(len(heights) - 1) * 3 // 4]
-            late_rise = (rise >= 0.02
-                         and three_quarters < finish - rise * 0.05
-                         and three_quarters - halfway >= rise * 0.1
-                         and sum(right > left + 1e-5 for left, right
-                                 in pairwise(heights[halfway_index:])) >= 4
-                         and all(left <= right + 1e-5 for left, right in pairwise(heights)))
-            spiral = (late_rise
-                      and start + max(0.01, rise * 0.1) < three_quarters
-                      and halfway - quarter >= rise * 0.1)
-            pattern = spiral, late_rise
-            self._spiral_cache[layer] = signature, pattern
-            return pattern
-
-    def continuous_z_at(self, layer):
-        """Whether Z climbs through the layer, allowing Z ordered progress."""
-        return self._z_pattern(layer)[0]
-
-    def continuous_z_boundary(self, layer):
-        """The physical start of a layer following a continuous Z rise."""
-        if layer <= 0 or layer >= len(self._index.layer_start_positions) \
-                or not self._z_pattern(layer - 1)[1]:
-            return None
-        return self._index.layer_start_positions[layer][2]
-
-    def spiral_z_split(self, layer, z):
-        """Fallback motion count when XY matching misses a rising spiral."""
-        try:
-            z = float(z)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(z):
-            return None
-        with self._index.cache_lock:
-            if not self.continuous_z_at(layer):
-                return None
-            heights = self._index.motion_z[layer]
-            start = self._index.layer_start_positions[layer][2]
-            if z < start - 0.001 or z > heights[-1] + 0.001:
-                return None
-            # Equal-Z edges may still be in flight; only strictly lower
-            # endpoints are certainly complete.
-            return bisect_left(heights, z)
-
-    def layer_at(self, position):
-        low, high = 0, len(self._index.ranges) - 1
-        while low <= high:
-            middle = (low + high) // 2
-            start, end = self._index.ranges[middle]
-            if position < start: high = middle - 1
-            elif position >= end: low = middle + 1
-            else: return middle
-        return min(low - 1, len(self._index.ranges) - 1) if low else None
-
-
-# The RAM tier budgets , from the
-# measured real print (467 MB, 327 layers): packed layers run
-# 13.5 KB - 927 KB (p50 610 KB), decoded layers 0.2 MB - 11.3 MB
-# (p50 8.0 MB). 64 MB holds ~105 median packed layers — a third of
-# the print — and 128 MB holds six dense decoded windows with room.
-_FULL_CACHE_MAX_BYTES = 64 * 1024 * 1024
-_DECODED_LRU_MAX_BYTES = 128 * 1024 * 1024
-_GPU_DECODED_LRU_MAX_BYTES = 256 * 1024 * 1024
-# The decoded LRU's guaranteed floor: ONE entry — the just-committed
-# layer before its render wrappers pin it. The live and frozen
-# windows' protection moved to the pins (the wrappers charge their
-# payloads against the budget explicitly), so the old 4-entry floor's
-# RAM no longer outvotes the byte bound.
-_DECODED_LRU_MIN_ENTRIES = 1
-# Decoded PPL1 expands into nested Python lists. The measured branch
-# ratios peak around the mid-teens, so charge a conservative 16x packed
-# size instead of recursively walking every decoded point a second time.
-# This is accounting, not serialization: an overestimate is safe and
-# keeps the byte budget bounded without adding O(points) seek latency.
-_DECODED_PACKED_EXPANSION = 16
-_DECODED_CHARGE_FLOOR = 4 * 1024
 # The progress signal's floor. A pass runs a 120 ms batch back to back,
 # so every batch boundary is a tick; the listeners only redraw a bar,
 # and 4 Hz keeps it moving without making the signal the new cost.
@@ -172,170 +35,6 @@ _PROGRESS_MIN_INTERVAL = 0.25
 # The background pass's slice, and the worker's OWN bound: it is
 # measured from the execution, never from the submission, so a pool
 # queue delay is not the batch's to spend.
-_FULL_PREP_BATCH_S = 0.12
-
-
-def _decoded_charge(raw=None, payload=None) -> int:
-    if isinstance(raw, (bytes, bytearray, memoryview)):
-        return max(_DECODED_CHARGE_FLOOR, len(raw) * _DECODED_PACKED_EXPANSION)
-    # Encoding failures are exceptional, but display must still work.
-    # Charge from the already-known motion count without another geometry
-    # traversal. 256 bytes/motion is deliberately conservative.
-    motions = 0
-    if isinstance(payload, dict):
-        try:
-            motions = max(0, int(payload.get("motions") or 0))
-        except (TypeError, ValueError):
-            motions = 0
-    return max(_DECODED_CHARGE_FLOOR, motions * 256)
-
-
-def _deep_size(obj) -> int:
-    """A decoded payload's true byte footprint (its points dominate;
-    a shallow getsizeof misses them)."""
-    total = 0
-    seen = set()
-
-    def walk(o):
-        nonlocal total
-        oid = id(o)
-        if oid in seen:
-            return
-        seen.add(oid)
-        try:
-            total += sys.getsizeof(o)
-        except TypeError:
-            return
-        if isinstance(o, dict):
-            for key, value in o.items():
-                walk(key)
-                walk(value)
-        elif isinstance(o, (list, tuple)):
-            for value in o:
-                walk(value)
-
-    walk(obj)
-    return total
-
-
-class _ByteBoundedLru:
-    """A byte-budgeted access-order cache with a minimum-entry floor.
-    ``peek`` reads without touching the order (the worker's path —
-    only the owner mutates); ``set`` and ``get`` refresh recency.
-    Sizes are explicit (the worker measures); a bare ``__setitem__``
-    (the tests' fixture path) falls back to the deep walk."""
-
-    def __init__(self, max_bytes: int, min_entries: int = 0) -> None:
-        self._data = OrderedDict()
-        self._sizes = {}
-        self._bytes = 0
-        self.max_bytes = max_bytes
-        self.min_entries = min_entries
-        # The demanded windows (the live print's ±1 and the detached
-        # follower's frozen ±1): eviction skips these layers — the
-        # owner updates the set as the anchors move.
-        self.protected = set()
-
-    def __len__(self):
-        return len(self._data)
-
-    def __contains__(self, key):
-        return key in self._data
-
-    def __getitem__(self, key):
-        value = self._data[key]
-        self._data.move_to_end(key)
-        return value
-
-    def __setitem__(self, key, value):
-        self.set(key, value, _deep_size(value))
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def keys(self):
-        return self._data.keys()
-
-    def peek(self, key):
-        return self._data.get(key)
-
-    def get(self, key):
-        value = self._data.get(key)
-        if value is not None:
-            self._data.move_to_end(key)
-        return value
-
-    def touch(self, key) -> None:
-        if key in self._data:
-            self._data.move_to_end(key)
-
-    def set(self, key, value, size: int) -> None:
-        if key in self._data:
-            self._bytes -= self._sizes.get(key, 0)
-        self._data[key] = value
-        self._sizes[key] = size
-        self._bytes += size
-        self._trim()
-
-    def update(self, items) -> None:
-        for key, value in items.items():
-            if key in self._data:
-                self._bytes -= self._sizes.get(key, 0)
-            self._data[key] = value
-            self._sizes[key] = len(value) if isinstance(value, (bytes, bytearray)) else _deep_size(value)
-            self._bytes += self._sizes[key]
-        self._trim()
-
-    def pop(self, key, default=None):
-        value = self._data.pop(key, default)
-        if value is not default:
-            self._bytes -= self._sizes.pop(key, 0)
-        return value
-
-    def popitem(self, last=True):
-        key, value = self._data.popitem(last)
-        self._bytes -= self._sizes.pop(key, 0)
-        return key, value
-
-    def move_to_end(self, key) -> None:
-        self._data.move_to_end(key)
-
-    def clear(self) -> None:
-        self._data.clear()
-        self._sizes.clear()
-        self._bytes = 0
-
-    def total_bytes(self) -> int:
-        return self._bytes
-
-    def _trim(self) -> None:
-        # The floor (the decoded LRU's): below it, never evict — the
-        # active windows must survive a single pathological layer.
-        # The protected windows (the live ±1 and the frozen ±1) are
-        # skipped: evicting a demanded layer flips the memoised
-        # bundle's decoded bit and the demand re-decodes it — a
-        # per-poll eviction/redemption thrash (the detached 114%
-        # burn).
-        while self._bytes > self.max_bytes and len(self._data) > self.min_entries:
-            victim = None
-            for key in self._data:
-                if key not in self.protected:
-                    victim = key
-                    break
-            if victim is None:
-                break
-            del self._data[victim]
-            self._bytes -= self._sizes.pop(victim, 0)
-
-
-def _polygon_identity(polygon):
-    """A polygon's CONTENT identity: its pairs, as a hashable tuple.
-
-    The live walk cannot key on object identity — the coordinator
-    rebuilds the rows (and their polygon lists) from the status on
-    every poll, so equal geometry arrives as a fresh object. Only the
-    content says whether the geometry actually changed."""
-    return tuple((point[0], point[1]) for point in polygon)
 
 
 class GCodeIndexService(QObject):
@@ -360,11 +59,11 @@ class GCodeIndexService(QObject):
     # work. The check's granularity is what a single poll may overshoot
     # by, and it is also the floor below which a range is walked
     # outright rather than cut: below it the walk is unmeasurable.
-    _VISITED_WALK_BUDGET_S = 0.008
-    _VISITED_WALK_STEP = 64
+
+
     # The replay's guaranteed share of the budget: a late polygon may
     # never starve the live delta, whose verdict is the poll's own.
-    _VISITED_REPLAY_SHARE = 0.5
+
 
     def __init__(self, files, cache, parent=None, prepared=None):
         super().__init__(parent)
@@ -480,15 +179,14 @@ class GCodeIndexService(QObject):
         # the next poll's refinement may not fall below — and the last
         # one a LIVE position established, None while there is none.
         self._split_tracker = PlateSplitTracker()
-        self._visited_key = None
-        self._visited = set()
-        self._visited_upto = -1
-        self._visited_settled = frozenset()
+        self._objects = ObjectVisitTracker()
+
+
         # The replay frontier: the motion index up to which every
         # polygon in `_visited_pending` has been judged, and the
         # geometry waiting on it (the bounded replay's resume point).
-        self._visited_replay_upto = -1
-        self._visited_pending = frozenset()
+
+
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -612,12 +310,9 @@ class GCodeIndexService(QObject):
         self._manual_anchor = None
         self._manual_split = None
         self._split_tracker.reset()
-        self._visited_key = None
-        self._visited = set()
-        self._visited_upto = -1
-        self._visited_settled = frozenset()
-        self._visited_replay_upto = -1
-        self._visited_pending = frozenset()
+        self._objects.reset()
+
+
         self._publish_change()
 
     def request_hydration(self, layer):
@@ -982,7 +677,7 @@ class GCodeIndexService(QObject):
                     if not len(offsets):
                         # Compact layers search the prepared payload's geometry;
                         # they use the same boundary policy as hydrated layers.
-                        refined = self._refine_over_payload(
+                        refined = refine_payload(
                             memo[1].get("current"), coarse, live_position,
                             floor, ahead=tracker.payload_ahead_window,
                             stall=tracker.stall_polls) if memo is not None else None
@@ -1007,379 +702,10 @@ class GCodeIndexService(QObject):
                 tracker.last_confirmed_z = float(live_position[2])
             return result
 
-    @staticmethod
-    def _refine_over_payload(payload, coarse, live_position, floor=None,
-                             ahead=4096, stall=0, max_distance_mm=3.0):
-        """The live-position refinement over a PAYLOAD's geometry (the
-        unhydrated compact layer): the index's own bounded search, run
-        against the decoded polylines the plate already draws. Each
-        segment contributes only its points inside the window —
-        bisected, never walked. The seed is the monotonic FLOOR, not
-        the byte-fraction coarse: the fraction drifts anywhere
-        relative to the true motion, and a window centred on it
-        missed the toolhead's geometry for stretches, stalling the
-        fill until the drift slid the window over it (the live
-        staircase report). The nozzle sits within a bounded advance
-        of the floor; only the floor-less first poll of a layer
-        searches wide around the coarse. Returns the RAW refined
-        motion count, or None when the geometry or the match is
-        absent (the caller holds the floor) — a below-floor result
-        is the caller's overshoot-lock evidence, never silently
-        clamped here."""
-        if payload is None or live_position is None or len(live_position) < 3:
-            return None
-        try:
-            px, py = float(live_position[0]), float(live_position[1])
-        except (TypeError, ValueError):
-            return None
-        # The progressive windows: floor-seeded windows first (the
-        # ahead side capped by the observed per-poll advance — a
-        # fresh floor means the nozzle is a bounded step past it),
-        # a wider one when the floor held through a travel, and the
-        # coarse-centred wide pair for the layer's first observation.
-        # CONSECUTIVE STALLED polls expand the ahead exponentially:
-        # a clamped match (the earlier pass of repeated geometry)
-        # never advanced the floor, so the window must reach the
-        # true pass the nozzle has since moved on to — without the
-        # expansion the stall self-perpetuates (the live report: a
-        # 28 s stick that only a lucky tie-break ever ended).
-        if floor is not None:
-            ahead = max(512, int(ahead))
-            # The window ladder pairs the AHEAD and the BEHIND sides:
-            # the ahead side chases the nozzle past a held floor, and
-            # the behind side is the overshoot-lock's EVIDENCE — the
-            # truth behind an overshot floor sits hundreds of motions
-            # back, and a 64-motion behind reach never found it, so
-            # the correction never fired (the live report: huge
-            # overshoots that never corrected).
-            multipliers = [(1, 1), (8, 1)]
-            if stall >= 2:
-                multipliers += [(64, 16), (512, 128)]
-            motions = int(payload.get("motions") or 0)
-            windows = []
-            for ahead_mult, behind_mult in multipliers:
-                hi = int(floor) + ahead * ahead_mult
-                if motions > 0:
-                    hi = min(hi, motions)
-                windows.append((max(0, int(floor) - 64 * behind_mult), hi))
-        else:
-            windows = ((max(0, int(coarse) - 8192), int(coarse) + 8192),)
-        best_distance_sq = float("inf")
-        best_motion = None
-        left = bottom = -float("inf")
-        right = top = float("inf")
-
-        def offer(distance_sq, motion):
-            # The shared candidate comparison (the hydrated search runs
-            # the same one): strict distance wins, a near tie resolves
-            # by the floor instead of by scan order — the pass the
-            # nozzle is on, never a future pass that merely lies inside
-            # the window and never an earlier one that stalls the fill.
-            nonlocal best_distance_sq, best_motion, left, right, bottom, top
-            previous_distance_sq = best_distance_sq
-            best_distance_sq, best_motion = better_candidate(
-                distance_sq, motion, best_distance_sq, best_motion, floor)
-            if best_distance_sq != previous_distance_sq:
-                # Include the shared comparator's near-tie tolerance.
-                # A candidate outside this box can neither improve nor
-                # tie the current best; rejected candidates have no effect
-                # on subsequent comparisons, even near the distance limit.
-                reach = math.sqrt(candidate_distance_limit_sq(best_distance_sq))
-                left, right = px - reach, px + reach
-                bottom, top = py - reach, py + reach
-
-        for lo, hi in windows:
-            for segments in (payload.get("classes") or {}).values():
-                for points in segments:
-                    if len(points) == 1 and lo <= points[0][2] <= hi:
-                        # A travel split can leave an isolated vertex
-                        # — the motion's only geometry. Skipping it
-                        # made the TRUE motion invisible and the
-                        # search picked a future pass instead (the
-                        # replay's +403 overshoot on the live file).
-                        vertex = points[0]
-                        offer((px - vertex[0]) ** 2 + (py - vertex[1]) ** 2,
-                              float(vertex[2]))
-                    if len(points) < 2:
-                        continue
-                    # Polylines carry increasing motion numbers. Most runs
-                    # are outside this bounded window; reject them before
-                    # bisecting every run on every status publication.
-                    if points[-1][2] < lo or points[1][2] > hi:
-                        continue
-                    # The manual bisect: the bundled engine's bisect
-                    # key compares the unkeyed needle, and an int <
-                    # list TypeError is what that yields (the live
-                    # traceback).
-                    low2, high2 = 0, len(points)
-                    while low2 < high2:
-                        mid2 = (low2 + high2) // 2
-                        if points[mid2][2] < lo:
-                            low2 = mid2 + 1
-                        else:
-                            high2 = mid2
-                    begin = low2
-                    if begin >= len(points):
-                        continue
-                    begin = max(0, begin - 1)
-                    for i in range(begin + 1, len(points)):
-                        if points[i][2] > hi:
-                            break
-                        ax, ay = points[i - 1][0], points[i - 1][1]
-                        bx, by = points[i][0], points[i][1]
-                        # An edge whose bounding box misses the best match's
-                        # neighbourhood cannot improve or tie that match.
-                        # Keep the motion window and tie policy unchanged,
-                        # but avoid projecting distant geometry on the UI thread.
-                        if (ax < left and bx < left) or (ax > right and bx > right) \
-                                or (ay < bottom and by < bottom) or (ay > top and by > top):
-                            continue
-                        dx, dy = bx - ax, by - ay
-                        length_sq = dx * dx + dy * dy
-                        if length_sq <= 1e-12:
-                            t = 1.0
-                            qx, qy = bx, by
-                        else:
-                            t = ((px - ax) * dx + (py - ay) * dy) / length_sq
-                            t = max(0.0, min(1.0, t))
-                            qx, qy = ax + t * dx, ay + t * dy
-                        distance_sq = (px - qx) ** 2 + (py - qy) ** 2
-                        # The edge i spans points[i-1] -> points[i]
-                        # and belongs to motion points[i][2]: the
-                        # completed count is that motion, fraction t.
-                        offer(distance_sq, points[i][2] - 1 + t)
-            # A match below the floor is NOT satisfying: it clamps,
-            # stalls the fill, and — critically — must not stop the
-            # wider windows from running. Only a match AT OR ABOVE
-            # the floor (or any match on a floor-less first search)
-            # settles the window.
-            if best_motion is not None \
-                    and math.sqrt(best_distance_sq) <= max(0.1, max_distance_mm) \
-                    and (floor is None or best_motion >= floor):
-                break
-        if best_motion is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
-            return None
-        # The travel gate: the nozzle on a travel is off the
-        # extrusion geometry — the nearest extrusion line can be a
-        # FUTURE pass close enough to win the match, jumping the
-        # split ahead and locking the overshoot into the floor (the
-        # replay's +403 on the live file: the truth's own geometry
-        # was the travel, absent from the classes). Nothing prints
-        # during a travel: the honest answer is to HOLD, and the
-        # nearest travel segment at ~0 is the tell.
-        best_travel_sq = None
-        for lo, hi in windows:
-            for points in (payload.get("travels") or []):
-                if len(points) < 2:
-                    continue
-                if points[-1][2] < lo or points[1][2] > hi:
-                    continue
-                low2, high2 = 0, len(points)
-                while low2 < high2:
-                    mid2 = (low2 + high2) // 2
-                    if points[mid2][2] < lo:
-                        low2 = mid2 + 1
-                    else:
-                        high2 = mid2
-                begin = low2
-                if begin >= len(points):
-                    continue
-                begin = max(0, begin - 1)
-                for i in range(begin + 1, len(points)):
-                    if points[i][2] > hi:
-                        break
-                    ax, ay = points[i - 1][0], points[i - 1][1]
-                    bx, by = points[i][0], points[i][1]
-                    if (ax < left and bx < left) or (ax > right and bx > right) \
-                            or (ay < bottom and by < bottom) or (ay > top and by > top):
-                        continue
-                    dx, dy = bx - ax, by - ay
-                    length_sq = dx * dx + dy * dy
-                    if length_sq <= 1e-12:
-                        t = 1.0
-                        qx, qy = bx, by
-                    else:
-                        t = ((px - ax) * dx + (py - ay) * dy) / length_sq
-                        t = max(0.0, min(1.0, t))
-                        qx, qy = ax + t * dx, ay + t * dy
-                    distance_sq = (px - qx) ** 2 + (py - qy) ** 2
-                    if best_travel_sq is None or distance_sq < best_travel_sq:
-                        best_travel_sq = distance_sq
-        # The old 0.2 mm margin admitted future skin only 0.024 mm from
-        # a live travel on the fine-layer print. Float-coordinate noise
-        # needs a small tolerance, not half a normal extrusion width.
-        if best_travel_sq is not None and math.sqrt(best_travel_sq) + 0.01 \
-                < math.sqrt(best_distance_sq):
-            return None
-        # The RAW result: the caller clamps for publication — a
-        # below-floor match is the overshoot-lock's evidence, and the
-        # caller's correction path needs it unclamped (the live
-        # replay: the refinement found the truth at distance 0 below
-        # an overshot floor every poll, and the clamp stalled the
-        # fill until the nozzle caught up).
-        return int(best_motion)
 
     def plate_visited(self, anchor, split, rows):
-        """The per-layer printed objects: which polygons the executed
-        EXTRUSION edges have touched. Built HERE (the raw arrays never
-        cross the boundary) and READ BACK FROM THE LAYER'S START — an
-        attach part-way through a layer still marks everything the
-        toolhead already printed (the live ruling: the DEFINE order
-        is not the print order on every machine, so the visits are
-        the truth). The walk advances only the new edges per poll.
+        return self._objects.observe(self._view, anchor, split, rows)
 
-        The edges are the G-code's own motion edges, and only the
-        extruding ones count: a travel that merely crosses or ends
-        inside a polygon deposits nothing there, while an extrusion
-        edge that clips a corner does — the visit follows the material,
-        never the motion endpoint.
-
-        A bare cursor is not a valid cache here: EXCLUDE_OBJECT_DEFINE
-        executes mid-layer on some machines, so a polygon can arrive
-        after the extrusion it covers has already been walked. The
-        cursor is therefore kept beside `_visited_settled` — the
-        (name, content) geometry the consumed range has been judged
-        against. A poll whose geometry still matches it walks only its
-        new edges; a poll carrying a new or changed polygon replays the
-        consumed range, for those polygons alone. The visited set
-        only ever grows, so a backwards split keeps its verdicts.
-
-        That replay is BOUNDED: one poll spends at most
-        `_VISITED_WALK_BUDGET_S` on the walk and keeps its water mark,
-        so a dense layer fills in over consecutive polls instead of
-        stalling the Qt thread. Nothing is provisional — every poll's
-        verdict is the truth about the edges walked so far, and the
-        cursor advances by exactly the work done, so repeated polls
-        never duplicate a scan. A cut replay resumes from its own
-        frontier: the geometry it is judging is remembered, and the
-        whole consumed range is still replayed once for it (the
-        late-DEFINE ruling), merely spread over polls."""
-        if self._view is None or split is None or anchor is None:
-            return frozenset()
-        index = self._view._index
-        entries = []
-        for row in rows:
-            polygon = row.get("polygon")
-            if not polygon or not row.get("name"):
-                continue
-            entries.append((row["name"], _polygon_identity(polygon),
-                            polygon, polygon_bounds(polygon)))
-        with index.cache_lock:
-            if self._visited_key != (anchor,):
-                self._visited_key = (anchor,)
-                self._visited = set()
-                self._visited_upto = 0
-                self._visited_settled = frozenset()
-                self._visited_replay_upto = 0
-                self._visited_pending = frozenset()
-            if not entries:
-                # No usable polygon: nothing can be marked, so the
-                # consumed range is never walked. The cursor still
-                # advances — a polygon arriving later replays from the
-                # layer's start regardless of it.
-                if split > self._visited_upto:
-                    self._visited_upto = split
-                    self._visited_replay_upto = split
-                self._visited_settled = frozenset()
-                self._visited_pending = frozenset()
-                return frozenset(self._visited)
-            settled = self._visited_settled
-            current = []
-            pending = []
-            for entry in entries:
-                name, key = entry[0], entry[1]
-                current.append((name, entry[2], entry[3]))
-                if (name, key) not in settled:
-                    pending.append(entry)
-            # An object already marked printed cannot change its
-            # verdict, so only the unmarked geometry is worth judging.
-            outstanding = [entry for entry in pending if entry[0] not in self._visited]
-            geometry = frozenset((name, key) for name, key, _p, _b in outstanding)
-            if not geometry <= self._visited_pending:
-                # Geometry this frontier has never judged: the replay
-                # restarts at the layer's start.
-                self._visited_replay_upto = 0
-            self._visited_pending = geometry
-            now = time.monotonic()
-            deadline = now + self._VISITED_WALK_BUDGET_S
-            if geometry and self._visited_upto > self._visited_replay_upto:
-                # The late/changed geometry, against everything already
-                # consumed. Replaying only these polygons is enough: the
-                # settled ones have already seen every consumed edge.
-                # The replay yields to the live delta after its own
-                # share, so a long replay never starves the poll's own
-                # verdict.
-                self._visited_replay_upto = self._visit_edges(
-                    index, anchor, self._visited_replay_upto, self._visited_upto,
-                    [(name, polygon, bounds) for name, _k, polygon, bounds in outstanding],
-                    min(deadline,
-                        now + self._VISITED_WALK_BUDGET_S * self._VISITED_REPLAY_SHARE))
-            if split > self._visited_upto:
-                reached = self._visit_edges(index, anchor, self._visited_upto, split,
-                                            current, deadline)
-                if self._visited_replay_upto >= self._visited_upto:
-                    # The delta walked its range with EVERY polygon, so
-                    # a caught-up frontier rides it.
-                    self._visited_replay_upto = reached
-                self._visited_upto = reached
-            if not geometry or self._visited_replay_upto >= self._visited_upto:
-                # Every unmarked polygon has been judged against the
-                # whole consumed range (or there is none): nothing is
-                # left on the frontier.
-                self._visited_replay_upto = self._visited_upto
-                self._visited_pending = frozenset()
-            self._visited_settled = frozenset(
-                (name, key) for name, key, _p, _b in entries
-                if (name, key) not in self._visited_pending)
-            return frozenset(self._visited)
-
-    def _visit_edges(self, index, anchor, first, stop, polygons, deadline=None):
-        """Mark every polygon an extruding edge in [first, stop) meets.
-
-        Returns the water mark the walk reached: *stop* when the whole
-        range was covered, a lower motion when the deadline cut it
-        short. The caller keeps its cursor there — the seek reconstructs
-        the state, so a cut walk resumes exactly where it stopped.
-
-        A polygon already in the visited set is dropped up front, and
-        the list is re-dropped whenever a hit marks another: an object's
-        verdict only ever grows, so retesting it buys nothing but
-        vertices. An empty list walks no edge at all — the rest of the
-        range has nothing left to decide.
-        """
-        remaining = [entry for entry in polygons if entry[0] not in self._visited]
-        if not remaining:
-            return stop
-        check = None if deadline is None else first + self._VISITED_WALK_STEP
-        for motion, x0, y0, x1, y1, _feature, extruding in _motion_edges(index, anchor, first):
-            if motion >= stop:
-                return stop
-            if check is not None and motion >= check:
-                # The deadline may cut the walk, never before the first
-                # step: every poll advances the cursor.
-                if time.monotonic() >= deadline:
-                    return motion
-                check = motion + self._VISITED_WALK_STEP
-            if not extruding:
-                continue
-            left, right = (x0, x1) if x0 <= x1 else (x1, x0)
-            bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
-            marked = False
-            for name, polygon, bounds in remaining:
-                # The bounds reject most pairs for the price of four
-                # comparisons, before any vertex is touched. Every
-                # hull the edge meets records the visit — overlapping
-                # object hulls all touch the toolhead's path, and the
-                # verdict must never depend on the define order.
-                if right < bounds[0] or left > bounds[2] or top < bounds[1] or bottom > bounds[3]:
-                    continue
-                if segment_in_polygon(x0, y0, x1, y1, polygon):
-                    self._visited.add(name)
-                    marked = True
-            if marked:
-                remaining = [entry for entry in remaining
-                             if entry[0] not in self._visited]
-        return stop
 
     def plate_progress(self, anchor, file_position=None, live_position=None, paused=False, extruding=None, *, motion=...):
         """The composed payload (the tests and the one-shot consumers):
@@ -1710,12 +1036,9 @@ class GCodeIndexService(QObject):
         self._manual_anchor_calls = 0
         self._manual_anchor_changes = 0
         self._split_tracker.reset()
-        self._visited_key = None
-        self._visited = set()
-        self._visited_upto = -1
-        self._visited_settled = frozenset()
-        self._visited_replay_upto = -1
-        self._visited_pending = frozenset()
+        self._objects.reset()
+
+
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrate_arrays.clear()
@@ -1818,177 +1141,7 @@ class GCodeIndexService(QObject):
                  or (manual is not None and manual - 1 <= n <= manual + 1))}
         prefetch = self._gpu_prefetch_layer(index) if not self._hydrate and not self._hydrate_arrays else None
         if self._hydrate or prefetch is not None:
-            # CURRENT is a foreground presentation demand. Detached/manual
-            # current outranks live current; live current outranks every
-            # ghost. Each current rides its own task and can publish as
-            # soon as it is ready.
-            window = sorted(self._hydrate)
-            submitted = []
-            for anchor in (manual, index.followed_layer):
-                if anchor is not None and anchor in self._hydrate:
-                    submitted = [anchor]
-                    self._hydrate.remove(anchor)
-                    break
-            if not submitted:
-                submitted = window
-                self._hydrate.clear()
-            background = prefetch is not None
-            if background:
-                submitted = [prefetch]
-                self._foreground_pending.clear()
-
-            # Only a layer with NO presentation source at all needs the
-            # G-code lease for the DECODE — packed RAM, prepared disk
-            # and already-hydrated index arrays are each sufficient on
-            # their own. A compact layer served from packed or prepared
-            # data therefore decodes NOW, and the file it still wants is
-            # the MOTION ARRAYS' alone: without them the split rides the
-            # byte-fraction estimate (the live stall/jump saga). That
-            # want is the debt recorded below when no lease is in hand,
-            # never a bar on the decode.
-            needs_raw = any(self._presentation_source(layer) == "raw"
-                            for layer in submitted)
-            arrays_owed = {layer for layer in submitted
-                           if not background and index.compact and layer not in index.hydrated_layers
-                           and (not self._gpu_consumers or index.followed_layer is None
-                                or abs(layer - index.followed_layer) <= 1)}
-            lease = self._files.lease() if (needs_raw or arrays_owed) else None
-            if needs_raw and lease is None:
-                self._hydrate.update(submitted)
-                self._files.request_file()
-                return
-            if arrays_owed and lease is None:
-                self._hydrate_arrays.update(arrays_owed)
-                self._files.request_file()
-            self._hydrating = set(submitted)
-            cache = self._full_cache
-            # The demanded encodings persist from the WORKER (below), so
-            # the writer they enter is opened and captured HERE, on the
-            # owner thread — a lazy open inside the worker would mutate
-            # owner state across the thread boundary, and could resurrect
-            # a writer a cutover had already retired. The capture plus
-            # the writer's own retirement flag is the structural
-            # ownership the pass already runs on. Opening it here also
-            # keeps the self-heal a failed publish relies on: the next
-            # demand opens a fresh writer and the finish retries it.
-            if self._prepared is not None and self._prepared_identity is not None \
-                    and self._prepared_writer is None and not self._prepared_saved:
-                self._prepared_writer = self._prepared.open_for_write(
-                    self._prepared_identity, len(self._view.ranges))
-            prepared_writer = self._prepared_writer
-            prepared_store = self._prepared
-            decode_cancel = self._cancel
-            gpu_decode = bool(self._gpu_consumers)
-            # No anchor argument: the worker reads the index's
-            # followed_layer at COMPLETION, so a worker that finishes
-            # after an anchor change applies the latest policy.
-            # The WHOLE demanded window rides ONE task: a seek's three
-            # layers arrive together instead of through three chained
-            # round-trips. The worker owns its own ENCODINGS — they enter
-            # the writer before it returns, which is the only way a
-            # demanded layer's per-layer write+flush lands off the UI
-            # thread — and returns (failed, stash) for the rest, which
-            # the generation-checked _finish commits: a stale old-job
-            # worker's appends reach a retired writer and are refused. A
-            # cached layer decodes straight off the compact store instead
-            # of re-reading the file and re-walking the geometry.
-            def hydrate_and_prepare():
-                failed = []
-                stash = {}
-                yield_at = time.monotonic()
-
-                def decode_checkpoint():
-                    nonlocal yield_at
-                    if decode_cancel.is_set() or (background and self._foreground_pending.is_set()):
-                        raise PreparationYield()
-                    yield_at = passive_yield(time.monotonic(), yield_at)
-
-                for layer in submitted:
-                    yield_at = passive_yield(time.monotonic(), yield_at)
-                    raw = cache.peek(layer)  # peek: the worker never reorders
-                    ram_hit = raw is not None
-                    if raw is None:
-                        raw = self._prepared_read(layer)
-                    if raw is not None:
-                        try:
-                            decoded = _decode_layer(raw, checkpoint=decode_checkpoint,
-                                                    immutable=gpu_decode)
-                            stash[layer] = (raw, decoded, ram_hit,
-                                            _decoded_charge(raw=raw, payload=decoded))
-                        except PreparationYield:
-                            break  # A newly selected layer outranks speculative decode.
-                        except Exception:
-                            failed.append(layer)
-                            continue
-                        # The prepared/packed source serves the
-                        # PRESENTATION but never fills the index's
-                        # motion arrays — hydrating them here is what
-                        # gives the split its exact parser-anchored
-                        # mapping. A decode that succeeded stays
-                        # served even if the array hydration fails;
-                        # the failure only degrades the split and is
-                        # named, never latched.
-                        if layer in arrays_owed:
-                            if lease is None:
-                                Logger.log(
-                                    "w",
-                                    "layer %d arrays stay unhydrated: "
-                                    "no gcode lease — the split rides "
-                                    "the estimate", layer)
-                            elif not hydrate_layer_from_file(index, lease.path, layer):
-                                Logger.log(
-                                    "w",
-                                    "layer %d arrays failed to hydrate "
-                                    "from %s — the split rides the "
-                                    "estimate", layer, lease.path)
-                        continue
-                    # Hydrated arrays are a complete source in their own
-                    # right. Non-compact indexes always take this branch;
-                    # compact indexes take it while the retention window
-                    # still holds the layer. No raw lease is needed.
-                    hydrated = not index.compact or layer in index.hydrated_layers
-                    if not hydrated:
-                        if lease is None:
-                            failed.append(layer)
-                            continue
-                        result = hydrate_layer_from_file(index, lease.path, layer)
-                        if not result:
-                            failed.append(layer)
-                            continue
-                    try:
-                        payload = (_prepare_layer(index, layer, should_yield=self._foreground_pending.is_set)
-                                   if background else _prepare_layer(index, layer))
-                    except PreparationYield:
-                        break
-                    if payload is None:
-                        # A hydrate that succeeded but prepared nothing
-                        # is not a hydrate failure: it must not latch
-                        # (the latch exists to stop whole-file re-reads,
-                        # and a re-ask here costs neither).
-                        continue
-                    encoded = None
-                    # An encode failure must never cost the layer its
-                    # display — the decoded payload still lands in the
-                    # hot cache (the compact store just misses it).
-                    try:
-                        encoded = _encode_layer(payload)
-                    except Exception:
-                        pass
-                    if encoded is not None and prepared_writer is not None:
-                        # Every successfully encoded layer enters the
-                        # incremental writer exactly once, whichever path
-                        # produced it: the demand's layer must never
-                        # publish as a (0, 0) hole merely because the
-                        # pass found it cached. The write rides the
-                        # worker — the commit's copy of it was on the UI
-                        # thread — and the store refuses a second append
-                        # to a filled slot, so beating the pass to the
-                        # layer cannot double-write it.
-                        prepared_store.append(prepared_writer, layer, encoded)
-                    stash[layer] = (encoded, payload, False,
-                                    _decoded_charge(raw=encoded, payload=payload))
-                return failed, stash
-            self._submit("hydrate", hydrate_and_prepare, lease)
+            self._start_hydration(index, manual, prefetch)
         elif self._drain_arrays_debt(index):
             return
         elif self._save and strong \
@@ -2030,176 +1183,179 @@ class GCodeIndexService(QObject):
                 self._submit("prepared_save", prepared_save)
         elif self._view is not None and not self._pass_error \
                 and self._full_next < len(self._view.ranges):
-            # The full prepared cache's background pass (the live
-            # request): one bounded batch per worker task, so the
-            # demanded hydrates above always cut in. Every layer ends
-            # up in the compact store. The frontier is the worker's
-            # LOCAL state and its return value — never a live
-            # mutation of the service  — and the freshly hydrated layer's own window
-            # survives the retention until its prepare and encode
-            # complete .
-            index = self._view._index
-            cache = self._full_cache
-            start = self._full_next
-            # A non-compact index (or a compact suffix already retained/
-            # prepared) can rebuild the prepared store without touching
-            # the raw G-code. Ask for a lease only when some remaining
-            # layer genuinely has no other source.
-            needs_raw = False
-            if index.compact:
-                for layer in range(start, len(index.ranges)):
-                    if layer in index.hydrated_layers or cache.peek(layer) is not None \
-                            or self._prepared_served(layer):
-                        continue
-                    if self._prepared_table is not None and layer < len(self._prepared_table) \
-                            and self._prepared_table[layer][0] == STATE_UNCACHEABLE:
-                        continue
-                    needs_raw = True
-                    break
-            lease = self._files.lease() if needs_raw else None
-            if needs_raw and lease is None:
-                self._files.request_file()
-                return
-            # The batch's slice: short enough that a demanded hydrate
-            # never queues long behind the pass, and the loop YIELDS
-            # the moment a demand appears (the worker checks the
-            # demand set between layers — the owner fills it).
-            prepared_read = self._prepared_read
-            prepared_table = self._prepared_table
-            # The incremental writer opens whenever a pass must walk
-            # (a fresh file, or a repair):
-            # the fast path's `_prepared_saved` latch has already
-            # stood it down for a complete clean table.
-            if self._prepared is not None and self._prepared_identity is not None \
-                    and self._prepared_writer is None \
-                    and not self._prepared_saved:
-                self._prepared_writer = self._prepared.open_for_write(
-                    self._prepared_identity, len(self._view.ranges))
-            prepared_writer = self._prepared_writer
-            # The store the writer belongs to is captured NOW: a
-            # machine rebind swaps self._prepared while the batch
-            # runs, and the appends must reach the store that opened
-            # the writer (which refuses them after the cutover's
-            # retirement anyway — the capture makes the ownership
-            # structural, never a thread-timing accident).
-            prepared_store = self._prepared
+            self._start_full_preparation(index)
 
-            # No demand exists on the owner thread at this instant.
-            # Any later request flips the event and cooperatively
-            # interrupts the in-progress dense layer too, not merely
-            # the gap between layers.
+
+    def _start_hydration(self, index, manual, prefetch):
+        # CURRENT is a foreground presentation demand. Detached/manual
+        # current outranks live current; live current outranks every
+        # ghost. Each current rides its own task and can publish as
+        # soon as it is ready.
+        window = sorted(self._hydrate)
+        submitted = []
+        for anchor in (manual, index.followed_layer):
+            if anchor is not None and anchor in self._hydrate:
+                submitted = [anchor]
+                self._hydrate.remove(anchor)
+                break
+        if not submitted:
+            submitted = window
+            self._hydrate.clear()
+        background = prefetch is not None
+        if background:
+            submitted = [prefetch]
             self._foreground_pending.clear()
 
-            def full_prep_batch():
-                encoded = {}
-                uncacheable = set()
-                frontier = start
-                # The budget starts HERE, where the batch actually runs.
-                # Measured from the submission it also spent the pool's
-                # queue delay, and a busy machine expired the slice
-                # before the first layer — the walk then reported the
-                # frontier it was handed, never the one it reached.
-                deadline = time.monotonic() + _FULL_PREP_BATCH_S
-                yield_at = time.monotonic()
+        # Only a layer with NO presentation source at all needs the
+        # G-code lease for the DECODE — packed RAM, prepared disk
+        # and already-hydrated index arrays are each sufficient on
+        # their own. A compact layer served from packed or prepared
+        # data therefore decodes NOW, and the file it still wants is
+        # the MOTION ARRAYS' alone: without them the split rides the
+        # byte-fraction estimate (the live stall/jump saga). That
+        # want is the debt recorded below when no lease is in hand,
+        # never a bar on the decode.
+        needs_raw = any(self._presentation_source(layer) == "raw"
+                        for layer in submitted)
+        arrays_owed = {layer for layer in submitted
+                       if not background and index.compact and layer not in index.hydrated_layers
+                       and (not self._gpu_consumers or index.followed_layer is None
+                            or abs(layer - index.followed_layer) <= 1)}
+        lease = self._files.lease() if (needs_raw or arrays_owed) else None
+        if needs_raw and lease is None:
+            self._hydrate.update(submitted)
+            self._files.request_file()
+            return
+        if arrays_owed and lease is None:
+            self._hydrate_arrays.update(arrays_owed)
+            self._files.request_file()
+        self._hydrating = set(submitted)
+        cache = self._full_cache
+        # The demanded encodings persist from the WORKER (below), so
+        # the writer they enter is opened and captured HERE, on the
+        # owner thread — a lazy open inside the worker would mutate
+        # owner state across the thread boundary, and could resurrect
+        # a writer a cutover had already retired. The capture plus
+        # the writer's own retirement flag is the structural
+        # ownership the pass already runs on. Opening it here also
+        # keeps the self-heal a failed publish relies on: the next
+        # demand opens a fresh writer and the finish retries it.
+        if self._prepared is not None and self._prepared_identity is not None \
+                and self._prepared_writer is None and not self._prepared_saved:
+            self._prepared_writer = self._prepared.open_for_write(
+                self._prepared_identity, len(self._view.ranges))
+        prepared_writer = self._prepared_writer
+        prepared_store = self._prepared
+        decode_cancel = self._cancel
+        gpu_decode = bool(self._gpu_consumers)
+        # No anchor argument: the worker reads the index's
+        # followed_layer at COMPLETION, so a worker that finishes
+        # after an anchor change applies the latest policy.
+        # The WHOLE demanded window rides ONE task: a seek's three
+        # layers arrive together instead of through three chained
+        # round-trips. The worker owns its own ENCODINGS — they enter
+        # the writer before it returns, which is the only way a
+        # demanded layer's per-layer write+flush lands off the UI
+        # thread — and returns (failed, stash) for the rest, which
+        # the generation-checked _finish commits: a stale old-job
+        # worker's appends reach a retired writer and are refused. A
+        # cached layer decodes straight off the compact store instead
+        # of re-reading the file and re-walking the geometry.
+        task = LayerHydrationTask(
+            index=index,
+            layers=tuple(submitted),
+            packed=cache,
+            lease=lease,
+            arrays_owed=frozenset(arrays_owed),
+            background=background,
+            cancelled=decode_cancel,
+            immutable=gpu_decode,
+            store=prepared_store,
+            writer=prepared_writer,
+            foreground=self._foreground_pending,
+            read_prepared=PreparedLayerReader(
+                self._prepared, self._prepared_identity, self._prepared_table).read,
+        )
+        self._submit("hydrate", task.run, lease)
 
-                def demand_pending():
-                    # The demand event is read FIRST and alone decides
-                    # the interrupt: a foreground request must never
-                    # wait out the interval. Only an idle check pays
-                    # the passive hand-back, so the interior of a dense
-                    # layer keeps the UI thread fed as well.
-                    nonlocal yield_at
-                    if self._foreground_pending.is_set():
-                        return True
-                    yield_at = passive_yield(time.monotonic(), yield_at)
-                    return False
 
-                while time.monotonic() < deadline:
-                    # The loop-top yield reads the thread-safe EVENT,
-                    # never the mutable hydrate set across the thread
-                    # boundary — the owner records every demand in
-                    # both, but only the event is the worker's signal.
-                    if demand_pending():
-                        break  # a demand arrived — it outranks the pass
-                    layer = frontier
-                    if layer >= len(index.ranges):
-                        break
-                    if layer in self._failed_hydrate:
-                        # The latch applies to the pass too: a refused
-                        # layer must not retry every poll (the same
-                        # whole-file re-read the demand path avoids).
-                        # Its slot stays EMPTY: the next session
-                        # retries it.
-                        frontier = layer + 1
-                        continue
-                    packed = cache.peek(layer)
-                    if packed is not None:
-                        # A demand prepared this layer before the pass
-                        # reached it: the writer receives the bytes
-                        # HERE, so the pass's finish can never publish
-                        # a hole for a layer that WAS prepared.
-                        if prepared_writer is not None:
-                            prepared_store.append(prepared_writer, layer, packed)
-                        frontier = layer + 1
-                        continue
-                    if prepared_table is not None and layer < len(prepared_table) \
-                            and prepared_table[layer][0] == STATE_UNCACHEABLE:
-                        # The repair copy: an UNCACHEABLE layer rides
-                        # into the new writer WITHOUT a re-walk — the
-                        # codec's refusal stands across sessions.
-                        uncacheable.add(layer)
-                        frontier = layer + 1
-                        continue
-                    raw = prepared_read(layer) if prepared_table else None
-                    if raw is not None:
-                        # The repair copy :
-                        # the old file's valid layer rides into the
-                        # new writer — the rebuild never loses an
-                        # entry while regenerating another. The bytes
-                        # are read anyway for the table walk; the
-                        # copy costs a write, not a decode.
-                        if prepared_writer is not None:
-                            prepared_store.append(prepared_writer, layer, raw)
-                        frontier = layer + 1
-                        continue
-                    if index.compact and layer not in index.hydrated_layers:
-                        try:
-                            if lease is None or not hydrate_layer_from_file(
-                                    index, lease.path, layer,
-                                    should_stop=self._foreground_pending.is_set):
-                                break
-                        except HydrationYield:
-                            # A demand outranks the pass, and the layer
-                            # is abandoned BEFORE its arrays publish, so
-                            # nothing is latched and the frontier does
-                            # not advance: the foreground runs first and
-                            # this layer is reached again.
-                            break
-                    try:
-                        payload = _prepare_layer(index, layer, demand_pending)
-                    except PreparationYield:
-                        # Do not advance the frontier: this layer was
-                        # deliberately abandoned before memo/publication.
-                        # _finish() will immediately run the foreground
-                        # demand, then resume this layer later.
-                        break
-                    if payload is not None:
-                        try:
-                            packed = _encode_layer(payload)
-                            encoded[layer] = packed
-                            if prepared_writer is not None:
-                                prepared_store.append(prepared_writer, layer, packed)
-                        except Exception:
-                            # A layer the codec cannot hold simply
-                            # stays out of the cache; the pass must
-                            # walk on, never stall. The explicit
-                            # UNCACHEABLE state records the refusal —
-                            # the next session never retries it.
-                            uncacheable.add(layer)
-                    frontier = layer + 1
-                return frontier, encoded, uncacheable
+    def _start_full_preparation(self, index):
+        # The full prepared cache's background pass (the live
+        # request): one bounded batch per worker task, so the
+        # demanded hydrates above always cut in. Every layer ends
+        # up in the compact store. The frontier is the worker's
+        # LOCAL state and its return value — never a live
+        # mutation of the service  — and the freshly hydrated layer's own window
+        # survives the retention until its prepare and encode
+        # complete .
+        index = self._view._index
+        cache = self._full_cache
+        start = self._full_next
+        # A non-compact index (or a compact suffix already retained/
+        # prepared) can rebuild the prepared store without touching
+        # the raw G-code. Ask for a lease only when some remaining
+        # layer genuinely has no other source.
+        needs_raw = False
+        if index.compact:
+            for layer in range(start, len(index.ranges)):
+                if layer in index.hydrated_layers or cache.peek(layer) is not None \
+                        or self._prepared_served(layer):
+                    continue
+                if self._prepared_table is not None and layer < len(self._prepared_table) \
+                        and self._prepared_table[layer][0] == STATE_UNCACHEABLE:
+                    continue
+                needs_raw = True
+                break
+        lease = self._files.lease() if needs_raw else None
+        if needs_raw and lease is None:
+            self._files.request_file()
+            return
+        # The batch's slice: short enough that a demanded hydrate
+        # never queues long behind the pass, and the loop YIELDS
+        # the moment a demand appears (the worker checks the
+        # demand set between layers — the owner fills it).
+        prepared_read = PreparedLayerReader(
+            self._prepared, self._prepared_identity, self._prepared_table).read
+        prepared_table = self._prepared_table
+        # The incremental writer opens whenever a pass must walk
+        # (a fresh file, or a repair):
+        # the fast path's `_prepared_saved` latch has already
+        # stood it down for a complete clean table.
+        if self._prepared is not None and self._prepared_identity is not None \
+                and self._prepared_writer is None \
+                and not self._prepared_saved:
+            self._prepared_writer = self._prepared.open_for_write(
+                self._prepared_identity, len(self._view.ranges))
+        prepared_writer = self._prepared_writer
+        # The store the writer belongs to is captured NOW: a
+        # machine rebind swaps self._prepared while the batch
+        # runs, and the appends must reach the store that opened
+        # the writer (which refuses them after the cutover's
+        # retirement anyway — the capture makes the ownership
+        # structural, never a thread-timing accident).
+        prepared_store = self._prepared
 
-            self._submit("fullprep", full_prep_batch, lease)
+        # No demand exists on the owner thread at this instant.
+        # Any later request flips the event and cooperatively
+        # interrupts the in-progress dense layer too, not merely
+        # the gap between layers.
+        self._foreground_pending.clear()
+
+        task = LayerPreparationTask(
+            index=index,
+            packed=cache,
+            start=start,
+            lease=lease,
+            read_prepared=prepared_read,
+            table=prepared_table,
+            store=prepared_store,
+            writer=prepared_writer,
+            foreground=self._foreground_pending,
+            failed_layers=frozenset(self._failed_hydrate),
+        )
+
+        self._submit("fullprep", task.run, lease)
+
 
     def _drain_arrays_debt(self, index) -> bool:
         """The motion-array debt's one drain attempt: hydrate the
@@ -2231,25 +1387,14 @@ class GCodeIndexService(QObject):
         # failure list can never name a layer this worker never saw.
         self._hydrating = set(owed)
 
-        def hydrate_arrays():
-            yield_at = time.monotonic()
-            for layer in owed:
-                yield_at = passive_yield(time.monotonic(), yield_at)
-                if not index.compact or layer in index.hydrated_layers:
-                    continue
-                try:
-                    if not hydrate_layer_from_file(
-                            index, lease.path, layer,
-                            should_stop=self._foreground_pending.is_set):
-                        Logger.log("w", "layer %d arrays failed to hydrate from %s — "
-                                   "the split rides the estimate", layer, lease.path)
-                except HydrationYield:
-                    # The debt is a background errand: a demand stops it
-                    # here rather than latching the rest as failures.
-                    break
-            return [], {}
+        task = LayerArrayTask(
+            index=index,
+            layers=tuple(owed),
+            lease=lease,
+            foreground=self._foreground_pending,
+        )
 
-        self._submit("hydrate", hydrate_arrays, lease)
+        self._submit("hydrate", task.run, lease)
         return True
 
     def _save_index(self, cache_store, generation, identity, index):

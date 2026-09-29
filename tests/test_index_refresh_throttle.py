@@ -167,7 +167,7 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         # installed directly so every batch walked is a batch emitted.
         index._restored = True
         index._wanted = True
-        index._view = self.fixture.load("GCodeIndexService").IndexView(
+        index._view = self.fixture.load("IndexView").IndexView(
             parts.files.job_key, make_index(layers=self.LAYERS, motions=self.MOTIONS))
 
     def test_a_pass_refreshes_once_per_transition_and_never_per_batch(self):

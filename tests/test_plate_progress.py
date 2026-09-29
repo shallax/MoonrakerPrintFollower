@@ -18,7 +18,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from mpf.gcode.GCodeIndex import LayerMotionIndex, build_index_from_bytes
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.GCodeIndex import build_index_from_bytes
 from mpf.gcode.PlateProgress import (
     MAX_TRAVEL_POINTS,
     _PREPARED_LIMIT,

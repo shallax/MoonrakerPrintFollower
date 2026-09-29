@@ -350,7 +350,7 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         service.bind(("old.gcode", 100, 1))
         old = service.generation
         service.bind(("new.gcode", 100, 2))
-        index = self.qt.load("GCodeIndex").LayerMotionIndex(ranges=[(0, 100)])
+        index = self.qt.load("MotionIndex").LayerMotionIndex(ranges=[(0, 100)])
         service._finish(old, "build", index, None, None)
         self.assertIsNone(service.view)
         self.assertGreater(service.generation, old)

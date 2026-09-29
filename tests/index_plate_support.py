@@ -49,19 +49,13 @@ from itertools import pairwise
 from unittest.mock import patch
 
 import mpf.gcode.GCodeIndex as gcode_index
-from mpf.gcode.GCodeIndex import (
-    LayerMotionIndex,
-    PersistentIndexCache,
-    _CACHE_MAGIC,
-    _CACHE_VERSION,
-    _MAX_TYPE_NAMES,
-    _MAX_TYPE_RUNS_PER_LAYER,
-    _TYPE_NONE,
-    _TYPE_OTHER,
-    build_index_from_bytes,
-    build_index_from_file,
-    hydrate_layer_from_file,
-)
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION
+from mpf.gcode.IndexLimits import _MAX_TYPE_NAMES, _MAX_TYPE_RUNS_PER_LAYER
+from mpf.gcode.FeatureTracker import _TYPE_NONE, _TYPE_OTHER
+from mpf.gcode.GCodeIndex import build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
 from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
 from tests.test_plate_progress import make_index
@@ -271,7 +265,7 @@ class HydrationWindowTests(unittest.TestCase):
         index.motion_offsets = [array("Q") for _ in range(layers)]
         index.compact = True
         index.hydrated_layers = set(hydrated)
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._view = view
         return index
 
@@ -306,7 +300,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
 
     def _bind(self, layers=1, motions=20):
         index = make_index(layers=layers, motions=motions)
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._view = view
         # The worker's commit: the decoded payloads land in the hot
         # presentation cache — the bundle reads no other store (the
@@ -331,7 +325,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         motion arrays are not (they land with the file hydration), so the
         boundary rides the payload geometry the plate already draws."""
         index = make_index(layers=1, motions=motions)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._decoded_lru[0] = self._row_payload(motions)
         index.layer_motion_counts = [motions if count is None else count]
         index.motion_offsets = [array("Q")]
@@ -349,7 +343,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         empty until the hydration lands, so the payload's geometry is the
         only toolpath the split can be measured against."""
         index = make_index(layers=1, motions=motions)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._decoded_lru[0] = {
             "classes": {"INFILL": list(runs)}, "travels": [],
             "travelStarts": [], "travelEnds": [], "motions": motions}
@@ -396,7 +390,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
         presentation cache, the plate's own anchor past the live layer's
         digest, exactly as the worker commits them."""
         index = build_index_from_bytes(_repeated_layer_gcode(passes, drift))
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
         from mpf.gcode.PlateProgress import prepare_layer
         self.service._decoded_lru[0] = prepare_layer(index, 0)
         self.index = index
@@ -432,7 +426,7 @@ class PayloadRefinementTests(unittest.TestCase):
         self.service_class = self.qt.load("GCodeIndexService").GCodeIndexService
 
     def _refine(self, payload, coarse, live, **kwargs):
-        return self.service_class._refine_over_payload(payload, coarse, live, **kwargs)
+        return self.qt.load("MotionRefinement").refine_payload(payload, coarse, live, **kwargs)
 
     @staticmethod
     def _row(y, first, count, x0=0.0, step=1.0):
@@ -501,7 +495,7 @@ class PlateVisitedTests(unittest.TestCase):
         index = build_index_from_file(path, compact=hydration is not None)
         for layer in hydration or ():
             self.assertTrue(hydrate_layer_from_file(index, path, layer, keep_anchor=layer))
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._view = view
         return index
 
@@ -518,7 +512,7 @@ class PlateVisitedTests(unittest.TestCase):
         which is the cost the cache exists to avoid. The recording lags
         one edge: a walk breaks ON the edge past its stop, so the lag
         counts what it drew without the seek's look-ahead."""
-        module = self.qt.load("GCodeIndexService")
+        module = self.qt.load("ObjectVisitTracker")
         real = module._motion_edges
         walked = []
 
@@ -550,7 +544,7 @@ class PlateVisitedTests(unittest.TestCase):
 
     def _bind_dense(self, motions, layers=1):
         index = make_index(layers=layers, motions=motions)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
         return index
 
     @staticmethod
@@ -562,9 +556,9 @@ class PlateVisitedTests(unittest.TestCase):
         """Pin the walk's owner-thread budget. Zero cuts every poll at
         the walk's own check step, which is what makes a chunked walk
         countable; the default is the production bound."""
-        original = self.service._VISITED_WALK_BUDGET_S
-        self.service._VISITED_WALK_BUDGET_S = seconds
-        self.addCleanup(setattr, self.service, "_VISITED_WALK_BUDGET_S", original)
+        original = self.service._objects._VISITED_WALK_BUDGET_S
+        self.service._objects._VISITED_WALK_BUDGET_S = seconds
+        self.addCleanup(setattr, self.service._objects, "_VISITED_WALK_BUDGET_S", original)
 
     def _drive(self, anchor, split, objects, limit=4000):
         """Poll the way the live loop does — fresh rows every tick —
@@ -573,14 +567,14 @@ class PlateVisitedTests(unittest.TestCase):
         service = self.service
         for polls in range(1, limit + 1):
             verdict = service.plate_visited(anchor, split, self._rows(*objects))
-            if (service._visited_upto >= split
-                    and service._visited_replay_upto >= service._visited_upto):
+            if (service._objects._visited_upto >= split
+                    and service._objects._visited_replay_upto >= service._objects._visited_upto):
                 return polls, verdict
         self.fail("the walk never settled after %d polls" % limit)
 
     def _count_segment_tests(self):
         """Every vertex test the walk runs, recorded."""
-        module = self.qt.load("GCodeIndexService")
+        module = self.qt.load("ObjectVisitTracker")
         real = module.segment_in_polygon
         calls = []
 
@@ -654,7 +648,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
 
     def _view(self, layers=5):
         index = make_index(layers=layers, motions=20)
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         return index
 
@@ -701,7 +695,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         index = make_index(layers=layers, motions=20, compact=True)
         index.hydrated_layers = set(hydrated)
         index.followed_layer = followed
-        self.service._view = self.qt.load("GCodeIndexService").IndexView(
+        self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         return index
 

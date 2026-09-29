@@ -454,7 +454,7 @@ class PreviewPresentationContractTests(unittest.TestCase):
         self.assertIn("parent.pauseEta.length > 0", qml)
 
     def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
-        index = (PLUGINS / "GCodeIndex.py").read_text(encoding="utf-8")
+        index = (PLUGINS / "MotionIndex.py").read_text(encoding="utf-8")
         preview = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
         status = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("layer_elapsed_times", index)

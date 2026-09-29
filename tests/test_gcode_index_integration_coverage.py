@@ -36,6 +36,8 @@ CuraIntegration.py
 """
 from __future__ import annotations
 
+import mpf.gcode.GCodeIndex as gcode_index
+
 import gzip
 import hashlib
 import json
@@ -50,19 +52,11 @@ from array import array
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import mpf.gcode.GCodeIndex as gcode_index
-from mpf.gcode.GCodeIndex import (
-    FLOOR_LOOKBACK,
-    LayerMotionIndex,
-    PersistentIndexCache,
-    _CACHE_MAGIC,
-    _CACHE_VERSION,
-    _emit_progress,
-    _read_exact,
-    build_index_from_bytes,
-    build_index_from_file,
-    hydrate_layer_from_file,
-)
+from mpf.gcode.MotionIndex import FLOOR_LOOKBACK, LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION, _read_exact
+from mpf.gcode.GCodeIndex import _emit_progress, build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
 from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
 

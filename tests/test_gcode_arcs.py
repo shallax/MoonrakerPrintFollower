@@ -9,6 +9,7 @@ endpoint, and the ownership that keeps a whole arc inside one printed
 motion.
 """
 from __future__ import annotations
+from mpf.gcode import IndexCodec as index_codec_module
 
 from array import array
 from math import cos, hypot, radians, sin
@@ -23,14 +24,10 @@ from unittest.mock import patch
 
 from mpf.gcode import ArcGeometry
 
-from mpf.gcode import GCodeIndex
-from mpf.gcode.GCodeIndex import (
-    LayerMotionIndex,
-    PersistentIndexCache,
-    build_index_from_bytes,
-    build_index_from_file,
-    hydrate_layer_from_file,
-)
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.GCodeIndex import build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
 from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from mpf.gcode.PlateProgress import _budgeted, layer_polylines, motion_edges, split_index
 
@@ -651,7 +648,7 @@ class ArcCacheTests(unittest.TestCase):
         # nothing about the file it came from: every v9 blob is refused
         # rather than read as an arc-free one.
         blob = self._blob(ARC_SOURCE)
-        self.assertEqual(GCodeIndex._CACHE_VERSION, 14,
+        self.assertEqual(index_codec_module._CACHE_VERSION, 14,
                          "the cache version must move past the era that could drop arcs")
         self._rewrite_header(blob, dict(self._header_of(blob), version=9))
         self.assertIsNone(self.cache.load(self.identity),
@@ -662,7 +659,7 @@ class ArcCacheTests(unittest.TestCase):
         # the entry budget cannot hold them the entry is not published,
         # rather than published as a file that restores as chords.
         original, _path = self._built(ARC_SOURCE)
-        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+        with patch.object(index_codec_module, "_MAX_CACHE_ARC_ENTRIES", 0):
             self.cache.save(self.identity, original)
         self.assertEqual(os.listdir(self.directory), [],
                          "a cache without the arcs was published anyway")
@@ -672,7 +669,7 @@ class ArcCacheTests(unittest.TestCase):
         # Nothing to lose, nothing to refuse: the budget only ever
         # refuses files that actually carry arc descriptors.
         original, _path = self._built(PLAIN_SOURCE)
-        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+        with patch.object(index_codec_module, "_MAX_CACHE_ARC_ENTRIES", 0):
             self.cache.save(self.identity, original)
         restored = self.cache.load(self.identity)
         self.assertIsNotNone(restored, "a file with no arcs to lose was not cached")
@@ -682,7 +679,7 @@ class ArcCacheTests(unittest.TestCase):
         # A file that selects G18 without commanding any arc still needs
         # the layer-start plane the hydrator seeds from.
         original, _path = self._built(PLANE_ONLY_SOURCE)
-        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+        with patch.object(index_codec_module, "_MAX_CACHE_ARC_ENTRIES", 0):
             self.cache.save(self.identity, original)
         restored = self.cache.load(self.identity)
         self.assertIsNotNone(restored, "a file with no arcs to lose was not cached")
@@ -691,7 +688,7 @@ class ArcCacheTests(unittest.TestCase):
 
     def test_an_over_budget_arc_column_is_refused_on_load(self):
         self.assertTrue(self._blob(ARC_SOURCE), "no blob to load")
-        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+        with patch.object(index_codec_module, "_MAX_CACHE_ARC_ENTRIES", 0):
             self.assertIsNone(self.cache.load(self.identity),
                               "an over-budget arc column was read as arc-free")
 
@@ -958,7 +955,7 @@ class ArcPrintedObjectTests(unittest.TestCase):
         path = _write(gcode)
         self.addCleanup(os.remove, path)
         index = build_index_from_file(path)
-        view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
+        view = self.qt.load("IndexView").IndexView(self.job, index)
         self.service._view = view
         return index
 
