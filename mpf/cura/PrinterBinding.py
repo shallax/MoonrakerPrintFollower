@@ -24,8 +24,8 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PersistenceMigration import MigrationOutcome, _record, read_source, run_migration
-from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
+from ..settings.PersistenceMigration import MigrationOutcome, _record, read_source, run_migration
+from ..settings.PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
 # The host-identifying fields the removal wipe clears (the
 # ruling): the harmless rest survives for a same-named re-add.
@@ -203,7 +203,7 @@ class PrinterBinding(QObject):
                 # The carry gates the clean: a failed carry keeps the
                 # legacy bed-mesh source intact for the next boot's
                 # retry (the 4.5.0 transactional fix).
-                from .PersistenceMigration import _clean_preferences, _remove_old_state_file
+                from ..settings.PersistenceMigration import _clean_preferences, _remove_old_state_file
                 if not self._carry_bed_mesh_preferences(preferences):
                     Logger.log("w", "Moonraker could not carry the bed-mesh preferences; the post-migration cleanup is held back.")
                     return
@@ -422,7 +422,7 @@ class PrinterBinding(QObject):
             Logger.log("w", "Moonraker machine %s removed but its credential wipe could not be saved — the credentials remain on disk.", machine_id)
 
     def _apply(self):
-        from ..moonraker.CameraTiming import begin
+        from ..diagnostics.CameraTiming import begin
         # The cold-camera trace rides the SAME preference as the HTTP
         # trace (the diagnostics toggle), never forced on.
         begin(bool(getattr(self.config, "trace_http", False)))

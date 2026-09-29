@@ -124,7 +124,7 @@ def main():
 
         _frozen_clock_sources = (
             os.path.join(ROOT, "mpf", "monitor", "MonitorFormatting.py"),
-            os.path.join(ROOT, "mpf", "printer", "PreviewFollower.py"),
+            os.path.join(ROOT, "mpf", "preview", "PreviewFollower.py"),
         )
 
         def _freeze_plugin_clocks():

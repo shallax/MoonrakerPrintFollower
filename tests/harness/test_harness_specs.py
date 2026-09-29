@@ -214,7 +214,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("confirm_replace", integration)
 
         card = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "printer", "MoonrakerPreviewCard.qml")
+            os.path.abspath(__file__)))), "mpf", "preview", "MoonrakerPreviewCard.qml")
         with open(card, encoding="utf-8") as handle:
             qml = handle.read()
         self.assertIn('objectName: "moonrakerReplacePrompt"', qml)
@@ -239,7 +239,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("visible: base.replacePromptVisible", qml)
 
         coordinator = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "printer", "PrintCoordinator.py")
+            os.path.abspath(__file__)))), "mpf", "application", "PrintCoordinator.py")
         with open(coordinator, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('self._presentation.publish({"replacePromptVisible": True})', source)

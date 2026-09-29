@@ -405,24 +405,21 @@ def runtime():
             Importing it as a submodule of the stand-in package looks
             equivalent and is not: a module reached that way has its
             relative imports rewritten against the stand-in, so a
-            cross-domain ``from ..index.Foo import`` climbs above the
+            cross-domain ``from ..gcode.Foo import`` climbs above the
             package root and the import fails. The real dotted module is
             imported instead — which also means a test that patches what
             it loaded patches the object the rest of the tree imported,
             rather than a second copy of it.
             """
-            candidates = ["mpf." + name] + [
-                "mpf.%s.%s" % (child.name, name)
-                for child in sorted((ROOT / "mpf").iterdir())
-                if child.is_dir() and (child / "__init__.py").is_file()
-            ]
-            for candidate in candidates:
-                try:
-                    return importlib.import_module(candidate)
-                except ModuleNotFoundError as error:
-                    if error.name not in (candidate, candidate.rsplit(".", 1)[0]):
-                        raise
-            raise ModuleNotFoundError("no module %r under mpf" % name)
+            # Resolve the file first, then import its REAL qualified name.
+            # Keep the import inside the fixture: its sys.modules patch owns
+            # teardown, and retaining classes across fixtures makes later
+            # spies patch a different module instance.
+            from tests.source_root import SourceRoot
+            path = SourceRoot(ROOT / "mpf").path(name + ".py")
+            candidate = ".".join(path.relative_to(ROOT).with_suffix("").parts)
+            return importlib.import_module(candidate)
+
 
         def process_events(milliseconds=0):
             if milliseconds:

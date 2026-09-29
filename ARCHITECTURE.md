@@ -54,10 +54,62 @@ component on stop or engine replacement. The Monitor shell still constructs its
 dashboard synchronously when opened; the retained compilation removes the cold
 compile wait without changing pane layout or initialization ordering.
 
+### Package ownership
+
+The tree is organised by domain and screen, not by programming language or
+class suffix. QML and Python for a feature live together. A screen may host a
+small wrapper for another feature (for example `monitor/FileManagerSection.qml`)
+without becoming the owner of that feature's implementation.
+
+| Package | Responsibility |
+| --- | --- |
+| `application/` | Cross-domain print orchestration: coordinator, refresh-side load tracking and next-pause pipeline. These intentionally compose domain and presentation capabilities. |
+| `cura/` | Cura entry points, lifecycle, machine binding, output adapters and host-affine file preparation. |
+| `settings/` | Configuration UI, schema, persistence, migration and shared migration-result presentation. The Machine Action remains a Cura adapter. |
+| `printing/` | Physical print state, run identity, remote job observations, pause scheduling and print-start ownership; independent of the Preview and Monitor screens. |
+| `preview/` | Cura Preview attachment/following, display smoothing, presentation and card hosts. |
+| `gcode/` | Parsing, motion interpretation, indexing, cache lifecycle and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
+| `geometry/` | Pure geometry shared by data processing and presentation. No screen or host dependencies. |
+| `plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
+| `bedmesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
+| `monitor/` | Dashboard/model composition, observations and projections, with camera, console, controls, temperature, toolhead and layout subfeatures. |
+| `files/browser/` | File browser QML, state, policy and stable file-row view model. |
+| `files/transfers/` | Upload/download workflows, the upload dialog, streaming and remote-file leases. |
+| `moonraker/` | Protocol, HTTP/websocket transport and status session; no screen dependencies. |
+| `diagnostics/` | Opt-in instrumentation. Camera timing is also consumed by the connection layer, so it is not owned by the camera screen. |
+| `whatsnew/` | Release-notice content, overlay and its lifecycle. |
+| `widgets/` | Reusable UI primitives. |
+| `resources/` | Shared theme, icons, shaders and plugin-root-relative resource paths. |
+
+`FollowerRuntime.py` remains the composition root at the plugin root. The
+`application/` workflows may compose screens; this is not permission for core
+`printing/`, `gcode/`, `geometry/` or `settings/` code to import a screen.
+`GCodeIndexService` uses `geometry/Polygons.py`, not Monitor formatting helpers.
+Arc geometry, travel/retraction classification and motion-range validation live
+in `gcode/`, so the index and prepared geometry no longer depend on `plate/`.
+
+Python imports remain relative because Cura installs the package under its
+plugin ID. There are no old-package forwarding aliases. Dynamic Python-loaded
+QML and shaders use `resources/PluginPaths.plugin_path` with literal
+plugin-root-relative paths; the configuration Machine Action retains the
+relative `_qml_url` required by Cura. QML imports and URLs are relative to each
+calling document, and `qmldir` entries point at the actual feature files.
+
+`tests/test_domain_layout.py` checks qualified import resolution, core package
+boundaries, co-location and non-vacuous nested dependency scanning.
+`tests/test_resource_references.py` checks the Python entry points, QML resource
+URLs, registration files and both built archive formats. Basename-based
+`SourceRoot` remains useful for content tests; it is not used as evidence of
+correct package ownership.
+
 ### Ownership map
 
 | Component | Owns | Does not own |
 | --- | --- | --- |
+| `Polygons.py` | Pure point/segment/polygon intersection and bounds shared by indexing and presentation | Qt, screen models, networking or mutable state |
+| `MotionRanges.py` | Validation of the numerical motion ranges stored in G-code indexes and prepared data | Palette selection, rendering or Cura |
+| `MigrationPresentation.py` | Shared migration-result text consumed by settings and Monitor | Either screen's model or runtime |
+| `PluginPaths.py` | Installed-plugin-root-relative filenames for explicit QML and shader resources | Application state or resource-loading lifecycle |
 | `PrinterBinding.py` | Per-printer configuration, migration triggers, active-machine transitions | Preview, files, uploads |
 | `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
 | `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |

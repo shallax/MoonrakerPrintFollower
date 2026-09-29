@@ -16,7 +16,7 @@ def register(app):
     # Cura always ships it.
     try:
         from PyQt6.QtQml import qmlRegisterType
-        from .moonraker.MoonrakerMJPGImage import MoonrakerMJPGImage
+        from .monitor.camera.MoonrakerMJPGImage import MoonrakerMJPGImage
         from .plate.GpuFollower import GpuFollower
         from .plate.GpuObjectPicker import GpuObjectPicker
         qmlRegisterType(GpuFollower, "MoonrakerPrintFollower", 1, 0, "GpuFollower")
@@ -29,7 +29,7 @@ def register(app):
     # The leak-hunt instrument ships OFF: the settings' diagnostics
     # toggle ("Log memory diagnostics") gates every tick, so an idle
     # timer is the whole cost until it is enabled.
-    from .cura.LeakProbe import start_leak_probe
+    from .diagnostics.LeakProbe import start_leak_probe
     start_leak_probe(follower._runtime, app)
 
     output_plugin = MoonrakerOutputDevicePlugin(app, follower)

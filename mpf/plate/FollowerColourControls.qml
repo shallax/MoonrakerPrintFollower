@@ -2,8 +2,8 @@ import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "../resources/theme"
 import "PreviewColours.js" as PreviewColours
+import "../resources/theme"
 
 ColumnLayout {
     id: root

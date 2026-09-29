@@ -3,6 +3,21 @@
 How changes are made in this repository. The architecture itself is described
 in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
+## Source ownership
+
+Place Python, QML and feature-specific behaviour together under the domain or
+screen that owns them; use the package ownership table in `ARCHITECTURE.md`.
+Host adapters stay in `cura/`, cross-domain workflows in `application/`, and
+shared primitives in their explicit domain rather than in a consumer screen.
+Do not create compatibility aliases for retired package paths. Update real
+imports, patch targets, harness registrations and resource paths when moving
+files. Keep source moves separate from rendering, threading and policy changes.
+
+Run the package-boundary and resource-reference tests after a move, followed by
+the normal full gates. Basename lookup in content tests does not verify the
+layout. The resource tests check dynamically loaded entry points and packaged
+files; the real-QML engine gate checks local types and singleton imports.
+
 ## Development environment
 
 The Makefile is the entry point on every host. Linux defaults to the
@@ -335,7 +350,7 @@ change together:
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
-5. `mpf/cura/WhatsNew.py` — a new head entry (headline + user-facing items)
+5. `mpf/whatsnew/WhatsNew.py` — a new head entry (headline + user-facing items)
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones

@@ -321,7 +321,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
 
     def test_the_trace_line_names_the_resolution_source(self):
         parts = self._make(config=harness.PrinterConfig(trace_layer=True))
-        from mpf.printer import PrintCoordinator as coordinator_module
+        from mpf.application import PrintCoordinator as coordinator_module
         with harness.patch.object(coordinator_module, "Logger") as logger:
             self._printing(parts)
         trace = [call for call in logger.log.call_args_list if "layer trace" in str(call)]
@@ -1027,7 +1027,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
 
     def test_the_gate_diagnostics_log_only_on_change(self):
         parts = self._make()
-        from mpf.printer import PrintCoordinator as coordinator_module
+        from mpf.application import PrintCoordinator as coordinator_module
         with harness.patch.object(coordinator_module, "Logger") as logger:
             parts.coordinator._publish()
             messages = [str(call) for call in logger.log.call_args_list]
@@ -1171,7 +1171,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         job = ("cube.gcode", 100000, 1)
         coordinator._maybe_fetch_mr_metadata("cube.gcode", job)
         parts.files.metadata_only[-1]({"result": {"job_id": 77, "layer_height": 0.2}}, None)
-        from mpf.printer import PrintCoordinator as coordinator_module
+        from mpf.application import PrintCoordinator as coordinator_module
         with harness.patch.object(coordinator_module, "Logger") as logger:
             parts.client.reply({"result": {"jobs": [{"job_id": 99}]}}, None)
         self.assertEqual(coordinator._mr_meta_key, ("", ""))

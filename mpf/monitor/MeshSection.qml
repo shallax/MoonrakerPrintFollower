@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "../bedmesh"
 import "../widgets"
 
 // The Bed-mesh section (4.3.0 extraction): the mini map out of the

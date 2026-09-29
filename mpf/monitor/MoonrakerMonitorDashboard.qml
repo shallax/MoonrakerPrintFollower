@@ -4,9 +4,11 @@ import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "../resources/theme"
-import "../filemanager"
+import "../files/browser"
 import "../widgets"
+import "controls"
+import "toolhead"
+import "../resources/theme"
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader
 // (setMonitorViewQmlPath) creates this document and expects a

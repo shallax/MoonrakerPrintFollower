@@ -1,5 +1,6 @@
 """One Cura Qt model: declarations and composition, not an inheritance stack."""
 from __future__ import annotations
+
 import json
 import logging
 import os
@@ -15,7 +16,7 @@ from UM.Resources import Resources
 from UM.Logger import Logger
 from PyQt6.QtGui import QDesktopServices, QImage
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
-from .ConsoleController import ConsoleController
+from .console.ConsoleController import ConsoleController
 
 
 def _coerce_anchor(value):
@@ -47,25 +48,25 @@ def _british_spelling() -> bool:
     return False
 
 
-from ..moonraker.MonitorCamera import MonitorCamera
+from .camera.MonitorCamera import MonitorCamera
 from ..plate.PlateQt import (
     PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _PLATE_TRAVEL_VISUAL_RATIO,
     _bridge_emit, png_file, render_layer_prefix, render_layer_raster,
     render_navigation_layer, qml_geometry,
 )
 from ..plate.PlateSceneIdentity import NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom
-from .MonitorCommands import MonitorCommands
-from .MonitorControls import MonitorControls, _exclude_status
+from .controls.MonitorCommands import MonitorCommands
+from .controls.MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
-from .FilesViewModel import FilesViewModel
-from .PrintStartOwner import PrintStartOwner
-from .UiStateStore import UiStateStore
+from ..files.browser.FilesViewModel import FilesViewModel
+from ..printing.PrintStartOwner import PrintStartOwner
+from .layout.UiStateStore import UiStateStore
 from datetime import datetime
 
-from ..filemanager.FileManager import FileManager
-from .SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
-from ..filemanager.FileManagerPolicy import (
+from ..files.browser.FileManager import FileManager
+from .layout.SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
+from ..files.browser.FileManagerPolicy import (
     delete_candidates,
     is_gcode_name,
     name_collides,
@@ -88,14 +89,14 @@ from .MonitorFormatting import (
 )
 from dataclasses import replace
 
-from ..cura.PrinterConfig import (
+from ..settings.PrinterConfig import (
     CAMERA_FPS_DEFAULT,
     CAMERA_FPS_FALLBACK_MAX,
     CAMERA_FPS_MIN,
     normalise_temperature_chart,
 )
-from ..cura.StateStore import StateStore
-from .MonitorTemperatureHistory import (
+from ..settings.StateStore import StateStore
+from .temperature.MonitorTemperatureHistory import (
     DORMANT_CHART,
     PALETTE,
     TemperatureHistory,
@@ -105,13 +106,15 @@ from .MonitorTemperatureHistory import (
     mini_names,
     series_metadata,
 )
-from .MonitorTuning import MonitorTuning
-from .ToolheadController import ToolheadController
-from .ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
+from .controls.MonitorTuning import MonitorTuning
+from .toolhead.ToolheadController import ToolheadController
+from .toolhead.ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
 # The pause gates, shared with the Preview card: the popover's own
 # candidate is re-read, its refusals are not re-worded.
-from ..printer.PreviewFormatting import pause_can_toggle, pause_unavailable
-from ..cura.WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
+from ..preview.PreviewFormatting import pause_can_toggle, pause_unavailable
+from ..whatsnew.WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
+
+from ..settings.MigrationPresentation import migration_banner_text, migration_diagnostics_text
 
 
 # The monitor's panel state lives in a plugin-owned JSON file next to
@@ -195,26 +198,8 @@ def _state_height(value) -> int:
 _chart_state = normalise_temperature_chart
 
 
-def _migration_banner_text(record):
-    """The dialog banner's copy (the UX spec): the rollback recipe is
-    the message — the file name, the folder route and the
-    reinstall-previous-version steps."""
-    backup = str(record.get("backupName") or "")
-    if record.get("backupWritten") and backup:
-        return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
-                "Cura's configuration was saved as %s. Open it from Help > Show Configuration Folder. "
-                "To roll back: close Cura, reinstall the previous version of the plugin, and copy that file over cura.cfg.") % backup
-    return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
-            "Nothing was removed — your existing Cura configuration is untouched.")
 
 
-def _migration_diagnostics_text(record):
-    """The permanent diagnostics row's copy (after dismissal): the
-    recipe is demoted, never deleted."""
-    backup = str(record.get("backupName") or "")
-    if record.get("backupWritten") and backup:
-        return "Settings migration failed. The previous configuration is saved as %s." % backup
-    return "Settings migration failed. Nothing was removed."
 
 
 def _read_state(store=None) -> dict:
@@ -984,7 +969,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_stream_failed(self) -> None:
         if not self._webcam_stream_enabled:
             return
-        from ..moonraker.CameraTiming import mark
+        from ..diagnostics.CameraTiming import mark
         mark("T6-watchdog", "camera render stalled")
         import time
         now = time.monotonic()
@@ -1767,10 +1752,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         record = self._migration_record()
         failed = bool(record and record.get("status") == "failed")
         values["migrationBannerVisible"] = bool(failed and not record.get("bannerDismissed"))
-        values["migrationBannerText"] = _migration_banner_text(record) if failed else ""
+        values["migrationBannerText"] = migration_banner_text(record) if failed else ""
         values["migrationBackupAvailable"] = bool(failed and record.get("backupWritten") and record.get("backupName"))
         values["migrationDiagnosticsVisible"] = bool(failed and record.get("bannerDismissed"))
-        values["migrationDiagnosticsText"] = _migration_diagnostics_text(record) if failed else ""
+        values["migrationDiagnosticsText"] = migration_diagnostics_text(record) if failed else ""
         self._values = values
         first_attach = False
         try:
@@ -1804,7 +1789,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self.setCameraUrl(QUrl(url))
         except AttributeError:
             pass
-        from ..moonraker.CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
+        from ..diagnostics.CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
         values["traceCameraTiming"] = camera_timing_enabled()
         if first_attach:
             # T5: the FINAL url QML consumes, sanitised to
@@ -2590,7 +2575,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def cameraFirstFrameRendered(self):
-        from ..moonraker.CameraTiming import mark_once
+        from ..diagnostics.CameraTiming import mark_once
         mark_once("T9", "first decoded frame")
 
     @pyqtSlot(result=int)
@@ -2598,7 +2583,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The pane's process-wide diagnostic id: every pane instance
         # (one per machine model) draws from the SAME sequence, so
         # pane-side trace lines can never collide across models.
-        from ..moonraker.CameraTiming import next_actor_id
+        from ..diagnostics.CameraTiming import next_actor_id
         return next_actor_id()
 
     @pyqtSlot(int, str)
@@ -2606,7 +2591,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The QML side of the cold-start trace: applyCamera calls,
         # visibility start/stops and watchdog firings, labelled with
         # the pane's id and sanitised by the pane itself.
-        from ..moonraker.CameraTiming import mark
+        from ..diagnostics.CameraTiming import mark
         mark("T6-qml", "pane %d: %s" % (int(pane_id), str(event)))
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")

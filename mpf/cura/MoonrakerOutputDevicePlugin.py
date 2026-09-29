@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QUrl
@@ -11,6 +11,8 @@ from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 from ..plate.FollowerColourScheme import FollowerColourScheme
 from ..monitor.MoonrakerMonitorModel import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController, MoonrakerOutputDevice
+
+from ..resources.PluginPaths import plugin_path
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
@@ -71,8 +73,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         if self._monitor_qml is not None:
             self._monitor_qml.deleteLater()
         self._monitor_qml_engine = engine
-        self._monitor_qml = QQmlComponent(engine, QUrl.fromLocalFile(os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "monitor", "MoonrakerMonitorDashboard.qml")),
+        self._monitor_qml = QQmlComponent(engine, QUrl.fromLocalFile(plugin_path("monitor", "MoonrakerMonitorDashboard.qml")),
             QQmlComponent.CompilationMode.Asynchronous)
 
     def _current_monitor(self) -> Optional[Any]:
@@ -260,9 +261,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         # milliseconds, so that read cannot land mid-compile; the
         # dashboard compiles asynchronously inside the shell, off the
         # startup path.
-        device.setMonitorViewQmlPath(os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "monitor", "MoonrakerMonitorBedMesh.qml"
-        ))
+        device.setMonitorViewQmlPath(plugin_path("monitor", "MoonrakerMonitorBedMesh.qml"))
         try:
             monitor.refreshAll()
         except Exception as exc:

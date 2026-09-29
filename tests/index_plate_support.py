@@ -48,8 +48,8 @@ import unittest
 from itertools import pairwise
 from unittest.mock import patch
 
-import mpf.index.GCodeIndex as gcode_index
-from mpf.index.GCodeIndex import (
+import mpf.gcode.GCodeIndex as gcode_index
+from mpf.gcode.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,
     _CACHE_MAGIC,
@@ -311,7 +311,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         # The worker's commit: the decoded payloads land in the hot
         # presentation cache — the bundle reads no other store (the
         # UI thread never prepares or decodes).
-        from mpf.plate.PlateProgress import prepare_layer
+        from mpf.gcode.PlateProgress import prepare_layer
         for layer in range(layers):
             self.service._decoded_lru[layer] = prepare_layer(index, layer)
         return list(index.motion_offsets[0])
@@ -397,7 +397,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
         digest, exactly as the worker commits them."""
         index = build_index_from_bytes(_repeated_layer_gcode(passes, drift))
         self.service._view = self.qt.load("GCodeIndexService").IndexView(self.job, index)
-        from mpf.plate.PlateProgress import prepare_layer
+        from mpf.gcode.PlateProgress import prepare_layer
         self.service._decoded_lru[0] = prepare_layer(index, 0)
         self.index = index
         self.offsets = list(index.motion_offsets[0])
@@ -581,14 +581,14 @@ class PlateVisitedTests(unittest.TestCase):
     def _count_segment_tests(self):
         """Every vertex test the walk runs, recorded."""
         module = self.qt.load("GCodeIndexService")
-        real = module._segment_in_polygon
+        real = module.segment_in_polygon
         calls = []
 
         def counted(*args):
             calls.append(args)
             return real(*args)
 
-        patcher = patch.object(module, "_segment_in_polygon", counted)
+        patcher = patch.object(module, "segment_in_polygon", counted)
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
@@ -642,7 +642,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.context = runtime()
         self.qt = self.context.__enter__()
         self.addCleanup(self.context.__exit__, None, None, None)
-        from mpf.index.PreparedStore import PreparedCache, STATE_CACHED
+        from mpf.gcode.PreparedStore import PreparedCache, STATE_CACHED
         self.store = PreparedCache(self._dir.name)
         self.state_cached = STATE_CACHED
         module = self.qt.load("GCodeIndexService")
@@ -674,7 +674,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
 
     @staticmethod
     def _payload(layer):
-        from mpf.plate.PlateProgress import encode_layer
+        from mpf.gcode.PlateProgress import encode_layer
         return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, float(layer), 1.0]]]},
                              "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})
 

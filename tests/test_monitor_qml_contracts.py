@@ -371,9 +371,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', harness.FANS_INFO_SECTION_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../resources/svg/Thermometer.svg")', harness.TEMP_HISTORY_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../resources/svg/Thermometer.svg")', harness.TEMP_HISTORY_SECTION_QML)
         self.assertIn('Qt.resolvedUrl("../resources/svg/Download.svg")', harness.JOB_SECTION_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../resources/svg/Power.svg")', harness.POWER_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../resources/svg/Power.svg")', harness.POWER_SECTION_QML)
         # The Position row's axis-coloured cells (the 4.5.0 ruling):
         # three fixed cells in the axis tokens, no-wrap — the row
         # must never reflow per poll (the status stack's polish-loop
@@ -508,7 +508,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('sectionId: "fileManager"', harness.FILE_MANAGER_SECTION_QML)
         self.assertIn('text: "File manager"', harness.FILE_MANAGER_SECTION_QML)
         self.assertIn("fileManagerOpen", harness.DASHBOARD_QML)
-        self.assertIn("FileManager 1.0 filemanager/FileManager.qml", harness.QMLDIR)
+        self.assertIn("FileManager 1.0 files/browser/FileManager.qml", harness.QMLDIR)
         # Opening the popup must trigger the walk (the Snapshot 1
         # live-test regression: the button flipped the flag but
         # nothing fetched, and the grid sat on "Loading files…").
@@ -963,7 +963,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # own document on the click — a host whose platform builds no
         # colour dialog still gets the whole monitor.
         self.assertNotIn("import QtQuick.Dialogs", harness.MONITOR_QML)
-        self.assertIn('Qt.createComponent("MoonrakerChartColorDialog.qml")', harness.MONITOR_QML)
+        self.assertIn('Qt.createComponent("temperature/MoonrakerChartColorDialog.qml")', harness.MONITOR_QML)
         self.assertIn("chartColorDialog", harness.MONITOR_QML)
         self.assertIn("applyChartColorChoice", harness.MONITOR_QML)
         self.assertIn('text: "Custom…"', harness.MONITOR_QML)

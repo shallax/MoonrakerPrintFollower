@@ -1,0 +1,411 @@
+"""Monitor command acknowledgement and emergency-stop ownership.
+
+The one-shot lane keeps two display channels: the durable STATUS (tracked
+confirmations, outcome-unknown warnings, emergency-stop results) and a
+transient RECEIPT ("X sent") that overlays it for a few seconds, plus a
+LIVE lifecycle text ("X requested…", "X queued") for the in-flight
+moment. Console sends never ride this lane at all (the console posts its
+own request) — console feedback lives on the console's own status line.
+"""
+from __future__ import annotations
+
+import time
+
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from ..MonitorPermissions import R_UNKNOWN, Verdict
+from .. import MonitorFormatting
+
+
+class MonitorCommands(QObject):
+    changed = pyqtSignal()
+    emergencyStopped = pyqtSignal()
+    EXPECTED = {"Pause": {"paused"}, "Resume": {"printing"}, "Cancel": {"cancelled", "complete", "standby"}}
+    # A resumed printer may re-heat before it actually resumes; the
+    # confirmation must outlive a slow heat-up instead of reporting
+    # failure while the printer does exactly what it was asked.
+    EXPECTED_TIMEOUT_S = {"Resume": 130}
+    MAX_QUEUED_COMMANDS = 16
+    # The post-e-stop reconnect delay (the ruling,
+    # 2026-09-10, live-proven on their printer): after the stop the
+    # host refuses commands until the connection is cycled, so the
+    # plugin cycles it ONCE, automatically. The pause lets the stop
+    # POST settle before the disconnect flash.
+    RECONNECT_DELAY_MS = 1500
+    # The stop requires two clicks and a held third press: the hold must
+    # last this long before the stop fires, so a click spasm cannot fire it
+    # while a real emergency stays under a second away.
+    HOLD_MS = 600
+    HOLD_TICK_MS = 50
+    # A completion receipt overlays the durable status for this long,
+    # then the row ages out to "—" under its permanent caption — never
+    # back to a stale claim from an earlier action (the panel ruling:
+    # "Pause: paused" resurfacing after Home reads as fresh activity).
+    # A newer action supersedes the receipt immediately, and a fresh
+    # terminal outcome can never hide under an old banner.
+    RECEIPT_MS = 5000
+
+    def __init__(self, data, parent=None):
+        super().__init__(parent)
+        self._data = data
+        # Bumped by the emergency stop: the in-flight command's
+        # terminal reply must not overwrite "Emergency stop issued"
+        # with an outcome-unknown verdict (the live
+        # request: after the stop the plugin assumes the print was
+        # cancelled and clears everything).
+        self._lifecycle = 0
+        self._busy = False
+        self._status = self._tracked = ""
+        self._live = self._receipt = ""
+        self._status_at = self._live_at = self._receipt_at = ""
+        self._job = None
+        self._retired_cancel = False
+        self._clicks = 0
+        self._queue = []
+        self._hold_progress = 0.0
+        self._hold_started_at = 0.0
+        self._suppress_click = False
+        self._receipt_timer = QTimer(self)
+        self._receipt_timer.setSingleShot(True)
+        self._receipt_timer.setInterval(self.RECEIPT_MS)
+        self._receipt_timer.timeout.connect(self._expire_receipt)
+        self._reset_timer = QTimer(self)
+        self._reset_timer.setSingleShot(True)
+        self._reset_timer.setInterval(1000)
+        self._reset_timer.timeout.connect(self._reset_clicks)
+        self._hold_timer = QTimer(self)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.setInterval(self.HOLD_MS)
+        self._hold_timer.timeout.connect(self._fire_hold)
+        self._hold_ticker = QTimer(self)
+        self._hold_ticker.setInterval(self.HOLD_TICK_MS)
+        self._hold_ticker.timeout.connect(self._hold_tick)
+        data.invalidated.connect(self.reset)
+        data.commandChanged.connect(self._command_changed)
+
+    @property
+    def busy(self): return self._busy
+    @property
+    def status(self):
+        # Receipt overlays lifecycle overlays durable: the in-flight
+        # text hides under a completion receipt, and the receipt's
+        # expiry reveals the live text or the durable status beneath.
+        return self._receipt or self._live or self._status
+    @property
+    def status_timestamp(self):
+        if self._receipt: return self._receipt_at
+        if self._live: return self._live_at
+        return self._status_at if self._status else ""
+
+    @staticmethod
+    def _timestamp():
+        return MonitorFormatting.datetime.now().astimezone().strftime("%H:%M:%S")
+
+    def _record_status(self, text):
+        self._status = str(text)
+        self._status_at = self._timestamp() if self._status else ""
+
+    def observe_job(self, job):
+        """Retire the previous print's display without interrupting commands."""
+        if job is None or job == self._job:
+            return
+        self._job = job
+        self._record_status("")
+        self._clear_receipt()
+        # A late cancellation acknowledgement belongs to the old run.
+        # Release its lane normally, but do not label the new print cancelled.
+        if self._tracked == "Cancel":
+            self._retired_cancel = True
+            self._live = ""
+    @property
+    def clicks(self): return self._clicks
+    @property
+    def hold_progress(self): return self._hold_progress
+    @property
+    def state(self):
+        if not self._data.active or not self._data.connected: return ""
+        return str((self._data.snapshot.core.get("print_stats") or {}).get("state") or "")
+    @property
+    def print_active(self): return self.state in {"printing", "paused"}
+    @property
+    def setup_allowed(self):
+        # Busy is deliberately not part of the gate: one-shot setup scripts
+        # (Home, QGL, mesh, Save, Cooldown, macros) queue behind the
+        # in-flight command, so the user can line them up in succession.
+        return bool(self.state) and not self.print_active
+
+    def report_status(self, text) -> None:
+        """A non-command status line for the action pane (the print
+        watchdog's failure verdict — the live report: a
+        start that never happens must say so where the user looks)."""
+        self._record_status(text)
+        self.changed.emit()
+
+    def _set_busy(self, busy):
+        """The observation push-in (4.2.0): the policy's record reads
+        the command lane's busy flag through the data owner."""
+        busy = bool(busy)
+        if busy == self._busy: return
+        self._busy = busy
+        self._data.set_commands_busy(busy)
+
+    def reset(self):
+        self._set_busy(False)
+        self._queue.clear()
+        self._status = self._tracked = ""
+        self._live = self._receipt = ""
+        self._job = None
+        self._retired_cancel = False
+        self._receipt_timer.stop()
+        self._reset_clicks()
+        self.changed.emit()
+
+    def send(self, label, path, body=None):
+        if self._busy or not self._data.active: return False
+        self._set_busy(True)
+        # A new action supersedes any old completion banner: the receipt
+        # must never resurface over the fresh lifecycle text or a newer
+        # terminal outcome (the engineering panel's receipt resurrection).
+        self._clear_receipt()
+        token = self._lifecycle
+        self._live = f"{label} requested…"
+        self._live_at = self._timestamp()
+        self._retired_cancel = False
+        expected = self.EXPECTED.get(label)
+        self._tracked = label if expected else ""
+        if expected: self._data.track_command(label, expected,
+            timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10))
+        self.changed.emit()
+        def finished(payload, error):
+            if token != self._lifecycle:
+                # The emergency stop reset the lane mid-flight: this
+                # reply belongs to the pre-stop world and must not
+                # touch the status.
+                return
+            if error:
+                self._set_busy(False)
+                self._live = ""
+                if payload is not None:
+                    # The server ANSWERED with an error body: the
+                    # command was refused, not lost (the transport's
+                    # refusal-vs-failure distinction). A live
+                    # report: a cold extrude showed a bare 400 —
+                    # now it reads the server's own words ("Extrude
+                    # below minimum temp").
+                    self._record_status(f"{label} refused: {error}" if not self._retired_cancel else "")
+                else:
+                    # A connection-level error says nothing about whether
+                    # the command executed: the script may already have
+                    # been accepted by the printer.
+                    self._record_status(f"{label} outcome unknown: {error}" if not self._retired_cancel else "")
+                if expected:
+                    # The tracker's signal owns the final display too:
+                    # preserve the refusal/unknown distinction there.
+                    detail = f"refused: {error}" if payload is not None else f"outcome unknown: {error}"
+                    self._data.fail_command(label, detail)
+                self._tracked = ""
+            elif expected:
+                self._live = ""
+                self._data.accept_command(label)
+            else:
+                self._set_busy(False)
+                self._live = ""
+                # A receipt, never "accepted": the POST ack only means
+                # Moonraker queued the script, and Klipper can still
+                # answer "!!" afterwards (panel UX ruling).
+                self._set_receipt(f"{label} sent")
+            self._data.later(150, self._data.refresh_all)
+            # Pump the queued one-shots BEFORE announcing the idle lane:
+            # listeners (the toolhead controller) react to "changed" by
+            # sending their own command, and the queue must keep its place
+            # in line ahead of that fresh send.
+            self._pump_queue()
+            self.changed.emit()
+        # Commands get a long transfer timeout: Moonraker accepts the
+        # script before responding, so a slow reply must never be
+        # misread as a failed command.
+        # RESUME's reply waits for the macro, including M109 heating.
+        # Allow the agreed two-minute heating window, then leave ten
+        # seconds for the state confirmation after an acknowledgement.
+        started = self._data.request("control", "POST", path, finished, body=body,
+            category="command", timeout_ms=120000 if label == "Resume" else 30000)
+        if not started:
+            finished(None, "Moonraker is unavailable")
+        return started
+
+    def script(self, label, script, rule=None):
+        return self.request(label, "printer/gcode/script", {"script": str(script)}, rule=rule)
+
+    def request(self, label, path, body=None, rule=None):
+        """A one-shot command: sent now, or queued behind the in-flight one.
+
+        One-shot commands (Home, QGL, mesh, Save, Cooldown, macros, system
+        restarts) queue instead of being dropped, so they can be lined up
+        in quick succession. Stateful commands never queue. The entry
+        carries its permission RULE for the dispatch revalidation
+        (4.2.0, N1).
+        """
+        if self._busy:
+            if len(self._queue) >= self.MAX_QUEUED_COMMANDS:
+                return False
+            self._queue.append((label, path, body, rule))
+            self._live = f"{label} queued"
+            self._live_at = self._timestamp()
+            self.changed.emit()
+            return True
+        return self.send(label, path, body)
+
+    def _pump_queue(self):
+        if not self._queue or self._busy or not self._data.active:
+            return
+        label, path, body, rule = self._queue.pop(0)
+        # The dispatch revalidation (4.2.0, N1): the click-time
+        # predicate was checked when the entry queued; re-run it
+        # against the CURRENT observation — a valid click can become
+        # invalid before execution (a print started by another
+        # client). Denied entries drop with the policy's reason.
+        observation = getattr(self._data, "observation", None)
+        if rule is not None:
+            # The revalidation is FAIL-CLOSED (the phase-6 security
+            # re-review, D2): a missing observation denies, matching
+            # the click-time gate's polarity — never skip the check.
+            verdict = rule(observation) if observation is not None \
+                else Verdict("disabled", R_UNKNOWN)
+            if verdict.mode != "allowed":
+                # A denial is a fresh terminal outcome: it must not
+                # hide under the completing command's receipt (the
+                # precedence would mask it until the receipt expires,
+                # round-2 S7).
+                self._clear_receipt()
+                self.report_status(f"{label} cancelled: {verdict.reason or 'no longer allowed'}")
+                self._pump_queue()
+                return
+        self.send(label, path, body)
+
+    def quick(self, channel, script, callback):
+        return self._data.request("quick-" + channel, "POST", "printer/gcode/script", callback,
+            body={"script": script}, replace=True, category="command")
+
+    def _command_changed(self, event):
+        if event.get("name") != self._tracked: return
+        outcome = event.get("outcome")
+        # A fresh terminal outcome must never hide under an old receipt
+        # banner (the engineering panel's receipt resurrection).
+        self._clear_receipt()
+        self._live = ""
+        if not self._retired_cancel:
+            self._record_status(f"{self._tracked}: {event.get('detail') or outcome}")
+        if event.get("terminal"):
+            # Through the push-in (the phase-6 security re-review,
+            # D6): the direct assignment left the record's busy flag
+            # set after a tracked Pause/Resume/Cancel, which kept
+            # can_z_offset refusing until some later command cleared
+            # it.
+            self._set_busy(False)
+            self._tracked = ""
+        self.changed.emit()
+        self._pump_queue()
+
+    def emergency_click(self):
+        # The first two clicks arm the stop; the third press must be held
+        # (see emergency_hold_started) before anything fires.
+        if not self._data.active: return
+        if self._suppress_click:
+            # The release of a fired hold delivers a clicked event; it must
+            # not count as the first click of a new arm sequence.
+            self._suppress_click = False
+            return
+        if self._clicks >= 2: return
+        self._clicks += 1
+        self._reset_timer.start()
+        self.changed.emit()
+
+    def emergency_hold_started(self):
+        if not self._data.active or self._clicks < 2 or self._hold_timer.isActive(): return
+        self._suppress_click = False  # a new press starts a fresh sequence
+        self._reset_timer.stop()  # the hold keeps the arm alive
+        self._hold_started_at = time.monotonic()
+        self._hold_progress = 0.0
+        self._hold_ticker.start()
+        self._hold_timer.start()
+        self.changed.emit()
+
+    def emergency_hold_released(self):
+        # Releasing before the hold completes cancels it; the arm persists
+        # for a moment so the user can try again.
+        if not self._hold_timer.isActive(): return
+        self._hold_ticker.stop()
+        self._hold_timer.stop()
+        self._hold_progress = 0.0
+        self._reset_timer.start()
+        self.changed.emit()
+
+    def _hold_tick(self):
+        self._hold_progress = min(1.0, (time.monotonic() - self._hold_started_at) * 1000.0 / self.HOLD_MS)
+        self.changed.emit()
+
+    def _fire_hold(self):
+        self._hold_ticker.stop()
+        self._hold_progress = 1.0
+        self._fire_emergency()
+
+    def _fire_emergency(self):
+        def finished(payload, error):
+            self._record_status(f"Emergency stop failed: {error}" if error else "Emergency stop issued")
+            self.changed.emit()
+            self._data.force_refresh()
+        self._data.request("emergency-stop", "POST", "printer/emergency_stop", finished,
+            replace=True, category="command")
+        # Everything pending dies with the stop: queued commands, the
+        # jog queue and any in-flight busy state. The busy release makes
+        # gated controls (power toggles, restarts) usable immediately.
+        self._suppress_click = True  # the release of this hold is not a click
+        self._lifecycle += 1
+        # The print is ASSUMED stopped at the client's observation
+        # layer (the ruling) — one point, every consumer
+        # (guards, jog gate, the follower's coordinator).
+        self._data.assume_print_stopped()
+        self.emergencyStopped.emit()
+        self.reset()
+        # The ruling (2026-09-10, live-proven on a
+        # printer): commands stay refused after the stop until the
+        # connection is cycled — the plugin disconnects and
+        # reconnects ONCE, automatically, instead of leaving the
+        # manual step to the user.
+        QTimer.singleShot(self.RECONNECT_DELAY_MS, self._data.reconnect_after_emergency)
+
+    def _reset_clicks(self):
+        self._reset_timer.stop()
+        self._hold_ticker.stop()
+        self._hold_timer.stop()
+        self._hold_progress = 0.0
+        self._clicks = 0
+        self.changed.emit()
+
+    def _clear_receipt(self) -> None:
+        """Supersede the current banner without emitting — callers hold
+        the display transition and emit once themselves."""
+        self._receipt = ""
+        self._receipt_timer.stop()
+
+    def _set_receipt(self, text) -> None:
+        # No changed.emit here: the only caller is inside finished(),
+        # which must pump the queue BEFORE announcing the idle lane —
+        # the toolhead controller reacts to "changed" by sending its own
+        # command, and the queue must keep its place ahead of that
+        # fresh send (an early emit let a queued jog jump Home).
+        self._receipt = text
+        self._receipt_at = self._timestamp()
+        self._receipt_timer.start()
+
+    def _expire_receipt(self) -> None:
+        # A receipt that is still showing owns this expiry. One that was
+        # superseded by a newer action was already cleared by it — this
+        # expiry must not blank the newer action's fresh status.
+        if not self._receipt:
+            return
+        self._receipt = ""
+        # Age out to "—" (the row's caption stays), never back to a
+        # stale durable claim from an earlier action (panel ruling).
+        self._status = ""
+        self.changed.emit()
+

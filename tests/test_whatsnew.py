@@ -12,7 +12,7 @@ import json
 import pathlib
 import unittest
 
-from mpf.cura.WhatsNew import WHATS_NEW, entries, latest_version, should_show
+from mpf.whatsnew.WhatsNew import WHATS_NEW, entries, latest_version, should_show
 from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]

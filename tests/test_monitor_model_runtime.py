@@ -1121,7 +1121,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(payload["sectionSizes"], {"info": 240.0})
 
     def test_the_store_delete_drops_only_the_named_keys(self):
-        from mpf.cura.StateStore import StateStore
+        from mpf.settings.StateStore import StateStore
         import tempfile
         import os
         with tempfile.TemporaryDirectory() as directory:

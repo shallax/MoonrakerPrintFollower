@@ -897,3 +897,15 @@ SimulationView is the ACTIVE view (the Preview stage click).
   real Cura under a virtual display is superseded by the gospel truths
   (real Cura under Docker is now the mandate); the doc and its pins
   are updated when the harness lands.
+
+## Domain-tree regression gates
+
+`tests/test_domain_layout.py` checks nested Python imports, screen-independent
+core packages and feature co-location. Its resolver tests include a deliberately
+forbidden nested screen dependency, so adding a directory cannot make the scan
+silently ignore an edge. `tests/test_resource_references.py` checks QML URLs,
+`qmldir` targets and the Python-loaded dialog/Preview/Monitor/shader paths in the
+source tree and in both actual package formats. Moving or deleting a target is
+a failure, including the upload dialog that previously fell outside the scan.
+The normal QML engine and capture gates remain mandatory; static path existence
+is not a substitute for successful component creation or visual evidence.

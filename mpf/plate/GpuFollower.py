@@ -25,7 +25,7 @@ from PyQt6.QtQuick import (
     QSGRendererInterface,
 )
 
-from .TravelStates import is_travel
+from ..gcode.TravelStates import is_travel
 from .PreviewColours import DEFAULT_CLASSES
 from .GpuStrokeMaterial import FollowerStrokeMaterial, ATTR, pack_shader
 

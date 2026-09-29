@@ -1,4 +1,4 @@
-"""Coverage for the gated leak-hunt instrument, mpf/cura/LeakProbe.py.
+"""Coverage for the gated leak-hunt instrument, mpf/diagnostics/LeakProbe.py.
 
 The probe is opt-in at runtime, but its logic is plain Python, so
 every axis is driven here: the sampler's platform readers, the census
@@ -52,8 +52,8 @@ except ImportError:  # the suite is also discovered from the repository root
     from tests.qt_runtime_support import runtime
 
 try:
-    import mpf.cura.LeakProbe as leakprobe
-    from mpf.cura.LeakProbe import (
+    import mpf.diagnostics.LeakProbe as leakprobe
+    from mpf.diagnostics.LeakProbe import (
         LeakProbe, _TOP_N, _camera_line, _diff, _frame_tag, _qml_class_counts,
         _rss_kb, _runtime_sizes, _usage_info_kb, start_leak_probe, stop_leak_probe,
     )
@@ -62,7 +62,7 @@ except ImportError:
     # the whole suite is container-only, so it skips as a module
     # rather than erroring at import.
     raise unittest.SkipTest("LeakProbe needs PyQt6 — container only") from None
-from mpf.cura.PrinterConfig import PrinterConfigStore
+from mpf.settings.PrinterConfig import PrinterConfigStore
 
 # The probe's timers need an application object; a module-level app
 # keeps timer state stable across the suite's tests (standalone runs

@@ -30,7 +30,7 @@ from mpf.monitor.MonitorFormatting import (
     print_job_caption,
 )
 from mpf.monitor.MonitorPermissions import Observation
-from mpf.printer.PrintState import LayerResolver, PhysicalLayer
+from mpf.printing.PrintState import LayerResolver, PhysicalLayer
 from tests.qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 from tests.source_root import SourceRoot
 

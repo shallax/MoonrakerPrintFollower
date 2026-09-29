@@ -8,13 +8,13 @@ import stat
 import tempfile
 import unittest
 
-from mpf.cura.PersistenceMigration import (
+from mpf.settings.PersistenceMigration import (
     read_source,
     run_migration,
     split_record,
     write_backup,
 )
-from mpf.cura.PrinterConfig import PrinterConfigStore
+from mpf.settings.PrinterConfig import PrinterConfigStore
 
 
 def _pretty_write(path, document):
@@ -158,7 +158,7 @@ class MigrationTests(unittest.TestCase):
             self.assertIn(b"printer_configs_v1", handle.read())
         # The clean: the blob and the legacy mirror reset to their
         # registered defaults (the in-memory return-to-default, C4).
-        from mpf.cura.PrinterConfig import PrinterConfigStore
+        from mpf.settings.PrinterConfig import PrinterConfigStore
         self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
         self.assertEqual(
             self.prefs[PrinterConfigStore.LEGACY_MAP["enabled"]],
@@ -201,7 +201,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual((outcome.status, outcome.reason), ("failed", "corrupt-blob"))
         document = self._settings_document()
         self.assertEqual(document["global"]["migration"]["status"], "failed")
-        from mpf.cura.PrinterConfig import PrinterConfigStore
+        from mpf.settings.PrinterConfig import PrinterConfigStore
         self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
         self.assertIs(self.prefs[PrinterConfigStore.MIGRATED_KEY], False)
 
@@ -219,7 +219,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual((outcome.status, outcome.reason), ("failed", "corrupt-blob"))
         document = self._settings_document()
         self.assertEqual(document["global"]["migration"]["status"], "failed")
-        from mpf.cura.PrinterConfig import PrinterConfigStore
+        from mpf.settings.PrinterConfig import PrinterConfigStore
         self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
         self.assertIs(self.prefs[PrinterConfigStore.MIGRATED_KEY], False)
 
@@ -260,7 +260,7 @@ class MigrationTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.old_state))
         # The backup exists and the clean ran.
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, outcome.backup_name)))
-        from mpf.cura.PrinterConfig import PrinterConfigStore
+        from mpf.settings.PrinterConfig import PrinterConfigStore
         self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
         self.assertEqual(document["global"]["migration"]["backupName"], outcome.backup_name)
 
@@ -499,7 +499,7 @@ class MigrationTests(unittest.TestCase):
         # strings: a %20 URL is genuine evidence and must read as a
         # normal verdict, never a parser crash (the review's
         # robustness hole).
-        from mpf.cura.PersistenceMigration import _raw_source_evidence
+        from mpf.settings.PersistenceMigration import _raw_source_evidence
         self.assertTrue(_raw_source_evidence(
             b"[general]\nversion = 1\n[moonrakerprintfollower]\nurl = http://host/path%20with%20spaces\n"))
         self.assertTrue(_raw_source_evidence(
@@ -508,7 +508,7 @@ class MigrationTests(unittest.TestCase):
             b"[moonrakerprintfollower]\nurl = http://host/%zzzz\n"))
 
     def test_the_v1_key_scanner_matches_only_a_real_option_assignment(self):
-        from mpf.cura.PersistenceMigration import _has_v1_blob_key
+        from mpf.settings.PersistenceMigration import _has_v1_blob_key
         # The corrupt value still qualifies — the scanner never parses it.
         self.assertTrue(_has_v1_blob_key(
             b"[moonrakerprintfollower]\nprinter_configs_v1 = {broken json {{{\n"))
@@ -534,7 +534,7 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse(_has_v1_blob_key(content), content)
 
     def test_the_source_evidence_fails_closed_on_malformed_content(self):
-        from mpf.cura.PersistenceMigration import _raw_source_evidence
+        from mpf.settings.PersistenceMigration import _raw_source_evidence
         for content in (
             b"[moonraker]\ninstances = {not json\n",
             b"[unclosed\nurl = x\n",

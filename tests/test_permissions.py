@@ -90,7 +90,7 @@ class PolicyRulingTests(unittest.TestCase):
         # re-review's M-2): the click-time row and the dispatch-time
         # jog_gate must agree over the union of states — one edit to
         # either must fail this.
-        from mpf.monitor.ToolheadPolicy import jog_gate
+        from mpf.monitor.toolhead.ToolheadPolicy import jog_gate
         for state in ("printing", "standby", "paused", "complete", "cancelled", "error", "idle", ""):
             verdict = can_jog(obs(state=state))
             gate = jog_gate(state)

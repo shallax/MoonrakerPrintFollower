@@ -66,10 +66,10 @@ if QT_AVAILABLE:
     from PyQt6.QtQml import QQmlComponent, QQmlEngine
     from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
-    from mpf.index.GCodeIndex import build_index_from_bytes
-    from mpf.monitor.MonitorFormatting import _point_in_polygon, polygon_bounds
+    from mpf.gcode.GCodeIndex import build_index_from_bytes
+    from mpf.geometry.Polygons import point_in_polygon, polygon_bounds
     from mpf.plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
-    from mpf.plate.PlateProgress import layer_polylines
+    from mpf.gcode.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
         """The one context property both documents read for idleness."""
@@ -3232,7 +3232,7 @@ class PlateCanvasHitTests(RealEngineTestCase):
         the Python ray cast the QML test mirrors, so a test can state
         what the geometry says before it asserts what the canvas did."""
         return [row["name"] for row in rows
-                if row.get("polygon") and _point_in_polygon(x, y, row["polygon"])]
+                if row.get("polygon") and point_in_polygon(x, y, row["polygon"])]
 
     def _nearest_centre(self, canvas, rows, bed_x, bed_y):
         """The nearest centre the payload carries, with its pixel
@@ -3868,4 +3868,4 @@ QtObject {
 
 # Explicit exports retain dependencies used by extracted cases. Importing this
 # module creates no Qt application; setUpClass owns application startup.
-__all__ = ['CameraFpsControlTests', 'CameraModelDouble', 'CameraOwnershipTests', 'CameraTitleRowTests', 'ChartColourPickerTests', 'ChartSurfaceTests', 'CollapseOnShrinkTests', 'ConsoleInputRowTests', 'CuraApplicationDouble', 'EscapeLadderTests', 'FollowerViewDprTests', 'IntervalSliderGrabTests', 'LateBedDouble', 'Mock', 'OutputDeviceDouble', 'PaneGutterTests', 'PauseRowRoleTests', 'PlateCanvasHitTests', 'PlateDownloadActionTests', 'PlateDownloadPrinterDouble', 'PlateFaceRenderTests', 'PlateJobBoundaryTests', 'PlatePrinterDouble', 'PlateProjectionMemo', 'PrinterModelDouble', 'QColor', 'QCoreApplication', 'QEvent', 'QGuiApplication', 'QKeyEvent', 'QMetaObject', 'QMouseEvent', 'QObject', 'QPoint', 'QPointF', 'QQmlComponent', 'QQmlEngine', 'QQuickItem', 'QQuickWindow', 'QRectF', 'QT_AVAILABLE', 'QUrl', 'Qt', 'ROOT', 'ReExpansionGuardTests', 'RealEngineTestCase', 'SectionOrderArrivalTests', 'SettingsCacheClearTests', 'SettingsCacheSizeTests', 'SettingsPageCase', 'SettingsSeekTraceTests', 'SimpleNamespace', 'StatusColumnGeometryTests', 'StripVerdictRefreshTests', 'TuningResetConvergenceTests', 'TuningResetTests', '_APPLICATION', '_ActionDialogDouble', '_Application', '_CatalogDouble', '_DefinitionContainer', '_DprMesh', '_ENV_REPORTED', '_Follower', '_LIVE_CONTEXT_OBJECTS', '_MachineActionBase', '_PLATE_TRAVEL_VISUAL_RATIO', '_Registry', '_point_in_polygon', '_report_environment', '_start_application', 'annotations', 'build_index_from_bytes', 'contextlib', 'layer_polylines', 'os', 'patch', 'pathlib', 'polygon_bounds', 'pyqtProperty', 'pyqtSignal', 'pyqtSlot', 'qInstallMessageHandler', 'qml_error_report', 'qml_geometry', 'runtime', 'sys', 'tempfile', 'time', 'unittest']
+__all__ = ['CameraFpsControlTests', 'CameraModelDouble', 'CameraOwnershipTests', 'CameraTitleRowTests', 'ChartColourPickerTests', 'ChartSurfaceTests', 'CollapseOnShrinkTests', 'ConsoleInputRowTests', 'CuraApplicationDouble', 'EscapeLadderTests', 'FollowerViewDprTests', 'IntervalSliderGrabTests', 'LateBedDouble', 'Mock', 'OutputDeviceDouble', 'PaneGutterTests', 'PauseRowRoleTests', 'PlateCanvasHitTests', 'PlateDownloadActionTests', 'PlateDownloadPrinterDouble', 'PlateFaceRenderTests', 'PlateJobBoundaryTests', 'PlatePrinterDouble', 'PlateProjectionMemo', 'PrinterModelDouble', 'QColor', 'QCoreApplication', 'QEvent', 'QGuiApplication', 'QKeyEvent', 'QMetaObject', 'QMouseEvent', 'QObject', 'QPoint', 'QPointF', 'QQmlComponent', 'QQmlEngine', 'QQuickItem', 'QQuickWindow', 'QRectF', 'QT_AVAILABLE', 'QUrl', 'Qt', 'ROOT', 'ReExpansionGuardTests', 'RealEngineTestCase', 'SectionOrderArrivalTests', 'SettingsCacheClearTests', 'SettingsCacheSizeTests', 'SettingsPageCase', 'SettingsSeekTraceTests', 'SimpleNamespace', 'StatusColumnGeometryTests', 'StripVerdictRefreshTests', 'TuningResetConvergenceTests', 'TuningResetTests', '_APPLICATION', '_ActionDialogDouble', '_Application', '_CatalogDouble', '_DefinitionContainer', '_DprMesh', '_ENV_REPORTED', '_Follower', '_LIVE_CONTEXT_OBJECTS', '_MachineActionBase', '_PLATE_TRAVEL_VISUAL_RATIO', '_Registry', 'point_in_polygon', '_report_environment', '_start_application', 'annotations', 'build_index_from_bytes', 'contextlib', 'layer_polylines', 'os', 'patch', 'pathlib', 'polygon_bounds', 'pyqtProperty', 'pyqtSignal', 'pyqtSlot', 'qInstallMessageHandler', 'qml_error_report', 'qml_geometry', 'runtime', 'sys', 'tempfile', 'time', 'unittest']

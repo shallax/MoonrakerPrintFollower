@@ -1,16 +1,9 @@
-import os
-import sys
 import unittest
 from types import SimpleNamespace
 
-# These two are imported as top-level modules, so the domain
-# directory they live in is what goes on the path.
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mpf", "printer"))
-if PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, PLUGIN_DIR)
-
-from FollowController import FollowController, FollowMode, FollowState, decide_layers
-from PrintIdentity import index_view_for_print
+# Import the real packages; these pure modules do not require Cura or Qt.
+from mpf.preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
+from mpf.printing.PrintIdentity import index_view_for_print
 
 
 class FollowControllerTests(unittest.TestCase):

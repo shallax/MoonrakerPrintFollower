@@ -211,7 +211,7 @@ Item {
 
     function _pointInPolygon(x, y, polygon) {
         // Ray casting, in the Python probe's own form
-        // (MonitorFormatting._point_in_polygon): a point lands in the
+        // (geometry.Polygons.point_in_polygon): a point lands in the
         // same object on both sides of the wire.
         var inside = false;
         var j = polygon.length - 1;

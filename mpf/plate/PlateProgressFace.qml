@@ -3,9 +3,9 @@ import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "../resources/theme"
 import "PreviewColours.js" as PreviewColours
 import "PlateExactComposition.js" as ExactComposition
+import "../resources/theme"
 
 // The plate map's progress face (4.6.0): the OctoApp-style
 // previous/current/next layer view. The current layer draws as a

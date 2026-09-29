@@ -1,6 +1,6 @@
 """Deterministic offscreen capture of the Moonraker settings page.
 
-Renders mpf/cura/MoonrakerFollowerConfiguration.qml the way production
+Renders mpf/settings/MoonrakerFollowerConfiguration.qml the way production
 does: the document's root is the Cura.MachineAction component and the
 action object MoonrakerFollowerMachineAction exposes to it is supplied
 as the ``manager`` engine context property (with ``actionDialog`` and
@@ -545,7 +545,7 @@ def main():
         context.setContextProperty("themeBackend", theme_backend)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "cura", "MoonrakerFollowerConfiguration.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "settings", "MoonrakerFollowerConfiguration.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

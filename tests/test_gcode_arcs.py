@@ -21,10 +21,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mpf.plate import ArcGeometry
+from mpf.gcode import ArcGeometry
 
-from mpf.index import GCodeIndex
-from mpf.index.GCodeIndex import (
+from mpf.gcode import GCodeIndex
+from mpf.gcode.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,
@@ -32,7 +32,7 @@ from mpf.index.GCodeIndex import (
     hydrate_layer_from_file,
 )
 from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
-from mpf.plate.PlateProgress import _budgeted, layer_polylines, motion_edges, split_index
+from mpf.gcode.PlateProgress import _budgeted, layer_polylines, motion_edges, split_index
 
 try:  # the host stdlib suite has no PyQt6: the service cases skip there
     from PyQt6.QtCore import QObject, pyqtSignal

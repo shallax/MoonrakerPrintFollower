@@ -3,7 +3,7 @@ from tests import index_plate_support as harness
 
 class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
     def test_malformed_physical_telemetry_falls_back_without_advancing_fill(self):
-        from mpf.index.GCodeIndex import build_index_from_bytes
+        from mpf.gcode.GCodeIndex import build_index_from_bytes
 
         index = build_index_from_bytes(
             b";LAYER:0\nG0 X0 Y0\nG1 X10 Y0 E1\n")
@@ -48,7 +48,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
 
     def test_flat_first_layer_with_start_and_end_z_moves_is_not_spiral(self):
         from array import array
-        from mpf.index.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.GCodeIndex import LayerMotionIndex
 
         index = LayerMotionIndex(
             ranges=[(0, 200)],
@@ -64,7 +64,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
 
     def test_flat_to_spiral_transition_uses_exact_next_boundary(self):
         from array import array
-        from mpf.index.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.GCodeIndex import LayerMotionIndex
 
         # The real vase file's seventh layer stays at 1.4 for half its
         # motions, then winds from 1.4 to 1.6. The first half must retain
@@ -91,7 +91,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
 
     def test_spiral_layer_enters_before_halfway_through_its_z_ramp(self):
         from array import array
-        from mpf.index.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.GCodeIndex import LayerMotionIndex
 
         index = LayerMotionIndex(
             ranges=[(0, 100), (100, 200), (200, 300)],
@@ -155,7 +155,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             self.assertGreater(progress, .9, f"layer {layer + 1} never followed: {best}")
 
     def test_partial_motion_projects_only_onto_the_accepted_unfinished_move(self):
-        from mpf.index.GCodeIndex import LayerMotionIndex
+        from mpf.gcode.GCodeIndex import LayerMotionIndex
         from array import array
         index = LayerMotionIndex(ranges=[(0, 100)], motion_x=[array("f", [10, 20])],
             motion_y=[array("f", [0, 0])], motion_z=[array("f", [.2, .2])],
@@ -571,7 +571,7 @@ class RepeatedGeometrySplitTests(harness.RepeatedGeometrySplitTests):
         index = harness.build_index_from_bytes(harness._repeated_layer_gcode(passes=6))
         self.service._view = self.qt.load("GCodeIndexService").IndexView(
             self.job, index)
-        from mpf.plate.PlateProgress import prepare_layer
+        from mpf.gcode.PlateProgress import prepare_layer
         self.service._decoded_lru[0] = prepare_layer(index, 0)
         self.index = index
         self.count = index.motion_count(0)
