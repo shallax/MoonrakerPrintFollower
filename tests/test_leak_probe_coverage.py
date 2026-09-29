@@ -1,4 +1,4 @@
-"""Coverage for the gated leak-hunt instrument, plugins/LeakProbe.py.
+"""Coverage for the gated leak-hunt instrument, mpf/LeakProbe.py.
 
 The probe is opt-in at runtime, but its logic is plain Python, so
 every axis is driven here: the sampler's platform readers, the census
@@ -52,8 +52,8 @@ except ImportError:  # the suite is also discovered from the repository root
     from tests.qt_runtime_support import runtime
 
 try:
-    import plugins.LeakProbe as leakprobe
-    from plugins.LeakProbe import (
+    import mpf.LeakProbe as leakprobe
+    from mpf.LeakProbe import (
         LeakProbe, _TOP_N, _camera_line, _diff, _frame_tag, _qml_class_counts,
         _rss_kb, _runtime_sizes, _usage_info_kb, start_leak_probe, stop_leak_probe,
     )
@@ -62,7 +62,7 @@ except ImportError:
     # the whole suite is container-only, so it skips as a module
     # rather than erroring at import.
     raise unittest.SkipTest("LeakProbe needs PyQt6 — container only") from None
-from plugins.PrinterConfig import PrinterConfigStore
+from mpf.PrinterConfig import PrinterConfigStore
 
 # The probe's timers need an application object; a module-level app
 # keeps timer state stable across the suite's tests (standalone runs
@@ -620,7 +620,7 @@ class FrameTagTests(unittest.TestCase):
 
 def _device(camera):
     """A real adapter instance without the plugin's wiring."""
-    from plugins.MoonrakerOutputDevice import MoonrakerOutputDevice
+    from mpf.MoonrakerOutputDevice import MoonrakerOutputDevice
     device = MoonrakerOutputDevice.__new__(MoonrakerOutputDevice)
     device._printers = [SimpleNamespace(_camera=camera)]
     return device

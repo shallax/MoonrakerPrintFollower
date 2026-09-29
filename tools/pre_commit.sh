@@ -37,8 +37,8 @@ qmlformat="$(command -v qmlformat 2>/dev/null || true)"
 changed="$(git diff --cached --name-only --diff-filter=ACM | grep '\.qml$' \
     | grep -v '^tests/theme_assets/' || true)"
 
-check compile python3 -m compileall -q plugins tools tests &
-check qml-structure python3 tools/check_qml.py plugins &
+check compile python3 -m compileall -q mpf tools tests &
+check qml-structure python3 tools/check_qml.py mpf &
 if [ "$have_docker" = "1" ]; then
     check qml-engine tools/docker_dev.sh python3 tools/check_qml_engine.py &
 fi
@@ -50,11 +50,11 @@ else
     echo "pre-commit: gitleaks not found — skipping (see INSTRUCTIONS.md)"
 fi
 if command -v ruff >/dev/null 2>&1; then
-    check ruff ruff check plugins tools tests &
+    check ruff ruff check mpf tools tests &
 elif [ "$have_docker" = "1" ]; then
     # No host ruff? The pinned container has the same version CI uses;
     # skipping here would hand the failure to the CI lint job instead.
-    check ruff tools/docker_dev.sh ruff check plugins tools tests &
+    check ruff tools/docker_dev.sh ruff check mpf tools tests &
 else
     echo "pre-commit: ruff not found — skipping (pip install ruff)"
 fi

@@ -21,7 +21,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
-# The suite files import plugins.* — discovery alone puts tests/ on
+# The suite files import mpf.* — discovery alone puts tests/ on
 # the path, not the repo root (the parallel legs get the root from
 # run_tests.sh's environment; this standalone pass sets it itself).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

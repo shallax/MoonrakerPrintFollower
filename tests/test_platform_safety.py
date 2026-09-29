@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-PLUGINS = Path(__file__).resolve().parent.parent / "plugins"
+PLUGINS = Path(__file__).resolve().parent.parent / "mpf"
 
 # token -> the guard that must appear in the same file when the token
 # does (a file that never uses the token needs no guard).
@@ -39,7 +39,7 @@ GUARDED = {
 }
 
 try:  # the sweep's module is Qt-bound; the stdlib suite runs without it
-    from plugins import RemoteFileService as sweep_module
+    from mpf import RemoteFileService as sweep_module
 except Exception:  # noqa: BLE001 — any import failure means no Qt runtime here
     sweep_module = None
 
@@ -55,7 +55,7 @@ BANNED = (
 class PlatformSafetyTests(unittest.TestCase):
     def test_every_posix_token_carries_its_guard(self):
         failures = []
-        for path in sorted(PLUGINS.glob("*.py")):
+        for path in sorted(PLUGINS.rglob("*.py")):
             source = path.read_text(encoding="utf-8")
             for token, guard in GUARDED.items():
                 if token in source and guard not in source:
@@ -64,7 +64,7 @@ class PlatformSafetyTests(unittest.TestCase):
 
     def test_no_unix_only_facilities(self):
         failures = []
-        for path in sorted(PLUGINS.glob("*.py")):
+        for path in sorted(PLUGINS.rglob("*.py")):
             source = path.read_text(encoding="utf-8")
             for token in BANNED:
                 if token in source:
@@ -75,7 +75,7 @@ class PlatformSafetyTests(unittest.TestCase):
         # The sweep's own guard, named separately so a failure reads as
         # the Windows kill rather than as a generic token sweep.
         failures = []
-        for path in sorted(PLUGINS.glob("*.py")):
+        for path in sorted(PLUGINS.rglob("*.py")):
             source = path.read_text(encoding="utf-8")
             if "os.kill" in source and 'sys.platform == "win32"' not in source:
                 failures.append("{}: os.kill without the Windows branch".format(path.name))

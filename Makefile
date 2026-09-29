@@ -86,11 +86,11 @@ lint:
 ifneq ($(LEG),posix)
 	$(DEV) lint
 else
-	./tools/docker_dev.sh sh -c "python3 -m compileall -q plugins tools tests \
-	    && python3 tools/check_qml.py plugins \
+	./tools/docker_dev.sh sh -c "python3 -m compileall -q mpf tools tests \
+	    && python3 tools/check_qml.py mpf \
 	    && python3 tools/check_qml_engine.py \
-	    && check_qml_format plugins/*.qml plugins/theme/*.qml \
-	    && ruff check plugins tools tests \
+	    && check_qml_format 'mpf/**/*.qml' \
+	    && ruff check mpf tools tests \
 	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
 	    && sh tools/check_workflows.sh \
@@ -180,7 +180,7 @@ format:
 ifneq ($(LEG),posix)
 	$(DEV) format
 else
-	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml plugins/theme/*.qml
+	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i 'mpf/**/*.qml'
 endif
 
 coverage:

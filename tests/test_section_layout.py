@@ -13,26 +13,26 @@ sys.modules.setdefault(
     types.SimpleNamespace(Logger=types.SimpleNamespace(log=lambda *args: None)),
 )
 
-from plugins.SectionLayoutPolicy import (
+from mpf.SectionLayoutPolicy import (
     PANE_NAMES,
     PANE_SECTION_ORDER,
     SECTION_LAYOUT_KEY,
     layout_for,
     normalise_section_layout,
 )
-from plugins.UiStateStore import UiStateStore
+from mpf.UiStateStore import UiStateStore
 
 import pathlib
 import re
 
-_PLUGINS = pathlib.Path(__file__).resolve().parent.parent / "plugins"
+_PLUGINS = pathlib.Path(__file__).resolve().parent.parent / "mpf"
 
 
 def _section_id_counts():
     """Every sectionId: literal in the *Section.qml files, counted —
     a duplicated literal would collapse a set comparison silently."""
     counts = {}
-    for path in sorted(_PLUGINS.glob("*Section.qml")):
+    for path in sorted(_PLUGINS.rglob("*Section.qml")):
         text = path.read_text(encoding="utf-8")
         for match in re.finditer(r'sectionId:\s*"([a-zA-Z0-9]+)"', text):
             counts[match.group(1)] = counts.get(match.group(1), 0) + 1

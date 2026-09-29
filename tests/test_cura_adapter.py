@@ -2,10 +2,10 @@ import importlib.util
 import pathlib
 import unittest
 
-from plugins.CuraLifecycleBridge import CuraLifecycleBridge
+from mpf.CuraLifecycleBridge import CuraLifecycleBridge
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("mpf_cura_adapter", ROOT / "plugins" / "CuraAdapter.py")
+SPEC = importlib.util.spec_from_file_location("mpf_cura_adapter", ROOT / "mpf" / "CuraAdapter.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)

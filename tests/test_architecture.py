@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
 RETIRED = {
@@ -51,7 +51,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
 
     def test_document_names_the_runtime_components_and_services(self):
         # Discover modules so a new owner cannot silently escape the table.
-        for path in sorted(PLUGINS.glob("*.py")):
+        for path in sorted(PLUGINS.rglob("*.py")):
             if path.name == "__init__.py":
                 continue
             self.assertRegex(ARCH, r"(?m)^\| `" + re.escape(path.name) + r"` \|",
@@ -88,7 +88,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_instructions_document_records_the_version_bump_checklist(self):
         instructions = (ROOT / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         for token in (
-            "package.json", "plugins/plugin.json", "CHANGELOG.md", "README.md",
+            "package.json", "mpf/plugin.json", "CHANGELOG.md", "README.md",
             "release workflow", "v<version>",
         ):
             self.assertIn(token, instructions)
@@ -108,7 +108,7 @@ class SourceContractTests(unittest.TestCase):
     def test_retired_runtime_is_removed_not_hidden_behind_shims(self):
         for name in RETIRED:
             self.assertFalse((PLUGINS / (name + ".py")).exists(), name)
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.ClassDef):
                     self.assertFalse(node.name.endswith("Mixin"), path.name)
@@ -117,13 +117,13 @@ class SourceContractTests(unittest.TestCase):
                 if isinstance(node, ast.ImportFrom) and node.level:
                     self.assertNotIn(node.module, RETIRED, path.name)
                 # Cura loads each plugin's files as top-level modules —
-                # an absolute `plugins.X` import (resolvable only when
+                # an absolute `mpf.X` import (resolvable only when
                 # the dev repo root sits on sys.path) breaks the real
                 # boot with "could not load plugin". Cross-module
                 # imports must stay relative.
                 if isinstance(node, ast.ImportFrom) and node.level == 0:
-                    self.assertFalse(str(node.module or "").startswith("plugins"),
-                                     f"{path.name}: absolute plugins import "
+                    self.assertFalse(str(node.module or "").startswith("mpf"),
+                                     f"{path.name}: absolute mpf import "
                                      f"({node.module})")
 
     def test_components_import_only_their_declared_dependencies(self):
@@ -223,7 +223,7 @@ class SourceContractTests(unittest.TestCase):
                                "PrinterConfig", "MoonrakerMonitorModel"}  # plugin-namespaced preference keys / file names
         # The allowed set must cover every plugin module: an unlisted
         # module would silently skip the whole check.
-        discovered = {path.stem for path in PLUGINS.glob("*.py")} - {"__init__"}
+        discovered = {path.stem for path in PLUGINS.rglob("*.py")} - {"__init__"}
         self.assertEqual(set(allowed), discovered)
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text(encoding="utf-8")
@@ -250,7 +250,7 @@ class SourceContractTests(unittest.TestCase):
         # own module, public APIs only.
         self.assertFalse((PLUGINS / "RendererAdaptation.py").is_file())
         self.assertTrue((PLUGINS / "NativeNozzleLifecycle.py").is_file())
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
             foreign = set()
             for node in ast.walk(tree):
@@ -273,7 +273,7 @@ class SourceContractTests(unittest.TestCase):
     def test_local_import_graph_is_acyclic(self):
         graph = {path.stem: {n.module for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(n, ast.ImportFrom) and n.level and n.module}
-            for path in PLUGINS.glob("*.py") if path.stem != "__init__"}
+            for path in PLUGINS.rglob("*.py") if path.stem != "__init__"}
         done = set()
         def visit(name, stack):
             if name in done or name not in graph: return
@@ -283,7 +283,7 @@ class SourceContractTests(unittest.TestCase):
         for name in graph: visit(name, [])
 
     def test_external_integrations_never_access_private_follower_members(self):
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             if path.name in {"MoonrakerPrintFollower.py", "FollowerRuntime.py"}: continue
             source = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"(?:self\.)?_follower\._\w+", source), path.name)
@@ -295,7 +295,7 @@ class SourceContractTests(unittest.TestCase):
         # the pane's stream view are their own lanes, not request
         # paths of the shared transport.
         owners = []
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             source = path.read_text(encoding="utf-8")
             if "QNetworkAccessManager(" in source: owners.append(path.name)
             self.assertNotIn("QWebSocket", source, path.name)
@@ -312,7 +312,7 @@ class SourceContractTests(unittest.TestCase):
         # the reply registered in a dict, the signal connected via a
         # default-argument lambda into a bound method of the owning
         # QObject, so nothing can be collected mid-flight.
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             source = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"\.finished\.connect\(finished\)", source), path.name)
             # PyQt6 enums never equal plain ints: ``error() != 0`` is
@@ -356,7 +356,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertFalse((PLUGINS / "PreviewActionPanelControls.qml").exists())
 
     def test_removed_preference_api_and_private_follower_access_are_absent(self):
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("self._pref_", source, path.name)
             self.assertNotIn("self._follower._", source, path.name)
@@ -364,7 +364,7 @@ class SourceContractTests(unittest.TestCase):
     def test_runtime_sources_do_not_contain_release_nicknames(self):
         # Short-form release nicknames stay banned; a full version
         # (v3.0.0) is not a nickname and is always written X.Y.Z.
-        for path in PLUGINS.iterdir():
+        for path in PLUGINS.rglob("*"):
             if path.suffix in {".py", ".qml"}:
                 self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(encoding="utf-8"), re.I), path.name)
 
@@ -448,7 +448,7 @@ class SourceContractTests(unittest.TestCase):
             "qmlRegisterType": "QtQml",
         }
         import ast
-        for path in PLUGINS.glob("*.py"):
+        for path in PLUGINS.rglob("*.py"):
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
             except SyntaxError:

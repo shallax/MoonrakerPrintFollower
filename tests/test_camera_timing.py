@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from plugins import CameraTiming
+from mpf import CameraTiming
 
 
 class CameraTimingContractTests(unittest.TestCase):
@@ -90,14 +90,14 @@ class CameraTimingContractTests(unittest.TestCase):
         sys.modules["UM.Resources"] = resources
         sys.modules["UM.Logger"] = logger
         try:
-            import plugins.CameraTiming as timing
+            import mpf.CameraTiming as timing
             timing = importlib.reload(timing)
             timing.begin(True)
             timing.mark("T3", "webcam list requested")  # must not raise
         finally:
             for name in ("UM", "UM.Resources", "UM.Logger"):
                 sys.modules.pop(name, None)
-            import plugins.CameraTiming as restored
+            import mpf.CameraTiming as restored
             importlib.reload(restored)
 
     def test_the_sinks_write_when_uranium_exists(self):
@@ -132,7 +132,7 @@ class CameraTimingContractTests(unittest.TestCase):
         sys.modules["UM.Resources"] = resources
         sys.modules["UM.Logger"] = logger
         try:
-            import plugins.CameraTiming as timing
+            import mpf.CameraTiming as timing
             timing = importlib.reload(timing)
             timing.begin(True)
             timing.mark("T3", "webcam list requested")
@@ -146,5 +146,5 @@ class CameraTimingContractTests(unittest.TestCase):
         finally:
             for name in ("UM", "UM.Resources", "UM.Logger"):
                 sys.modules.pop(name, None)
-            import plugins.CameraTiming as restored
+            import mpf.CameraTiming as restored
             importlib.reload(restored)

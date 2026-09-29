@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from plugins.MonitorFormatting import (
+from mpf.MonitorFormatting import (
     core_values,
     filament_total_mm_from_file,
     filament_total_mm_from_gcode,

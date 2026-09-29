@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 
-from plugins.StateStore import StateStore
+from mpf.StateStore import StateStore
 
 
 class _Recording:

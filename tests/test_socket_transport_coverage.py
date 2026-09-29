@@ -50,9 +50,9 @@ if QT_AVAILABLE:
         QSslSocket,
     )
 
-    import plugins.MoonrakerSocket as socket_module
-    from plugins.MoonrakerSocket import MoonrakerSocket
-    from plugins.SocketFraming import (
+    import mpf.MoonrakerSocket as socket_module
+    from mpf.MoonrakerSocket import MoonrakerSocket
+    from mpf.SocketFraming import (
         MAX_HANDSHAKE_HEADER_BYTES,
         accept_value,
     )
@@ -534,7 +534,7 @@ class FrameRoutingTests(SocketCase):
     def test_a_parser_that_raises_fails_closed(self):
         # The parser contract is "raise or emit"; the raise half must tear
         # the feed down rather than escape the callback.
-        from plugins.SocketFraming import FramingError
+        from mpf.SocketFraming import FramingError
         server = self.loopback()
         instance = self.upgraded(server)
         original = socket_module.parse_frames

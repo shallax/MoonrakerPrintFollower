@@ -8,7 +8,7 @@ a short-form header is a corrupt frame the peer drops silently).
 import struct
 import unittest
 
-from plugins.SocketFraming import (
+from mpf.SocketFraming import (
     FrameState,
     FramingError,
     MAX_HANDSHAKE_HEADER_BYTES,

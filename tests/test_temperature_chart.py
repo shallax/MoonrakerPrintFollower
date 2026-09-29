@@ -15,11 +15,11 @@ import pathlib
 import random
 import unittest
 
-from plugins.MonitorTemperatureHistory import TemperatureHistory
+from mpf.MonitorTemperatureHistory import TemperatureHistory
 
 QT_AVAILABLE = importlib.util.find_spec("PyQt6") is not None
 
-PLUGINS = pathlib.Path(__file__).resolve().parent.parent / "plugins"
+PLUGINS = pathlib.Path(__file__).resolve().parent.parent / "mpf"
 CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text()
 
 TOLERANCE_SECONDS = 1.5
@@ -174,7 +174,7 @@ class ChartSearchTests(unittest.TestCase):
                 "extruder": {"temperature": 200.0 + tick, "target": 210.0 if tick < 25 else 240.0},
                 "heater_bed": {"temperature": 60.0, "target": 0.0},
             }, 1000.0 + tick * 2.5)
-        from plugins.MonitorTemperatureHistory import chart_payload
+        from mpf.MonitorTemperatureHistory import chart_payload
 
         for series in chart_payload(history, {})["series"]:
             scanned = self.series_bounds({"points": series["points"], "targets": series["targets"]})

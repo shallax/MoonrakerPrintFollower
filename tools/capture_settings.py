@@ -1,6 +1,6 @@
 """Deterministic offscreen capture of the Moonraker settings page.
 
-Renders plugins/MoonrakerFollowerConfiguration.qml the way production
+Renders mpf/MoonrakerFollowerConfiguration.qml the way production
 does: the document's root is the Cura.MachineAction component and the
 action object MoonrakerFollowerMachineAction exposes to it is supplied
 as the ``manager`` engine context property (with ``actionDialog`` and
@@ -525,7 +525,7 @@ def main():
         # from a single directory, so the fallbacks are added first: the
         # final search order is [theme assets, plugins, qml stubs].
         engine.addImportPath(os.path.join(ROOT, "tests", "qml_stubs"))
-        engine.addImportPath(os.path.join(ROOT, "plugins"))
+        engine.addImportPath(os.path.join(ROOT, "mpf"))
         engine.addImportPath(theme_import)
         verify_capture_tree(engine, theme_backend)
         context = engine.rootContext()
@@ -545,7 +545,7 @@ def main():
         context.setContextProperty("themeBackend", theme_backend)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "MoonrakerFollowerConfiguration.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "MoonrakerFollowerConfiguration.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

@@ -1,6 +1,6 @@
 """Deterministic capture of the file-manager page.
 
-Renders the real plugins/FileManager.qml in an offscreen engine with the
+Renders the real mpf/FileManager.qml in an offscreen engine with the
 real Cura/UM theme components and the real cura-light theme, against a
 stub model carrying the values production publishes.
 
@@ -386,14 +386,14 @@ def render(output_dir: str) -> None:
     try:
         engine = QQmlEngine()
         engine.addImportPath(os.path.join(ROOT, "tests", "qml_stubs"))
-        engine.addImportPath(os.path.join(ROOT, "plugins"))
+        engine.addImportPath(os.path.join(ROOT, "mpf"))
         engine.addImportPath(theme_import)
         verify_capture_tree(engine, theme_backend)
         engine_context = engine.rootContext()
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "FileManager.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "FileManager.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

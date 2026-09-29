@@ -2,13 +2,13 @@ import pathlib
 import unittest
 
 from tests.fake_moonraker import FakeMoonraker
-from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
-from plugins.PreviewFormatting import pause_items, pause_summary
-from plugins.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory
+from mpf.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
+from mpf.PreviewFormatting import pause_items, pause_summary
+from mpf.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 
 
@@ -118,8 +118,8 @@ class NextPausePolicyTests(unittest.TestCase):
     def _pipeline(self, manual=(), states=None, baked=(), current=0, total=None,
                   elapsed=0.0, anchor_elapsed=None, remaining_value=240.0):
         from types import SimpleNamespace
-        from plugins.NextPausePipeline import NextPausePipeline
-        from plugins.PrintState import PhysicalLayer
+        from mpf.NextPausePipeline import NextPausePipeline
+        from mpf.PrintState import PhysicalLayer
         view = SimpleNamespace(pause_layers=set(baked))
         calls = []
         def remaining(layer, view_arg=None, end=True):
@@ -304,8 +304,8 @@ class MonitorPauseBlockTests(unittest.TestCase):
         return block
 
     def snapshot(self, index=10, total=40):
-        from plugins.PrintState import PhysicalLayer, PrintSnapshot
-        from plugins.RemoteJobService import PrintObservation
+        from mpf.PrintState import PhysicalLayer, PrintSnapshot
+        from mpf.RemoteJobService import PrintObservation
         return PrintSnapshot(observation=PrintObservation("printing", "part.gcode", 100, 20, 12.5),
                              layer=PhysicalLayer(index=index, total=total),
                              index_ready=True, plate_layer_count=total)
@@ -349,8 +349,8 @@ class MonitorPauseBlockTests(unittest.TestCase):
         self.model._publish()
 
     def test_an_unindexed_print_has_no_final_layer_claim_or_schedule_action(self):
-        from plugins.PrintState import PhysicalLayer, PrintSnapshot
-        from plugins.RemoteJobService import PrintObservation
+        from mpf.PrintState import PhysicalLayer, PrintSnapshot
+        from mpf.RemoteJobService import PrintObservation
         self.build()
         # Moonraker knows the current/total layer before our index exists.
         self.print_state = PrintSnapshot(

@@ -59,14 +59,14 @@ COPY tools/check_qml_format.sh /usr/local/bin/check_qml_format
 RUN chmod +x /usr/local/bin/check_qml_format \
     && ln -s /usr/lib/qt6/bin/qmlformat /usr/local/bin/qmlformat
 
-CMD ["sh", "-c", "python3 -m compileall -q plugins tools tests \
+CMD ["sh", "-c", "python3 -m compileall -q mpf tools tests \
     && python3 tools/build_shaders.py \
-    && python3 tools/check_qml.py plugins \
-    && check_qml_format plugins/*.qml \
-    && ruff check plugins tools tests \
+    && python3 tools/check_qml.py mpf \
+    && check_qml_format 'mpf/**/*.qml' \
+    && ruff check mpf tools tests \
     && shellcheck tools/*.sh \
     && hadolint Dockerfile \
     && gitleaks detect --no-git --no-banner --redact \
     && coverage run -m unittest discover -s tests -p 'test_*.py' \
-    && coverage report --include='plugins/*' --fail-under=80 \
+    && coverage report --include='mpf/*' --fail-under=80 \
     && sh tools/run_captures.sh dist/screenshots"]

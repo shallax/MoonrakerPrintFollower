@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
 
-PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "mpf"
 
 
 class UploadContractTests(unittest.TestCase):

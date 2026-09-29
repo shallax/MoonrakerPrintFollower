@@ -18,8 +18,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from plugins.GCodeIndex import LayerMotionIndex, build_index_from_bytes
-from plugins.PlateProgress import (
+from mpf.GCodeIndex import LayerMotionIndex, build_index_from_bytes
+from mpf.PlateProgress import (
     MAX_TRAVEL_POINTS,
     _PREPARED_LIMIT,
     _budgeted,
@@ -786,7 +786,7 @@ class PayloadRunOrderTests(unittest.TestCase):
         # The prepared store hands the painter a DECODED payload: for a
         # layer that comes back from the cache the compact form IS the
         # geometry the walk reads, so the ordering has to hold there.
-        from plugins.PlateProgress import decode_layer, encode_layer
+        from mpf.PlateProgress import decode_layer, encode_layer
         index = _index(
             "M82\n"
             ";LAYER:0\n"
@@ -1025,7 +1025,7 @@ class CompactCodecTests(unittest.TestCase):
     }
 
     def test_the_round_trip_preserves_every_channel(self):
-        from plugins.PlateProgress import decode_layer, encode_layer
+        from mpf.PlateProgress import decode_layer, encode_layer
         raw = encode_layer(self.PAYLOAD)
         self.assertIsInstance(raw, bytes)
         self.assertEqual(decode_layer(raw), self.PAYLOAD)
@@ -1034,13 +1034,13 @@ class CompactCodecTests(unittest.TestCase):
         self.assertLessEqual(len(raw), 14 * 12 + 256)
 
     def test_an_empty_payload_round_trips(self):
-        from plugins.PlateProgress import decode_layer, encode_layer
+        from mpf.PlateProgress import decode_layer, encode_layer
         empty = {"classes": {}, "travels": [], "travelStarts": [],
                  "travelEnds": [], "motions": 0}
         self.assertEqual(decode_layer(encode_layer(empty)), empty)
 
     def test_immutable_decode_preserves_bytes_and_software_array_transport(self):
-        from plugins.PlateProgress import decode_layer, encode_layer
+        from mpf.PlateProgress import decode_layer, encode_layer
         raw = encode_layer(self.PAYLOAD)
         immutable = decode_layer(raw, immutable=True)
         self.assertIsInstance(immutable["classes"]["WALL-OUTER"][0], tuple)
@@ -1049,13 +1049,13 @@ class CompactCodecTests(unittest.TestCase):
         self.assertEqual(decode_layer(encode_layer(immutable)), self.PAYLOAD)
 
     def test_encoding_rejects_malformed_point_triples(self):
-        from plugins.PlateProgress import encode_layer
+        from mpf.PlateProgress import encode_layer
         for points in (([1, 2],), ([1, 2], [3, 4, 5, 6])):
             with self.subTest(points=points), self.assertRaises(ValueError):
                 encode_layer(dict(self.PAYLOAD, classes={"SKIN": [points]}))
 
     def test_dense_decode_checkpoints_preserve_every_channel_and_can_stop(self):
-        from plugins.PlateProgress import decode_layer, encode_layer, PreparationYield
+        from mpf.PlateProgress import decode_layer, encode_layer, PreparationYield
         payload = dict(self.PAYLOAD)
         payload["classes"] = {"SKIN": [[[float(i), .5, i] for i in range(8193)]]}
         raw = encode_layer(payload)
@@ -1069,7 +1069,7 @@ class CompactCodecTests(unittest.TestCase):
             decode_layer(raw, checkpoint=stop)
 
     def test_garbage_decodes_to_the_empty_payload(self):
-        from plugins.PlateProgress import decode_layer
+        from mpf.PlateProgress import decode_layer
         self.assertEqual(decode_layer(b"not a payload"), {})
         self.assertEqual(decode_layer(None), {})
 
@@ -1331,7 +1331,7 @@ class SimplificationWorkBoundTests(unittest.TestCase):
         # clock stays as a loose secondary guard only.
         points = [[index * 0.0005, 0.05 if index % 2 else 0.0, float(index)]
                   for index in range(20000)]
-        import plugins.PlateProgress as plate_progress
+        import mpf.PlateProgress as plate_progress
         real_simplify = plate_progress._simplify
         charges = []
         def counted_simplify(points_arg, tolerance, spent, should_yield=None):

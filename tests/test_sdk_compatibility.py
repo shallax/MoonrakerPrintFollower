@@ -4,7 +4,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 PACKAGE = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
 PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text(encoding="utf-8"))
 FOLLOWER_SOURCES = (
@@ -26,9 +26,12 @@ CLIENT = (PLUGINS / "MoonrakerClient.py").read_text(encoding="utf-8")
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
 MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
 # Every shipped QML file is audited; a newly added file must not silently
-# bypass the Qt6.2 import checks.
-QML_FILES = sorted(path.name for path in PLUGINS.glob("*.qml"))
-QML_SOURCES = {path.name: path.read_text(encoding="utf-8") for path in PLUGINS.glob("*.qml")}
+# bypass the Qt6.2 import checks. Keyed by path, not basename: two files
+# sharing a name in different domains would otherwise collide and one
+# would drop out of the audit unnoticed.
+QML_FILES = sorted(str(path.relative_to(PLUGINS)) for path in PLUGINS.rglob("*.qml"))
+QML_SOURCES = {str(path.relative_to(PLUGINS)): path.read_text(encoding="utf-8")
+               for path in PLUGINS.rglob("*.qml")}
 CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
 MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
 CAMERA_PANE_QML = QML_SOURCES["CameraPane.qml"]
@@ -128,7 +131,9 @@ class SdkCompatibilityTests(unittest.TestCase):
 
     def test_qml_imports_are_qt6_2_compatible(self):
         for name in QML_FILES:
-            self.assertRegex(QML_SOURCES[name], r"^import QtQuick 2\.15", name)
+            # A singleton opens with its pragma; the QtQuick import is
+            # still the first thing after it.
+            self.assertRegex(QML_SOURCES[name], r"^(pragma \w+\n)?import QtQuick 2\.15", name)
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 

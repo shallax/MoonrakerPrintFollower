@@ -1,9 +1,9 @@
 """Deterministic offscreen capture of the what's-new overlay.
 
-Renders plugins/WhatsNewOverlay.qml the way production opens it: a
+Renders mpf/WhatsNewOverlay.qml the way production opens it: a
 Popup created on Cura's engine and parented into a plain QQuickWindow
 (the window stands in for Cura's main window), with the REAL content
-from plugins/WhatsNew.py and the real cura-light theme through the
+from mpf/WhatsNew.py and the real cura-light theme through the
 shared capture overlay.
 
 Usage:  python3 tools/capture_whatsnew.py <output-directory>
@@ -40,7 +40,7 @@ class WhatsNewModelStub(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from plugins.WhatsNew import entries
+        from mpf.WhatsNew import entries
         self._content = entries()
 
     @pyqtProperty(QVariant, constant=True)
@@ -85,7 +85,7 @@ def main():
     # module resolution makes the last import path declaring a module its
     # provider (so the overlay must win for UM and Cura).
     engine.addImportPath(THEME_ASSETS)
-    engine.addImportPath(os.path.join(ROOT, "plugins"))
+    engine.addImportPath(os.path.join(ROOT, "mpf"))
     engine.addImportPath(QML_STUBS)
     engine.addImportPath(overlay)
     verify_capture_tree(engine, backend)
@@ -103,7 +103,7 @@ def main():
     window.show()
 
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "WhatsNewOverlay.qml")))
+    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "WhatsNewOverlay.qml")))
     if component.isError():
         raise RuntimeError("\n".join(e.toString() for e in component.errors()))
 

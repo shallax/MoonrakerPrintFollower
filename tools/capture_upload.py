@@ -1,6 +1,6 @@
 """Deterministic offscreen capture of the Moonraker upload dialog.
 
-Renders plugins/MoonrakerUploadDialog.qml at ~520x420 with a minimal
+Renders mpf/MoonrakerUploadDialog.qml at ~520x420 with a minimal
 ``manager`` QObject mirroring the surface the production
 MoonrakerOutputDevice exposes to the dialog (uploadPathOptions,
 initialUploadPath, initialUploadFilename, initialStartPrint,
@@ -164,7 +164,7 @@ def main():
     # module resolution makes the last import path declaring a module its
     # provider (so the overlay must win for UM and Cura).
     engine.addImportPath(THEME_ASSETS)
-    engine.addImportPath(os.path.join(ROOT, "plugins"))
+    engine.addImportPath(os.path.join(ROOT, "mpf"))
     engine.addImportPath(QML_STUBS)
     engine.addImportPath(overlay)
     verify_capture_tree(engine, backend)
@@ -176,7 +176,7 @@ def main():
     context.setContextProperty("screenScaleFactor", 1.0)
 
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "MoonrakerUploadDialog.qml")))
+    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "MoonrakerUploadDialog.qml")))
     if component.isError():
         raise RuntimeError("\n".join(e.toString() for e in component.errors()))
 

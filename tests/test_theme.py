@@ -9,7 +9,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b|#[0-9A-Fa-f]{8}\b")
 NAMED = re.compile(r'color:\s*"(black|white|red|green|blue|grey|gray|darkgrey|darkgray|lightgrey|lightgray)"')
 # The named-literal allowlist (the panel's M2): the two justified

@@ -32,11 +32,11 @@ def main() -> int:
     for file_path, file_data in sorted(data.get("files", {}).items()):
         # Coverage writes the platform's separator, and the prefix, the
         # exclusion table and the bar's own report are all posix-spelled:
-        # on Windows the raw key ("plugins\\Foo.py") matched no prefix,
+        # on Windows the raw key ("mpf\\Foo.py") matched no prefix,
         # so every file was skipped and the gate passed having judged
         # nothing.
         file_path = file_path.replace("\\", "/")
-        if not file_path.startswith("plugins/") or file_path.endswith("__main__.py"):
+        if not file_path.startswith("mpf/") or file_path.endswith("__main__.py"):
             continue
         summary = file_data.get("summary", {})
         statements = summary.get("num_statements", 0)

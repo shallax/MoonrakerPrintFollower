@@ -343,7 +343,7 @@ class FileManagerOpenBindingTests(harness.RealEngineTestCase):
                           b"property bool fileManagerOpen: openingPrinter.fileManagerOpen; "
                           b"FileManager { anchors.fill: parent; open: parent.fileManagerOpen; "
                           b"printerModel: openingPrinter } }",
-                          harness.QUrl.fromLocalFile(str(harness.ROOT / "plugins" / "OpenProbe.qml")))
+                          harness.QUrl.fromLocalFile(str(harness.ROOT / "mpf" / "OpenProbe.qml")))
         document = component.create()
         self.assertIsNotNone(document, harness.qml_error_report(component))
         window = harness.QQuickWindow()

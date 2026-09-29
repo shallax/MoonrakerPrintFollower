@@ -106,7 +106,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         import pathlib
         ROOT = pathlib.Path(__file__).resolve().parents[1]
         comp = QQmlComponent(cls.engine)
-        comp.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / "PlateProgressFace.qml")))
+        comp.loadUrl(QUrl.fromLocalFile(str(ROOT / "mpf" / "PlateProgressFace.qml")))
         cls.face = comp.create()
         assert cls.face is not None, _parent.qml_error_report(comp)
         # The model must precede the sizing: PlateCanvas replots on

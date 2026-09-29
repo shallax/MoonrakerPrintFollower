@@ -127,7 +127,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from plugins.PlateQt import render_layer_prefix, png_file
+        from mpf.PlateQt import render_layer_prefix, png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -202,7 +202,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
     def test_a_face_leases_held_assets_and_releases_its_model_on_destruction(self):
         from PyQt6.QtCore import QEvent
         component = harness.QQmlComponent(self.engine)
-        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.ROOT / "plugins" / "PlateProgressFace.qml")))
+        component.loadUrl(harness.QUrl.fromLocalFile(str(harness.ROOT / "mpf" / "PlateProgressFace.qml")))
         first = harness.PlatePrinterDouble()
         second = harness.PlatePrinterDouble()
         face = component.createWithInitialProperties({"printerModel": first})
@@ -249,7 +249,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from plugins.PlateQt import render_layer_prefix, png_file
+        from mpf.PlateQt import render_layer_prefix, png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):

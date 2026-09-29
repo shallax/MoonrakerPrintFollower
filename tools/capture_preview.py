@@ -1,5 +1,5 @@
 """Deterministic Preview-pane captures: render the real
-plugins/MoonrakerPreviewCard.qml in an offscreen engine with the
+mpf/MoonrakerPreviewCard.qml in an offscreen engine with the
 real Cura/UM theme components, the real cura-light theme and fake pane
 data, and write a PNG for release notes and layout regression checks.
 
@@ -63,7 +63,7 @@ class CuraApplicationStub(QObject):
 def pane_values():
     """Pane property values, formatted exactly as the production
     presenters format them (see PrintCoordinator._publish and
-    BedMeshPresenter._publish in plugins/)."""
+    BedMeshPresenter._publish in mpf/)."""
     return {
         # Visibility chain: the presenter's gateVisible (the card shows
         # in whichever host the presenter places it).
@@ -135,7 +135,7 @@ def render(output_dir: str) -> None:
         # module from a single directory, so add the fallbacks first:
         # the final search order is [theme assets, plugins, qml stubs].
         engine.addImportPath(os.path.join(ROOT, "tests", "qml_stubs"))
-        engine.addImportPath(os.path.join(ROOT, "plugins"))
+        engine.addImportPath(os.path.join(ROOT, "mpf"))
         engine.addImportPath(theme_import)
         verify_capture_tree(engine, theme_backend)
         engine_context = engine.rootContext()
@@ -148,7 +148,7 @@ def render(output_dir: str) -> None:
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "MoonrakerPreviewCard.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "MoonrakerPreviewCard.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

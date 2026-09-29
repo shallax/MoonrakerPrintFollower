@@ -23,9 +23,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import plugins
+import mpf
 
-from plugins.MonitorFormatting import (chart_label, chart_temperature_objects, core_values,
+from mpf.MonitorFormatting import (chart_label, chart_temperature_objects, core_values,
                                        day_offset_suffix, duration, endstop_values,
                                        estimate_remaining, factor_percent, fan_writable,
                                        file_disk_text, file_duration_short, file_filament,
@@ -38,7 +38,7 @@ from plugins.MonitorFormatting import (chart_label, chart_temperature_objects, c
                                        result, wanted_object, format_bytes, normalise_mesh,
                                        filament_total_mm_from_gcode, infer_macro_parameters,
                                        preview_block, preview_temperature_pair)
-from plugins.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
+from mpf.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
                                         R_BUSY, R_CLEARED_PAUSE, R_DISCONNECTED, R_ESTOPPED,
                                         R_LOCKED, R_NO_PAUSED_PRINT, R_NOTHING_TO_PAUSE,
                                         R_NOT_PRINTING, R_PAUSE_FIRST, R_PAUSED_NOTE,
@@ -47,23 +47,23 @@ from plugins.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY
                                         can_restart, can_resume, can_set_absolute,
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
-from plugins.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
+from mpf.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
                                                chart_payload, series_metadata)
-from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
-from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
+from mpf.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
+from mpf.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
                                           _record, _remove_old_state_file, _verify_new_files,
                                           _write_new_files, read_source, run_migration,
                                           split_record, write_backup)
-from plugins.PluginPersistence import PluginPersistence
-from plugins.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
+from mpf.PluginPersistence import PluginPersistence
+from mpf.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
                                        pause_unavailable, status_icon, status_text)
-from plugins.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
+from mpf.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
                                    PrinterConfig, PrinterConfigStore, normalise_url,
                                    normalise_temperature_chart, upload_path_safe)
-from plugins.StateStore import StateStore
+from mpf.StateStore import StateStore
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 
-PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "mpf"
 
 
 def _pretty_save(path, text):
@@ -80,15 +80,15 @@ if QT_AVAILABLE:
     _RUNTIME = runtime()
     _QT = _RUNTIME.__enter__()
 
-    from plugins.CameraBridge import CameraBridge
-    from plugins.GCodeIndexService import GCodeIndexService, IndexView
-    from plugins.GCodeIndex import LayerMotionIndex
-    from plugins.MonitorCamera import MonitorCamera
-    from plugins.MonitorCommands import MonitorCommands
-    from plugins.MonitorTuning import MonitorTuning
-    from plugins.PauseController import PauseController
-    from plugins.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
-    from plugins.UiStateStore import UiStateStore
+    from mpf.CameraBridge import CameraBridge
+    from mpf.GCodeIndexService import GCodeIndexService, IndexView
+    from mpf.GCodeIndex import LayerMotionIndex
+    from mpf.MonitorCamera import MonitorCamera
+    from mpf.MonitorCommands import MonitorCommands
+    from mpf.MonitorTuning import MonitorTuning
+    from mpf.PauseController import PauseController
+    from mpf.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
+    from mpf.UiStateStore import UiStateStore
 
 
 def observation(**overrides):
@@ -1545,7 +1545,7 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
             with open(destination, "wb") as handle:
                 handle.write(b"[general]\n")
 
-        with patch("plugins.PersistenceMigration.os.replace", side_effect=truncate):
+        with patch("mpf.PersistenceMigration.os.replace", side_effect=truncate):
             self.assertFalse(write_backup(self.cura_cfg, target))
         with open(target, "rb") as handle:
             self.assertEqual(handle.read(), b"[general]\n")
@@ -2589,7 +2589,7 @@ if QT_AVAILABLE:
             # included: the pass's own hydration hands the interpreter
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
-            with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.GCodeIndexService.hydrate_layer_from_file",
                        side_effect=lambda index, path, layer, should_stop=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
@@ -2628,7 +2628,7 @@ if QT_AVAILABLE:
                 return original(kind, work, lease)
 
             self.service._submit = counted
-            with patch("plugins.GCodeIndexService.hydrate_layer_from_file",
+            with patch("mpf.GCodeIndexService.hydrate_layer_from_file",
                        side_effect=OSError("the file went away")):
                 self.service._advance()
                 self.assertEqual(submitted, ["fullprep"],
@@ -3403,7 +3403,7 @@ class SettingsPageMigrationMirrorTests(unittest.TestCase):
                 "UM.Settings.DefinitionContainer": SimpleNamespace(
                     DefinitionContainer=type("DefinitionContainer", (), {})),
             }):
-            from plugins.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
+            from mpf.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
             action = MoonrakerFollowerMachineAction(application, follower)
         self.addCleanup(action.deleteLater)
         return action
@@ -3482,24 +3482,24 @@ class PluginPackageCoverageTests(unittest.TestCase):
     wiring is what register() owns, not the extensions themselves."""
 
     def test_metadata_is_empty_and_register_wires_the_components(self):
-        self.assertEqual(plugins.getMetaData(), {})
+        self.assertEqual(mpf.getMetaData(), {})
         probed = []
         app = SimpleNamespace(name="app")
         follower = SimpleNamespace(_runtime="runtime")
         output = SimpleNamespace(name="output")
         action = SimpleNamespace(name="action")
         fakes = {name: ModuleType(name) for name in (
-            "plugins.MoonrakerPrintFollower", "plugins.MoonrakerOutputDevicePlugin",
-            "plugins.MoonrakerFollowerMachineAction", "plugins.LeakProbe")}
-        fakes["plugins.MoonrakerPrintFollower"].MoonrakerPrintFollower = lambda app: follower
-        fakes["plugins.MoonrakerOutputDevicePlugin"].MoonrakerOutputDevicePlugin = (
+            "mpf.MoonrakerPrintFollower", "mpf.MoonrakerOutputDevicePlugin",
+            "mpf.MoonrakerFollowerMachineAction", "mpf.LeakProbe")}
+        fakes["mpf.MoonrakerPrintFollower"].MoonrakerPrintFollower = lambda app: follower
+        fakes["mpf.MoonrakerOutputDevicePlugin"].MoonrakerOutputDevicePlugin = (
             lambda app, owner: output)
-        fakes["plugins.MoonrakerFollowerMachineAction"].MoonrakerFollowerMachineAction = (
+        fakes["mpf.MoonrakerFollowerMachineAction"].MoonrakerFollowerMachineAction = (
             lambda app, owner, output_plugin: action)
-        fakes["plugins.LeakProbe"].start_leak_probe = (
+        fakes["mpf.LeakProbe"].start_leak_probe = (
             lambda runtime, application: probed.append((runtime, application)))
         with patch.dict(sys.modules, fakes):
-            wired = plugins.register(app)
+            wired = mpf.register(app)
             # Hosts without Qt can still register the nonvisual plugin pieces.
             original_import = __import__
 
@@ -3509,7 +3509,7 @@ class PluginPackageCoverageTests(unittest.TestCase):
                 return original_import(name, *args, **kwargs)
 
             with patch("builtins.__import__", side_effect=no_qml):
-                without_qml = plugins.register(app)
+                without_qml = mpf.register(app)
         self.assertEqual(wired, {"extension": follower, "output_device": output,
                                  "machine_action": action})
         self.assertEqual(without_qml, wired)

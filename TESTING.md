@@ -134,7 +134,7 @@ Hard rules, in order:
 
 `HarnessDriver` lives in `tests/harness/` and is staged into the Cura
 plugin path at run time only; the package-parity gate and a new
-allowlist pin over `plugins/` contents guarantee it never ships.
+allowlist pin over `mpf/` contents guarantee it never ships.
 
 - **Assertions** read real objects (QML items, the model, the
   controller) — reading state is not faking interaction.

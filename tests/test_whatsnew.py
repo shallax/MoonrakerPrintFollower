@@ -12,10 +12,10 @@ import json
 import pathlib
 import unittest
 
-from plugins.WhatsNew import WHATS_NEW, entries, latest_version, should_show
+from mpf.WhatsNew import WHATS_NEW, entries, latest_version, should_show
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mpf"
 
 
 class WhatsNewContentTests(unittest.TestCase):

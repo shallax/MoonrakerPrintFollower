@@ -1986,7 +1986,7 @@ display-free option if the Windows Python defects ever bite again.
 
 Live state (2026-09-18): the functional build is confirmed and
 pinned at the tag v4.5.0-snapshot (the revert point for
-the remaining work); the coverage wave lifted plugins/ to 99% line
+the remaining work); the coverage wave lifted mpf/ to 99% line
 coverage with the 95% per-project bar in the gates; the debt pack's
 open items (the refresh extraction and the resume grey-out
 unification) and the 5.7+ compatibility pack sit before the ship

@@ -15,6 +15,6 @@ fi
 target="$cura_dir/plugins/MoonrakerPrintFollower"
 mkdir -p "$(dirname "$target")"
 rm -rf "$target"
-ln -s "$root/plugins" "$target"
-echo "Linked $target -> $root/plugins"
+ln -s "$root/mpf" "$target"
+echo "Linked $target -> $root/mpf"
 echo "Restart Cura to load the checkout; rebuild the QML cache is not needed for plugin QML."

@@ -18,7 +18,7 @@
 #
 # COVERAGE=1 turns the container leg into a parallel coverage run:
 # each worker measures its own file (COVERAGE_FILE per worker), the
-# results combine, and the plugins/ report prints with the 95% bars
+# results combine, and the mpf/ report prints with the 95% bars
 # enforced — the project total AND per file
 # (tools/check_per_file_coverage.py, whose justified exclusions carry
 # the scenario map's reason/evidence/date/recheck schema).
@@ -144,7 +144,7 @@ run_coverage_container() {
         printf '%s\n' $parallel_files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
         for f in $timed_files; do $PYTHON -m unittest discover -s $tests_dir -p \"\$f\" || exit; done && \
         $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
-        $PYTHON -m coverage report --include='plugins/*' --fail-under=95 && \
+        $PYTHON -m coverage report --include='mpf/*' --fail-under=95 && \
         $PYTHON -m coverage json -o /tmp/mpf/coverage.json && \
         $PYTHON tools/check_per_file_coverage.py /tmp/mpf/coverage.json"
 }

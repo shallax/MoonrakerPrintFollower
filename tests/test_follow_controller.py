@@ -3,7 +3,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
+PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mpf"))
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 

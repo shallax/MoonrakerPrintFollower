@@ -17,7 +17,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         plot = self._bed_plot(face)
         # A 2x bake: the prefix rendered at scale 2 (a previous
         # zoom's cached asset).
-        from plugins.PlateQt import PlateLayer, render_layer_prefix, png_file
+        from mpf.PlateQt import PlateLayer, render_layer_prefix, png_file
         view2x = {"width": int(face.width()), "height": int(face.height()),
                   "scale": 2.0, "lineScale": 8.0, "compact": False,
                   "panX": 0.0, "panY": 0.0, "dpr": 1.0}
@@ -382,7 +382,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "travels": [], "travelStarts": [], "travelEnds": [],
             "motions": 21,
         }
-        from plugins.PlateQt import render_layer_prefix, png_file
+        from mpf.PlateQt import render_layer_prefix, png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -522,7 +522,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         layer = self._native_layer(payload, face, prefix_split=10)
-        from plugins.PlateQt import render_navigation_layer, png_file
+        from mpf.PlateQt import render_navigation_layer, png_file
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()

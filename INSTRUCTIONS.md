@@ -62,7 +62,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
-  (qmlformat on the selected backend), `make coverage` (plugins/ report,
+  (qmlformat on the selected backend), `make coverage` (mpf/ report,
   the coverage gate), `make snapshot_package` (build + verify + copy to
   `mpf.curapackage` in the host's temporary directory), `make snapshot_quick`
   (the fast iteration path: lint + tests + package, no captures),
@@ -331,11 +331,11 @@ When bumping the version (for example 3.1.0 → 3.2.0), every one of these must
 change together:
 
 1. `package.json` — `package_version`
-2. `plugins/plugin.json` — `version`
+2. `mpf/plugin.json` — `version`
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
-5. `plugins/WhatsNew.py` — a new head entry (headline + user-facing items)
+5. `mpf/WhatsNew.py` — a new head entry (headline + user-facing items)
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
@@ -454,7 +454,7 @@ file, never inline content:
 1. The component (`FooSection.qml`) — a `ColumnLayout` root
    (`id: root`, `spacing: 0`) with `property var printerModel: null`,
    then the shared `CollapsibleSectionHeader`
-   (`plugins/CollapsibleSectionHeader.qml`, instantiated directly —
+   (`mpf/CollapsibleSectionHeader.qml`, instantiated directly —
    no Loader) with `Layout.fillWidth: true`,
    `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
@@ -526,7 +526,7 @@ binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
 `tests/test_runtime_monitor_composition.py`.
 
-Plugin-drawn glyphs (see `plugins/PadlockLocked.svg`,
+Plugin-drawn glyphs (see `mpf/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
 `UM.ColorImage` injects the theme colour into the root `<svg>` element,
 so the glyph follows Cura's theme and scaling automatically. Reference
@@ -860,7 +860,7 @@ look identical to the real artifact by eye.
 ## Development install loop
 
 On Linux, `make dev_install` (`tools/install_dev.sh`) symlinks this checkout's
-`plugins/` into Cura's user plugin directory
+`mpf/` into Cura's user plugin directory
 (`~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower`), so
 edits appear on the next Cura restart — no package download, unzip or
 drag. The symlink shadows the packaged copy; `rm` it to go back to the
@@ -880,7 +880,7 @@ by default — request FAILURES always log a warning regardless.
 
 ### Follower shader maintenance
 
-The release archives include `plugins/shaders/stroke.vert.qsb` and
+The release archives include `mpf/shaders/stroke.vert.qsb` and
 `stroke.frag.qsb`; Cura users need no compiler or additional dependency.
 `make all`, `make build`, and `make package` generate the bundles before
 packaging; CI and release artifact builds do the same. Windows package and

@@ -34,7 +34,7 @@ from tests.qt_runtime_support import QT_AVAILABLE, runtime
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication
 
-    from plugins.PrinterConfig import PrinterConfig
+    from mpf.PrinterConfig import PrinterConfig
     from tests.control_owner_support import (
         _BedMesh,
         _Binding,
@@ -74,7 +74,7 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         self.addCleanup(self.dir.cleanup)
 
     def _compose(self):
-        from plugins.PreparedStore import PreparedCache
+        from mpf.PreparedStore import PreparedCache
         module = self.fixture.load("GCodeIndexService")
         parts = SimpleNamespace(
             client=_Client(), binding=_Binding(PrinterConfig()),

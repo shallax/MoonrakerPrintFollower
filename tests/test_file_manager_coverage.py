@@ -31,7 +31,7 @@ from unittest.mock import patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 
-from plugins.FileManagerPolicy import (
+from mpf.FileManagerPolicy import (
     COLUMN_WIDTH_MAX,
     COLUMN_WIDTH_MIN,
     DEFAULT_COLUMN_ORDER,
@@ -72,8 +72,8 @@ if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QModelIndex, QObject, Qt, pyqtSignal
     from PyQt6.QtNetwork import QNetworkReply
 
-    from plugins.FileManager import FileManager
-    from plugins.FilesViewModel import FilesViewModel
+    from mpf.FileManager import FileManager
+    from mpf.FilesViewModel import FilesViewModel
 
 
 NOW = 1728000000.0  # a fixed instant: the policy never reads the clock
@@ -544,7 +544,7 @@ class WalkFailureTests(ServiceCase):
         # MAX_DIRECTORIES bounds the fan-out, not the folder strip: the
         # surplus folders are still known (their parent listed them) and
         # their contents arrive on a later walk.
-        with patch("plugins.FileManager.MAX_DIRECTORIES", 2):
+        with patch("mpf.FileManager.MAX_DIRECTORIES", 2):
             self.service.open()
             self.directory("path=gcodes&", [], dirs=("a", "b", "c"))
             self.assertEqual(len(self.all_walk_requests()), 2)
@@ -562,7 +562,7 @@ class LifecycleTests(ServiceCase):
         self.service.open()
         self.directory("path=gcodes&", [("a.gcode", {})])
         old_root = self.service._thumb_root
-        with patch("plugins.FileManager.shutil.rmtree", side_effect=OSError("busy")):
+        with patch("mpf.FileManager.shutil.rmtree", side_effect=OSError("busy")):
             self.service.bind()
             self.assertEqual(self.service.rows_resident, 0)
             self.assertNotEqual(self.service._thumb_root, old_root)
@@ -905,7 +905,7 @@ class ProjectionAccessorTests(ServiceCase):
         self.assertEqual(self.service.total_count(), 0)
 
     def test_the_projection_cache_serves_one_evaluation_per_revision_set(self):
-        with patch("plugins.FileManager.time.time", return_value=10.0):
+        with patch("mpf.FileManager.time.time", return_value=10.0):
             self.open_listing()
             self.service.current_rows()
             self.assertEqual(self.service.projection_count, 1)
@@ -1173,7 +1173,7 @@ class ThumbnailTests(ServiceCase):
 
     def test_clear_thumbnails_survives_a_tree_removal_failure(self):
         self.service._thumbs["a.gcode"] = {"state": "ready", "url": "file:///x.png"}
-        with patch("plugins.FileManager.shutil.rmtree", side_effect=OSError("busy")):
+        with patch("mpf.FileManager.shutil.rmtree", side_effect=OSError("busy")):
             self.service.clear_thumbnails()
         self.assertEqual(self.service.thumbnail_payload(), {})
         self.addCleanup(shutil.rmtree, self.service._thumb_root, True)

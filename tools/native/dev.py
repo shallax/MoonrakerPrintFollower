@@ -148,7 +148,7 @@ COVERAGE_BAR = 95.0
 # and only when every other file clears the bar; the container remains
 # the authority for the figure itself.
 PLATFORM_BOUND_COVERAGE = {
-    "plugins/LeakProbe.py": "its /proc, mach and libproc readers are Unix-only; "
+    "mpf/LeakProbe.py": "its /proc, mach and libproc readers are Unix-only; "
                             "the pinned container is the authority for this bar",
 }
 
@@ -158,7 +158,7 @@ RESULTS = []
 # --- the shared ground ----------------------------------------------------
 def checkout_root() -> Path:
     for candidate in Path(__file__).resolve().parents:
-        if (candidate / "package.json").is_file() and (candidate / "plugins").is_dir():
+        if (candidate / "package.json").is_file() and (candidate / "mpf").is_dir():
             return candidate
     raise SystemExit("tools/native/dev.py is not inside the checkout (no package.json above it)")
 
@@ -306,8 +306,8 @@ def qmlformat_exe():
 
 
 def qml_files(root: Path):
-    files = sorted((root / "plugins").glob("*.qml"))
-    files += sorted((root / "plugins" / "theme").glob("*.qml"))
+    files = sorted((root / "mpf").glob("*.qml"))
+    files += sorted((root / "mpf" / "theme").glob("*.qml"))
     return files
 
 
@@ -783,15 +783,15 @@ def cmd_lint(args) -> int:
     python = sys.executable
 
     step("python: compile, QML structure, QML engine")
-    record("compile", run([python, "-m", "compileall", "-q", "plugins", "tools", "tests"],
+    record("compile", run([python, "-m", "compileall", "-q", "mpf", "tools", "tests"],
                           cwd=root, env=env) == 0)
-    record("qml-structure", run([python, "tools/check_qml.py", "plugins"], cwd=root, env=env) == 0)
+    record("qml-structure", run([python, "tools/check_qml.py", "mpf"], cwd=root, env=env) == 0)
     record("qml-engine", run([python, "tools/check_qml_engine.py"], cwd=root, env=env) == 0)
 
     step("linters")
     ruff = ruff_exe()
     if ruff:
-        record("ruff", run([ruff, "check", "plugins", "tools", "tests"], cwd=root, env=env) == 0)
+        record("ruff", run([ruff, "check", "mpf", "tools", "tests"], cwd=root, env=env) == 0)
     else:
         record("ruff", False, "not installed - run: make dev_install")
 
@@ -892,7 +892,7 @@ def cmd_coverage(args) -> int:
     if run([python, "-m", "coverage", "combine", *part_files], cwd=root,
            env=combined_env) != 0:
         return record("coverage", False, "combine failed")
-    report_ok = run([python, "-m", "coverage", "report", "--include=plugins/*",
+    report_ok = run([python, "-m", "coverage", "report", "--include=mpf/*",
                      "--fail-under=%s" % COVERAGE_BAR], cwd=root, env=combined_env) == 0
     record("coverage total (%.0f%% bar)" % COVERAGE_BAR, report_ok)
     json_path = scratch / "coverage.json"
@@ -905,7 +905,7 @@ def cmd_coverage(args) -> int:
         record("coverage per file", True)
     else:
         failing = [line.split()[0] for line in out.splitlines()
-                   if line.strip().startswith("plugins/")]
+                   if line.strip().startswith("mpf/")]
         excused = [name for name in failing if name in PLATFORM_BOUND_COVERAGE]
         if IS_WINDOWS and failing and len(excused) == len(failing):
             print(out.rstrip())

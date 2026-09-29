@@ -35,14 +35,14 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from plugins.MonitorTemperatureHistory import (  # noqa: E402
+from mpf.MonitorTemperatureHistory import (  # noqa: E402
     MAX_SAMPLES,
     TemperatureHistory,
     chart_payload,
 )
 
 try:  # the split-payload API (4.5.0 chart work); the legacy tree lacks it
-    from plugins.MonitorTemperatureHistory import (  # noqa: F401
+    from mpf.MonitorTemperatureHistory import (  # noqa: F401
         MINI_RENDER_BUDGET,
         latest_values,
         mini_chart_payload as _mini_payload,

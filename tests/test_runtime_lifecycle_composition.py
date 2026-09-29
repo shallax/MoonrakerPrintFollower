@@ -469,12 +469,12 @@ class ComposedComponentTests(harness.ComposedComponentTests):
                       "the demanded layer never reached the full cache")
 
     def test_service_failure_signals_are_logged(self):
-        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "plugins" / "PrintCoordinator.py").read_text(encoding="utf-8")
+        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("files.failed.connect", source)
         self.assertIn("index.failed.connect", source)
 
     def test_smoothing_trace_is_opt_in(self):
-        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "plugins" / "FollowerRuntime.py").read_text(encoding="utf-8")
+        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "FollowerRuntime.py").read_text(encoding="utf-8")
         self.assertIn("MOONRAKER_FOLLOWER_SMOOTHING_TRACE", source)
         self.assertIn("os.environ.get", source)
 

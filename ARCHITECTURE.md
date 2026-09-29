@@ -1,7 +1,7 @@
 # Moonraker Print Follower architecture
 
 This is the current implementation contract, not a roadmap. Package identity,
-version and SDK support are defined in `package.json`, `plugins/plugin.json` and
+version and SDK support are defined in `package.json`, `mpf/plugin.json` and
 CI. Release history belongs in `CHANGELOG.md`. Change procedures, including the
 version bump checklist, live in `INSTRUCTIONS.md`.
 
@@ -27,7 +27,7 @@ version bump checklist, live in `INSTRUCTIONS.md`.
 
 ## 2. Composition roots and public APIs
 
-`plugins/__init__.py` registers the extension, output-device plugin and Machine
+`mpf/__init__.py` registers the extension, output-device plugin and Machine
 Action. Its imports remain lazy so pure modules can be imported without Cura.
 
 `MoonrakerPrintFollower.py` is the stable QObject/Extension facade. Its public
@@ -588,14 +588,14 @@ resize mapping and the host's printer-change resets are structural
 entanglements, not section content.
 
 **The theme singleton (4.4.0).** The plugin's colours live in one
-singleton document (`plugins/theme/MoonrakerTheme.qml`, imported by
+singleton document (`mpf/theme/MoonrakerTheme.qml`, imported by
 the QML directory as `import "theme"`): the axis identity colours,
 the pause orange, the console palette, the strip accents. No
 document repeats a colour literal; `tests/test_theme.py` scans the
 QML tree and fails any magic colour AND any cited token the
 singleton does not declare (the two directions of the gate), and
 the format/lint targets cover the theme directory like the rest of
-`plugins/`.
+`mpf/`.
 
 **The Preview value-block seam (4.3.0).** The Monitor's data path
 publishes one per-poll block — the strip's verdicts, the state
