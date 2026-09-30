@@ -98,8 +98,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # the session's downloaded file is gone with the old process.
         service._view = None
         service._restored = False
-        service._prepared_table = None
-        service._prepared_identity = None
+        service._prepared.table = None
+        service._prepared.identity = None
         files._path = None
         requests = []
         with harness.patch.object(files, "request_file", lambda *a, **k: requests.append(1)):
@@ -136,13 +136,13 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # temp file and leave a future append racing the deletion.
         service = self.parts.index
         writer = {"retired": False}
-        service._prepared_writer = writer
-        with harness.patch.object(service, "_suspend_prepared_writer") as suspend:
+        service._prepared.writer = writer
+        with harness.patch.object(service._prepared, "suspend") as suspend:
             service.invalidate()
         self.assertTrue(writer["retired"], "the writer was never frozen")
         self.assertEqual(suspend.call_count, 1,
                          "the writer was never suspended/checkpointed")
-        self.assertIsNone(service._prepared_writer,
+        self.assertIsNone(service._prepared.writer,
                           "the writer reference was dropped without retiring")
 
     def test_the_cache_clear_invalidate_drops_every_index_listener_state(self):
@@ -158,10 +158,10 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         service._view = self.qt.load("IndexView").IndexView(("part.gcode", 100, 1), index)
         service._job = ("part.gcode", 100, 1)
         service._wanted = service._restored = service._save = True
-        service._prepared_table = {"layer": 0}
-        service._prepared_identity = ("part.gcode", 100, 1)
-        service._prepared_complete = True
-        service._prepared_coverage = {0}
+        service._prepared.table = {"layer": 0}
+        service._prepared.identity = ("part.gcode", 100, 1)
+        service._prepared.complete = True
+        service._prepared.coverage = {0}
         service._full_cache.set("layer", object(), 16)
         service._decoded_lru.set("layer", object(), 16)
         service._decoded_lru.protected = {3}
@@ -190,10 +190,10 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.assertIsNone(service.view)
         self.assertIsNone(service._job)
         self.assertFalse(service._wanted or service._restored or service._save)
-        self.assertIsNone(service._prepared_table)
-        self.assertIsNone(service._prepared_identity)
-        self.assertFalse(service._prepared_complete)
-        self.assertEqual(service._prepared_coverage, set())
+        self.assertIsNone(service._prepared.table)
+        self.assertIsNone(service._prepared.identity)
+        self.assertFalse(service._prepared.complete)
+        self.assertEqual(service._prepared.coverage, set())
         self.assertEqual(len(service._full_cache), 0)
         self.assertEqual(len(service._decoded_lru), 0)
         self.assertEqual(service._decoded_lru.protected, set())

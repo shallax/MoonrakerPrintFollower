@@ -111,7 +111,7 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
             kinds=[], published=lambda: len(parts.presentation.published))
 
         def snapshot():
-            return (index.phase, index._prepared_saved, index._prepared_complete)
+            return (index.phase, index._prepared.saved, index._prepared.complete)
 
         def observe():
             state.boundaries += 1
@@ -151,7 +151,7 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             index._advance()
-            if index._prepared_saved and not index._busy:
+            if index._prepared.saved and not index._busy:
                 return
             QCoreApplication.processEvents()
             time.sleep(0.002)
@@ -180,7 +180,7 @@ class CoordinatorRefreshThrottleTests(unittest.TestCase):
         self._run_pass(parts)
         self._settle(parts)
         index = parts.index
-        self.assertTrue(index._prepared_saved, "the pass never completed")
+        self.assertTrue(index._prepared.saved, "the pass never completed")
         batches = [kind for kind in state.kinds if kind == "fullprep"]
         # Two is the floor the ceiling below can discriminate from: a
         # per-batch refresh would put it at twice the batches, and one

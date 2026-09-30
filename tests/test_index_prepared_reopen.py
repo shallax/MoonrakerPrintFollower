@@ -37,7 +37,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             self.service.set_manual_anchor(10)
         captured = self._capture_submit()
         self.qt.load("GCodeIndexService")
-        with harness.patch.object(self.service, "_prepared_open"), \
+        with harness.patch.object(self.service._prepared, "open"), \
                 harness.patch.object(self.files, "lease", side_effect=AssertionError("distant cache requested raw file")), \
                 harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", side_effect=AssertionError("distant cache hydrated motion arrays")):
             self.service._advance()
@@ -80,7 +80,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             self.service.set_gpu_rendering("popover", True)
         work = []
         self.qt.load("GCodeIndexService")
-        with harness.patch.object(self.service, "_prepared_open"), \
+        with harness.patch.object(self.service._prepared, "open"), \
                 harness.patch.object(self.service, "_submit", side_effect=lambda kind, task, *args: work.append((kind, task))), \
                 harness.patch.object(self.files, "lease", side_effect=AssertionError("prefetch requested the file")), \
                 harness.patch.object(self.qt.load("IndexTasks"), "hydrate_layer_from_file", side_effect=AssertionError("prefetch hydrated motion arrays")):
@@ -104,14 +104,14 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.store.read = lambda identity, table, layer: (
             reads.append(layer) or original_read(identity, table, layer))
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         self.assertEqual(self.service._full_next, 5)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
         self.service._advance()
         self.assertEqual(self.service._busy, "", "the pass ran after a fast-path reopen")
-        self.assertIsNone(self.service._prepared_writer)
+        self.assertIsNone(self.service._prepared.writer)
         self.assertEqual(reads, [], "the reopen replayed the store")
 
     def test_the_public_restore_adopts_the_prepared_store(self):
@@ -145,9 +145,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                                 (submitted.append(kind),
                                  original_submit(kind, fn, *args, **kwargs))[1])
         self._pump()
-        self.assertTrue(self.service._prepared_saved,
+        self.assertTrue(self.service._prepared.saved,
                         "the restored complete store never took the fast path")
-        self.assertTrue(self.service._prepared_complete)
+        self.assertTrue(self.service._prepared.complete)
         self.assertEqual(self.service._full_next, 5)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
         self.assertEqual(requested, [], "the restore demanded the raw file")
@@ -184,9 +184,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             self.store.append(writer, layer, self._payload(layer))
         self.store.finish_write(writer)
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertFalse(self.service._prepared_saved,
+        self.assertFalse(self.service._prepared.saved,
                          "a holey table took the fast path")
         self._pump()
         loaded = self.store.load_table("print-key")
@@ -209,15 +209,15 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # enter the writer anyway, or the finish publishes a (0,0)
         # hole for a layer that WAS prepared.
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         encoded = self._payload(2)
-        self.service._prepared_persist(2, encoded)
-        self.assertIsNotNone(self.service._prepared_writer,
+        self.service._prepared.persist(2, encoded, len(self.service.view.ranges))
+        self.assertIsNotNone(self.service._prepared.writer,
                              "the persist opened no writer")
-        self.assertEqual(self.service._prepared_writer["table"][2][0],
+        self.assertEqual(self.service._prepared.writer["table"][2][0],
                          self.state_cached)
-        self.assertGreater(self.service._prepared_writer["table"][2][2], 0)
-        self.assertIn(2, self.service._prepared_coverage)
+        self.assertGreater(self.service._prepared.writer["table"][2][2], 0)
+        self.assertIn(2, self.service._prepared.coverage)
         # The pass reaching the same layer copies the cached bytes
         # instead of skipping it (the worker's branch).
         self.service._full_cache.set(2, encoded, len(encoded))
@@ -232,9 +232,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # RAM tier must report the store's coverage, not the cache's
         # residency (a 64-entry cache must not cap the band at 6%).
         self._view(layers=1000)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         for layer in range(900):
-            self.service._prepared_coverage.add(layer)
+            self.service._prepared.coverage.add(layer)
         self.assertEqual(self.service.plate_pass_fraction(), 0.9)
         for layer in range(64):
             self.service._full_cache.set(layer, b"x" * 1000, 1000)
@@ -259,7 +259,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                 raise ValueError("refused")
             return real_encode(payload)
         with harness.patch.object(self.qt.load("IndexTasks"), "_encode_layer", refusing):
-            self.service._prepared_open(self.files.identity)
+            self.service._prepared.open(self.files.identity)
             self._pump()
         self.assertEqual(self.service.plate_pass_fraction(), 1.0,
                          "the refused layer capped the fraction")
@@ -278,16 +278,16 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.store.append_uncacheable(writer, 1)
         self.store.finish_write(writer)
         self._view(3)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertTrue(self.service._prepared_saved,
+        self.assertTrue(self.service._prepared.saved,
                         "the complete table (refusal included) took the repair path")
-        self.assertTrue(self.service._prepared_complete)
-        self.assertIsNone(self.service._prepared_writer)
+        self.assertTrue(self.service._prepared.complete)
+        self.assertIsNone(self.service._prepared.writer)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
-        self.assertIn(1, self.service._prepared_coverage,
+        self.assertIn(1, self.service._prepared.coverage,
                       "the uncacheable layer left the coverage")
-        self.assertFalse(self.service._prepared_served(1),
+        self.assertFalse(self.service._prepared.served(1),
                          "an uncacheable layer read as served")
         self.service._advance()
         self.assertEqual(self.service._busy, "",
@@ -296,9 +296,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
     def test_a_layer_is_not_served_without_a_table(self):
         # No open table (a print whose pass never opened one, a cache
         # clear): nothing is readable without the raw file.
-        self.assertFalse(self.service._prepared_served(0))
-        self.service._prepared_table = []
-        self.assertFalse(self.service._prepared_served(0))
+        self.assertFalse(self.service._prepared.served(0))
+        self.service._prepared.table = []
+        self.assertFalse(self.service._prepared.served(0))
 
     def test_a_table_of_another_length_is_dropped(self):
         # The file's layer count no longer matches this print's index: the
@@ -306,34 +306,34 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # resume one print's geometry onto another's layers.
         self._view(5)
         self.store.finalise("print-key", [self._payload(i) for i in range(3)])
-        self.service._prepared_open(self.files.identity)
-        self.assertEqual(len(self.service._prepared_coverage), 3)
+        self.service._prepared.open(self.files.identity)
+        self.assertEqual(len(self.service._prepared.coverage), 3)
         self.service._adopt_prepared()
-        self.assertIsNone(self.service._prepared_table, "a foreign-length table was adopted")
-        self.assertEqual(self.service._prepared_coverage, set())
+        self.assertIsNone(self.service._prepared.table, "a foreign-length table was adopted")
+        self.assertEqual(self.service._prepared.coverage, set())
 
     def test_an_abandoned_writer_is_aborted(self):
         # An unfinished writer on an abandon path: its temp file goes and
         # the handle closes, so the store never publishes half a pass.
         writer = self.store.open_for_write("print-key", 3)
-        self.service._prepared_writer = writer
-        self.service._abort_prepared_writer()
-        self.assertIsNone(self.service._prepared_writer)
+        self.service._prepared.writer = writer
+        self.service._prepared.abort()
+        self.assertIsNone(self.service._prepared.writer)
         self.assertTrue(writer["retired"], "the abandoned writer stayed writable")
         self.assertFalse(harness.os.path.exists(writer["temp"]), "the abandoned writer's file survived")
 
     def test_writers_drop_even_when_the_store_is_already_gone(self):
         # A cache clear or a rebind can take the store first: the writer
         # reference still drops, and no later pass can finalise it.
-        self.service._abort_prepared_writer()          # nothing to abandon
-        self.service._suspend_prepared_writer()        # nothing to checkpoint
-        self.service._prepared = None
-        self.service._prepared_writer = {"table": [None]}
-        self.service._abort_prepared_writer()
-        self.assertIsNone(self.service._prepared_writer)
-        self.service._prepared_writer = {"table": [None]}
-        self.service._suspend_prepared_writer()
-        self.assertIsNone(self.service._prepared_writer)
+        self.service._prepared.abort()          # nothing to abandon
+        self.service._prepared.suspend()        # nothing to checkpoint
+        self.service._prepared.rebind(None)
+        self.service._prepared.writer = {"table": [None]}
+        self.service._prepared.abort()
+        self.assertIsNone(self.service._prepared.writer)
+        self.service._prepared.writer = {"table": [None]}
+        self.service._prepared.suspend()
+        self.assertIsNone(self.service._prepared.writer)
 
     def test_a_weak_identity_never_opens_the_prepared_table(self):
         # The same strength gate the index restore obeys: a weak identity
@@ -342,21 +342,31 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self._view(5)
         self.store.finalise("print-key", [self._payload(i) for i in range(5)])
         self.files.identity.modified = 0.0
-        self.service._prepared_open(self.files.identity)
-        self.assertIsNone(self.service._prepared_table)
+        self.service._prepared.open(self.files.identity)
+        self.assertIsNone(self.service._prepared.table)
         # And with no table at all there is nothing to adopt.
         self.service._adopt_prepared()
-        self.assertFalse(self.service._prepared_saved)
+        self.assertFalse(self.service._prepared.saved)
 
     def test_the_fraction_reads_the_ram_tier_when_nothing_persists(self):
         # No persistence configured: the RAM tier's residency is the only
         # prepared store there is — and no view is no fraction at all.
         self._view(5)
-        self.service._prepared = None
+        self.service._prepared.rebind(None)
         self.service._full_cache.set(0, b"x" * 10, 10)
         self.assertEqual(self.service.plate_pass_fraction(), 1 / 5)
         self.service._view = None
         self.assertIsNone(self.service.plate_pass_fraction())
+
+    def test_a_failed_publish_arms_at_most_one_rebuild(self):
+        # The self-heal is bounded: the first failed publish arms the
+        # rebuild, and a second failure must not arm another — a loop
+        # here would walk the file again on every pass forever.
+        self._view(5)
+        self.service._prepared.open(self.files.identity)
+        self.assertTrue(self.service._prepared.arm_retry())
+        self.assertFalse(self.service._prepared.arm_retry(),
+                         "the rebuild was armed twice")
 
     def test_an_index_with_no_layers_has_no_fraction(self):
         # No layers is no fraction: the pass bar reads empty, never a
@@ -373,7 +383,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         index = self._view(5)
         index.followed_layer = 2
         self.service._last_save_at = harness.time.monotonic()  # keep index-save out of this ordering test
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         requests = []
         self.files.lease = lambda: None
         self.files.request_file = lambda: requests.append(set(self.service._decoded_lru))
@@ -410,7 +420,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         for layer in range(3):
             self.store.append(writer, layer, self._payload(layer))
         self.store.finish_write(writer)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         requests = []
 
         def request():
@@ -450,9 +460,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.store.finalise("print-key", [self._payload(layer) for layer in range(3)])
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertTrue(self.service._prepared_complete,
+        self.assertTrue(self.service._prepared.complete,
                         "the complete store never took the fast path")
         submitted = []
         original_submit = self.service._submit
@@ -571,9 +581,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # now holds the frontier: the fast path stays complete.
         self.store.finalise("print-key", [self._payload(i) for i in range(5)])
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         self.assertEqual(self.service._full_next, 5)
         submitted = []
         original = self.service._submit
@@ -589,12 +599,12 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
 
     def test_the_saved_latch_autonomously_recovers_after_one_failed_publish(self):
         # A failed publish must NOT read as saved, and recovery must not
-        # depend on a later user demand or _prepared_persist call.
+        # depend on a later user demand or _prepared.persist call.
         self._view(3)
-        self.service._prepared_open(self.files.identity)
-        self.service._prepared_persist(0, self._payload(0))
+        self.service._prepared.open(self.files.identity)
+        self.service._prepared.persist(0, self._payload(0), len(self.service.view.ranges))
         self.service._full_next = len(self.service._view.ranges)
-        self.service._prepared_saved = False
+        self.service._prepared.saved = False
         from mpf.gcode.PreparedStore import PreparedCache
         real_finish = PreparedCache.finish_write
         attempts = []
@@ -610,12 +620,12 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             for _ in range(400):
                 self.service._advance()
                 self.qt.events(5)
-                if self.service._prepared_saved and not self.service._busy:
+                if self.service._prepared.saved and not self.service._busy:
                     break
 
         self.assertGreaterEqual(len(attempts), 2,
                                 "the failed publish never retried autonomously")
-        self.assertTrue(self.service._prepared_saved,
+        self.assertTrue(self.service._prepared.saved,
                         "the autonomous retry never latched")
         loaded = self.store.load_table("print-key")
         self.assertIsNotNone(loaded)
@@ -630,7 +640,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         index.followed_layer = 0
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         module = self.qt.load("GCodeIndexService")
         entered = harness.threading.Event()
         interrupted = harness.threading.Event()
@@ -678,7 +688,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         index = harness.make_index(layers=60, motions=20000)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._advance()
         self.assertEqual(self.service._busy, "fullprep",
                          "the pass never submitted")
@@ -712,7 +722,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # asking the gate before the window closed.
         index = harness.make_index(layers=20000, motions=20)
         self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         captured = []
         original = self.service._submit
         self.service._submit = lambda kind, work, lease=None: captured.append((kind, work))
@@ -794,7 +804,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.qt.load("GCodeIndexService")
         index = harness.make_index(layers=8000, motions=20)
         self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         beats = []
         heartbeat = self.qt.QTimer()
         heartbeat.setInterval(harness._HEARTBEAT_INTERVAL_MS)
@@ -850,7 +860,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         index = harness.make_index(layers=6, motions=40)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         ui_thread = harness.threading.get_ident()
         appends = []
         real_append = PreparedCache.append
@@ -882,7 +892,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         index = harness.make_index(layers=5, motions=2)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         captured = []
         original = self.service._submit
         self.service._submit = lambda kind, work, lease=None: (
@@ -911,7 +921,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.store.append_uncacheable(writer, 3)
         self.store.finish_write(writer)  # complete: 2 EMPTY, 3 refused
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
         self.qt.load("GCodeIndexService")
         prepared_walks = []
@@ -995,12 +1005,12 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # left behind, and the old print's progress survives for its
         # next session.
         self._view(5)
-        self.service._prepared_open(self.files.identity)
-        self.service._prepared_persist(0, self._payload(0))
-        temp = self.service._prepared_writer["temp"]
+        self.service._prepared.open(self.files.identity)
+        self.service._prepared.persist(0, self._payload(0), len(self.service.view.ranges))
+        temp = self.service._prepared.writer["temp"]
         self.assertTrue(harness.os.path.exists(temp))
         self.service.bind(("other.gcode", 100, 2))
-        self.assertIsNone(self.service._prepared_writer)
+        self.assertIsNone(self.service._prepared.writer)
         self.assertFalse(harness.os.path.exists(temp),
                          "the rebind left the old print's temp writer")
         leftovers = [name for root, _dirs, names in harness.os.walk(self._dir.name)
@@ -1021,7 +1031,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # believes it has shut down. close() must not return while a
         # worker is still running.
         self._view(3)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._advance()
         executor = self.service._executor
         # The premise: work was actually submitted, so there IS a
@@ -1040,13 +1050,13 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # reads the prepared layers from disk, resumes from the EMPTY
         # slots and reaches a complete store.
         self._view(40)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         # The production append path the pass's worker uses: three
         # layers commit, the pass's remaining walk is interrupted by
         # the NORMAL close — no fake crash, no dead pid.
         for layer in range(3):
-            self.service._prepared_persist(layer, self._payload(layer))
-        writer = self.service._prepared_writer
+            self.service._prepared.persist(layer, self._payload(layer), len(self.service.view.ranges))
+        writer = self.service._prepared.writer
         self.assertIsNotNone(writer, "the pass never opened its writer")
         self.service.close()  # the NORMAL close — no fake crash
         table = self.store.load_table("print-key")
@@ -1072,7 +1082,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.service._restored = True
         self.service._wanted = True
         self._view(40)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
         fraction = self.service.plate_pass_fraction()
         self.assertGreater(fraction, 0.0,
@@ -1082,7 +1092,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The N prepared layers are served from the store; the pass
         # resumes from the EMPTY slots and the final store completes.
         self._pump()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
 
     def test_a_weak_re_extraction_never_adopts_the_old_prepared_geometry(self):
@@ -1098,9 +1108,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.files.identity.modified = 0.0
         self.files.identity.size = 100
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self._pump()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         old_table = self.store.load_table("print-key")
         self.assertIsNotNone(old_table, "session 1 persisted nothing")
         old_payload = self.store.read("print-key", old_table["table"], 0)
@@ -1126,10 +1136,10 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # may seed neither the table nor the coverage from them. Read
         # after _advance() the same assertion races the pass's own
         # completions, which resolve layers into that very set.
-        self.service._prepared_open(self.files.identity)
-        self.assertIsNone(self.service._prepared_table,
+        self.service._prepared.open(self.files.identity)
+        self.assertIsNone(self.service._prepared.table,
                           "the old prepared table was adopted")
-        self.assertEqual(self.service._prepared_coverage, set(),
+        self.assertEqual(self.service._prepared.coverage, set(),
                          "the old prepared coverage leaked in")
         submitted = []
         original = self.service._submit
@@ -1138,15 +1148,15 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.service._advance()
         self.assertNotIn("restore", submitted,
                          "the weak re-extraction attempted the index restore")
-        self.assertIsNone(self.service._prepared_table,
+        self.assertIsNone(self.service._prepared.table,
                           "the old prepared table was adopted")
         self._pump()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         # The pass ran to its own completion (the settle above waits for
         # its terminal signal): every layer resolved is the FRESH view's,
         # since a set carried over from the old table never reaches the
         # count without the pass.
-        self.assertEqual(self.service._prepared_coverage, set(range(5)),
+        self.assertEqual(self.service._prepared.coverage, set(range(5)),
                          "the fresh pass did not resolve the coverage")
         # The published store now holds the NEW geometry's exact
         # bytes — the old representation was replaced, never served.
@@ -1170,9 +1180,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.files.identity.modified = 1.0
         self.files.identity.size = 100
         self._view(5)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self._pump()
-        self.assertTrue(self.service._prepared_saved)
+        self.assertTrue(self.service._prepared.saved)
         old_payload = self.store.read(
             "print-key", self.store.load_table("print-key")["table"], 0)
 
@@ -1191,9 +1201,9 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         original = self.service._submit
         self.service._submit = lambda kind, work, lease=None: (
             submitted.append(kind) or original(kind, work, lease))
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         self.service._adopt_prepared()
-        self.assertTrue(self.service._prepared_saved,
+        self.assertTrue(self.service._prepared.saved,
                         "the strong metadata never took the fast path")
         self.assertEqual(self.service._full_next, 5)
         self.assertEqual(self.service.plate_pass_fraction(), 1.0)
@@ -1335,8 +1345,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         writer = self.store.open_for_write("print-key", 4)
         self.store.append_uncacheable(writer, 2)
         self.store.finish_write(writer)
-        self.service._prepared_open(self.files.identity)
-        self.assertEqual(self.service._prepared_table[2][0], 2, "the refusal never loaded")
+        self.service._prepared.open(self.files.identity)
+        self.assertEqual(self.service._prepared.table[2][0], 2, "the refusal never loaded")
         captured = self._capture_submit()
         module = self.qt.load("GCodeIndexService")
         with harness.patch.object(module, "time", harness._HeldClock()):
@@ -1347,7 +1357,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertEqual(frontier, 3, "the pass walked past a layer it could not read")
         self.assertEqual(uncacheable, {2}, "the resolved refusal was re-walked")
         self.assertIn(0, encoded, "the hydrated layer was never prepared")
-        table = self.service._prepared_writer["table"]
+        table = self.service._prepared.writer["table"]
         self.assertEqual(table[1][0], self.state_cached,
                          "the RAM-packed layer never rode into the rebuild")
 
@@ -1364,7 +1374,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         writer = self.store.open_for_write("print-key", 4)
         self.store.append_uncacheable(writer, 2)
         self.store.finish_write(writer)
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         captured = self._capture_submit()
         self.qt.load("GCodeIndexService")
         clock = harness._HeldClock()
@@ -1385,7 +1395,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # the runner's clock did meanwhile.
         self.qt.load("GCodeIndexService")
         self._compact_view(2000, hydrated=range(2000))
-        self.service._prepared_open(self.files.identity)
+        self.service._prepared.open(self.files.identity)
         captured = self._capture_submit()
         clock = harness._HeldClock()
         real_prepare = self.qt.load("IndexTasks")._prepare_layer

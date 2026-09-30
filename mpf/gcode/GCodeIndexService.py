@@ -1,7 +1,7 @@
 """Index lifecycle and scheduling. One in-flight job; observations and caches have explicit owners."""
 from __future__ import annotations
 
-from .IndexTasks import LayerHydrationTask, LayerPreparationTask, LayerArrayTask, PreparedLayerReader
+from .IndexTasks import LayerHydrationTask, LayerPreparationTask, LayerArrayTask
 
 from .ObjectVisitTracker import ObjectVisitTracker
 from .MotionRefinement import refine_payload
@@ -21,7 +21,7 @@ from .PlateProgress import (
     split_index as _split_index,
 )
 from .PlateSplitTracker import PlateSplitTracker
-from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
+from .PreparedSession import PreparedSession
 from ..printing.PrintState import MotionProgress
 
 
@@ -68,25 +68,12 @@ class GCodeIndexService(QObject):
     def __init__(self, files, cache, parent=None, prepared=None):
         super().__init__(parent)
         self._files, self._cache = files, cache
-        # The file-backed prepared store: the
-        # pass's encodings persist per print, random-accessible, so
-        # a reopened print skips the whole preparation walk.
-        self._prepared = prepared
-        self._prepared_table = None
-        self._prepared_identity = None
-        self._prepared_saved = False
-        self._prepared_writer = None
-        # A failed final publish gets one autonomous bounded rebuild.
-        # This is reset per print and on a successful publish.
-        self._prepared_retry_count = 0
-        # The reopen policy's adoption :
-        # a complete clean table takes the fast path; a complete
-        # table with holes repairs. The coverage set counts every
-        # layer whose prepared representation exists — the pass
-        # fraction's truth, independent of RAM residency.
-        self._prepared_complete = False
-        self._prepared_flag_complete = False
-        self._prepared_coverage = set()
+        # The file-backed prepared store's SESSION: the adopted table,
+        # the incremental writer and the coverage census of the file
+        # being served. The encodings persist per print,
+        # random-accessible, so a reopened print skips the whole
+        # preparation walk.
+        self._prepared = PreparedSession(prepared)
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MoonrakerIndex")
         self._generation = 0
         self._job = None
@@ -206,7 +193,7 @@ class GCodeIndexService(QObject):
         """The state the UI latches on: the phase (an error is one) and
         the pass's own completion. These are what a preparation batch's
         boundary can move that a listener would render differently."""
-        return (self.phase, self._prepared_saved, self._prepared_complete)
+        return (self.phase, self._prepared.saved, self._prepared.complete)
 
     def _publish_change(self):
         self._notified_key = self._state_key()
@@ -248,7 +235,7 @@ class GCodeIndexService(QObject):
         # incomplete store the print's next session resumes (never a
         # bare drop of the reference, never a needless loss of the
         # old print's progress).
-        self._retire_prepared_writer()
+        self._prepared.retire()
         self._reset_print_state()
         # Keep _busy until the submitted worker actually completes. No new task
         # is submitted while a stale job is still executing.
@@ -275,7 +262,7 @@ class GCodeIndexService(QObject):
         # later append and finish and checkpoints the committed
         # layers through its own store — no worker can ever write
         # to it again.
-        self._retire_prepared_writer()
+        self._prepared.retire()
         # The sweep's marker: a queued save from an older generation
         # must never recreate this store's directory (see _save_index).
         self._swept_store = self._cache
@@ -291,14 +278,7 @@ class GCodeIndexService(QObject):
         self._hydrating = None
         self._failed_hydrate.clear()
         self._pass_error = ""
-        self._prepared_table = None
-        self._prepared_identity = None
-        self._prepared_saved = False
-        self._prepared_writer = None
-        self._prepared_retry_count = 0
-        self._prepared_complete = False
-        self._prepared_flag_complete = False
-        self._prepared_coverage = set()
+        self._prepared.reset()
         self._full_cache.clear()
         self._full_next = 0
         self._last_save_at = None
@@ -371,7 +351,7 @@ class GCodeIndexService(QObject):
             # walk down, and rewinding the frontier would only start
             # a pointless re-read of the whole store (the review's
             # finding).
-            if not self._prepared_saved:
+            if not self._prepared.saved:
                 self._full_next = min(self._full_next, max(0, self._manual_anchor - 1))
         self._apply_manual_anchor()
         self._request_manual_window()
@@ -444,7 +424,7 @@ class GCodeIndexService(QObject):
             return "failed"
         if self._full_cache.peek(layer) is not None:
             return "packed"
-        if self._prepared_served(layer):
+        if self._prepared.served(layer):
             return "prepared"
         if view.hydrated(layer):
             return "hydrated"
@@ -574,13 +554,12 @@ class GCodeIndexService(QObject):
         total = len(self._view.ranges)
         if not total:
             return None
-        if self._prepared_complete:
-            return 1.0
-        if self._prepared is None or self._prepared_identity is None:
-            # No persistence configured: the RAM tier's residency is
-            # the only prepared store there is.
-            return min(1.0, len(self._full_cache) / total)
-        return min(1.0, len(self._prepared_coverage) / total)
+        persisted = self._prepared.fraction(total)
+        if persisted is not None:
+            return persisted
+        # No persistence configured: the RAM tier's residency is
+        # the only prepared store there is.
+        return min(1.0, len(self._full_cache) / total)
 
     def plate_split(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
@@ -818,170 +797,6 @@ class GCodeIndexService(QObject):
         self._request_window(layer)
         self._advance()
 
-    def _prepared_read(self, layer):
-        """The file-backed store's random-access read for one
-        layer — the reopened print's path (no decode of preceding
-        layers, no RAM residency)."""
-        if self._prepared is None or self._prepared_table is None:
-            return None
-        return self._prepared.read(self._prepared_identity, self._prepared_table, layer)
-
-    def _prepared_served(self, layer):
-        """The prepared store's table says this layer's payload is
-        READABLE without the raw G-code file — a table-tuple probe,
-        never a payload read (the lease decision must not cost a
-        disk read on the owner thread)."""
-        if self._prepared is None or self._prepared_table is None:
-            return False
-        if layer < 0 or layer >= len(self._prepared_table):
-            return False
-        state, _offset, length = self._prepared_table[layer]
-        return state == STATE_CACHED and length > 0
-
-    def _prepared_open(self, identity):
-        """Open the table for the current file's prepared cache (a
-        one-shot per identity). The adoption obeys the SAME strength
-        gate as the index restore (the review's identity-policy
-        finding): only a RELIABLE modified timestamp may reuse
-        persisted geometry across sessions — a weak identity (name +
-        size alone, whatever its uuid) never adopts an old prepared
-        table, so a re-extracted file can never resurrect stale
-        geometry. The key still targets the same path: the fresh
-        pass's publish replaces the old representation."""
-        if self._prepared is None or identity is None:
-            return
-        key = identity.stable_key() if hasattr(identity, "stable_key") else None
-        if key is None or key == self._prepared_identity:
-            return
-        self._prepared_identity = key
-        # The strength gate — the same decision the index restore
-        # makes: modified > 0 is the only voucher for cross-session
-        # reuse. A uuid is Moonraker's per-extraction token, never
-        # content identity, and a name + size alone cannot tell two
-        # extractions apart — prefer rebuilding over stale geometry.
-        if not bool(getattr(identity, "modified", 0) > 0):
-            self._prepared_table = None
-            self._prepared_flag_complete = False
-            self._prepared_coverage = set()
-            return
-        loaded = self._prepared.load_table(key)
-        if loaded is None:
-            self._prepared_table = None
-            self._prepared_flag_complete = False
-            self._prepared_coverage = set()
-            return
-        self._prepared_table = loaded["table"]
-        self._prepared_flag_complete = loaded["complete"]
-        # The resolved entries (CACHED and UNCACHEABLE alike) count
-        # as coverage BEFORE the pass walks: a repair session starts
-        # at the old file's fraction. The coverage truth — a layer
-        # the codec refused is as resolved as one it held.
-        self._prepared_coverage = {i for i, entry in enumerate(loaded["table"])
-                                   if entry[0] != STATE_EMPTY}
-
-    def _adopt_prepared(self):
-        """The reopen policy once the view's layer count is known
-        : a complete clean table
-        takes the FAST path — the pass never walks the file again;
-        a complete table with holes repairs (copy the valid, retry
-        the holes); anything else prepares fresh."""
-        table = self._prepared_table
-        self._prepared_complete = False
-        if not table or self._prepared is None:
-            return
-        total = len(self._view.ranges)
-        if len(table) == total and self._prepared_flag_complete \
-                and all(entry[0] != STATE_EMPTY for entry in table):
-            # A valid complete cache must not read its own 197 MB
-            # back merely to rediscover the table: the frontier and the saved latch both
-            # stand down the background pass for good. UNCACHEABLE
-            # layers count as complete — the pass already gave them
-            # its best attempt.
-            self._prepared_complete = True
-            self._prepared_saved = True
-            self._full_next = total
-            Logger.log("i", "prepared store restored: %d/%d layers", total, total)
-            return
-        if len(table) != total:
-            # The file's layer count no longer matches this print's
-            # index: the table is unusable, and the fresh pass will
-            # overwrite the file.
-            self._prepared_table = None
-            self._prepared_coverage = set()
-            return
-        covered = sum(1 for entry in table if entry[0] != STATE_EMPTY)
-        Logger.log("i", "prepared store resumed: %d/%d layers", covered, total)
-
-    def _prepared_persist(self, layer, encoded):
-        """Every successfully encoded layer enters the incremental
-        writer exactly once, whichever path produced it: a
-        demand-prepared layer must never
-        become a (0, 0) hole merely because the background pass
-        found it already in the RAM cache.
-
-        The demand path does not commit through here: the worker that
-        produced an encoding appends it itself, because this call's
-        write+flush+seek+table-write+flush sat on the UI thread once
-        per demanded layer. The captured writer and its retirement flag
-        carry the ownership the generation check used to."""
-        self._prepared_coverage.add(layer)
-        if self._prepared is None or self._prepared_identity is None or self._prepared_saved:
-            return
-        writer = self._prepared_writer
-        if writer is None and self._view is not None:
-            writer = self._prepared.open_for_write(
-                self._prepared_identity, len(self._view.ranges))
-            self._prepared_writer = writer
-        if writer is not None:
-            self._prepared.append(writer, layer, encoded)
-
-    def _abort_prepared_writer(self, store=None):
-        """Abandon an unfinished writer on every exit path: rebind,
-        close and any abandonment —
-        the temp file goes, the handle closes, and an old
-        generation's worker can never finalise it."""
-        if self._prepared_writer is None:
-            return
-        store = store if store is not None else self._prepared
-        if store is not None:
-            store.abort_write(self._prepared_writer)
-        self._prepared_writer = None
-
-    def _suspend_prepared_writer(self, store=None):
-        """The normal-lifecycle checkpoint (the review's clean-shutdown
-        finding): a close or a store rebind publishes the writer's
-        committed layers as an INCOMPLETE store — the next session
-        opens it and resumes from the EMPTY slots. Only a genuinely
-        failed or stale writer is aborted. The store is the writer's
-        OWN store — during a rebind the caller passes the OLD one
-        explicitly, so the checkpoint lands in the machine whose
-        pass produced it."""
-        if self._prepared_writer is None:
-            return
-        store = store if store is not None else self._prepared
-        if store is not None:
-            covered = sum(1 for entry in self._prepared_writer["table"]
-                          if entry is not None)
-            store.suspend_write(self._prepared_writer)
-            Logger.log("i", "prepared checkpoint published on shutdown: %d layers",
-                       covered)
-        self._prepared_writer = None
-
-    def _retire_prepared_writer(self, store=None):
-        """The writer-ownership cutover (the review's ownership
-        finding): bind, close and the machine rebind all RETIRE
-        before they checkpoint. The retired flag freezes every later
-        append and finish, and the store's own lock makes the freeze
-        and the publication one atomic step against an in-flight
-        append — once this returns no worker can ever write to the
-        writer again, and the checkpoint holds exactly the committed
-        layers. No blocking beyond one bounded append: the suspend
-        only ever waits for a write already in progress."""
-        if self._prepared_writer is None:
-            return
-        self._prepared_writer["retired"] = True
-        self._suspend_prepared_writer(store)
-
     def rebind_stores(self, cache, prepared, initial=False):
         """The machine-switch rebind (the review's namespace finding):
         the index and prepared stores swap while THIS service survives.
@@ -995,18 +810,20 @@ class GCodeIndexService(QObject):
         the state is already fresh."""
         if initial:
             self._cache = cache
-            self._prepared = prepared
+            self._prepared.rebind(prepared)
             return
-        old_prepared = self._prepared
         self._generation += 1
         self._cancel.set()
         self._cancel = threading.Event()
         self._job = None
         self._view = None
         self._progress = None
-        self._retire_prepared_writer(old_prepared)
+        # The cutover precedes the install: the OLD machine's writer is
+        # retired and checkpointed through the OLD store, so an A
+        # writer can never publish into B's namespace.
+        self._prepared.retire()
         self._cache = cache
-        self._prepared = prepared
+        self._prepared.rebind(prepared)
         self._reset_print_state()
         self._publish_change()
 
@@ -1025,13 +842,7 @@ class GCodeIndexService(QObject):
         self._gpu_prefetch_done.clear()
         self._decoded_pins = {}
         self._decoded_sizes = {}
-        self._prepared_table = None
-        self._prepared_identity = None
-        self._prepared_saved = False
-        self._prepared_retry_count = 0
-        self._prepared_complete = False
-        self._prepared_flag_complete = False
-        self._prepared_coverage = set()
+        self._prepared.reset()
         self._manual_anchor = None
         self._manual_anchor_calls = 0
         self._manual_anchor_changes = 0
@@ -1046,6 +857,20 @@ class GCodeIndexService(QObject):
         self._failed_hydrate.clear()
         self._pass_error = ""
         self._error = ""
+
+    def _open_prepared(self) -> None:
+        """Open the current file's prepared table. The session owns the
+        identity strength gate and the table itself; the service owns
+        WHEN — here, the build/restore that just installed the view."""
+        self._prepared.open(self._files.identity)
+
+    def _adopt_prepared(self) -> None:
+        """Adopt the table for the view that just landed. The session
+        owns the fast-path/repair/fresh policy; the PASS FRONTIER is the
+        service's own scheduling state, and a complete clean table stands
+        it down with the fast path."""
+        if self._prepared.adopt(len(self._view.ranges)):
+            self._full_next = len(self._view.ranges)
 
     def _request_window(self, layer):
         """Ask for the live anchor's presentation window, never a backlog.
@@ -1101,7 +926,7 @@ class GCodeIndexService(QObject):
             self._submit("restore", lambda: self._cache.load(identity))
             return
         self._restored = True
-        self._prepared_open(identity)
+        self._prepared.open(identity)
         if self._view is None:
             lease = self._files.lease()
             if lease is None:
@@ -1164,20 +989,20 @@ class GCodeIndexService(QObject):
                          lambda: self._save_index(cache_store, generation,
                                                   identity, index))
         elif self._view is not None and self._full_next >= len(self._view.ranges) \
-                and self._prepared is not None and not self._prepared_saved:
+                and self._prepared.has_source() and not self._prepared.saved:
             # The pass's completion finishes the incremental writer.
             # The latch rides the COMMIT: a failed publish never
             # reads as saved. A failed attempt self-heals — the next
             # demand's persist opens a fresh writer and this branch
             # retries the finish.
-            writer = self._prepared_writer
-            self._prepared_writer = None
+            writer = self._prepared.writer
+            self._prepared.writer = None
             if writer is not None:
                 # The store is captured NOW: a machine rebind swaps
-                # self._prepared before the worker runs, and this
-                # writer's finalise must publish through the store
+                # self._prepared's store before the worker runs, and
+                # this writer's finalise must publish through the store
                 # that opened it (its own machine's namespace).
-                store = self._prepared
+                store = self._prepared.store
                 def prepared_save():
                     return store.finish_write(writer)
                 self._submit("prepared_save", prepared_save)
@@ -1240,12 +1065,8 @@ class GCodeIndexService(QObject):
         # ownership the pass already runs on. Opening it here also
         # keeps the self-heal a failed publish relies on: the next
         # demand opens a fresh writer and the finish retries it.
-        if self._prepared is not None and self._prepared_identity is not None \
-                and self._prepared_writer is None and not self._prepared_saved:
-            self._prepared_writer = self._prepared.open_for_write(
-                self._prepared_identity, len(self._view.ranges))
-        prepared_writer = self._prepared_writer
-        prepared_store = self._prepared
+        prepared_writer = self._prepared.writer_target(len(self._view.ranges))
+        prepared_store = self._prepared.store
         decode_cancel = self._cancel
         gpu_decode = bool(self._gpu_consumers)
         # No anchor argument: the worker reads the index's
@@ -1273,8 +1094,7 @@ class GCodeIndexService(QObject):
             store=prepared_store,
             writer=prepared_writer,
             foreground=self._foreground_pending,
-            read_prepared=PreparedLayerReader(
-                self._prepared, self._prepared_identity, self._prepared_table).read,
+            read_prepared=self._prepared.reader(),
         )
         self._submit("hydrate", task.run, lease)
 
@@ -1299,10 +1119,9 @@ class GCodeIndexService(QObject):
         if index.compact:
             for layer in range(start, len(index.ranges)):
                 if layer in index.hydrated_layers or cache.peek(layer) is not None \
-                        or self._prepared_served(layer):
+                        or self._prepared.served(layer):
                     continue
-                if self._prepared_table is not None and layer < len(self._prepared_table) \
-                        and self._prepared_table[layer][0] == STATE_UNCACHEABLE:
+                if self._prepared.uncacheable(layer):
                     continue
                 needs_raw = True
                 break
@@ -1314,26 +1133,20 @@ class GCodeIndexService(QObject):
         # never queues long behind the pass, and the loop YIELDS
         # the moment a demand appears (the worker checks the
         # demand set between layers — the owner fills it).
-        prepared_read = PreparedLayerReader(
-            self._prepared, self._prepared_identity, self._prepared_table).read
-        prepared_table = self._prepared_table
+        prepared_read = self._prepared.reader()
+        prepared_table = self._prepared.table
         # The incremental writer opens whenever a pass must walk
         # (a fresh file, or a repair):
-        # the fast path's `_prepared_saved` latch has already
+        # the fast path's saved latch has already
         # stood it down for a complete clean table.
-        if self._prepared is not None and self._prepared_identity is not None \
-                and self._prepared_writer is None \
-                and not self._prepared_saved:
-            self._prepared_writer = self._prepared.open_for_write(
-                self._prepared_identity, len(self._view.ranges))
-        prepared_writer = self._prepared_writer
+        prepared_writer = self._prepared.writer_target(len(self._view.ranges))
         # The store the writer belongs to is captured NOW: a
-        # machine rebind swaps self._prepared while the batch
+        # machine rebind swaps the session's store while the batch
         # runs, and the appends must reach the store that opened
         # the writer (which refuses them after the cutover's
         # retirement anyway — the capture makes the ownership
         # structural, never a thread-timing accident).
-        prepared_store = self._prepared
+        prepared_store = self._prepared.store
 
         # No demand exists on the owner thread at this instant.
         # Any later request flips the event and cooperatively
@@ -1452,7 +1265,7 @@ class GCodeIndexService(QObject):
                     # a reopened complete store must take the fast
                     # path, never wait for a later _advance that never
                     # re-adopts.
-                    self._prepared_open(self._files.identity)
+                    self._open_prepared()
                     self._adopt_prepared()
                     # A detach or a scrub that raced the build/restore
                     # dropped its demand at the view-None guards; the
@@ -1501,7 +1314,7 @@ class GCodeIndexService(QObject):
                         # that produced it. The coverage still follows
                         # the COMMIT: a stale generation's stash is
                         # dropped here and must not count as resolved.
-                        self._prepared_coverage.add(layer)
+                        self._prepared.note_coverage((layer,))
                     self._decoded_lru.set(layer, decoded, size)
                     self._decoded_sizes[layer] = size
                     if ram_hit:
@@ -1529,16 +1342,13 @@ class GCodeIndexService(QObject):
                         # writer appended :
                         # the fraction is a store census, never the
                         # RAM tier's residency.
-                        self._prepared_coverage.update(encoded.keys())
+                        self._prepared.note_coverage(encoded.keys())
                     if isinstance(uncacheable, (set, list, tuple)):
                         # The codec's refusals resolve too: coverage
                         # counts them, and the writer records the
                         # state so the next session never retries.
-                        self._prepared_coverage.update(uncacheable)
-                        writer = self._prepared_writer
-                        if writer is not None:
-                            for layer in uncacheable:
-                                self._prepared.append_uncacheable(writer, layer)
+                        self._prepared.note_coverage(uncacheable)
+                        self._prepared.mark_uncacheable(uncacheable)
                     if isinstance(frontier, int):
                         self._full_next = max(self._full_next, frontier)
                         self._pass_error = ""
@@ -1556,31 +1366,12 @@ class GCodeIndexService(QObject):
                 # the old file's, and a stale table would serve
                 # mis-aligned reads for the rest of the session.
                 # The saved latch closes ONLY on the publish itself.
-                if value is not None and self._prepared_identity is not None:
-                    self._prepared_saved = True
-                    self._prepared_retry_count = 0
-                    loaded = self._prepared.load_table(self._prepared_identity)
-                    if loaded is not None:
-                        self._prepared_table = loaded["table"]
-                        self._prepared_flag_complete = loaded["complete"]
-                        self._prepared_coverage = {
-                            i for i, entry in enumerate(loaded["table"])
-                            if entry[0] != STATE_EMPTY}
-                        self._prepared_complete = (
-                            loaded["complete"]
-                            and all(entry[0] != STATE_EMPTY for entry in loaded["table"]))
-                elif self._view is not None and self._prepared_retry_count < 1:
+                if not self._prepared.publish(value is not None) \
+                        and self._view is not None and self._prepared.arm_retry():
                     # finish_write detached/closed the failed writer.
                     # Rebuild once from the already-available prepared
                     # sources without waiting for another user demand.
-                    self._prepared_retry_count += 1
-                    self._prepared_saved = False
-                    self._prepared_complete = False
                     self._full_next = 0
-                    table = self._prepared_table or ()
-                    self._prepared_coverage = {
-                        i for i, entry in enumerate(table)
-                        if entry[0] != STATE_EMPTY}
             self._notify_changed(kind)
         self._advance()
 
@@ -1596,7 +1387,7 @@ class GCodeIndexService(QObject):
         # again, and the committed layers publish as an incomplete
         # store the next session resumes — a plain abort would throw
         # away a partly-prepared print.
-        self._retire_prepared_writer()
+        self._prepared.retire()
         # WAITED, not abandoned. cancel_futures drops the queued work,
         # but the worker already RUNNING keeps the store open and keeps
         # writing: on Windows a directory holding a file that appears

@@ -861,16 +861,16 @@ class MachineNamespaceTests(unittest.TestCase):
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
-        store_a = owner.index._prepared
+        store_a = owner.index._prepared.store
         store_a.finalise("print-key", [self._payload(1)])
         self.assertIsNotNone(store_a.load_table("print-key"))
         self._switch(app, "B")
-        self.assertIsNot(owner.index._prepared, store_a,
+        self.assertIsNot(owner.index._prepared.store, store_a,
                          "the switch kept the old machine's store")
-        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.store.directory),
                             os.path.dirname(store_a.directory),
                             "the two machines share one cache directory")
-        store_b = owner.index._prepared
+        store_b = owner.index._prepared.store
         store_b.finalise("print-key", [self._payload(2)])
         # The isolation: B's write never touched A's store, and vice
         # versa — the same key holds each machine's own payload.
@@ -883,11 +883,11 @@ class MachineNamespaceTests(unittest.TestCase):
         # Back to A: the ORIGINAL persisted state is recovered, and
         # B's namespace keeps its own.
         self._switch(app, "A")
-        self.assertEqual(owner.index._prepared.directory, store_a.directory,
+        self.assertEqual(owner.index._prepared.store.directory, store_a.directory,
                          "the return to A never rebound its own namespace")
-        table = owner.index._prepared.load_table("print-key")
+        table = owner.index._prepared.store.load_table("print-key")
         self.assertIsNotNone(table, "A's cache was lost over the switch")
-        self.assertEqual(decode_layer(owner.index._prepared.read(
+        self.assertEqual(decode_layer(owner.index._prepared.store.read(
             "print-key", table["table"], 0))["classes"]["SKIN"][0][1][1], 1.0,
             "A's persisted layer never round-tripped")
 
@@ -902,17 +902,17 @@ class MachineNamespaceTests(unittest.TestCase):
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
-        unknown_store = owner.index._prepared
+        unknown_store = owner.index._prepared.store
         from mpf.gcode.CacheNamespaces import CacheNamespaces
         self.assertEqual(owner.cache_namespaces.machine_hash,
                          CacheNamespaces._hash("unknown"),
                          "the unresolved runtime never hashed the unknown id")
         self._switch(app, "A")
-        self.assertIsNot(owner.index._prepared, unknown_store,
+        self.assertIsNot(owner.index._prepared.store, unknown_store,
                          "the first resolution kept the unknown store")
-        self.assertNotEqual(os.path.dirname(owner.index._prepared.directory),
+        self.assertNotEqual(os.path.dirname(owner.index._prepared.store.directory),
                             os.path.dirname(unknown_store.directory))
-        owner.index._prepared.finalise("print-key", [self._payload(3)])
+        owner.index._prepared.store.finalise("print-key", [self._payload(3)])
         self.assertIsNone(unknown_store.load_table("print-key"),
                           "data stranded in the unknown namespace")
 
@@ -929,7 +929,7 @@ class MachineNamespaceTests(unittest.TestCase):
         with patch.object(MigrationNotice, "announce"):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
-        store_a = owner.index._prepared
+        store_a = owner.index._prepared.store
         index_a = owner.index._cache
         self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
                          "the prepared default bound is not 512 MiB")
@@ -940,7 +940,7 @@ class MachineNamespaceTests(unittest.TestCase):
         owner.persistence.set_machine("A", {"cache_max_mb": 256})
         owner.persistence.set_machine("B", {"cache_max_mb": 128})
         self._switch(app, "B")
-        store_b = owner.index._prepared
+        store_b = owner.index._prepared.store
         index_b = owner.index._cache
         self.assertEqual(store_b.max_bytes, 128 * 1024 * 1024,
                          "B's prepared store never bound its size")
@@ -951,7 +951,7 @@ class MachineNamespaceTests(unittest.TestCase):
         self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
                          "the switch rewrote A's store object")
         self._switch(app, "A")
-        self.assertEqual(owner.index._prepared.max_bytes, 256 * 1024 * 1024,
+        self.assertEqual(owner.index._prepared.store.max_bytes, 256 * 1024 * 1024,
                          "the return to A never bound A's prepared size")
         self.assertEqual(owner.index._cache.max_bytes, 256 * 1024 * 1024,
                          "the return to A never bound A's index size")
@@ -970,7 +970,7 @@ class MachineNamespaceTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         index_a = owner.index._cache
-        prepared_a = owner.index._prepared
+        prepared_a = owner.index._prepared.store
         self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024)
         self.assertEqual(prepared_a.max_bytes, 512 * 1024 * 1024)
         machine_hash = owner.cache_namespaces.machine_hash
@@ -979,7 +979,7 @@ class MachineNamespaceTests(unittest.TestCase):
         config.cache_max_mb = 256
         self.assertTrue(owner.binding.apply(config))
         index_new = owner.index._cache
-        prepared_new = owner.index._prepared
+        prepared_new = owner.index._prepared.store
         self.assertIsNot(index_new, index_a,
                          "the index store never rebound on the budget change")
         self.assertIsNot(prepared_new, prepared_a,
@@ -996,7 +996,7 @@ class MachineNamespaceTests(unittest.TestCase):
         self.assertTrue(owner.binding.apply(config))
         self.assertIs(owner.index._cache, index_new,
                       "an unrelated save rebound the index store")
-        self.assertIs(owner.index._prepared, prepared_new,
+        self.assertIs(owner.index._prepared.store, prepared_new,
                       "an unrelated save rebound the prepared store")
 
     def test_the_index_side_cannot_evict_before_the_machine_budget(self):
@@ -1113,7 +1113,7 @@ class WriterOwnershipTests(unittest.TestCase):
         service._wanted = True
         service._restored = True
         service._view = IndexView(job_key, make_index(layers=5, motions=20))
-        service._prepared_open(owner.files.identity)
+        service._prepared.open(owner.files.identity)
 
         entered = threading.Event()
         release = threading.Event()
@@ -1133,7 +1133,7 @@ class WriterOwnershipTests(unittest.TestCase):
         service._advance()
         self.assertTrue(entered.wait(10.0),
                         "the pass never reached the blocked layer")
-        writer = service._prepared_writer
+        writer = service._prepared.writer
         self.assertIsNotNone(writer, "the pass opened no prepared writer")
         self.assertIsNotNone(writer["table"][0],
                              "layer 0 never committed before the block")
@@ -1168,7 +1168,7 @@ class WriterOwnershipTests(unittest.TestCase):
         from mpf.gcode.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
-        store_a = service._prepared
+        store_a = service._prepared.store
         failed = []
         service.failed.connect(lambda message: failed.append(message))
 
@@ -1186,11 +1186,11 @@ class WriterOwnershipTests(unittest.TestCase):
                         "a layer crossed the cutover into the checkpoint")
         self.assertTrue(handle.closed,
                         "the cutover never closed the writer's handle")
-        self.assertIsNone(service._prepared_writer,
+        self.assertIsNone(service._prepared.writer,
                           "the cutover kept the old writer attached")
         # B contains no A prepared file — the checkpoint (and every
         # later append) stays in A's namespace.
-        self.assertIsNone(service._prepared.load_table("print-key"),
+        self.assertIsNone(service._prepared.store.load_table("print-key"),
                           "A's writer published into B's namespace")
 
         release.set()
@@ -1198,7 +1198,7 @@ class WriterOwnershipTests(unittest.TestCase):
         self.assertEqual(failed, [], "the cutover surfaced a worker failure")
         self.assertEqual(service._error, "")
         # The released worker's later appends landed nowhere.
-        self.assertIsNone(service._prepared.load_table("print-key"),
+        self.assertIsNone(service._prepared.store.load_table("print-key"),
                           "the released worker wrote into B's store")
         self.assertTrue(self._empty_slots_after(
             store_a.load_table("print-key"), 1),
@@ -1208,12 +1208,12 @@ class WriterOwnershipTests(unittest.TestCase):
         # A's namespace reads the checkpoint and resumes from the
         # EMPTY slots.
         self._switch(app, "A")
-        recovered = service._prepared.load_table("print-key")
+        recovered = service._prepared.store.load_table("print-key")
         self.assertIsNotNone(recovered, "A's checkpoint never recovered")
         self.assertFalse(recovered["complete"])
         self.assertEqual(recovered["table"][0][0], STATE_CACHED)
         self.assertIsNotNone(
-            service._prepared.read("print-key", recovered["table"], 0))
+            service._prepared.store.read("print-key", recovered["table"], 0))
 
     def test_a_budget_change_retires_the_in_flight_writer(self):
         # The reviewer's Test D: a same-machine budget change rides
@@ -1226,7 +1226,7 @@ class WriterOwnershipTests(unittest.TestCase):
         from mpf.gcode.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
-        store_old = service._prepared
+        store_old = service._prepared.store
         failed = []
         service.failed.connect(lambda message: failed.append(message))
 
@@ -1239,9 +1239,9 @@ class WriterOwnershipTests(unittest.TestCase):
         self.assertEqual(table["table"][0][0], STATE_CACHED)
         self.assertTrue(handle.closed,
                         "the budget rebind never closed the writer's handle")
-        self.assertIsNot(service._prepared, store_old,
+        self.assertIsNot(service._prepared.store, store_old,
                          "the budget rebind kept the old prepared store")
-        self.assertEqual(service._prepared.max_bytes, 256 * 1024 * 1024,
+        self.assertEqual(service._prepared.store.max_bytes, 256 * 1024 * 1024,
                          "the rebound prepared store kept the old budget")
         self.assertEqual(service._cache.max_bytes, 256 * 1024 * 1024,
                          "the rebound index store kept the old budget")
@@ -1263,7 +1263,7 @@ class WriterOwnershipTests(unittest.TestCase):
         from mpf.gcode.PreparedStore import STATE_CACHED
         app, owner = self._owner("A")
         service, release, handle = self._start_blocked_pass(owner)
-        store_a = service._prepared
+        store_a = service._prepared.store
         failed = []
         service.failed.connect(lambda message: failed.append(message))
 
