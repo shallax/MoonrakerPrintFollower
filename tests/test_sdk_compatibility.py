@@ -42,7 +42,7 @@ def audited(name):
     return QML_SOURCES[str(PLUGINS.path(name).relative_to(PLUGINS.root))]
 
 
-CONFIG_QML = audited("MoonrakerFollowerConfiguration.qml")
+CONFIG_QML = "\n".join(audited(name) for name in ("MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml"))
 MONITOR_QML = audited("MoonrakerMonitor.qml")
 CAMERA_PANE_QML = audited("CameraPane.qml")
 UPLOAD_QML = audited("MoonrakerUploadDialog.qml")

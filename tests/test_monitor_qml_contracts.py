@@ -1358,7 +1358,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # A live report: a click on a slider's grab handle
         # must not move it, and a click focuses the slider so the
         # arrow keys nudge one step.
-        config = (harness.PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        config = (harness.PLUGINS / "ConnectionSettings.qml").read_text(encoding="utf-8")
         for token in ("handlePress", "pressIsOnHandle", "parent.value = parent.valueBeforePress",
                       "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: {", "increase()",
                       "forceActiveFocus()", "mouse.accepted = parent.handlePress",

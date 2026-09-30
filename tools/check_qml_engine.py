@@ -138,7 +138,9 @@ for _path in sorted(Path(_MPF).rglob("*.qml")):
     component.loadUrl(QUrl.fromLocalFile(str(_path)))
     if component.isError():
         failures.extend(f"{name}: {error.toString()}" for error in component.errors())
-    if _path.name == "WhatsNewOverlay.qml":
+    if _path.name in {"ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml"}:
+        created = component.createWithInitialProperties({"settings": config_manager})
+    elif _path.name == "WhatsNewOverlay.qml":
         created = component.createWithInitialProperties({"model": whats_new_model})
     else:
         created = component.create()
