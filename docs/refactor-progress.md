@@ -116,7 +116,11 @@ the restored file passes.
   asserts a QML animation advanced inside a fixed pump window; it failed once on
   macOS and passed on re-run. Load-sensitive assertion, not fixed. A green that
   needs a second attempt is not a fixed test.
-- The pre-commit hook runs its six legs concurrently and its unit leg failed
-  once under that load, then passed on an immediate re-run with no tree change.
-  Same class as the above: load-sensitive, not diagnosed.
+- One unit-leg run aborted on a segmentation fault instead of a test failure:
+  `PlateQt._derive_grey` and `PlateQt.png_file` crashed on the raster worker
+  threads through `sip_api_convert_to_enum`. This ledger first wrote it up as
+  load sensitivity; the artifact is a crash, so that reading is not established
+  and this is not a flake to dismiss. It sits outside this batch's modules, and
+  the four unit-leg runs since have not reproduced it. The raster path already
+  carries teardown-segfault guards.
 - Batches E-I not started.
