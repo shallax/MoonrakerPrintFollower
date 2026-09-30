@@ -343,6 +343,48 @@ class HarnessSpecTests(unittest.TestCase):
         duplicates = sorted({name for name in ids if ids.count(name) > 1})
         self.assertEqual(duplicates, [])
 
+    def test_the_package_re_exports_every_probe_constant(self):
+        # The compile check below and the verbs resolution in
+        # test_every_exec_code_step_declares_its_verbs both look the
+        # constant up on the PACKAGE. A constant added to the probe
+        # module but left out of the assembly point's enumerated
+        # re-export would silently drop out of both — the check would
+        # keep passing over a smaller set.
+        import scenarios.probe_source as _probes
+        defined = {name for name in dir(_probes)
+                   if name.isupper() and isinstance(getattr(_probes, name), (str, int))}
+        exported = {name for name in dir(_scenarios)
+                    if name.isupper() and isinstance(getattr(_scenarios, name), (str, int))}
+        self.assertGreater(len(defined), 40,
+                           "the probe module's constants stopped being found")
+        self.assertEqual(defined - exported, set(),
+                         "probe constants the package does not re-export")
+        for name in sorted(defined):
+            self.assertIs(getattr(_scenarios, name), getattr(_probes, name),
+                          "%s is re-exported as a different object" % name)
+
+    def test_the_suite_is_assembled_from_named_groups_in_order(self):
+        # The assembly point spells the group order out; a filesystem
+        # glob would make the suite depend on directory order. Each
+        # group's own sequence is what the runner executes, and each
+        # group must stay contiguous so selecting one yields exactly
+        # its module's list.
+        groups = [module.__name__.rsplit(".", 1)[-1] for module in _scenarios.GROUPS]
+        self.assertEqual(len(groups), len(set(groups)), "a group is assembled twice")
+        self.assertEqual(len(groups), 16)
+        for module in _scenarios.GROUPS:
+            name = module.__name__.rsplit(".", 1)[-1]
+            selected = [spec for spec in _scenarios.SCENARIOS
+                        if spec.get("group") == name]
+            self.assertEqual(selected, module.SCENARIOS,
+                             "selecting group %s does not yield its module's "
+                             "list in order" % name)
+            for spec in module.SCENARIOS:
+                self.assertEqual(spec.get("group"), name,
+                                 "%s sits in the %s module" % (spec["id"], name))
+        self.assertEqual(len(_scenarios.SCENARIOS),
+                         sum(len(module.SCENARIOS) for module in _scenarios.GROUPS))
+
     def test_every_probe_constant_compiles(self):
         broken = []
         for name in dir(_scenarios):

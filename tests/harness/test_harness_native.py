@@ -395,8 +395,15 @@ class DispatchIsInOnePlaceTests(unittest.TestCase):
             self.assertNotIn(token, source, f"runner.py still names {token}")
 
     def test_no_harness_file_but_the_dispatch_names_a_capture_device(self):
-        for name in ("runner.py", "scenarios.py", "simulator.py", "surface_coverage.py",
-                     "scenario_map.py", "driver/__init__.py"):
+        names = ["runner.py", "simulator.py", "surface_coverage.py",
+                 "scenario_map.py", "driver/__init__.py"]
+        # The suite is a package: every one of its modules is scanned,
+        # discovered from the directory rather than listed, with a floor
+        # so a rename cannot leave the scan reading nothing.
+        suite = sorted(path.name for path in HERE.joinpath("scenarios").glob("*.py"))
+        self.assertGreater(len(suite), 16, "the scenario package scan found nothing")
+        names += ["scenarios/%s" % name for name in suite]
+        for name in names:
             source = self._read(*name.split("/"))
             for token in ("x11grab", "avfoundation", "gdigrab"):
                 self.assertNotIn(token, source, f"{name} still names {token}")

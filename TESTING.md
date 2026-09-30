@@ -590,7 +590,7 @@ right side this time). The reservation is gone (the scrollbar
 overlays), and the pin now measures the panes' true outer edges:
 11px vs 11px, green.
 
-The step vocabulary (`scenarios.py`, interpreted in
+The step vocabulary (`tests/harness/scenarios/`, interpreted in
 `runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/
 `sim_drop` drive the harness lane; `sim_ledger` asserts request
 counts with an optional `method` filter; `exec_slot`/`exec_file_slot`

@@ -526,7 +526,12 @@ cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
 cp "$root/tests/harness/native_host.py" "$WORK_DIR"/native_host.py
 cp "$root/tests/harness/log_gate.py" "$WORK_DIR"/log_gate.py
 cp "$root/tests/harness/window_geometry.py" "$WORK_DIR"/window_geometry.py
-cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
+# The suite is a PACKAGE (one module per group plus the shared probe
+# bodies and the assembly point), so the whole directory stages —
+# the staged runner imports `scenarios` from this work dir, and a
+# single-file copy would leave it importing nothing.
+rm -rf "$WORK_DIR"/scenarios
+cp -r "$root/tests/harness/scenarios" "$WORK_DIR"/scenarios
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py
 # The simulator is a test instrument, not a fixture: the working
