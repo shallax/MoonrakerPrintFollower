@@ -113,7 +113,7 @@ the restored file passes.
 
 ## Batch E — the renderer subsystem
 
-Two commits, because the surface record stands alone and the lifecycle does not.
+The extraction itself is two commits, because the surface record stands alone and the lifecycle does not.
 `RenderSurface.py` (94 lines) takes the per-surface record — view/plot context,
 retained layer wrappers, demand, tokens, generation, anchors, the navigation slot
 — and `PlateRenderController.py` (1626) takes the rest: both surfaces' render
@@ -173,6 +173,112 @@ helpers (`_paint_segments`, `_paint_below_split`, `_paint_travels`, `_paint_grid
 the one class there, `PlateLayer`, is cohesive. Nothing was moved and no second
 raster framework was introduced.
 
+The extraction also concentrated a measurement blind spot, and the per-file
+coverage gate caught it. Under coverage's ctrace core the controller records
+55 missed statements of 856; under sysmon, on the same revision, the same
+module set and the same test set, 1. Every line in that difference sits inside
+a job body started on the thread pool — the navigation bake, the rewind walk
+and the checkpoint walk — nothing flips the other way, and the package total
+moves from 333 missed statements to 276. ctrace is the `sys.settrace` core,
+and coverage selects it on every interpreter below 3.14; it never sees Python
+that Qt's own threads call into. Those 55 statements were about one percent of
+the model's 4486 and the model passed the bar; the same 55 are 6.4% of the
+controller's 856, so CI failed the file it had been passing all along. The
+coverage job now sets `COVERAGE_CORE: sysmon` — available on 3.12, and the
+runner measures statements only, so the branch gate sysmon cannot satisfy
+below 3.14 does not apply. The 95% per-file bar is unchanged, and sysmon
+records a superset of ctrace's lines here.
+
+`tests/test_plate_render_controller.py` (13 tests) closes what stays open
+deterministically: the presentation restamp across both live surfaces, the
+decoded cache's consumer key, the pixel-width stroke on the warm composite, the
+teardown's pin and tier release, the repeated gesture hold, the discard sweep's
+reference guard, the navigation wake's popover guard, the checkpoint walk's
+terminal paths (cancel, vanished asset, failed write, a worker that throws), the
+checkpoint file that seeds a refreshed prefix, and the seek trace's debounce —
+whose only other driver is `tests.test_follower_seek_performance`, the wall-clock
+module `tools/run_some.py` deliberately runs uninstrumented.
+`PlateRenderController.asset_owner_files` had no caller and went with the pass.
+
+That suite spelled its cache URLs as `"file://"` plus a path, which round trips
+through `QUrl(...).toLocalFile()` on POSIX only; on Windows it resolves to
+nothing, so the sweep's unlink raised into the guard that keeps a vanished
+asset harmless and the discarded file outlived its job. The tests now build the
+`QUrl.fromLocalFile` form `png_file` itself returns, which is the spelling the
+sibling raster suites already used — the same defect the raster prune keys its
+reference set for.
+
+## Batch F — the publication transaction, the camera recovery and the pause block
+
+Three commits. `MonitorPublication.py` (166 lines) is the owner the brief asked
+for by name: the committed value map, the per-value QVariant conversion cache
+and the notification-group table with its emit order. The model's `_publish()`
+was the 438-line body that read the config, ran the state transitions, built
+every value and then decided what to notify; it is now a transaction naming its
+phases — previous frame, observe, compose, apply the camera transition,
+compare, emit — over `_observe()`, `_compose()` and `_apply_camera_url()`
+(3015 -> 2941). The store and the comparison are two calls rather than one
+`commit()` on purpose: `_apply_camera_url` amends the committed dict in place,
+so the comparison has to run after the amendment and before the emission.
+Moving the store after the emit fails three of the five ordering tests in
+`tests/test_monitor_publish_transaction.py`; `tests/test_monitor_publication.py`
+(10 tests) takes the owner's value identity, its one-per-rebuild QVariant
+conversion and its group selection to 100%.
+
+`CameraRecovery.py` (151 lines) takes the webcam stream's freshness policy —
+five attributes written from six handlers, every one of them resolving to the
+same reload nonce. Each transition answers whether the published frame changed
+and the facade keeps its own dispatch, so the synchronous user-action publish
+and the coalesced one stay where they were. The first-failure retry, the 10 s
+cadence, the query-only URL rule, the both-directions toggle and the
+ACTIVE-monitor-only wake moved whole (2941 -> 2892). The nonce had a second
+writer: `self._camera_refresh_nonce = 0` sat eighty lines above the rest of the
+camera state, inside the follower-view rehydration, and would have survived the
+extraction as a duplicate owner. `PreviewFormatting` left the model's declared
+dependencies at the next step, because the popover projection was its only
+consumer — the table is exact, so an unused entry is a lie even where the gate
+allows a superset.
+
+`PauseAtLayerPresentation.py` (74 lines) takes the popover's pause block out of
+`_published_pause_block` and `_pause_at_layer_values`. The schedule and its rows
+stay with the coordinator; what is derived here is only the candidate at the
+follower's own layer and the button's gates, over the same rows and with the
+same helpers the card's own gates use (2892 -> 2798). The facade hands it an
+already-coerced plate anchor, because `_coerce_anchor` is pinned by
+`tests/test_monitor_model_coverage.py` and read from four other places in the
+model.
+
+The QML contract that pinned the candidate's source to the follower's layer
+scanned the model for `index = self._follower_layer_anchor`. That statement
+moved, so the pin was retargeted rather than dropped: the model is asserted to
+wire `anchor=lambda: self._follower_layer_anchor`, and the projection to read
+it live and to fall back to the plate's anchor. The camera throttle pins in
+`tests/test_monitor_camera_runtime.py` retarget to
+`_camera_recovery._last_refresh_at`, and the camera-state pins in
+`tests/test_monitor_model_coverage.py` to `application_state`,
+`seed_application_state` and `nonce`. No assertion was weakened, skipped,
+xfailed or deleted.
+
+Deliberately left in the facade: the follower-view settings bundle, the UI
+layout state, and the job/status and migration/What's New projections. The
+renderer results already integrate through the transaction rather than as an
+independent stream, so nothing there is unsettled. UI layout state and the
+job/status and migration/What's New presentations have owners already —
+`UiStateStore` with `SectionLayoutPolicy`, `MonitorFormatting` with
+`MonitorPermissions`, `MigrationPresentation`, `WhatsNew` — and the facade only
+calls them. The follower-view bundle is ten Qt slots that guard, store, save and
+publish: API delegation over the facade's own chrome state, which is what the
+acceptance describes the facade as being. An owner for it would need either ten
+named fields, no shorter than what it replaces, or a string-keyed settings bag,
+which is the context bag the rules forbid.
+
+Verified by the focused modules — publication 10, publish transaction 5, camera
+recovery 13, camera runtime 10, pause presentation 12, pause at layer 34, model
+coverage 138, model runtime 114, monitor contracts 44, ownership 9, architecture
+34 — and by each commit's own full gate, which runs the whole suite including
+the four `tests/harness/test_harness_*.py` legs `tools/run_some.sh` does not
+glob.
+
 ## Outstanding
 
 - `tests/test_gpu_canvas_isolation.py::test_live_layer_handoff_fades_previous_geometry_then_retires_it`
@@ -186,4 +292,4 @@ raster framework was introduced.
   and this is not a flake to dismiss. It sits outside this batch's modules, and
   the four unit-leg runs since have not reproduced it. The raster path already
   carries teardown-segfault guards.
-- Batches F-I not started.
+- Batches G-I not started.
