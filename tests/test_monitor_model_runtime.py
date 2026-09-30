@@ -2609,6 +2609,9 @@ Item {
             # only change on a printer switch, which is user-initiated.
             "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
             "visible: root.printerModel != null && root.printerModel.hasBedMesh",
+            # The bed-mesh detail card: a transient pop-over surface
+            # that appears with its opener — nothing under it reflows.
+            "visible: root.open && root.printerModel != null && root.printerModel.bedMeshAvailable",
             # The webcam FPS bar: parked until the pane is wide enough
             # and the stream is live — layout-static within the pane.
             "visible: root.cameraBarFits && root.cameraControlLive",

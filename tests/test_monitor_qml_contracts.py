@@ -821,7 +821,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the unlabelled sparklines stay readable, and the mesh detail's
         # readout row is permanent so the map never resizes on hover.
         self.assertIn("modelData.label + \" \" + value", harness.TEMP_HISTORY_SECTION_QML)
-        self.assertIn("Hover the map for probe coordinates", harness.MONITOR_QML)
+        self.assertIn("Hover the map for probe coordinates", harness.BED_MESH_DETAIL_QML)
         # The chart's hover values live in a cursor-following tooltip
         # OUTSIDE the clipped card (allowed to overflow any boundary) —
         # there is no in-card readout row to stretch the pop-up, and the
@@ -859,11 +859,10 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # so a second click on the opener dismisses without moving the
         # mouse (the chosen position, mesh-style).
         self.assertEqual(harness.MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 4)
-        # meshDetail is component-scoped: exactly one in-scope refresh
-        # (inside meshContent) may reference it, or the outer handler
-        # throws and kills the pop-over auto-close.
-        self.assertEqual(harness.MONITOR_QML.count("meshDetail.refresh()"), 1)
-        self.assertGreater(harness.MONITOR_QML.index("meshDetail.refresh()"), harness.MONITOR_QML.index("id: meshContent"))
+        # meshDetail is card-scoped: exactly one refresh may reference
+        # it, and it lives in the same document that declares the id.
+        self.assertEqual(harness.BED_MESH_DETAIL_QML.count("meshDetail.refresh()"), 1)
+        self.assertGreater(harness.BED_MESH_DETAIL_QML.index("meshDetail.refresh()"), harness.BED_MESH_DETAIL_QML.index("id: meshDetail"))
         # The snapped-second gate must WRAP the publications, and the
         # chart-changed re-snap must clear the snap first so a gap
         # reset or legend toggle republishes even on a snap collision.
@@ -874,7 +873,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("_updateHover(root.hoverX);", on_chart[:800])
         # The freshly created detail map rehydrates the persisted
         # probe-points toggle at creation (never after a toggle event).
-        self.assertIn("showProbePoints: root.printer != null ? root.printer.showProbePoints : false", harness.MONITOR_QML)
+        self.assertIn("showProbePoints: root.printerModel != null ? root.printerModel.showProbePoints : false", harness.BED_MESH_DETAIL_QML)
         # A refused console send keeps the typed draft.
         self.assertIn("if (consolePanel.printerModel.sendConsoleCommand(consoleInput.text)) {", harness.CONSOLE_PANE_QML)
         # When every primary sensor is hidden, up to two visible
@@ -986,7 +985,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # live refresh re-snaps a parked cursor.
         self.assertIn('Height " + value.toFixed(3)', harness.BED_MESH_MAP_QML)
         self.assertIn("root.snap(root._hoverMouseX", harness.BED_MESH_MAP_QML)
-        self.assertIn('"Probe points"', harness.MONITOR_QML)
+        self.assertIn('"Probe points"', harness.BED_MESH_DETAIL_QML)
         self.assertIn("showProbePoints", harness.BED_MESH_MAP_QML)
         # The colour row offers a full picker beside the quick swatches,
         # and the picker is a platform dialog: the monitor must not
@@ -1000,7 +999,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('text: "Custom…"', harness.MONITOR_QML)
         self.assertIn("import QtQuick.Dialogs", harness.CHART_COLOUR_DIALOG_QML)
         self.assertIn("ColorDialog {", harness.CHART_COLOUR_DIALOG_QML)
-        self.assertIn("setShowProbePoints", harness.MONITOR_QML)
+        self.assertIn("setShowProbePoints", harness.BED_MESH_DETAIL_QML)
         # Terminal order: the history sits above the input row.
         self.assertLess(harness.CONSOLE_PANE_QML.index("id: consoleText"), harness.CONSOLE_PANE_QML.index("id: consoleInput"))
         self.assertIn("All sensors hidden — click to re-enable one in the chart.", harness.TEMP_HISTORY_SECTION_QML)
@@ -1447,9 +1446,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         slider = (harness.PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
         for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, slider)
-        for qml in (harness.MONITOR_QML, harness.PREVIEW_CONTROLS_QML):
+        for qml in (harness.BED_MESH_DETAIL_QML, harness.PREVIEW_CONTROLS_QML):
             self.assertIn("BedMeshRangeSlider", qml)
-        self.assertIn('text: root.printer != null ? "Low " + root.printer.bedMeshMinimum.toFixed(3)', harness.MONITOR_QML)
+        self.assertIn('text: root.printerModel != null ? "Low " + root.printerModel.bedMeshMinimum.toFixed(3)', harness.BED_MESH_DETAIL_QML)
 
     def test_mesh_map_bed_space_visualisation_is_klipper_faithful(self):
         # The accuracy ruling: the expanded map draws the
@@ -1466,7 +1465,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertIn(token, harness.BED_MESH_MAP_QML + harness.MONITOR_MODEL)
         # The popover carries the same clamped disclaimer the Preview's
         # legend makes (the request).
-        self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", harness.MONITOR_QML)
+        self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", harness.BED_MESH_DETAIL_QML)
 
     def test_the_popover_schedules_the_pause_at_its_own_layer(self):
         # The popover's pause-at-layer block (4.6.0): the CARD's own

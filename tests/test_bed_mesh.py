@@ -15,6 +15,7 @@ MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf-8")
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
 RANGE_SLIDER_QML = (PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
+BED_MESH_DETAIL = (PLUGINS / "BedMeshDetail.qml").read_text(encoding="utf-8")
 PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text(encoding="utf-8")
 PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
@@ -90,13 +91,13 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("self._node", PRESENTER)
         self.assertNotIn("self._follower", PRESENTER)
         self.assertIn("Qt.createComponent", DASHBOARD)  # the registered shell's async dashboard load
-        self.assertIn("BedMeshMap {", MONITOR_QML)  # the shared mesh canvas
+        self.assertIn("BedMeshMap {", BED_MESH_DETAIL)  # the shared mesh canvas
         self.assertIn("Canvas", BED_MESH_MAP_QML)
-        self.assertIn('title: "Bed mesh — "', MONITOR_QML)  # the pop-over shell owns the title
-        self.assertIn("bedMeshMinimum", MONITOR_QML)
-        self.assertIn("bedMeshMaximum", MONITOR_QML)
-        self.assertIn("bedMeshRange", MONITOR_QML)
-        self.assertIn("The Preview's height exaggeration adjusts from its card", MONITOR_QML)
+        self.assertIn('title: "Bed mesh — "', BED_MESH_DETAIL)  # the pop-over shell owns the title
+        self.assertIn("bedMeshMinimum", BED_MESH_DETAIL)
+        self.assertIn("bedMeshMaximum", BED_MESH_DETAIL)
+        self.assertIn("bedMeshRange", BED_MESH_DETAIL)
+        self.assertIn("The Preview's height exaggeration adjusts from its card", BED_MESH_DETAIL)
         self.assertIn("id: infoPanel", MONITOR_QML)
         self.assertIn('text: "Information"', MONITOR_QML)
         self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", BED_MESH_MAP_QML)  # aspect-fitted plot
@@ -156,14 +157,14 @@ class BedMeshTests(unittest.TestCase):
         # in the shared component so the two surfaces cannot drift.
         for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, RANGE_SLIDER_QML)
-        for qml in (MONITOR_QML, PREVIEW_CONTROLS):
+        for qml in (BED_MESH_DETAIL, PREVIEW_CONTROLS):
             self.assertIn("BedMeshRangeSlider", qml)
         # The shared window: the model publishes it, the pop-over
         # slider writes it, the card's intents route through the
         # presentation into the same slot.
         self.assertIn("bedMeshThresholdLow", TYPED_CONTROLS)
         self.assertIn("setBedMeshThresholds", TYPED_CONTROLS)
-        self.assertIn('root.printer.setBedMeshThresholds(low, high)', MONITOR_QML)
+        self.assertIn('root.printerModel.setBedMeshThresholds(low, high)', BED_MESH_DETAIL)
         self.assertIn("bedMeshThresholdsRequested", PRESENTATION)
         # The intent routes through the plugin to the CURRENT monitor
         # only (the 4.5.0 ownership fix) — never a broadcast to every
