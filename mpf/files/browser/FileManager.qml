@@ -5,6 +5,7 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "../../widgets"
+import "dialogs"
 import "../../resources/theme"
 
 // The file-manager popup (3.6.0): the real QML surface over the
@@ -166,415 +167,37 @@ Item {
     // the pinned verbs. While it is up, Esc cancels IT — the top
     // layer owns the key (the ruling), and every row's
     // Print entry stands down.
-    Popup {
+    PrintConfirmDialog {
         id: printConfirmDialog
-        objectName: "printConfirmDialog"
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        // The dialog owns the interaction while it is up: the rows
-        // behind it must not answer clicks (the live
-        // report).
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        // The dialog's content owns focus and answers Escape
-        // itself; a popup-held focus swallows the key.
-        focus: false
-        onOpened: printConfirmDialogFocus.forceActiveFocus()
-        // The popup's own background (the live report: the
-        // default background was a dark slab under dark text) —
-        // the same surface as the filter dropdowns.
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        contentItem: Column {
-            id: printConfirmDialogFocus
-            focus: true
-            Keys.onEscapePressed: {
-                printConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelPrint();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: "Start print?"
-                font: UM.Theme.getFont("large_bold")
-            }
-            // The confirmation's own large thumbnail (the
-            // live request): the grid's fetch/cache at dialog scale
-            // with the same fallbacks — hourglass while loading,
-            // diamond when the file has none. The centring Item is
-            // deliberate: anchored children inside a Column are
-            // undefined behaviour.
-            Item {
-                width: parent.width
-                height: 128 * screenScaleFactor
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 128 * screenScaleFactor
-                    height: 128 * screenScaleFactor
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
-                    color: root.thumbStateLarge(root.confirmRelpath()) === "ready" ? UM.Theme.getColor("setting_category") : "transparent"
-                    Image {
-                        id: confirmThumb
-                        visible: root.thumbStateLarge(root.confirmRelpath()) === "ready" && confirmThumb.status !== Image.Error
-                        anchors.fill: parent
-                        anchors.margins: 4 * screenScaleFactor
-                        source: root.thumbUrlLarge(root.confirmRelpath())
-                        fillMode: Image.PreserveAspectFit
-                        smooth: true
-                        asynchronous: true
-                    }
-                    UM.ColorImage {
-                        visible: root.thumbStateLarge(root.confirmRelpath()) === "loading"
-                        anchors.centerIn: parent
-                        width: 24 * screenScaleFactor
-                        height: 24 * screenScaleFactor
-                        source: Qt.resolvedUrl("../../resources/svg/Hourglass.svg")
-                        color: UM.Theme.getColor("text_inactive")
-                        // The spin: a static glyph reads as dead.
-                        RotationAnimation on rotation {
-                            from: 0
-                            to: 360
-                            duration: 2000
-                            loops: Animation.Infinite
-                            running: root.thumbStateLarge(root.confirmRelpath()) === "loading"
-                        }
-                    }
-                    UM.Label {
-                        visible: root.thumbStateLarge(root.confirmRelpath()) === "failed" || root.thumbStateLarge(root.confirmRelpath()) === "none"
-                        anchors.centerIn: parent
-                        text: "◇"
-                        color: UM.Theme.getColor("text_inactive")
-                    }
-                }
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.name : ""
-                font: UM.Theme.getFont("medium")
-            }
-            GridLayout {
-                columns: 2
-                columnSpacing: UM.Theme.getSize("default_margin").width
-                rowSpacing: UM.Theme.getSize("narrow_margin").height / 2
-                width: parent.width
-                UM.Label {
-                    text: "Est. time"
-                    color: UM.Theme.getColor("text_inactive")
-                }
-                UM.Label {
-                    text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.est : ""
-                }
-                UM.Label {
-                    text: "Filament"
-                    color: UM.Theme.getColor("text_inactive")
-                }
-                UM.Label {
-                    text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.filament : ""
-                }
-                UM.Label {
-                    text: "Printer"
-                    color: UM.Theme.getColor("text_inactive")
-                }
-                UM.Label {
-                    text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.printerName : ""
-                }
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.readyText : ""
-                color: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? (root.printerModel.filePrintConfirm.homed ? (root.printerModel.filePrintConfirm.ready ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")) : MoonrakerTheme.warningOrange) : UM.Theme.getColor("text_inactive")
-            }
-            RowLayout {
-                width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "printConfirmStartButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Start print"
-                    Layout.fillWidth: true
-                    // The gate re-evaluates while the dialog stays
-                    // open (4.2.0, N2): the click-time check ran at
-                    // dialog-open; the dispatch re-checks again in
-                    // Python — this binding keeps the button honest
-                    // for the states the dialog can witness.
-                    enabled: root.printerModel != null && root.printStartAllowed()
-                    onClicked: {
-                        printConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileConfirmPrint();
-                        }
-                    }
-                }
-                Cura.SecondaryButton {
-                    objectName: "printConfirmCancelButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Cancel"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        printConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileCancelPrint();
-                        }
-                    }
-                }
-            }
-        }
+        startAllowed: root.printStartAllowed()
     }
 
     // The delete confirmation (Snapshot 3): the selection's count, a
     // blocked line when some of it is printing, and the pinned verbs.
-    Popup {
+    DeleteConfirmDialog {
         id: deleteConfirmDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        // The dialog's content owns focus and answers Escape
-        // itself; a popup-held focus swallows the key.
-        focus: false
-        onOpened: deleteConfirmDialogFocus.forceActiveFocus()
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        contentItem: Column {
-            id: deleteConfirmDialogFocus
-            focus: true
-            Keys.onEscapePressed: {
-                deleteConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelDelete();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: root.deleteKind() === "dir" ? "Delete folder?" : "Delete files?"
-                font: UM.Theme.getFont("large_bold")
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.deleteWording()
-                font: UM.Theme.getFont("medium")
-            }
-            UM.Label {
-                visible: root.deleteBlockedCount() > 0
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.deleteBlockedCount() + " selected can't be deleted — the printer is using them."
-                color: MoonrakerTheme.warningOrange
-            }
-            RowLayout {
-                width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "deleteConfirmDeleteButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Delete"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        deleteConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileConfirmDelete();
-                        }
-                    }
-                }
-                Cura.SecondaryButton {
-                    objectName: "deleteConfirmCancelButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Cancel"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        deleteConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileCancelDelete();
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // The New-folder dialog (a live request): a plain
     // name, Enter creates, Esc cancels.
-    Popup {
+    CreateFolderDialog {
         id: createFolderDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        focus: false
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        onOpened: {
-            createFolderField.text = "";
-            createFolderField.forceActiveFocus();
-        }
-        contentItem: Column {
-            id: createFolderDialogFocus
-            focus: true
-            Keys.onEscapePressed: createFolderDialog.close()
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: "New folder"
-                font: UM.Theme.getFont("large_bold")
-            }
-            TextField {
-                id: createFolderField
-                width: parent.width
-                color: UM.Theme.getColor("text")
-                palette.highlight: UM.Theme.getColor("primary")
-                palette.highlightedText: "white"
-                background: Rectangle {
-                    color: UM.Theme.getColor("setting_category")
-                    border.color: createFolderField.activeFocus ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                    border.width: createFolderField.activeFocus ? 2 * screenScaleFactor : UM.Theme.getSize("default_lining").width
-                    radius: UM.Theme.getSize("default_radius").width
-                }
-                Keys.onReturnPressed: root.submitNewFolder()
-                Keys.onEnterPressed: root.submitNewFolder()
-            }
-            RowLayout {
-                width: parent.width
-                Cura.SecondaryButton {
-                    objectName: "createFolderCancelButton"
-                    Layout.fillWidth: true
-                    text: "Cancel"
-                    onClicked: createFolderDialog.close()
-                }
-                Cura.PrimaryButton {
-                    objectName: "createFolderCreateButton"
-                    Layout.fillWidth: true
-                    text: "Create"
-                    onClicked: root.submitNewFolder()
-                }
-            }
-        }
     }
 
     // The rename dialog (Snapshot 3): the name field pre-filled on
     // open, a live collision line while typing (the host's move
     // silently overwrites — the dialog asks first, round-1 C2/C3),
     // and the pinned verbs.
-    Popup {
+    RenameDialog {
         id: renameDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        // The dialog's content owns focus and answers Escape
-        // itself; a popup-held focus swallows the key.
-        focus: false
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        onOpened: {
-            // The whole stem pre-selects (the live
-            // request): typing replaces the name and the extension
-            // survives. onOpened fires once per open, so a republish
-            // mid-typing never re-selects or moves the cursor. The
-            // field takes focus so typing starts immediately.
-            var target = root.renameTarget();
-            if (target !== null) {
-                renameField.text = target.name;
-                renameField.select(0, root.renameStemLength(target.name));
-            }
-            renameField.forceActiveFocus();
-        }
-        contentItem: Column {
-            id: renameDialogFocus
-            focus: true
-            Keys.onEscapePressed: {
-                renameDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelRename();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: root.renameKind() === "dir" ? "Rename folder" : "Rename file"
-                font: UM.Theme.getFont("large_bold")
-            }
-            TextField {
-                id: renameField
-                width: parent.width
-                // The theme's default field reads as a black slab
-                // under the popup (the live report): the
-                // input well matches the thumbnail tiles' surface,
-                // with the theme's text colour (white-on-white was
-                // the second report) and a Cura-blue selection.
-                color: UM.Theme.getColor("text")
-                palette.highlight: UM.Theme.getColor("primary")
-                palette.highlightedText: "white"
-                background: Rectangle {
-                    color: UM.Theme.getColor("setting_category")
-                    // The focus cue: the well's outline flips to the
-                    // Cura blue while the field holds focus (the
-                    // live report — tabbing gave no cue).
-                    border.color: renameField.activeFocus ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                    border.width: renameField.activeFocus ? 2 * screenScaleFactor : UM.Theme.getSize("default_lining").width
-                    radius: UM.Theme.getSize("default_radius").width
-                }
-                onTextEdited: {
-                    if (root.printerModel != null) {
-                        root.printerModel.filePreviewRename(renameField.text);
-                    }
-                }
-                Keys.onReturnPressed: root.confirmRename()
-                Keys.onEnterPressed: root.confirmRename()
-            }
-            UM.Label {
-                visible: root.printerModel != null && root.printerModel.fileRenameConflict
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: "A file with this name already exists — it will be overwritten."
-                color: MoonrakerTheme.warningOrange
-            }
-            RowLayout {
-                width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "renameConfirmButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: root.printerModel != null && root.printerModel.fileRenameConflict ? "Overwrite" : "Rename"
-                    Layout.fillWidth: true
-                    onClicked: root.confirmRename()
-                }
-                Cura.SecondaryButton {
-                    objectName: "renameConfirmCancelButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Cancel"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        renameDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileCancelRename();
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // The folder context menu (a live request): right-click
@@ -605,261 +228,29 @@ Item {
 
     // The upload-overwrite confirmation (Snapshot 3): the host
     // silently overwrites, so a name collision asks first.
-    Popup {
+    UploadConfirmDialog {
         id: uploadConfirmDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        // The dialog's content owns focus and answers Escape
-        // itself; a popup-held focus swallows the key.
-        focus: false
-        onOpened: uploadConfirmDialogFocus.forceActiveFocus()
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        contentItem: Column {
-            id: uploadConfirmDialogFocus
-            focus: true
-            Keys.onEscapePressed: {
-                uploadConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelUpload();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: "File already exists"
-                font: UM.Theme.getFont("large_bold")
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.uploadName() + " exists on the printer — uploading will overwrite it."
-                font: UM.Theme.getFont("medium")
-            }
-            RowLayout {
-                width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "uploadConfirmOverwriteButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Overwrite"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        uploadConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileConfirmUpload();
-                        }
-                    }
-                }
-                Cura.SecondaryButton {
-                    objectName: "uploadConfirmCancelButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Cancel"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        uploadConfirmDialog.close();
-                        if (root.printerModel != null) {
-                            root.printerModel.fileCancelUpload();
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // The upload progress popup (Snapshot 3 finish — the
     // live request): a bar while the upload runs, and a success/fail
     // verdict in the SAME popup at the end.
-    Popup {
+    UploadProgressDialog {
         id: uploadProgressDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        padding: UM.Theme.getSize("default_margin").width
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        // The dialog's content owns focus and answers Escape
-        // itself; a popup-held focus swallows the key.
-        focus: false
-        onOpened: uploadProgressDialogFocus.forceActiveFocus()
-        // ANY close dismisses the payload (the ruling: the
-        // dialog can never get stuck) — Esc and the button alike;
-        // a dismissed upload runs on and its verdict lands in the
-        // console.
-        onClosed: {
-            if (root.printerModel != null) {
-                root.printerModel.fileUploadDismiss();
-            }
-        }
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        contentItem: Column {
-            id: uploadProgressDialogFocus
-            focus: true
-            Keys.onEscapePressed: {
-                uploadProgressDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileUploadDismiss();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            UM.Label {
-                text: root.uploadProgressState() === "uploading" ? "Uploading" : (root.uploadProgressState() === "done" ? "Upload complete" : "Upload failed")
-                font: UM.Theme.getFont("large_bold")
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.uploadProgressName()
-                font: UM.Theme.getFont("medium")
-            }
-            OutlineProgressBar {
-                visible: root.uploadProgressState() === "uploading"
-                // Explicit geometry: Layout.* is IGNORED inside this
-                // plain Column, and a zero-sized bar was the
-                // live report ("no progress bar").
-                width: parent.width
-                height: 10 * screenScaleFactor
-                from: 0
-                to: 100
-                value: root.uploadProgressPercent()
-            }
-            UM.Label {
-                visible: root.uploadProgressState() === "failed"
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.uploadProgressError()
-                color: MoonrakerTheme.warningOrange
-            }
-            RowLayout {
-                // Always present: closing mid-upload dismisses the
-                // popup, and the upload runs on (the
-                // ruling: the dialog can never get stuck).
-                width: parent.width
-                spacing: UM.Theme.getSize("narrow_margin").width
-                Cura.PrimaryButton {
-                    objectName: "uploadProgressCloseButton"
-                    focusPolicy: Qt.StrongFocus
-                    text: "Close"
-                    Layout.fillWidth: true
-                    onClicked: uploadProgressDialog.close()
-                }
-            }
-        }
     }
 
     // The download progress window (the live request): the file
     // manager's own control — a bar, the percentage and a Cancel.
     // It opens while a save download streams and closes when the
     // stream ends or the user cancels.
-    Popup {
+    DownloadProgressDialog {
         id: downloadProgressDialog
+        printerModel: root.printerModel
         anchors.centerIn: root
-        visible: root.downloadProgressName() !== ""
-        modal: true
-        closePolicy: Popup.NoAutoClose  // only Cancel (button or Esc) ends it
-        // The content owns focus and answers Esc itself; a popup-held
-        // focus swallows the key (the upload dialog's live-proven
-        // pattern).
-        onOpened: downloadProgressDialogFocus.forceActiveFocus()
-        padding: UM.Theme.getSize("default_margin").width
-        background: Rectangle {
-            color: UM.Theme.getColor("main_background")
-            border.color: UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            radius: UM.Theme.getSize("default_radius").width
-        }
-        contentItem: Column {
-            id: downloadProgressDialogFocus
-            focus: true
-            // Esc cancels the download itself, not just the window
-            // (the live request).
-            Keys.onEscapePressed: {
-                if (root.printerModel != null) {
-                    root.printerModel.fileDownloadCancel();
-                }
-            }
-            spacing: UM.Theme.getSize("narrow_margin").height
-            width: 320 * screenScaleFactor
-            // The popup is only about the download: one large
-            // spinning hourglass over the title (the live request).
-            UM.ColorImage {
-                id: downloadHourglass
-                anchors.horizontalCenter: parent.horizontalCenter
-                source: Qt.resolvedUrl("../../resources/svg/Hourglass.svg")
-                color: UM.Theme.getColor("text")
-                width: 56 * screenScaleFactor
-                height: 56 * screenScaleFactor
-                SequentialAnimation on rotation {
-                    running: downloadProgressDialog.visible
-                    loops: Animation.Infinite
-                    NumberAnimation {
-                        from: 0
-                        to: 180
-                        duration: 350
-                    }
-                    NumberAnimation {
-                        from: 180
-                        to: 360
-                        duration: 350
-                    }
-                }
-            }
-            UM.Label {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Downloading"
-                font: UM.Theme.getFont("large_bold")
-            }
-            UM.Label {
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.downloadProgressName()
-                font: UM.Theme.getFont("medium")
-            }
-            OutlineProgressBar {
-                width: parent.width
-                // An undeclared total has no fraction to draw: the bar
-                // yields to the byte counter and the spinner until the
-                // headers name one (a bar pinned at 0% would read as a
-                // stalled transfer).
-                height: root.downloadProgressIndeterminate() ? 0 : 10 * screenScaleFactor
-                from: 0
-                to: 100
-                value: root.downloadProgressPercent()
-            }
-            RowLayout {
-                width: parent.width
-                UM.Label {
-                    text: root.downloadProgressIndeterminate() ? "Received" : root.downloadProgressPercent() + "%"
-                    font: UM.Theme.getFont("small")
-                    Layout.fillWidth: true
-                }
-                UM.Label {
-                    text: root.downloadProgressSize()
-                    font: UM.Theme.getFont("small")
-                    color: UM.Theme.getColor("text_inactive")
-                }
-            }
-            Cura.SecondaryButton {
-                width: parent.width
-                objectName: "downloadProgressCancelButton"
-                text: "Cancel"
-                onClicked: {
-                    if (root.printerModel != null) {
-                        root.printerModel.fileDownloadCancel();
-                    }
-                }
-            }
-        }
     }
 
     // The local-file picker for uploads (Snapshot 3): gcode files
@@ -1292,155 +683,10 @@ Item {
     }
     // The print dialog's large variant (the list cells use the small
     // one via thumbState/thumbUrl above).
-    function thumbStateLarge(relpath) {
-        var thumbs = root.printerModel != null ? root.printerModel.fileManagerThumbs : {};
-        var entry = thumbs[relpath];
-        return entry !== undefined ? entry.state_large : "none";
-    }
-    function thumbUrlLarge(relpath) {
-        var thumbs = root.printerModel != null ? root.printerModel.fileManagerThumbs : {};
-        var entry = thumbs[relpath];
-        return entry !== undefined ? entry.url_large : "";
-    }
+
     // The confirmation dialog's file: the relpath inside the payload,
     // or "" while the dialog is closed.
-    function confirmRelpath() {
-        return root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.relpath : "";
-    }
-    function submitNewFolder() {
-        var name = createFolderField.text.trim();
-        if (name !== "" && root.printerModel != null) {
-            root.printerModel.fileCreateDirectory(name);
-        }
-        createFolderDialog.close();
-    }
-    function deleteConfirm() {
-        return root.printerModel != null && root.printerModel.fileDeleteConfirm !== "" ? root.printerModel.fileDeleteConfirm : null;
-    }
-    function deleteWording() {
-        var confirm = root.deleteConfirm();
-        if (confirm === null) {
-            return "";
-        }
-        if (confirm.kind === "dir") {
-            return confirm.first + " and everything inside it will be deleted from the printer.";
-        }
-        if (confirm.count === 1) {
-            return confirm.first + " will be deleted from the printer.";
-        }
-        return confirm.count + " files will be deleted from the printer, including " + confirm.first + ".";
-    }
-    function deleteKind() {
-        var confirm = root.deleteConfirm();
-        return confirm !== null ? confirm.kind : "file";
-    }
-    function deleteBlockedCount() {
-        var confirm = root.deleteConfirm();
-        return confirm !== null ? confirm.blocked : 0;
-    }
-    function renameTarget() {
-        return root.printerModel != null && root.printerModel.fileRenameTarget !== "" ? root.printerModel.fileRenameTarget : null;
-    }
-    function renameKind() {
-        var target = root.renameTarget();
-        return target !== null ? target.kind : "file";
-    }
-    function uploadConfirm() {
-        return root.printerModel != null && root.printerModel.fileUploadConfirm !== "" ? root.printerModel.fileUploadConfirm : null;
-    }
-    function uploadName() {
-        var confirm = root.uploadConfirm();
-        return confirm !== null ? confirm.filename : "";
-    }
-    function downloadProgress() {
-        return root.printerModel != null ? root.printerModel.fileDownloadProgress : "";
-    }
 
-    function downloadProgressName() {
-        var progress = root.downloadProgress();
-        return progress !== "" ? progress.name : "";
-    }
-
-    function downloadProgressPercent() {
-        var progress = root.downloadProgress();
-        return progress !== "" ? progress.percent : 0;
-    }
-
-    function downloadProgressIndeterminate() {
-        // No declared length yet: the window stays open, the bytes
-        // received stand in for the fraction and the Cancel stays
-        // reachable. A determinate percentage replaces this the moment
-        // the total arrives.
-        var progress = root.downloadProgress();
-        return progress !== "" && progress.indeterminate === true;
-    }
-
-    function humanBytes(bytes) {
-        // Bytes stay bytes; anything larger steps through the binary
-        // units at 1024 (the live request).
-        if (bytes < 1024) {
-            return bytes + " B";
-        }
-        var units = ["KiB", "MiB", "GiB", "TiB"];
-        var value = bytes;
-        var unit = "";
-        for (var i = 0; i < units.length && value >= 1024; ++i) {
-            value /= 1024;
-            unit = units[i];
-        }
-        return value.toFixed(1) + " " + unit;
-    }
-
-    function downloadProgressSize() {
-        var progress = root.downloadProgress();
-        if (progress === "") {
-            return "";
-        }
-        if (!(progress.total > 0)) {
-            // An undeclared total leaves the bytes received as the only
-            // honest readout (the total is a 0 sentinel, never absent).
-            return root.humanBytes(progress.received);
-        }
-        return root.humanBytes(progress.received) + " / " + root.humanBytes(progress.total);
-    }
-
-    function uploadProgress() {
-        return root.printerModel != null && root.printerModel.fileUploadProgress !== "" ? root.printerModel.fileUploadProgress : null;
-    }
-    function uploadProgressState() {
-        var progress = root.uploadProgress();
-        return progress !== null ? progress.state : "";
-    }
-    function uploadProgressName() {
-        var progress = root.uploadProgress();
-        return progress !== null ? progress.name : "";
-    }
-    function uploadProgressPercent() {
-        var progress = root.uploadProgress();
-        return progress !== null ? progress.percent : 0;
-    }
-    function uploadProgressError() {
-        var progress = root.uploadProgress();
-        return progress !== null ? progress.error : "";
-    }
-    function confirmRename() {
-        // The button and the field's Return key share this path.
-        renameDialog.close();
-        if (root.printerModel != null) {
-            root.printerModel.fileConfirmRename();
-        }
-    }
-    function renameStemLength(name) {
-        // Everything before the LAST dot: "bench.tar.gcode" keeps
-        // ".gcode" unselected; no dot selects the whole name.
-        var lower = String(name).toLowerCase();
-        for (var i = lower.length - 1; i >= 0; --i) {
-            if (lower.charAt(i) === ".") {
-                return i;
-            }
-        }
-        return name.length;
-    }
     function isGcodeName(name) {
         // The host refuses to metascan/print anything else
         // ("not a valid gcode file", live-proven).
