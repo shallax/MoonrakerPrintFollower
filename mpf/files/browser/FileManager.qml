@@ -120,7 +120,7 @@ Item {
             // first stop; in narrow mode (no search field) the focus
             // anchor below carries it.
             if (!root.narrowMode) {
-                searchField.forceActiveFocus();
+                searchBar.focusField();
             } else {
                 focusAnchor.forceActiveFocus();
             }
@@ -584,58 +584,12 @@ Item {
         var values = root.printerModel.fileManagerFilters[category];
         return values !== undefined ? values : [];
     }
-    function filterActive(category) {
-        return root.filterValues(category).length > 0;
-    }
-    function filterCount(category) {
-        var counts = root.printerModel != null ? root.printerModel.fileManagerFilterCounts : {};
-        return counts[category] !== undefined ? counts[category] : 0;
-    }
-    function filterAnyActive() {
-        // "Clear all" covers the search too (the live
-        // ruling), so a search alone lights the link.
-        if (root.printerModel != null && root.printerModel.fileManagerSearch.length > 0) {
-            return true;
-        }
-        var counts = root.printerModel != null ? root.printerModel.fileManagerFilterCounts : {};
-        for (var key in counts) {
-            if (counts[key] > 0) {
-                return true;
-            }
-        }
-        return false;
-    }
     function clearAllFilters() {
         if (root.printerModel == null) {
             return;
         }
         root.printerModel.clearFileFilters();
         root.printerModel.setFileSearch("");
-    }
-    function filterOptionsFor(category) {
-        if (root.printerModel == null) {
-            return [];
-        }
-        var options = root.printerModel.fileManagerFilterOptions[category];
-        return options !== undefined ? options : [];
-    }
-    function filterOptionRows(category) {
-        // Option triples become self-contained row dicts — the row
-        // delegate must not reach up through parent chains (the
-        // probe showed that arithmetic is off by one and the
-        // category arrives empty).
-        var options = root.filterOptionsFor(category);
-        var rows = [];
-        for (var i = 0; i < options.length; ++i) {
-            rows.push({
-                "key": options[i][0],
-                "label": options[i][1],
-                "count": options[i][2],
-                "category": category,
-                "radio": category === "modified" || category === "print_time"
-            });
-        }
-        return rows;
     }
     function toggleFilter(category, key) {
         if (root.printerModel == null) {
@@ -708,97 +662,6 @@ Item {
         return root.printerModel != null ? root.printerModel.fileManagerWalkError : "";
     }
 
-    // One option row in a filter dropdown (the live
-    // rulings: a selection NEVER dismisses the dropdown — Qt menus
-    // close on item activation regardless of closePolicy, so the
-    // dropdowns are Popups; Modified/Print time are radios — the
-    // model holds ONE value, clicking the active one clears; Slicer
-    // stays checkboxes). The row reads its category and radio-ness
-    // off the hosting Popup (delegate → Column → Rectangle → Popup).
-    Component {
-        id: filterOptionRow
-        Item {
-            width: 240 * screenScaleFactor
-            height: 28 * screenScaleFactor
-            Rectangle {
-                anchors.fill: parent
-                // Inset by the border width: a flush hover rect
-                // paints OVER the dropdown's outline (the
-                // live report: the border vanished on hover).
-                anchors.margins: UM.Theme.getSize("default_lining").width
-                radius: UM.Theme.getSize("default_radius").width
-                color: rowMouse.containsMouse ? UM.Theme.getColor("setting_category") : "transparent"
-            }
-            // The selection marker: the native themed checkbox for
-            // multi-select categories, the native Cura.RadioButton
-            // for radios (the Uranium-controls-first ruling).
-            Cura.RadioButton {
-                id: optionRadio
-                visible: modelData.radio
-                anchors.left: parent.left
-                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                anchors.verticalCenter: parent.verticalCenter
-                checked: root.filterValues(modelData.category).indexOf(modelData.key) >= 0
-                onClicked: {
-                    root.setFilterValue(modelData.category, modelData.key);
-                    optionRadio.checked = Qt.binding(function () {
-                        return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
-                    });
-                }
-            }
-            UM.CheckBox {
-                id: optionCheck
-                visible: !modelData.radio
-                anchors.left: parent.left
-                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                anchors.verticalCenter: parent.verticalCenter
-                checked: root.filterValues(modelData.category).indexOf(modelData.key) >= 0
-                onClicked: {
-                    root.toggleFilter(modelData.category, modelData.key);
-                    optionCheck.checked = Qt.binding(function () {
-                        return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
-                    });
-                }
-            }
-            UM.Label {
-                anchors.left: parent.left
-                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + 22 * screenScaleFactor
-                anchors.right: parent.right
-                anchors.rightMargin: 60 * screenScaleFactor
-                anchors.verticalCenter: parent.verticalCenter
-                text: modelData.label
-                elide: Text.ElideRight
-                font: UM.Theme.getFont("default")
-            }
-            UM.Label {
-                anchors.right: parent.right
-                anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
-                anchors.verticalCenter: parent.verticalCenter
-                text: "(" + modelData.count + ")"
-                color: UM.Theme.getColor("text_inactive")
-                font: UM.Theme.getFont("default")
-            }
-            MouseArea {
-                id: rowMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (modelData.radio) {
-                        root.setFilterValue(modelData.category, modelData.key);
-                    } else {
-                        root.toggleFilter(modelData.category, modelData.key);
-                    }
-                }
-            }
-        }
-    }
-
-    // The filter slots live inline in the Filters row below; the
-    // options are [key, label, count] triples from the model and the
-    // count per option sits beside its label (the ruling:
-    // numbers next to each filter option).
-
     // The scrim covers the stage above the e-stop dock, which stays
     // visible and live behind it (the UX panel's placement ruling).
     Rectangle {
@@ -835,7 +698,7 @@ Item {
             acceptedButtons: Qt.AllButtons
             onPressed: {
                 if (!root.narrowMode) {
-                    searchField.forceActiveFocus();
+                    searchBar.focusField();
                 } else {
                     focusAnchor.forceActiveFocus();
                 }
@@ -900,309 +763,42 @@ Item {
                 }
             }
 
-            // Search — name-only, full width (the live-test
-            // ruling: filters stack UNDER the search bar, not beside).
-            // The field is an Item so the in-field clear button can
-            // anchor without touching the TextField's own layout
-            // (anchored children inside a layout-managed field are
-            // undefined behaviour).
-            Item {
+            // Search — name-only, full width; the filters stack UNDER
+            // it (FileManagerSearch.qml owns the field, its clear
+            // button and the 250 ms settle).
+            FileManagerSearch {
+                id: searchBar
                 visible: !root.narrowMode
-                Layout.fillWidth: true
-                implicitHeight: 28 * screenScaleFactor
-                TextField {
-                    id: searchField
-                    // Inert; the narrow-mode exercise asserts this
-                    // field's presence in the rendered tree.
-                    objectName: "moonrakerFileSearch"
-                    anchors.fill: parent
-                    // User typing breaks a plain `text:` binding for
-                    // good; a Binding element with RestoreBinding
-                    // survives the edit, so the model stays the one
-                    // source of truth in both directions.
-                    Binding {
-                        target: searchField
-                        property: "text"
-                        value: root.printerModel != null ? root.printerModel.fileManagerSearch : ""
-                        restoreMode: Binding.RestoreBinding
-                    }
-                    placeholderText: "Search by name"
-                    rightPadding: searchClear.visible ? searchClear.width + 8 * screenScaleFactor : 6 * screenScaleFactor
-                    // The keystroke settles for 250 ms before the
-                    // search hits the model (the live
-                    // ruling) — typing never stutters the grid.
-                    onTextEdited: searchDebounce.restart()
-                    Timer {
-                        id: searchDebounce
-                        interval: 250
-                        onTriggered: {
-                            if (root.printerModel != null) {
-                                root.printerModel.setFileSearch(searchField.text);
-                            }
-                        }
+                search: root.printerModel != null ? root.printerModel.fileManagerSearch : ""
+                onSearchSettled: function (text) {
+                    if (root.printerModel != null) {
+                        root.printerModel.setFileSearch(text);
                     }
                 }
-                // The clear button: a circled × on the right of the
-                // field, shown only while a search is active (a
-                // live request).
-                Rectangle {
-                    id: searchClear
-                    visible: searchField.text.length > 0
-                    anchors.right: parent.right
-                    anchors.rightMargin: 6 * screenScaleFactor
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 16 * screenScaleFactor
-                    height: 16 * screenScaleFactor
-                    radius: 8 * screenScaleFactor
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
-                    color: "transparent"
-                    UM.Label {
-                        anchors.centerIn: parent
-                        text: "✕"
-                        color: UM.Theme.getColor("text_inactive")
-                        font: UM.Theme.getFont("small")
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.printerModel != null) {
-                                root.printerModel.setFileSearch("");
-                            }
-                        }
+                onSearchCleared: {
+                    if (root.printerModel != null) {
+                        root.printerModel.setFileSearch("");
                     }
                 }
             }
 
-            // One dropdown PER filter category, each self-contained
-            // with scrollable multi-select options (the
-            // live ruling). A category with an active filter turns
-            // SOLID BLUE and its selected options stay inside the
-            // dropdown's own menu — NO chips band spilling into the
-            // form (the live ruling). The mock shows
-            // Slicer and Modified active, the other two inactive.
-            // The over-filtered empty state carries its own
-            // "Clear all filters" action, so nothing needs the
-            // chips row it used to point at.
-            RowLayout {
+            // The filter row (FileManagerFilters.qml): one dropdown
+            // per category, each self-contained with its scrollable
+            // options, plus the Never printed toggle and Clear all.
+            // The row reports intent — every model write stays here.
+            FileManagerFilters {
                 visible: !root.narrowMode
-                Layout.fillWidth: true
-                spacing: UM.Theme.getSize("default_margin").width / 2
-
-                UM.Label {
-                    text: "Filters:"
-                    color: UM.Theme.getColor("text_inactive")
-                    font: UM.Theme.getFont("medium")
+                filters: root.printerModel != null ? root.printerModel.fileManagerFilters : ({})
+                filterCounts: root.printerModel != null ? root.printerModel.fileManagerFilterCounts : ({})
+                filterOptions: root.printerModel != null ? root.printerModel.fileManagerFilterOptions : ({})
+                search: root.printerModel != null ? root.printerModel.fileManagerSearch : ""
+                onFilterToggled: function (category, key) {
+                    root.toggleFilter(category, key);
                 }
-                // The filter slots: BOTH button faces coexist and
-                // visibility flips (never a Loader swap — rebuilding
-                // the button destroys the open menu the moment a
-                // selection lands, the live report: the
-                // dropdown dismissed itself). Each menu parents to
-                // its SLOT, so `y: parent.height` opens it BELOW the
-                // button, not over it (the live report).
-                // No CloseOnRelease: a selection never dismisses the
-                // menu — the user does (the live ruling).
-                Item {
-                    implicitWidth: slicerPrimary.implicitWidth
-                    implicitHeight: slicerPrimary.implicitHeight
-                    Cura.PrimaryButton {
-                        id: slicerPrimary
-                        visible: root.filterActive("slicer")
-                        text: "Slicer ▾ " + root.filterCount("slicer")
-                        onPressed: slicerPopup.wasOpenAtPress = slicerPopup.opened
-                        onClicked: {
-                            if (slicerPopup.wasOpenAtPress) {
-                                slicerPopup.close();
-                            } else {
-                                slicerPopup.open();
-                            }
-                        }
-                    }
-                    Cura.SecondaryButton {
-                        visible: !root.filterActive("slicer")
-                        text: "Slicer ▾"
-                        onPressed: slicerPopup.wasOpenAtPress = slicerPopup.opened
-                        onClicked: {
-                            if (slicerPopup.wasOpenAtPress) {
-                                slicerPopup.close();
-                            } else {
-                                slicerPopup.open();
-                            }
-                        }
-                    }
-                    Popup {
-                        id: slicerPopup
-                        objectName: "slicerPopup"
-                        property bool wasOpenAtPress: false
-                        property string category: "slicer"
-                        property bool radio: false
-                        y: parent.height
-                        x: 0
-                        padding: 0
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside
-                        contentItem: Rectangle {
-                            implicitWidth: 240 * screenScaleFactor
-                            implicitHeight: slicerColumn.height
-                            color: UM.Theme.getColor("main_background")
-                            border.color: UM.Theme.getColor("lining")
-                            border.width: UM.Theme.getSize("default_lining").width
-                            radius: UM.Theme.getSize("default_radius").width
-                            Column {
-                                id: slicerColumn
-                                Repeater {
-                                    model: root.filterOptionRows("slicer")
-                                    delegate: filterOptionRow
-                                }
-                            }
-                        }
-                    }
+                onFilterValueSet: function (category, key) {
+                    root.setFilterValue(category, key);
                 }
-                // Modified and Print time are RADIOS (the
-                // live ruling: OR-checkboxes make no sense for
-                // windows and bounds — one at a time; clicking the
-                // active radio clears the filter).
-                Item {
-                    implicitWidth: modifiedPrimary.implicitWidth
-                    implicitHeight: modifiedPrimary.implicitHeight
-                    Cura.PrimaryButton {
-                        id: modifiedPrimary
-                        visible: root.filterActive("modified")
-                        text: "Modified ▾ " + root.filterCount("modified")
-                        onPressed: modifiedPopup.wasOpenAtPress = modifiedPopup.opened
-                        onClicked: {
-                            if (modifiedPopup.wasOpenAtPress) {
-                                modifiedPopup.close();
-                            } else {
-                                modifiedPopup.open();
-                            }
-                        }
-                    }
-                    Cura.SecondaryButton {
-                        visible: !root.filterActive("modified")
-                        text: "Modified ▾"
-                        onPressed: modifiedPopup.wasOpenAtPress = modifiedPopup.opened
-                        onClicked: {
-                            if (modifiedPopup.wasOpenAtPress) {
-                                modifiedPopup.close();
-                            } else {
-                                modifiedPopup.open();
-                            }
-                        }
-                    }
-                    Popup {
-                        id: modifiedPopup
-                        objectName: "modifiedPopup"
-                        property bool wasOpenAtPress: false
-                        property string category: "modified"
-                        property bool radio: true
-                        y: parent.height
-                        x: 0
-                        padding: 0
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside
-                        contentItem: Rectangle {
-                            implicitWidth: 240 * screenScaleFactor
-                            implicitHeight: modifiedColumn.height
-                            color: UM.Theme.getColor("main_background")
-                            border.color: UM.Theme.getColor("lining")
-                            border.width: UM.Theme.getSize("default_lining").width
-                            radius: UM.Theme.getSize("default_radius").width
-                            Column {
-                                id: modifiedColumn
-                                Repeater {
-                                    model: root.filterOptionRows("modified")
-                                    delegate: filterOptionRow
-                                }
-                            }
-                        }
-                    }
-                }
-                Item {
-                    implicitWidth: printTimePrimary.implicitWidth
-                    implicitHeight: printTimePrimary.implicitHeight
-                    Cura.PrimaryButton {
-                        id: printTimePrimary
-                        visible: root.filterActive("print_time")
-                        text: "Print time ▾ " + root.filterCount("print_time")
-                        onPressed: printTimePopup.wasOpenAtPress = printTimePopup.opened
-                        onClicked: {
-                            if (printTimePopup.wasOpenAtPress) {
-                                printTimePopup.close();
-                            } else {
-                                printTimePopup.open();
-                            }
-                        }
-                    }
-                    Cura.SecondaryButton {
-                        visible: !root.filterActive("print_time")
-                        text: "Print time ▾"
-                        onPressed: printTimePopup.wasOpenAtPress = printTimePopup.opened
-                        onClicked: {
-                            if (printTimePopup.wasOpenAtPress) {
-                                printTimePopup.close();
-                            } else {
-                                printTimePopup.open();
-                            }
-                        }
-                    }
-                    Popup {
-                        id: printTimePopup
-                        objectName: "printTimePopup"
-                        property bool wasOpenAtPress: false
-                        property string category: "print_time"
-                        property bool radio: true
-                        y: parent.height
-                        x: 0
-                        padding: 0
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside
-                        contentItem: Rectangle {
-                            implicitWidth: 240 * screenScaleFactor
-                            implicitHeight: printTimeColumn.height
-                            color: UM.Theme.getColor("main_background")
-                            border.color: UM.Theme.getColor("lining")
-                            border.width: UM.Theme.getSize("default_lining").width
-                            radius: UM.Theme.getSize("default_radius").width
-                            Column {
-                                id: printTimeColumn
-                                Repeater {
-                                    model: root.filterOptionRows("print_time")
-                                    delegate: filterOptionRow
-                                }
-                            }
-                        }
-                    }
-                }
-                // The Never printed filter is a bare TOGGLE, not a
-                // dropdown (the live ruling on the fourth
-                // filter category).
-                Item {
-                    implicitWidth: neverPrintedPrimary.implicitWidth
-                    implicitHeight: neverPrintedPrimary.implicitHeight
-                    Cura.PrimaryButton {
-                        id: neverPrintedPrimary
-                        visible: root.filterActive("never_printed")
-                        text: "Never printed"
-                        onClicked: root.toggleFilter("never_printed", "true")
-                    }
-                    Cura.SecondaryButton {
-                        visible: !root.filterActive("never_printed")
-                        text: "Never printed"
-                        onClicked: root.toggleFilter("never_printed", "true")
-                    }
-                }
-                // A clickable Clear all in the same style as the
-                // [⇄ Columns] trigger (the live ruling);
-                // it lights up only while a filter is active.
-                UM.Label {
-                    text: "Clear all"
-                    color: root.filterAnyActive() ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_inactive")
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: root.filterAnyActive() ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: root.clearAllFilters()
-                    }
-                }
+                onClearAllRequested: root.clearAllFilters()
             }
 
             // The folder strip (the ruling: directories
