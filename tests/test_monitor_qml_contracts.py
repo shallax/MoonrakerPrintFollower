@@ -343,6 +343,13 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         for name in dialogs:
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
             self.assertIn("property var printerModel: null", dialogs[name])
+        # The browser's extracted leaves: each owns one visual region of
+        # the popup, so the pins below follow the code into the document
+        # that now holds it. Mounting stays pinned in the shell.
+        leaves = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
+                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip")}
+        for name in leaves:
+            self.assertIn(name + " {", harness.FILE_MANAGER_QML)
         # The left panel carries no printer commands: only the camera list,
         # the read-outs and view configuration remain there.
         self.assertNotIn("root.printer.pausePrint", harness.MONITOR_QML)
@@ -524,18 +531,18 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # strip (never in the metadata list).
         self.assertIn("interval: 250", harness.FILE_MANAGER_QML)
         self.assertIn("refreshFileManager()", harness.FILE_MANAGER_QML)
-        self.assertIn('text: "⟳"', harness.FILE_MANAGER_QML)
+        self.assertIn('text: "⟳"', leaves["FileManagerToolbar"])
         self.assertIn("restoreMode: Binding.RestoreBinding", harness.FILE_MANAGER_QML)
         self.assertIn("id: searchClear", harness.FILE_MANAGER_QML)
         self.assertIn("activeDirectories", harness.FILE_MANAGER_QML)
-        self.assertIn('UM.Theme.getIcon("Folder")', harness.FILE_MANAGER_QML)
+        self.assertIn('UM.Theme.getIcon("Folder")', leaves["FileDirectoryStrip"])
         self.assertIn("filterOptionRow", harness.FILE_MANAGER_QML)
         # Probe-proven engine traps: a Repeater with two bare
         # children keeps only the last as its delegate, and
         # Component ids must never be reached through an object
         # reference (a Loader's sourceComponent silently loads
         # nothing) — both were live reports.
-        self.assertIn('text: " / "', harness.FILE_MANAGER_QML)
+        self.assertIn('text: " / "', leaves["FileManagerToolbar"])
         # The filter dropdowns (the live rulings): radios
         # for Modified/Print time (single-value model semantics —
         # the engine's exclusive group only unchecks visually), no
@@ -555,8 +562,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("closePolicy: Popup.CloseOnEscape\n", dialogs['PrintConfirmDialog'])
         self.assertIn("y: parent.height", harness.FILE_MANAGER_QML)
         self.assertIn("visible: !root.filterActive(\"slicer\")", harness.FILE_MANAGER_QML)
-        self.assertIn('text: ".."', harness.FILE_MANAGER_QML)
-        self.assertIn('text: "<root>"', harness.FILE_MANAGER_QML)
+        self.assertIn('text: ".."', leaves["FileDirectoryStrip"])
+        self.assertIn('text: "<root>"', leaves["FileManagerToolbar"])
         # Snapshot 2 live refinements: double-click-to-print, the
         # themed confirmation background.
         self.assertIn("onDoubleClicked", harness.FILE_MANAGER_QML)
@@ -667,10 +674,11 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("root.uploadProgressState() === \"uploading\"", dialogs['UploadProgressDialog'])
         # The recents strip: a scrolling 50, no dismissal glyph, and
         # the strip's own thumbnails (the live requests).
-        self.assertIn('id: recentsScroller', harness.FILE_MANAGER_QML)
-        self.assertIn('id: recentsThumb', harness.FILE_MANAGER_QML)
-        self.assertNotIn('fileHideRecent', harness.FILE_MANAGER_QML)
-        self.assertNotIn('text: "×"', harness.FILE_MANAGER_QML)
+        self.assertIn('id: recentsScroller', leaves["FileManagerRecents"])
+        self.assertIn('id: recentsThumb', leaves["FileManagerRecents"])
+        for name, source in [("FileManager", harness.FILE_MANAGER_QML)] + sorted(leaves.items()):
+            self.assertNotIn('fileHideRecent', source, name)
+            self.assertNotIn('text: "×"', source, name)
         # The console grab bar hides under the auto-collapse width
         # (the live request).
         self.assertIn("visible: !consolePanel.tooNarrow", harness.CONSOLE_PANE_QML)

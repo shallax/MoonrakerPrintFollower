@@ -847,154 +847,18 @@ Item {
             anchors.margins: UM.Theme.getSize("default_margin").width
             spacing: UM.Theme.getSize("default_margin").height
 
-            // Recents strip FIRST: the top 50 distinct recently
-            // printed files from Moonraker history, a HORIZONTALLY
-            // SCROLLING bar (a live request, 2026-09-10)
-            // — the strip's leading spot is the live-test
-            // reversal (Snapshot 0): "I've changed my opinion on the
-            // recent prints bit. I think that does belong as the
-            // first thing in the window." No local persistence at
-            // all: history is the source of truth, gone files never
-            // render, and there is no dismissal glyph.
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: UM.Theme.getSize("default_margin").width / 2
-
-                UM.Label {
-                    text: "Recent prints"
-                    font: UM.Theme.getFont("medium_bold")
-                }
-                Flickable {
-                    id: recentsScroller
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 56 * screenScaleFactor
-                    clip: true
-                    contentWidth: recentsRow.width
-                    contentHeight: recentsRow.height
-                    boundsBehavior: Flickable.StopAtBounds
-                    flickableDirection: Flickable.HorizontalFlick
-                    ScrollBar.horizontal: ScrollBar {}
-                    Row {
-                        id: recentsRow
-                        height: parent.height
-                        spacing: UM.Theme.getSize("default_margin").width / 2
-                        Repeater {
-                            model: root.activeRecents
-                            Rectangle {
-                                width: 168 * screenScaleFactor
-                                height: 56 * screenScaleFactor
-                                border.color: UM.Theme.getColor("lining")
-                                border.width: UM.Theme.getSize("default_lining").width
-                                radius: UM.Theme.getSize("default_radius").width
-                                color: UM.Theme.getColor("main_background")
-                                HoverHandler {
-                                    id: tooltipHover1
-                                }
-                                UM.ToolTip {
-                                    visible: tooltipHover1.hovered
-                                    targetPoint: Qt.point(parent.width / 2, 0)
-                                    x: 0
-                                    y: parent.height + UM.Theme.getSize("default_margin").height
-                                    width: UM.Theme.getSize("tooltip").width
-                                    text: modelData.name
-                                }
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                                    width: 36 * screenScaleFactor
-                                    height: 36 * screenScaleFactor
-                                    border.color: UM.Theme.getColor("lining")
-                                    border.width: UM.Theme.getSize("default_lining").width
-                                    color: root.thumbState(modelData.relpath) === "ready" ? UM.Theme.getColor("setting_category") : "transparent"
-                                    // The strip's own thumbnail (a
-                                    // live request): the same
-                                    // fetch/cache as the grid cells, with
-                                    // the same fallbacks.
-                                    Image {
-                                        id: recentsThumb
-                                        visible: root.thumbState(modelData.relpath) === "ready" && recentsThumb.status !== Image.Error
-                                        anchors.fill: parent
-                                        anchors.margins: 2 * screenScaleFactor
-                                        source: root.thumbUrl(modelData.relpath)
-                                        fillMode: Image.PreserveAspectFit
-                                        smooth: true
-                                        // Decode off the UI thread.
-                                        asynchronous: true
-                                    }
-                                    UM.ColorImage {
-                                        visible: root.thumbState(modelData.relpath) === "loading"
-                                        anchors.centerIn: parent
-                                        width: 12 * screenScaleFactor
-                                        height: 12 * screenScaleFactor
-                                        source: Qt.resolvedUrl("../../resources/svg/Hourglass.svg")
-                                        color: UM.Theme.getColor("text_inactive")
-                                        // The spin: a static glyph reads as dead.
-                                        RotationAnimation on rotation {
-                                            from: 0
-                                            to: 360
-                                            duration: 2000
-                                            loops: Animation.Infinite
-                                            running: root.thumbState(modelData.relpath) === "loading"
-                                        }
-                                    }
-                                    UM.Label {
-                                        visible: root.thumbState(modelData.relpath) === "failed" || root.thumbState(modelData.relpath) === "none"
-                                        anchors.centerIn: parent
-                                        text: "◇"
-                                        color: UM.Theme.getColor("text_inactive")
-                                    }
-                                }
-                                MouseArea {
-                                    // The recents strip prints too (a
-                                    // live request): a click opens the
-                                    // confirmation, the same gate as the
-                                    // rows. Gone files never render here:
-                                    // recents are Moonraker's history, and
-                                    // unlike a local store there is no way
-                                    // for the user to clean a recently
-                                    // deleted entry out — so it must not
-                                    // appear at all (the live
-                                    // ruling).
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (root.printerModel != null && root.printStartAllowed() && root.isGcodeName(modelData.relpath)) {
-                                            root.printerModel.fileRequestPrint(modelData.relpath);
-                                        }
-                                    }
-                                }
-                                UM.Label {
-                                    id: recentsName
-                                    anchors.top: parent.top
-                                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 36 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
-                                    // Inert; the harness's rendered-follows scenarios read
-                                    // this label's text (shared by rows; the
-                                    // lookup resolves any instance).
-                                    objectName: "moonrakerFileRowName"
-                                    text: root.displayName(modelData.name)
-                                    elide: Text.ElideMiddle
-                                    // Elide, never wrap: a wrapped name
-                                    // pushes the date out of the card (the
-                                    // live report).
-                                    wrapMode: Text.NoWrap
-                                    font: UM.Theme.getFont("default")
-                                }
-                                UM.Label {
-                                    anchors.top: recentsName.bottom
-                                    anchors.topMargin: 2 * screenScaleFactor
-                                    anchors.left: recentsName.left
-                                    text: modelData.time
-                                    color: UM.Theme.getColor("text_inactive")
-                                    font: UM.Theme.getFont("small")
-                                }
-                            }
-                        }
+            // Recents strip FIRST (FileManagerRecents.qml): history is
+            // the source of truth, so gone files never render and there
+            // is no dismissal glyph.
+            FileManagerRecents {
+                recents: root.activeRecents
+                thumbs: root.printerModel != null ? root.printerModel.fileManagerThumbs : ({})
+                displayName: root.displayName
+                onPrintRequested: function (relpath) {
+                    // The strip reports the intent; the gate needs the
+                    // connection and job state only the shell holds.
+                    if (root.printerModel != null && root.printStartAllowed() && root.isGcodeName(relpath)) {
+                        root.printerModel.fileRequestPrint(relpath);
                     }
                 }
             }
@@ -1008,128 +872,30 @@ Item {
                 color: UM.Theme.getColor("lining")
             }
 
-            RowLayout {
+            FileManagerToolbar {
                 visible: !root.narrowMode
-                Layout.fillWidth: true
-                spacing: UM.Theme.getSize("narrow_margin").width
-
-                UM.Label {
-                    text: "Files"
-                    font: UM.Theme.getFont("large_bold")
-                }
-                // Breadcrumb: one directory at a time, every segment
-                // clickable — a click navigates to that directory
-                // (Snapshot 1 wires the mock's inert segments).
-                // While a search is active the scope is the whole
-                // tree, not a directory, so the breadcrumb goes
-                // (the live ruling).
-                RowLayout {
-                    visible: root.printerModel == null || root.printerModel.fileManagerSearch.length === 0
-                    spacing: 0
-                    UM.Label {
-                        // The root segment reads "<root>", not
-                        // Moonraker's raw root name — "/" collided
-                        // with the segment separators (the
-                        // live ruling).
-                        text: "<root>"
-                        color: UM.Theme.getColor("primary")
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (root.printerModel != null) {
-                                    root.printerModel.fileNavigateTo([], false);
-                                }
-                            }
-                        }
-                    }
-                    // ONE delegate per segment: a Repeater with two
-                    // bare children keeps only the LAST as its
-                    // delegate (engine-proven in the probe — the
-                    // " / " separators never made it to the tree),
-                    // so the slash and the segment share a Row.
-                    Repeater {
-                        model: root.printerModel != null ? root.printerModel.fileManagerDirectory : []
-                        Row {
-                            spacing: 0
-                            UM.Label {
-                                text: " / "
-                            }
-                            UM.Label {
-                                text: modelData
-                                color: UM.Theme.getColor("primary")
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (root.printerModel == null) {
-                                            return;
-                                        }
-                                        if (mouse.button === Qt.RightButton) {
-                                            // The folder context menu
-                                            // (the live
-                                            // request): rename or
-                                            // delete this segment's
-                                            // directory.
-                                            dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.slice(0, index + 1).join("/");
-                                            dirActionsMenu.popup();
-                                            return;
-                                        }
-                                        root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory.slice(0, index + 1), false);
-                                    }
-                                }
-                            }
-                        }
+                directory: root.printerModel != null ? root.printerModel.fileManagerDirectory : []
+                search: root.printerModel != null ? root.printerModel.fileManagerSearch : ""
+                refreshedAt: root.printerModel != null ? root.printerModel.fileManagerRefreshedAt : ""
+                canLoadAllHistory: root.printerModel != null && root.printerModel.fileManagerHistoryLoaded > 0 && !root.printerModel.fileManagerHistoryExhausted
+                connected: root.printerModel != null
+                onNavigateRequested: function (segments, up) {
+                    if (root.printerModel != null) {
+                        root.printerModel.fileNavigateTo(segments, up);
                     }
                 }
-                UM.Label {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignRight
-                    text: root.printerModel != null ? root.printerModel.fileManagerRefreshedAt : ""
-                    color: UM.Theme.getColor("text_inactive")
+                onDirectoryMenuRequested: function (path) {
+                    dirActionsMenu.dirPath = path;
+                    dirActionsMenu.popup();
                 }
-                // The bounded-window escape hatch (the
-                // ruling: 200 jobs by default, one click loads the
-                // complete history — even a file printed a thousand
-                // jobs ago resolves). It sits with the refresh
-                // affordance, not the recents strip (the
-                // live ruling).
-                UM.Label {
-                    visible: root.printerModel != null && root.printerModel.fileManagerHistoryLoaded > 0 && !root.printerModel.fileManagerHistoryExhausted
-                    text: "Load all history"
-                    color: UM.Theme.getColor("primary")
-                    font: UM.Theme.getFont("small")
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.printerModel != null) {
-                                root.printerModel.fileLoadAllHistory();
-                            }
-                        }
+                onRefreshRequested: {
+                    if (root.printerModel != null) {
+                        root.printerModel.refreshFileManager();
                     }
                 }
-                // The refresh button (a live request):
-                // re-walks the tree and re-fetches the history
-                // window on demand.
-                Cura.SecondaryButton {
-                    text: "⟳"
-                    enabled: root.printerModel != null
-                    onClicked: {
-                        if (root.printerModel != null) {
-                            root.printerModel.refreshFileManager();
-                        }
-                    }
-                    HoverHandler {
-                        id: tooltipHover2
-                    }
-                    UM.ToolTip {
-                        visible: tooltipHover2.hovered
-                        targetPoint: Qt.point(parent.width / 2, 0)
-                        x: 0
-                        y: parent.height + UM.Theme.getSize("default_margin").height
-                        width: UM.Theme.getSize("tooltip").width
-                        text: "Refresh"
+                onLoadAllHistoryRequested: {
+                    if (root.printerModel != null) {
+                        root.printerModel.fileLoadAllHistory();
                     }
                 }
             }
@@ -1448,124 +1214,18 @@ Item {
             // The strip scrolls horizontally: a wrapping Flow grew
             // rows of chips on folder-heavy printers and crushed the
             // grid (the live report).
-            Flickable {
+            FileDirectoryStrip {
                 visible: !root.narrowMode && root.printerModel != null && root.printerModel.fileManagerSearch.length === 0 && (root.printerModel.fileManagerDirectory.length > 0 || root.activeDirectories.length > 0)
-                Layout.fillWidth: true
-                Layout.preferredHeight: 28 * screenScaleFactor
-                clip: true
-                contentWidth: chipsRow.width
-                contentHeight: 28 * screenScaleFactor
-                boundsBehavior: Flickable.StopAtBounds
-                flickableDirection: Flickable.HorizontalFlick
-                ScrollBar.horizontal: ScrollBar {}
-                Row {
-                    id: chipsRow
-                    spacing: UM.Theme.getSize("narrow_margin").width
-                    // The up directory (the live ruling): a
-                    // chip whenever a parent exists — the root view has
-                    // nowhere to go. It leads the strip, like a file
-                    // manager's ".." entry.
-                    Rectangle {
-                        visible: root.printerModel != null && root.printerModel.fileManagerDirectory.length > 0
-                        width: upName.width + 48 * screenScaleFactor
-                        height: 28 * screenScaleFactor
-                        radius: UM.Theme.getSize("default_radius").width
-                        border.color: UM.Theme.getColor("lining")
-                        border.width: UM.Theme.getSize("default_lining").width
-                        color: "transparent"
-                        UM.Label {
-                            anchors.left: parent.left
-                            anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "↑"
-                            color: UM.Theme.getColor("primary")
-                            font: UM.Theme.getFont("default")
-                        }
-                        UM.Label {
-                            id: upName
-                            anchors.left: parent.left
-                            anchors.leftMargin: 16 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: ".."
-                            font: UM.Theme.getFont("default")
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (root.printerModel != null) {
-                                    root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory, true);
-                                }
-                            }
-                        }
+                directory: root.printerModel != null ? root.printerModel.fileManagerDirectory : []
+                directories: root.activeDirectories
+                onNavigateRequested: function (segments, up) {
+                    if (root.printerModel != null) {
+                        root.printerModel.fileNavigateTo(segments, up);
                     }
-                    Repeater {
-                        model: root.activeDirectories
-                        Rectangle {
-                            width: folderName.width + 48 * screenScaleFactor
-                            height: 28 * screenScaleFactor
-                            radius: UM.Theme.getSize("default_radius").width
-                            border.color: UM.Theme.getColor("lining")
-                            border.width: UM.Theme.getSize("default_lining").width
-                            color: "transparent"
-                            UM.ColorImage {
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 16 * screenScaleFactor
-                                height: 16 * screenScaleFactor
-                                source: UM.Theme.getIcon("Folder")
-                                color: UM.Theme.getColor("primary")
-                            }
-                            UM.Label {
-                                id: folderName
-                                anchors.left: parent.left
-                                anchors.leftMargin: 16 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData
-                                elide: Text.ElideRight
-                                font: UM.Theme.getFont("default")
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (root.printerModel == null) {
-                                        return;
-                                    }
-                                    if (mouse.button === Qt.RightButton) {
-                                        // The folder context menu (the
-                                        // live request).
-                                        dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
-                                        dirActionsMenu.popup();
-                                        return;
-                                    }
-                                    root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory.concat(modelData), false);
-                                }
-                            }
-                            // The visible menu affordance: the right-click
-                            // menu alone was undiscoverable (folder
-                            // deletion could not be found at all).
-                            UM.Label {
-                                anchors.right: parent.right
-                                anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "⋮"
-                                font: UM.Theme.getFont("medium_bold")
-                                color: UM.Theme.getColor("primary")
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (root.printerModel != null) {
-                                            dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
-                                            dirActionsMenu.popup();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                }
+                onDirectoryMenuRequested: function (path) {
+                    dirActionsMenu.dirPath = path;
+                    dirActionsMenu.popup();
                 }
             }
 
