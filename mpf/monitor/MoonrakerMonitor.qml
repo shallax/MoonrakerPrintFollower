@@ -609,10 +609,9 @@ Component {
             target: root.printer
             function onTypedControlsChanged() {
                 meshSection.refreshMap();
-                // The detail map refreshes via the Connections inside
-                // meshContent — its id is component-scoped and invisible
-                // here; the section exposes its refresh as an accessor
-                // so this handler's auto-close always runs.
+                // The detail card refreshes its own map in its own
+                // scope; this handler only owns the auto-close, and it
+                // must still run when the card is not instantiated.
                 if (root.printer == null) {
                     root.openPopOver = "";
                 } else if (!root.printer.bedMeshAvailable && root.openPopOver === "mesh") {
@@ -1905,21 +1904,17 @@ Component {
             }
         }
 
-        MonitorPopOver {
+        // The overlay frame stays here: this is the document that owns
+        // the camera column's coordinates and the one-at-a-time open
+        // flag. The card keeps its own content and refresh.
+        BedMeshDetail {
             id: meshPanel
-            visible: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
+            open: root.openPopOver === "mesh"
+            printerModel: root.printer
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
             height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             contentWidth: 390 * screenScaleFactor
-            title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
-
-            Loader {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                active: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
-                sourceComponent: meshContent
-            }
         }
 
         MonitorPopOver {
@@ -1957,145 +1952,6 @@ Component {
                 Layout.fillHeight: true
                 active: root.openPopOver === "plateprogress" && root.printer != null
                 sourceComponent: plateProgressContent
-            }
-        }
-
-        Component {
-            id: meshContent
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: UM.Theme.getSize("thin_margin").height
-
-                BedMeshMap {
-                    id: meshDetail
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 190 * screenScaleFactor
-                    printer: root.printer
-                    // Rehydrated at creation: the model already holds the
-                    // persisted value, and a fresh map must never open
-                    // with the dots missing while the checkbox shows on.
-                    showProbePoints: root.printer != null ? root.printer.showProbePoints : false
-                }
-
-                // The dual-ended range filter (a request):
-                // the SAME five-stop blue-to-red scale the Preview's
-                // bed-mesh overlay uses, shared by both surfaces. The
-                // window lives in the model, so the Preview card's
-                // slider and this one stay synchronised.
-                BedMeshRangeSlider {
-                    id: meshRangeSlider
-                    Layout.fillWidth: true
-                    enabled: root.printer != null && root.printer.bedMeshAvailable
-                    minimum: root.printer != null ? root.printer.bedMeshMinimum : 0
-                    maximum: root.printer != null ? root.printer.bedMeshMaximum : 0
-                    low: root.printer != null ? root.printer.bedMeshThresholdLow : 0
-                    high: root.printer != null ? root.printer.bedMeshThresholdHigh : 0
-                    onWindowAdjusted: {
-                        if (root.printer != null) {
-                            root.printer.setBedMeshThresholds(low, high);
-                        }
-                    }
-                }
-
-                Row {
-                    Layout.fillWidth: true
-                    UM.Label {
-                        width: parent.width / 2
-                        text: root.printer != null ? "Low " + root.printer.bedMeshMinimum.toFixed(3) + " mm" : "Low"
-                        color: UM.Theme.getColor("text_inactive")
-                        font: UM.Theme.getFont("default")
-                    }
-                    UM.Label {
-                        width: parent.width / 2
-                        text: root.printer != null ? "High " + root.printer.bedMeshMaximum.toFixed(3) + " mm" : "High"
-                        horizontalAlignment: Text.AlignRight
-                        color: UM.Theme.getColor("text_inactive")
-                        font: UM.Theme.getFont("default")
-                    }
-                }
-
-                UM.Label {
-                    // The Klipper-clamped disclaimer (a
-                    // request): the same honest claim the Preview's
-                    // legend makes.
-                    Layout.fillWidth: true
-                    text: "Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them"
-                    color: UM.Theme.getColor("text_inactive")
-                    font: UM.Theme.getFont("default_italic")
-                    wrapMode: Text.WordWrap
-                }
-
-                // The detail map is component-scoped, so its live
-                // refresh lives here in scope.
-                Connections {
-                    target: root.printer
-                    function onTypedControlsChanged() {
-                        meshDetail.refresh();
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.CheckBox {
-                        checked: root.printer != null ? root.printer.showProbePoints : false
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setShowProbePoints(checked);
-                            }
-                        }
-                    }
-                    UM.Label {
-                        text: "Probe points"
-                    }
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                }
-
-                // The crosshair readout row is permanent so the map
-                // never resizes on hover; it shows the placeholder until
-                // the cursor snaps to a probe point OR reads a clamped
-                // (extended) value.
-                UM.Label {
-                    Layout.fillWidth: true
-                    text: (meshDetail.hoverColumn >= 0 || meshDetail.hoverClamped) ? meshDetail.hoverText : "Hover the map for probe coordinates"
-                    color: (meshDetail.hoverColumn >= 0 || meshDetail.hoverClamped) ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                GridLayout {
-                    columns: 3
-                    Layout.fillWidth: true
-                    UM.Label {
-                        text: "Min " + (root.printer != null ? root.printer.bedMeshMinimum.toFixed(3) : "0.000") + " mm"
-                    }
-                    UM.Label {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: "Range " + (root.printer != null ? root.printer.bedMeshRange.toFixed(3) : "0.000") + " mm"
-                    }
-                    UM.Label {
-                        horizontalAlignment: Text.AlignRight
-                        text: "Max " + (root.printer != null ? root.printer.bedMeshMaximum.toFixed(3) : "0.000") + " mm"
-                    }
-                }
-
-                UM.Label {
-                    Layout.fillWidth: true
-                    text: root.printer != null ? "X " + root.printer.bedMeshXMin.toFixed(1) + "…" + root.printer.bedMeshXMax.toFixed(1) + " mm   ·   Y " + root.printer.bedMeshYMin.toFixed(1) + "…" + root.printer.bedMeshYMax.toFixed(1) + " mm" : ""
-                    color: UM.Theme.getColor("text_inactive")
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                UM.Label {
-                    Layout.fillWidth: true
-                    text: "The faded perimeter is extrapolated to Cura's bed edge; values shown are the actual Klipper mesh heights. The Preview's height exaggeration adjusts from its card."
-                    color: UM.Theme.getColor("text_inactive")
-                    wrapMode: Text.WordWrap
-                }
             }
         }
 
