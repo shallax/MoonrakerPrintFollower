@@ -403,6 +403,11 @@ class DispatchIsInOnePlaceTests(unittest.TestCase):
         suite = sorted(path.name for path in HERE.joinpath("scenarios").glob("*.py"))
         self.assertGreater(len(suite), 16, "the scenario package scan found nothing")
         names += ["scenarios/%s" % name for name in suite]
+        # The driver is a package too: its probe and interaction families
+        # are scanned the same way, discovered rather than listed.
+        families = sorted(path.name for path in HERE.joinpath("driver").glob("*.py"))
+        self.assertGreater(len(families), 4, "the driver package scan found nothing")
+        names += ["driver/%s" % name for name in families if name != "__init__.py"]
         for name in names:
             source = self._read(*name.split("/"))
             for token in ("x11grab", "avfoundation", "gdigrab"):
