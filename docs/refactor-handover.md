@@ -29,9 +29,15 @@ git status --short                     # expect clean
 | D camera / toolhead / Preview / dashboard | 1403→221 · 993→401 · 1211→354 · 1181→980 | `a8ece19` | green |
 | E renderer extraction | `MoonrakerMonitorModel.py` 4486 → 3015 | `9e89200` | green |
 | F publication transaction | `_publish()` 438 → 5 lines; model 3015 → 2798 | `fa50016` | green |
-| G python orchestration | `FileManager.py` 1317→1026, `GCodeIndexService.py` 1742→1399, refresh() split into phases; +`ThumbnailCache.py` 264, `PreparedSession.py` 350, `ReplyBodyReader.py` 56 | `96a2026` | run 36721180076, pending at handover |
+| G python orchestration | `FileManager.py` 1317→1026, `GCodeIndexService.py` 1742→1399, refresh() split into phases; +`ThumbnailCache.py` 264, `PreparedSession.py` 350, `ReplyBodyReader.py` 56 | `96a2026` | run 36721180076 success |
 | H PlateProgressFace.qml | **not started** | — | — |
 | I test suite and harness | **not started** | — | — |
+
+Batch G also fixed a real publication inconsistency it was not asked to look for: a thumbnail
+fetch that could not start published on `FileManager.changed` — a full listing rebuild — while the
+same logical failure at the reply published on the thumbnail channel alone. Both publish on the
+thumbnail channel now, with a pin asserting the row channel stayed silent. Two duplicated
+reply-body drains were collapsed into one shared reader.
 
 `docs/refactor-progress.md` in the repo is the authoritative ledger — one row per batch, with the
 couplings each batch found that its brief did not name. **Read it first.** It is updated as part of
