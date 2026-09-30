@@ -9,17 +9,18 @@ state the model reads in production rather than by hand-stuffing its
 internals.
 
 Leftovers, with reasons:
-  - 1533: the published window's swap-back. Both thresholds are clamped
+  - 2400: the published window's swap-back. Both thresholds are clamped
     into the same mesh window and the clamp is monotone, so
     setBedMeshThresholds cannot hand the publish an inverted pair; the
     line guards a state nothing constructs.
-  - 3404: the navigation demand's hard-key guard. _nav_key_hard returns
-    None only for a None key, and _schedule_navigation has already
-    returned on that key two lines earlier, so the guard cannot fire.
-  - 1890 (openMigrationBackupFolder): the body opens the config folder in
+  - 2115 (openMigrationBackupFolder): the body opens the config folder in
     the desktop's file manager. The container has no such handler, so the
     slot is driven with QDesktopServices.openUrl replaced by a recorder —
     the URL it hands over is asserted, the launch itself is not.
+
+The navigation demand's hard-key guard left with the renderer: its
+reason, and the line it now sits on, are recorded beside the
+controller's own suite (tests/test_plate_render_controller.py).
 """
 from __future__ import annotations
 
