@@ -572,52 +572,12 @@ Item {
         }
     }
 
-    function _rasterOf(layer) {
-        // The render key's verdict: a
-        // raster counts only while its key matches the surface's
-        // CURRENT key — an old-view image never reads as current.
-        // The PlateLayer publishes its pixel extents as INTs (the
-        // engine cannot see inside a QImage variant); the plain-dict
-        // fixtures fall back to the image's own width.
-        if (layer == null) {
-            return false;
-        }
-        if (layer.rasterWidth !== undefined) {
-            return layer.rasterValid === true && layer.rasterWidth > 0;
-        }
-        return layer.raster !== undefined && layer.raster != null && layer.raster.width > 0;
-    }
-
-    function _baseOf(layer) {
-        // The key verdict: a base counts only while its own render
-        // key matches the surface's current one AND its file
-        // transport succeeded. The plain-dict fixtures fall back
-        // to presence.
-        if (layer == null) {
-            return false;
-        }
-        if (layer.baseValid !== undefined) {
-            return layer.baseValid === true;
-        }
-        return layer.baseRaster !== undefined && layer.baseRaster != null && layer.baseRaster.width > 0;
-    }
-
-    function _travelsOf(layer) {
-        if (layer == null) {
-            return false;
-        }
-        if (layer.travelValid !== undefined) {
-            return layer.travelValid === true;
-        }
-        return layer.travelRaster !== undefined && layer.travelRaster != null && layer.travelRaster.width > 0;
-    }
-
     function _travelsShown() {
         // The travels belong to the pictured state: only the full
         // state has a travels raster, and only when the scene wants
         // them. One predicate for the image's visibility AND its
         // source, so the decode starts exactly when they are shown.
-        return root.showTravels && _fullRaster() && _travelsOf(root.progress.layers.current);
+        return root.showTravels && _fullRaster() && ExactComposition.travelsOf(root.progress.layers.current);
     }
 
     function _fullTravelsRequired() {
@@ -641,7 +601,7 @@ Item {
         // so the two halves swap in one beat and no frame shows one
         // half of a bake over the other's held picture.
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
-        return _fullRaster() && root._rasterStatusReady && root._classTexture.source === layer.rasterData && (!_fullTravelsRequired() || (_travelsOf(layer) && root._travelsStatusReady && root._travelTexture.source === layer.travelData));
+        return _fullRaster() && root._rasterStatusReady && root._classTexture.source === layer.rasterData && (!_fullTravelsRequired() || (ExactComposition.travelsOf(layer) && root._travelsStatusReady && root._travelTexture.source === layer.travelData));
     }
 
     function _ghost(role) {
@@ -658,12 +618,12 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return split != null && layer != null && split >= layer.motions && _rasterOf(layer);
+        return split != null && layer != null && split >= layer.motions && ExactComposition.rasterOf(layer);
     }
 
     function _fullDemand() {
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
-        return root.available() && layer != null && _motionsOf(layer) > 0 && root.progress.split != null && root.progress.split >= _motionsOf(layer);
+        return root.available() && layer != null && ExactComposition.motionsOf(layer) > 0 && root.progress.split != null && root.progress.split >= ExactComposition.motionsOf(layer);
     }
 
     function _prefixModelReady() {
@@ -794,7 +754,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return "split=" + split + " motions=" + (current != null ? _motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
+        return "split=" + split + " motions=" + (current != null ? ExactComposition.motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
     }
 
     // The live stickiness: an interaction held past a beat is wrong,
@@ -835,11 +795,11 @@ Item {
             presentationReady: root._presentation.ready,
             full: _fullDemand(),
             fullImagesReady: _exactFullStanding(),
-            partial: current != null && split != null && split > 0 && split < _motionsOf(current),
+            partial: current != null && split != null && split > 0 && split < ExactComposition.motionsOf(current),
             prefixReady: root._presentation.kind === "prefix" && root._presentation.ready,
-            fullCanvasReady: root._splitGate() && root._vectorCoversShown === 0 && (!_fullDemand() || root._vectorSplitShown >= _motionsOf(current)),
+            fullCanvasReady: root._splitGate() && root._vectorCoversShown === 0 && (!_fullDemand() || root._vectorSplitShown >= ExactComposition.motionsOf(current)),
             baseShown: current != null && _partialBase(),
-            basePending: !((_baseOf(current) && pendingBaseImage.status === Image.Ready && pendingBaseImage.source.toString() === current.baseData) || (_pendingDraws() && _backgroundReady())),
+            basePending: !((ExactComposition.baseOf(current) && pendingBaseImage.status === Image.Ready && pendingBaseImage.source.toString() === current.baseData) || (_pendingDraws() && _backgroundReady())),
             previousPending: root.showPrevious && !_ghostReady("prev"),
             nextPending: root.showNext && !_ghostReady("next")
         });
@@ -956,7 +916,7 @@ Item {
         // one — the entry the hold transaction covers.
         var progress = root.progress;
         var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && layer != null && progress.split > 0 && progress.split < _motionsOf(layer);
+        return progress != null && progress.split != null && layer != null && progress.split > 0 && progress.split < ExactComposition.motionsOf(layer);
     }
 
     function _splitGate() {
@@ -1005,7 +965,7 @@ Item {
                 Painter.drawLayer(ctx, _fallbackVector(_ghost(role)), 0.30, -1, false, -1, style);
         }
         var layer = root.progress.layers.current;
-        if (!_partialBase() || layer == null || (_baseOf(layer) && pendingBaseImage.status !== Image.Error)) {
+        if (!_partialBase() || layer == null || (ExactComposition.baseOf(layer) && pendingBaseImage.status !== Image.Error)) {
             return;
         }
         var current = _baseVector();
@@ -1029,7 +989,7 @@ Item {
             return true;
         var layers = root.progress != null ? root.progress.layers : null;
         var layer = layers != null ? layers.current : null;
-        return _partialBase() && layer != null && (!_baseOf(layer) || pendingBaseImage.status === Image.Error) && _baseVector() != null;
+        return _partialBase() && layer != null && (!ExactComposition.baseOf(layer) || pendingBaseImage.status === Image.Error) && _baseVector() != null;
     }
 
     function _baseVector() {
@@ -1050,7 +1010,7 @@ Item {
         var layer = _ghost(role);
         var shown = role === "prev" ? root.showPrevious : root.showNext;
         var image = role === "prev" ? prevGhostImage : nextGhostImage;
-        return shown && layer != null && ((image != null && image.status === Image.Error) || (layer.rasterWidth !== undefined && layer.rasterWidth > 0 && layer.rasterData === "") || (layer.classes !== undefined && !_rasterOf(layer)));
+        return shown && layer != null && ((image != null && image.status === Image.Error) || (layer.rasterWidth !== undefined && layer.rasterWidth > 0 && layer.rasterData === "") || (layer.classes !== undefined && !ExactComposition.rasterOf(layer)));
     }
 
     function _backgroundReady() {
@@ -1059,10 +1019,10 @@ Item {
 
     function _ghostReady(role) {
         var layer = _ghost(role);
-        if (layer == null || _motionsOf(layer) === 0)
+        if (layer == null || ExactComposition.motionsOf(layer) === 0)
             return true;
         var image = role === "prev" ? prevGhostImage : nextGhostImage;
-        return (_rasterOf(layer) && image.status === Image.Ready && image.source.toString() === layer.rasterData) || (_ghostFallbackNeeded(role) && _backgroundReady());
+        return (ExactComposition.rasterOf(layer) && image.status === Image.Ready && image.source.toString() === layer.rasterData) || (_ghostFallbackNeeded(role) && _backgroundReady());
     }
 
     // Whether the canvas holds — or is owed — a picture. A skip is
@@ -1346,10 +1306,6 @@ Item {
         return [root.viewScale, root.viewPanX, root.viewPanY, root.lineScale, root.trueThickness ? 1 : 0, JSON.stringify(root.colourScheme), root.compact ? 1 : 0, width, height, root.devicePixelRatio, root.toolpathWidthPx(), bed != null ? [bed.offsetX, bed.offsetY, bed.bedXMin, bed.bedYMax, plot.sx, plot.sy].join(":") : ""].join("|");
     }
 
-    function _motionsOf(layer) {
-        return layer != null && layer.motions !== undefined ? layer.motions : -1;
-    }
-
     function _pendingKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
@@ -1358,13 +1314,13 @@ Item {
         // every other input unchanged . The
         // SPLIT rides the key too: the base exists only for the
         // partial states — a 0% or 100% move must clear it.
-        return [_worldKeyOf(), _partialBase() ? 1 : 0, layers != null && _baseOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.baseWidth : 0, pendingBaseImage != null && pendingBaseImage.status === Image.Error ? 1 : 0, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, _ghostFallbackNeeded("prev") ? 1 : 0, _ghostFallbackNeeded("next") ? 1 : 0, _ghost("prev") != null ? _ghost("prev").sceneIdentity : "", _ghost("next") != null ? _ghost("next").sceneIdentity : ""].join("|");
+        return [_worldKeyOf(), _partialBase() ? 1 : 0, layers != null && ExactComposition.baseOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.baseWidth : 0, pendingBaseImage != null && pendingBaseImage.status === Image.Error ? 1 : 0, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, _ghostFallbackNeeded("prev") ? 1 : 0, _ghostFallbackNeeded("next") ? 1 : 0, _ghost("prev") != null ? _ghost("prev").sceneIdentity : "", _ghost("next") != null ? _ghost("next").sceneIdentity : ""].join("|");
     }
 
     function _worldKeyOf() {
         var p = root.progress;
         var layer = p != null && p.layers != null ? p.layers.current : null;
-        return [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, layer != null && layer.sceneIdentity !== undefined ? layer.sceneIdentity : "", _motionsOf(layer), _viewKey(), root.showTravels ? 1 : 0, root.available() ? 1 : 0].join("|");
+        return [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, layer != null && layer.sceneIdentity !== undefined ? layer.sceneIdentity : "", ExactComposition.motionsOf(layer), _viewKey(), root.showTravels ? 1 : 0, root.available() ? 1 : 0].join("|");
     }
 
     function _adoptProgressWorld() {
@@ -1479,7 +1435,7 @@ Item {
         // The raster, travel and PREFIX arrivals ride the key too:
         // the prefix's landing must reset the stack so the canvas
         // redraws only the tail beyond it.
-        return [(progress != null && progress.sceneEpoch !== undefined ? progress.sceneEpoch : ""), (progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, layers != null && _rasterOf(layers.current) ? 1 : 0, layers != null && _travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.rasterWidth : 0, layers != null && layers.current != null ? layers.current.rasterData : "", layers != null && layers.current != null ? layers.current.prefixData : "", layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null && progress.sceneEpoch !== undefined ? progress.sceneEpoch : ""), (progress != null ? progress.anchor : -1), layers != null ? ExactComposition.motionsOf(layers.current) : -1, layers != null && ExactComposition.rasterOf(layers.current) ? 1 : 0, layers != null && ExactComposition.travelsOf(layers.current) ? 1 : 0, layers != null && layers.current != null ? layers.current.rasterWidth : 0, layers != null && layers.current != null ? layers.current.rasterData : "", layers != null && layers.current != null ? layers.current.prefixData : "", layers != null && layers.current != null && layers.current.prefixSplit !== undefined ? layers.current.prefixSplit : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
@@ -1908,7 +1864,7 @@ Item {
             asynchronous: true
             smooth: false
             opacity: 0.30
-            visible: root.available() && root.showPrevious && _ghost("prev") != null && _rasterOf(_ghost("prev"))
+            visible: root.available() && root.showPrevious && _ghost("prev") != null && ExactComposition.rasterOf(_ghost("prev"))
             source: visible ? _ghost("prev").rasterData : ""
         }
         Image {
@@ -1917,7 +1873,7 @@ Item {
             asynchronous: true
             smooth: false
             opacity: 0.30
-            visible: root.available() && root.showNext && _ghost("next") != null && _rasterOf(_ghost("next"))
+            visible: root.available() && root.showNext && _ghost("next") != null && ExactComposition.rasterOf(_ghost("next"))
             source: visible ? _ghost("next").rasterData : ""
         }
 
@@ -2046,7 +2002,7 @@ Item {
             asynchronous: true
             smooth: false
             opacity: 0.55
-            visible: _partialBase() && _baseOf(root.progress.layers.current)
+            visible: _partialBase() && ExactComposition.baseOf(root.progress.layers.current)
             source: visible ? root.progress.layers.current.baseData : ""
         }
 
@@ -2302,7 +2258,7 @@ Item {
                     // accumulation also re-rasters fully on its own cadence
                     // so it cannot drift. Otherwise the canvas keeps its
                     // image and only the new delta is stroked on top.
-                    var vectorMotions = _motionsOf(current);
+                    var vectorMotions = ExactComposition.motionsOf(current);
                     var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
                     var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
                     root._vectorSourceMotions = vectorMotions;
@@ -2363,8 +2319,8 @@ Item {
                         // would assume ink the canvas never drew (the
                         // travels arriving with the prefix already in
                         // place).
-                        var sourceMotions = root.progress.layers != null ? _motionsOf(root.progress.layers.current) : -1;
-                        var sourceReady = _travelsOf(root.progress.layers.current) ? 1 : 0;
+                        var sourceMotions = root.progress.layers != null ? ExactComposition.motionsOf(root.progress.layers.current) : -1;
+                        var sourceReady = ExactComposition.travelsOf(root.progress.layers.current) ? 1 : 0;
                         var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
                         root._travelsSourceMotions = sourceMotions;
                         root._travelsSourceReady = sourceReady;

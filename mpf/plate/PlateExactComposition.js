@@ -64,6 +64,33 @@ function unchanged(s) {
     // has no delivery to wait for. Never release a real upload's slot.
     return s.count===0 ? empty(s.epoch,s.world) : s;
 }
+// The layer payload's own asset validity — the readiness these
+// decisions are taken over. A raster, base or travel image counts only
+// while its own render key matches the surface's CURRENT key, so an
+// old-view image never reads as current. The PlateLayer publishes its
+// pixel extents as INTs (the engine cannot see inside a QImage variant);
+// the plain-dict fixtures fall back to the image's own width or to
+// presence.
+function rasterOf(layer) {
+    if(layer===null || layer===undefined) return false;
+    if(layer.rasterWidth!==undefined) return layer.rasterValid===true && layer.rasterWidth>0;
+    return layer.raster!==undefined && layer.raster!==null && layer.raster.width>0;
+}
+function baseOf(layer) {
+    if(layer===null || layer===undefined) return false;
+    if(layer.baseValid!==undefined) return layer.baseValid===true;
+    return layer.baseRaster!==undefined && layer.baseRaster!==null && layer.baseRaster.width>0;
+}
+function travelsOf(layer) {
+    if(layer===null || layer===undefined) return false;
+    if(layer.travelValid!==undefined) return layer.travelValid===true;
+    return layer.travelRaster!==undefined && layer.travelRaster!==null && layer.travelRaster.width>0;
+}
+// The layer's motion count, or -1 for a layer that has none to report:
+// the boundary every split comparison is made against.
+function motionsOf(layer) {
+    return layer!==null && layer!==undefined && layer.motions!==undefined ? layer.motions : -1;
+}
 function splitGate(ready,paintEpoch,epoch,paintSplit,split,attached) {
     if(!ready || paintEpoch!==epoch) return false;
     return attached && split!==null && paintSplit>=0
