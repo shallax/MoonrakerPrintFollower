@@ -338,6 +338,11 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("The window is too narrow — widen it to show the printer controls.", dash)
 
     def test_controls_live_in_the_collapsible_column_and_the_left_is_read_only(self):
+        dialogs = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
+                   for name in ("PrintConfirmDialog", "DeleteConfirmDialog", "CreateFolderDialog", "RenameDialog", "UploadConfirmDialog", "UploadProgressDialog", "DownloadProgressDialog")}
+        for name in dialogs:
+            self.assertIn(name + " {", harness.FILE_MANAGER_QML)
+            self.assertIn("property var printerModel: null", dialogs[name])
         # The left panel carries no printer commands: only the camera list,
         # the read-outs and view configuration remain there.
         self.assertNotIn("root.printer.pausePrint", harness.MONITOR_QML)
@@ -547,7 +552,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # before the opener could record it and every dismissal click
         # re-opened the popup); the dialogs close on Escape only.
         self.assertIn("closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside", harness.FILE_MANAGER_QML)
-        self.assertIn("closePolicy: Popup.CloseOnEscape\n", harness.FILE_MANAGER_QML)
+        self.assertIn("closePolicy: Popup.CloseOnEscape\n", dialogs['PrintConfirmDialog'])
         self.assertIn("y: parent.height", harness.FILE_MANAGER_QML)
         self.assertIn("visible: !root.filterActive(\"slicer\")", harness.FILE_MANAGER_QML)
         self.assertIn('text: ".."', harness.FILE_MANAGER_QML)
@@ -561,38 +566,27 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # The confirmation's large thumbnail and the metadata-scan
         # gate (the live reports: the dialog's thumbnail
         # request, and a scan entry offered where it cannot work).
-        self.assertIn('id: confirmThumb', harness.FILE_MANAGER_QML)
+        self.assertIn('id: confirmThumb', dialogs['PrintConfirmDialog'])
         # The dialog reads the LARGE variant (the list cells use the
         # small one) and the thumbnail Images decode off the UI
         # thread.
-        self.assertIn("thumbUrlLarge(root.confirmRelpath())", harness.FILE_MANAGER_QML)
+        self.assertIn("thumbUrlLarge(root.confirmRelpath())", dialogs['PrintConfirmDialog'])
         self.assertIn("asynchronous: true", harness.FILE_MANAGER_QML)
         # The dialogs own their Esc: a popup-held focus swallows the
         # key into the overlay (live-proven), so the content FocusScope
         # answers it.
-        self.assertIn("focus: false", harness.FILE_MANAGER_QML)
+        self.assertIn("focus: false", dialogs['PrintConfirmDialog'])
         # Esc CANCELS, not just closes: the payload must not survive
         # the dismissal (a dismissed confirmation used to resurrect).
         # Pinned INSIDE the Esc handlers — a bare substring would
         # also match the dialogs' Cancel buttons (the adversarial
         # round's pin-strength point).
-        self.assertIn('''            Keys.onEscapePressed: {
-                printConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelPrint();''', harness.FILE_MANAGER_QML)
-        self.assertIn('''            Keys.onEscapePressed: {
-                deleteConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelDelete();''', harness.FILE_MANAGER_QML)
-        self.assertIn('''            Keys.onEscapePressed: {
-                renameDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelRename();''', harness.FILE_MANAGER_QML)
-        self.assertIn('''            Keys.onEscapePressed: {
-                uploadConfirmDialog.close();
-                if (root.printerModel != null) {
-                    root.printerModel.fileCancelUpload();''', harness.FILE_MANAGER_QML)
-        self.assertIn("onOpened: printConfirmDialogFocus.forceActiveFocus()", harness.FILE_MANAGER_QML)
+        for name, cancel in (("PrintConfirmDialog", "fileCancelPrint"),
+                             ("DeleteConfirmDialog", "fileCancelDelete"),
+                             ("RenameDialog", "fileCancelRename"),
+                             ("UploadConfirmDialog", "fileCancelUpload")):
+            self.assertRegex(dialogs[name], r"Keys.onEscapePressed:\s*\{\s*root.close\(\);\s*if \(root.printerModel != null\) \{\s*root.printerModel\." + cancel + r"\(\);")
+        self.assertIn("onOpened: printConfirmDialogFocus.forceActiveFocus()", dialogs['PrintConfirmDialog'])
         # Closing the popup closes its dialogs (a surviving dialog
         # stays painted over the dashboard with dead buttons — the
         # adversarial round's live repro).
@@ -645,23 +639,23 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("fileRequestRename(modelData.relpath)", harness.FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
         # pre-selects the stem (the live reports).
-        self.assertEqual(harness.FILE_MANAGER_QML.count("modal: true"), 7)
-        self.assertIn("renameField.select(0, root.renameStemLength(target.name))", harness.FILE_MANAGER_QML)
+        self.assertEqual(sum(source.count("modal: true") for source in dialogs.values()), 7)
+        self.assertIn("renameField.select(0, root.renameStemLength(target.name))", dialogs['RenameDialog'])
         # The helper the open handler calls must be DEFINED — a
         # ReferenceError inside onOpened only fires on open, which
         # the engine gate (closed popovers) cannot see; the missing
         # helper was the live "no pre-populated name" report.
-        self.assertIn("function renameTarget()", harness.FILE_MANAGER_QML)
-        self.assertIn('palette.highlight: UM.Theme.getColor("primary")', harness.FILE_MANAGER_QML)
+        self.assertIn("function renameTarget()", dialogs['RenameDialog'])
+        self.assertIn('palette.highlight: UM.Theme.getColor("primary")', dialogs['CreateFolderDialog'])
         # The field takes focus on open and Return confirms (the
         # live requests).
-        self.assertIn("renameField.forceActiveFocus()", harness.FILE_MANAGER_QML)
-        self.assertIn("Keys.onReturnPressed: root.confirmRename()", harness.FILE_MANAGER_QML)
+        self.assertIn("renameField.forceActiveFocus()", dialogs['RenameDialog'])
+        self.assertIn("Keys.onReturnPressed: root.confirmRename()", dialogs['RenameDialog'])
         # Tab-focus cues: the field's outline flips blue on focus and
         # the six popup buttons take tab focus (the live
         # report — no cue while tabbing).
-        self.assertIn('border.color: renameField.activeFocus ? UM.Theme.getColor("primary")', harness.FILE_MANAGER_QML)
-        self.assertEqual(harness.FILE_MANAGER_QML.count("focusPolicy: Qt.StrongFocus"), 9)
+        self.assertIn('border.color: renameField.activeFocus ? UM.Theme.getColor("primary")', dialogs['RenameDialog'])
+        self.assertEqual(sum(source.count("focusPolicy: Qt.StrongFocus") for source in dialogs.values()), 9)
         # Snapshot 3 finish: the upload affordance, the local-file
         # picker, and the folder context menu.
         self.assertIn('text: "Upload file…"', harness.FILE_MANAGER_QML)
@@ -670,7 +664,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("fileRequestRenameDir(dirActionsMenu.dirPath)", harness.FILE_MANAGER_QML)
         self.assertIn("fileRequestDeleteDir(dirActionsMenu.dirPath)", harness.FILE_MANAGER_QML)
         self.assertIn('id: uploadProgressDialog', harness.FILE_MANAGER_QML)
-        self.assertIn("root.uploadProgressState() === \"uploading\"", harness.FILE_MANAGER_QML)
+        self.assertIn("root.uploadProgressState() === \"uploading\"", dialogs['UploadProgressDialog'])
         # The recents strip: a scrolling 50, no dismissal glyph, and
         # the strip's own thumbnails (the live requests).
         self.assertIn('id: recentsScroller', harness.FILE_MANAGER_QML)

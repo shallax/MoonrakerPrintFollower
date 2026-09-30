@@ -1262,3 +1262,11 @@ its established QML slots and the shared printer permission/start watchdog.
 `FileFormatting` owns table units and labels without a Monitor dependency.
 Thumbnail notifications remain separate from row publication; view changes stay
 synchronous and the closed popup still avoids rebuilding its expensive rows.
+
+### File-browser modal components
+
+The browser shell opens and closes seven explicit dialogs; each dialog owns its
+fields, keyboard handling and presentation helpers. They receive the file-model
+capability explicitly, never the browser root. Print permission is a live boolean
+input shared with the grid's action gate. Popup geometry remains anchored by the
+shell, and stable object names and cancellation callbacks are unchanged.
