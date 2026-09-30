@@ -62,6 +62,13 @@ MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text(encoding="utf-8")
 JOB_SECTION_QML = (PLUGINS / "JobSection.qml").read_text(encoding="utf-8")
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text(encoding="utf-8")
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+# The card's own leaves (4.6.2): the strip, the end-of-layer pause
+# section, the bed-mesh legend and the replace prompt. The card keeps
+# the published values and the gates; each leaf owns its controls.
+PREVIEW_STATUS_STRIP_QML = (PLUGINS / "PreviewStatusStrip.qml").read_text(encoding="utf-8")
+PAUSE_AT_LAYER_SECTION_QML = (PLUGINS / "PauseAtLayerSection.qml").read_text(encoding="utf-8")
+BED_MESH_LEGEND_QML = (PLUGINS / "BedMeshLegend.qml").read_text(encoding="utf-8")
+REPLACE_PROMPT_DIALOG_QML = (PLUGINS / "ReplacePromptDialog.qml").read_text(encoding="utf-8")
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf-8")
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
 BED_MESH_DETAIL_QML = (PLUGINS / "BedMeshDetail.qml").read_text(encoding="utf-8")
@@ -73,6 +80,10 @@ INFO_PANE_QML = (PLUGINS / "InfoPane.qml").read_text(encoding="utf-8")
 INFO_COLLAPSED_READOUT_QML = (PLUGINS / "InfoCollapsedReadout.qml").read_text(encoding="utf-8")
 STATUS_PANE_QML = (PLUGINS / "StatusPane.qml").read_text(encoding="utf-8")
 STATUS_COLLAPSED_READOUT_QML = (PLUGINS / "StatusCollapsedReadout.qml").read_text(encoding="utf-8")
+# The controls pane's collapsed strip is a leaf too (4.6.2): it owns the
+# position and z-offset row, its availability gates and the fit that
+# keeps the row inside the pane.
+CONTROLS_COLLAPSED_READOUT_QML = (PLUGINS / "ControlsCollapsedReadout.qml").read_text(encoding="utf-8")
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text(encoding="utf-8")
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text(encoding="utf-8")
 CHART_COLOUR_DIALOG_QML = (PLUGINS / "MoonrakerChartColorDialog.qml").read_text(encoding="utf-8")
@@ -229,4 +240,4 @@ class MonitorQtTests(unittest.TestCase):
 
 # Explicit exports retain dependencies used by extracted cases. Importing this
 # module creates no Qt application; setUpClass owns application startup.
-__all__ = ['BED_MESH_DETAIL_QML', 'BED_MESH_MAP_QML', 'BED_MESH_QML', 'CAMERA_CONTROL_BAR_QML', 'CAMERA_PANE_QML', 'CAMERA_VIEWPORT_QML', 'CAPTURE_HARNESS', 'CHANGELOG', 'CHART_COLOUR_DIALOG_QML', 'CONTROLS', 'DASHBOARD_QML', 'DATA', 'EXTRUSION_CONTROLS_QML', 'EndstopAndEtaBasisTests', 'FANS_INFO_SECTION_QML', 'FANS_SECTION_QML', 'FILAMENT_SECTION_QML', 'FILE_MANAGER_QML', 'FILE_MANAGER_SECTION_QML', 'FORMATTING', 'INFO_COLLAPSED_READOUT_QML', 'INFO_PANE_QML', 'JOB_SECTION_QML', 'JOG_PAD_QML', 'LEDS_SECTION_QML', 'LayerResolver', 'MACROS_SECTION_QML', 'MCUS_SECTION_QML', 'MESH_SECTION_QML', 'MONITOR_MODEL', 'MONITOR_QML', 'MonitorFormattingTests', 'MonitorModelContractTests', 'MonitorPolicyConsistencyTests', 'MonitorQtTests', 'OBJECT_PICKER_QML', 'OUTPUT_PLUGIN', 'Observation', 'PAUSE_SCHEDULE_QML', 'PLUGINS', 'POLICY', 'POPOVER_QML', 'POWER_SECTION_QML', 'PREVIEW_CONTROLS_QML', 'PRINT_FOLLOWER_QML', 'PRINT_SECTION_QML', 'PROFILES_SECTION_QML', 'PWM_SECTION_QML', 'PhysicalLayer', 'QMLDIR', 'QT_AVAILABLE', 'ROOT', 'SAVE_SECTION_QML', 'SECTION_IDS', 'SETUP_SECTION_QML', 'STATUS_COLLAPSED_READOUT_QML', 'STATUS_PANE_QML', 'SYSTEM_INFO_SECTION_QML', 'SYSTEM_SECTION_QML', 'ScriptedSocket', 'ScriptedTransport', 'SimpleNamespace', 'TEMPERATURE_DETAIL_QML', 'TEMPS_SECTION_QML', 'TEMP_CHART_QML', 'TEMP_HISTORY_SECTION_QML', 'TOOLHEAD_SECTION_QML', 'TUNING_SECTION_QML', 'TYPED', 'ZOFFSET_CONTROLS_QML', 'annotations', 'ast', 'core_values', 'estimate_remaining', 'file_row_payload', 'height_readout', 'infer_macro_parameters', 'json', 'layer_readout', 'parse_bed_mesh', 'parse_mcu_stats', 'patch', 'preview_block', 'preview_temperature_pair', 'print_job_caption', 're', 'replace', 'runtime', 'time', 'unittest']
+__all__ = ['BED_MESH_DETAIL_QML', 'BED_MESH_LEGEND_QML', 'BED_MESH_MAP_QML', 'BED_MESH_QML', 'CAMERA_CONTROL_BAR_QML', 'CAMERA_PANE_QML', 'CAMERA_VIEWPORT_QML', 'CAPTURE_HARNESS', 'CHANGELOG', 'CHART_COLOUR_DIALOG_QML', 'CONTROLS', 'CONTROLS_COLLAPSED_READOUT_QML', 'DASHBOARD_QML', 'DATA', 'EXTRUSION_CONTROLS_QML', 'EndstopAndEtaBasisTests', 'FANS_INFO_SECTION_QML', 'FANS_SECTION_QML', 'FILAMENT_SECTION_QML', 'FILE_MANAGER_QML', 'FILE_MANAGER_SECTION_QML', 'FORMATTING', 'INFO_COLLAPSED_READOUT_QML', 'INFO_PANE_QML', 'JOB_SECTION_QML', 'JOG_PAD_QML', 'LEDS_SECTION_QML', 'LayerResolver', 'MACROS_SECTION_QML', 'MCUS_SECTION_QML', 'MESH_SECTION_QML', 'MONITOR_MODEL', 'MONITOR_QML', 'MonitorFormattingTests', 'MonitorModelContractTests', 'MonitorPolicyConsistencyTests', 'MonitorQtTests', 'OBJECT_PICKER_QML', 'OUTPUT_PLUGIN', 'Observation', 'PAUSE_AT_LAYER_SECTION_QML', 'PAUSE_SCHEDULE_QML', 'PLUGINS', 'POLICY', 'POPOVER_QML', 'POWER_SECTION_QML', 'PREVIEW_CONTROLS_QML', 'PREVIEW_STATUS_STRIP_QML', 'PRINT_FOLLOWER_QML', 'PRINT_SECTION_QML', 'PROFILES_SECTION_QML', 'PWM_SECTION_QML', 'PhysicalLayer', 'QMLDIR', 'QT_AVAILABLE', 'REPLACE_PROMPT_DIALOG_QML', 'ROOT', 'SAVE_SECTION_QML', 'SECTION_IDS', 'SETUP_SECTION_QML', 'STATUS_COLLAPSED_READOUT_QML', 'STATUS_PANE_QML', 'SYSTEM_INFO_SECTION_QML', 'SYSTEM_SECTION_QML', 'ScriptedSocket', 'ScriptedTransport', 'SimpleNamespace', 'TEMPERATURE_DETAIL_QML', 'TEMPS_SECTION_QML', 'TEMP_CHART_QML', 'TEMP_HISTORY_SECTION_QML', 'TOOLHEAD_SECTION_QML', 'TUNING_SECTION_QML', 'TYPED', 'ZOFFSET_CONTROLS_QML', 'annotations', 'ast', 'core_values', 'estimate_remaining', 'file_row_payload', 'height_readout', 'infer_macro_parameters', 'json', 'layer_readout', 'parse_bed_mesh', 'parse_mcu_stats', 'patch', 'preview_block', 'preview_temperature_pair', 'print_job_caption', 're', 'replace', 'runtime', 'time', 'unittest']

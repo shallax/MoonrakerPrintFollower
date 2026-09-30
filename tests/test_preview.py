@@ -25,6 +25,14 @@ PLUGINS = SourceRoot(pathlib.Path(__file__).resolve().parents[1] / "mpf")
 BUTTON = (PLUGINS / "PreviewSecondaryButton.qml").read_text(encoding="utf-8")
 PANEL = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 EMPTY = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+# The card's own leaves (4.6.2): the strip, the pause section, the
+# legend and the prompt. The card hosts them, so a surface pin that
+# reads the card reads these too.
+STATUS_STRIP = (PLUGINS / "PreviewStatusStrip.qml").read_text(encoding="utf-8")
+PAUSE_SECTION = (PLUGINS / "PauseAtLayerSection.qml").read_text(encoding="utf-8")
+BED_MESH_LEGEND = (PLUGINS / "BedMeshLegend.qml").read_text(encoding="utf-8")
+REPLACE_PROMPT = (PLUGINS / "ReplacePromptDialog.qml").read_text(encoding="utf-8")
+PREVIEW_SURFACE = PANEL + STATUS_STRIP + PAUSE_SECTION + BED_MESH_LEGEND + REPLACE_PROMPT
 
 
 class View:
@@ -444,7 +452,8 @@ class PreviewPresentationContractTests(unittest.TestCase):
     def test_each_scheduled_pause_has_end_of_layer_eta(self):
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
         follower = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
-        qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+        # The delegate that renders the ETA lives in the pause section.
+        qml = PAUSE_SECTION
         # The end-of-layer ETA moved into PreviewFollower.remaining_end
         # (the coordinator's composition calls it) — the pin follows
         # the semantic, not the old inline call.
@@ -472,8 +481,8 @@ class PreviewButtonUxTests(unittest.TestCase):
         self.assertIn('textColor: "transparent"', BUTTON)
 
     def test_preview_controls_use_centred_wrapper(self):
-        self.assertGreaterEqual(PANEL.count("PreviewSecondaryButton"), 6)
-        self.assertNotIn("Cura.SecondaryButton", PANEL)
+        self.assertGreaterEqual(PREVIEW_SURFACE.count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("Cura.SecondaryButton", PREVIEW_SURFACE)
         self.assertGreaterEqual(EMPTY.count("PreviewSecondaryButton"), 2)
         self.assertNotIn("Cura.SecondaryButton", EMPTY)
 
@@ -489,8 +498,8 @@ class PreviewButtonUxTests(unittest.TestCase):
         self.assertIn("contentWidth: 300 * screenScaleFactor", PANEL)
 
     def test_pause_action_keeps_pause_symbol(self):
-        self.assertIn('"⏸  Pause at end of selected layer"', PANEL)
-        self.assertIn('"⏸  Enable pause at end of layer "', PANEL)
+        self.assertIn('"⏸  Pause at end of selected layer"', PAUSE_SECTION)
+        self.assertIn('"⏸  Enable pause at end of layer "', PAUSE_SECTION)
 
 
 if __name__ == "__main__":

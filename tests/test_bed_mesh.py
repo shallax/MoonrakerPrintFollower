@@ -23,7 +23,12 @@ INFO_PANE_QML = (PLUGINS / "InfoPane.qml").read_text(encoding="utf-8")
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text(encoding="utf-8")
 PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
-EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+# The legend and its toggle live in the card's own leaf (4.6.2): the
+# card hosts it, so a Preview-side mesh pin reads both documents.
+PREVIEW_LEGEND = (PLUGINS / "BedMeshLegend.qml").read_text(encoding="utf-8")
+PREVIEW_SURFACE = PREVIEW_CONTROLS + PREVIEW_LEGEND
+# The empty-preview scene renders the same documents as the loaded one.
+EMPTY_PREVIEW = PREVIEW_SURFACE
 
 
 class BedMeshTests(unittest.TestCase):
@@ -102,7 +107,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("id: infoPanel", MONITOR_QML)
         self.assertIn('text: "Information"', INFO_PANE_QML)
         self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", BED_MESH_MAP_QML)  # aspect-fitted plot
-        for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
+        for qml in (PREVIEW_SURFACE, EMPTY_PREVIEW):
             self.assertIn("bedMeshVisibilityRequested", qml)
             self.assertIn('"Hide bed mesh"', qml)
             self.assertIn('"Show bed mesh"', qml)
@@ -139,12 +144,12 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("fileCompleted", TYPED)
         self.assertIn("cura.changed.connect(self._render)", TYPED)
         self.assertIn("with self._cura.decorating_scene()", TYPED)
-        for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
+        for qml in (PREVIEW_SURFACE, EMPTY_PREVIEW):
             self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", qml)
             # The legend collapses when the mesh is hidden (the
             # 2026-09-16 ruling): the card reflows instead of
             # keeping a faded gap.
-            self.assertIn("visible: base.bedMeshAvailable && base.bedMeshVisible", qml)
+            self.assertIn("visible: root.bedMeshAvailable && root.bedMeshVisible", qml)
             self.assertNotIn("opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0", qml)
             self.assertIn("selectedLayerEtaText", qml)
             self.assertIn("bedMeshMinimumText", qml)
@@ -158,7 +163,7 @@ class BedMeshTests(unittest.TestCase):
         # in the shared component so the two surfaces cannot drift.
         for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, RANGE_SLIDER_QML)
-        for qml in (BED_MESH_DETAIL, PREVIEW_CONTROLS):
+        for qml in (BED_MESH_DETAIL, PREVIEW_SURFACE):
             self.assertIn("BedMeshRangeSlider", qml)
         # The shared window: the model publishes it, the pop-over
         # slider writes it, the card's intents route through the
@@ -204,8 +209,8 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("MAX_EXAGGERATION = 1000.0", PRESENTER)
         self.assertIn('max(0.0, min(self.MAX_EXAGGERATION, float(exaggeration)))', SCENE_NODE)
         for token in ("Scale z-max", "bedMeshExaggerationRequested", "bedMeshExaggeration"):
-            self.assertIn(token, PREVIEW_CONTROLS)
-        self.assertIn("to: 1000", PREVIEW_CONTROLS)
+            self.assertIn(token, PREVIEW_SURFACE)
+        self.assertIn("to: 1000", PREVIEW_SURFACE)
         self.assertIn("bedMeshExaggerationRequested", PRESENTATION)
         self.assertIn("bedMeshExaggerationRequested.connect(self.set_exaggeration)", PRESENTER)
 
