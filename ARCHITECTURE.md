@@ -144,7 +144,8 @@ correct package ownership.
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
-| `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `MoonrakerMonitorModel.py` | The single Qt Monitor model: explicit property declarations, collaborator composition and the one publication transaction | Domain policy or networking |
+| `MonitorPublication.py` | The committed Monitor value map, the per-value QVariant conversion cache and the notification-group table with its emit order | Value construction, signal emission or domain policy |
 | `PlateSceneIdentity.py` | Immutable, named navigation scene keys and split-compatible identity projections used to reject obsolete raster work | Qt, rendering, scheduling |
 | `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
