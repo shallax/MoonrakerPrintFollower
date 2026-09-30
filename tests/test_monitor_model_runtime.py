@@ -2861,6 +2861,12 @@ Item {
             "visible: root.printerModel == null || root.printerModel.fileManagerSearch.length === 0",
             'visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""',
             "visible: root.printerModel != null && root.printerModel.fileManagerHistoryLoaded > 0 && !root.printerModel.fileManagerHistoryExhausted",
+            # The toolbar and the folder strip read the same state as
+            # their own declared inputs, so the gates reach them as
+            # local aliases rather than through the browser root.
+            "visible: root.search.length === 0",
+            "visible: root.canLoadAllHistory",
+            "visible: root.directory.length > 0",
             "visible: searchField.text.length > 0",
             "visible: root.filterActive(\"slicer\")",
             "visible: !root.filterActive(\"slicer\")",
