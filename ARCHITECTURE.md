@@ -1270,3 +1270,13 @@ fields, keyboard handling and presentation helpers. They receive the file-model
 capability explicitly, never the browser root. Print permission is a live boolean
 input shared with the grid's action gate. Popup geometry remains anchored by the
 shell, and stable object names and cancellation callbacks are unchanged.
+
+### Console pane composition
+
+`ConsolePane.qml` owns transcript rendering, selection/scroll preservation,
+command drafts and history, collapse and resize interaction. It receives only
+the printer-model capability and a stable resize coordinate frame. The Monitor
+screen lays it out beside the camera and does not access the transcript's ids.
+A printer change resets the transcript inside its owner; initial creation is
+reconciled once after its children exist. The resize still measures against the
+stationary containing frame, not the handle that moves during the drag.
