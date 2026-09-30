@@ -851,10 +851,13 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("if (root.printer.sendConsoleCommand(consoleInput.text)) {", harness.MONITOR_QML)
         # When every primary sensor is hidden, up to two visible
         # non-primary sensors stand in for the mini chart. The policy
-        # lives ONCE in the model (mini_names), and the legend carries
+        # lives ONCE in the chart owner (mini_names), and the legend carries
         # the selection as a stable row list — the section's chart
         # reads the bounded mini payload directly.
-        self.assertIn("mini_names(", harness.MONITOR_MODEL)
+        chart_owner = (harness.PLUGINS / "TemperaturePresentation.py").read_text(encoding="utf-8")
+        self.assertIn("mini_names(", chart_owner)
+        self.assertNotIn("@pyqtSlot", chart_owner)
+        self.assertIn("return self._temperature.setChartOpen(opened)", harness.MONITOR_MODEL)
         self.assertIn("legend.miniSeries", harness.MONITOR_QML)
         self.assertIn("temperatureChartMini", harness.TEMP_HISTORY_SECTION_QML)
         # The Layer row discloses which source produced the value, and

@@ -10,7 +10,7 @@ import json
 import re
 from copy import deepcopy
 from dataclasses import replace
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from .MonitorTemperatureHistory import (
     DORMANT_CHART, PALETTE, TemperatureHistory, chart_payload, latest_values,
@@ -36,7 +36,6 @@ class TemperaturePresentation(QObject):
         self._chart_open = False
         self._legend_payload = None
 
-    @pyqtSlot(str, bool)
     def setTemperatureSensorVisible(self, name, visible):
         # Missing keys mean the default (visible); only a real change saves.
         if self._chart_config.get("visible", {}).get(str(name), True) is bool(visible):
@@ -49,7 +48,6 @@ class TemperaturePresentation(QObject):
         self.changed.emit()
 
 
-    @pyqtSlot(str, str)
     def setTemperatureSensorColor(self, name, color):
         color = str(color)
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
@@ -67,7 +65,6 @@ class TemperaturePresentation(QObject):
         self.changed.emit()
 
 
-    @pyqtSlot(bool)
     def setShowTemperatureTargets(self, show):
         if self._chart_config.get("showTargets") is bool(show):
             return
@@ -76,7 +73,6 @@ class TemperaturePresentation(QObject):
         self.changed.emit()
 
 
-    @pyqtSlot(bool)
     def setShowTemperaturePower(self, show):
         if self._chart_config.get("showPower") is bool(show):
             return
@@ -153,7 +149,6 @@ class TemperaturePresentation(QObject):
         return self._legend_payload
 
 
-    @pyqtSlot(bool)
     def setChartOpen(self, opened):
         # The pop-over's hydration gate: the full chart payload
         # materialises only while the pop-over is open; closed, it
