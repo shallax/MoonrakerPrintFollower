@@ -280,10 +280,21 @@ class TestingDocPinTests(unittest.TestCase):
                      "surface_coverage.py", "liveness.py", "static_leg.py"):
             self.assertIn('cp "$root/tests/harness/%s"' % name, text,
                           "%s is no longer staged" % name)
-        self.assertIn('cp -r "$root/tests/harness/scenarios" "$WORK_DIR"/scenarios',
-                      text, "the scenario package is not staged as a directory")
+        self.assertIn('cp "$root"/tests/harness/scenarios/*.py "$WORK_DIR"/scenarios/',
+                      text, "the scenario package's modules are not staged")
         self.assertNotIn('cp "$root/tests/harness/scenarios.py"', text,
                          "the flat-module copy is back and would stage nothing")
+        # And the directory is never REPLACED. The container imports the
+        # package as root, so Python writes root-owned __pycache__ beside
+        # the sources and an `rm -rf` of the staged directory fails on
+        # them: the second unit of a repeat-boot run could not stage at
+        # all, and every one of its .pyc files reported
+        # "Permission denied" before the unit failed. Everything else the
+        # script removes under the work dir is either host-owned or
+        # removed through the container's own root.
+        self.assertNotIn('rm -rf "$WORK_DIR"/scenarios', text,
+                         "the staged package is removed again, which the "
+                         "container's own bytecode makes impossible")
         # Every module the harness directory holds is either staged into
         # the work dir, staged into the plugin, or a host-side test leg.
         staged = {"runner.py", "native_host.py", "log_gate.py",

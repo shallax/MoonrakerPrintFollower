@@ -532,11 +532,22 @@ cp "$root/tests/harness/liveness.py" "$WORK_DIR"/liveness.py
 cp "$root/tests/harness/static_leg.py" "$WORK_DIR"/static_leg.py
 cp "$root/tests/harness/window_geometry.py" "$WORK_DIR"/window_geometry.py
 # The suite is a PACKAGE (one module per group plus the shared probe
-# bodies and the assembly point), so the whole directory stages —
-# the staged runner imports `scenarios` from this work dir, and a
-# single-file copy would leave it importing nothing.
-rm -rf "$WORK_DIR"/scenarios
-cp -r "$root/tests/harness/scenarios" "$WORK_DIR"/scenarios
+# bodies and the assembly point), so every module stages — the staged
+# runner imports `scenarios` from this work dir, and a single-file copy
+# would leave it importing nothing.
+#
+# The modules are copied INTO the directory rather than the directory
+# being replaced. The container imports the package as root and Python
+# writes __pycache__ beside the sources, so an `rm -rf` of the staged
+# directory fails on those root-owned files — the second unit of a
+# repeat-boot run could not stage at all (measured on CI: every
+# "Permission denied" on a .pyc, then "harness smoke smoke-2 FAILED").
+# A flat copy overwrites the host-owned sources it wrote itself and
+# never touches the bytecode. A module deleted upstream can leave a
+# stale copy in a reused work dir; the assembly point names every group
+# it loads, so a stale module is never assembled.
+mkdir -p "$WORK_DIR"/scenarios
+cp "$root"/tests/harness/scenarios/*.py "$WORK_DIR"/scenarios/
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py
 # The simulator is a test instrument, not a fixture: the working
