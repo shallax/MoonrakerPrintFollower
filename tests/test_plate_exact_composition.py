@@ -272,6 +272,55 @@ class ExactCompositionPolicyTests(unittest.TestCase):
             {"reset": True, "from": -1, "coverage": 0},
         ])
 
+    def test_an_asset_counts_only_while_its_own_render_key_still_holds(self):
+        """The layer publishes its pixel extents as INTs, so validity is
+        the payload's own flag: a raster whose key the surface has moved
+        past reads as absent even with pixels behind it."""
+        for name, valid, width in (("raster", "rasterValid", "rasterWidth"),
+                                   ("base", "baseValid", None),
+                                   ("travel", "travelValid", None)):
+            call = {"raster": "rasterOf", "base": "baseOf",
+                    "travel": "travelsOf"}[name]
+            with self.subTest(asset=name):
+                fields = "%s:true" % valid
+                if width:
+                    fields += ",%s:64" % width
+                self.assertTrue(self.evaluate("%s({%s})" % (call, fields)))
+                stale = fields.replace("true", "false")
+                self.assertFalse(self.evaluate("%s({%s})" % (call, stale)))
+
+    def test_a_valid_raster_still_needs_pixels_to_count(self):
+        """A committed key with a zero extent is a bake that produced no
+        image; the presentation must not hand it the layer's history."""
+        self.assertFalse(self.evaluate("rasterOf({rasterValid:true,rasterWidth:0})"))
+        self.assertTrue(self.evaluate("rasterOf({rasterValid:true,rasterWidth:1})"))
+
+    def test_the_plain_dict_fixtures_fall_back_to_the_image_itself(self):
+        """The real-engine fixtures publish plain dicts with no validity
+        flag: presence, and a non-empty image, is the whole verdict."""
+        self.assertTrue(self.evaluate("rasterOf({raster:{width:8}})"))
+        self.assertFalse(self.evaluate("rasterOf({raster:{width:0}})"))
+        self.assertFalse(self.evaluate("rasterOf({raster:null})"))
+        self.assertTrue(self.evaluate("baseOf({baseRaster:{width:8}})"))
+        self.assertFalse(self.evaluate("baseOf({baseRaster:null})"))
+        self.assertTrue(self.evaluate("travelsOf({travelRaster:{width:8}})"))
+        self.assertFalse(self.evaluate("travelsOf({travelRaster:null})"))
+
+    def test_no_layer_owns_no_asset_and_reports_no_motions(self):
+        """A payload between prints names no layer at all. Every
+        predicate must answer without dereferencing it, and the motion
+        count must be a boundary no split can already have passed."""
+        for call in ("rasterOf", "baseOf", "travelsOf"):
+            with self.subTest(call=call):
+                self.assertFalse(self.evaluate("%s(null)" % call))
+                self.assertFalse(self.evaluate("%s(undefined)" % call))
+                self.assertFalse(self.evaluate("%s({})" % call))
+        self.assertEqual(self.evaluate("motionsOf(null)"), -1)
+        self.assertEqual(self.evaluate("motionsOf(undefined)"), -1)
+        self.assertEqual(self.evaluate("motionsOf({})"), -1)
+        self.assertEqual(self.evaluate("motionsOf({motions:0})"), 0)
+        self.assertEqual(self.evaluate("motionsOf({motions:4210})"), 4210)
+
 
 if __name__ == "__main__":
     unittest.main()
