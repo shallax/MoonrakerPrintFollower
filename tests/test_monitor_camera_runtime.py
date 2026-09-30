@@ -83,7 +83,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         # dead stream cannot spin the loader, with the veil until the
         # stream restarts.
         model = self.monitor()
-        model._camera_last_refresh_at = 0.0
+        model._camera_recovery._last_refresh_at = 0.0
         before = model.cameraRefreshNonce
         model._on_stream_failed()
         self.assertTrue(model.cameraRecovering)
@@ -100,7 +100,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         # through the same nonce-bump recovery as a stream failure,
         # with the same 10 s throttle.
         model = self.monitor()
-        model._camera_last_refresh_at = 0.0
+        model._camera_recovery._last_refresh_at = 0.0
         before = model.cameraRefreshNonce
         model.cameraRenderStalled()
         self.assertTrue(model.cameraRecovering)

@@ -41,6 +41,7 @@ def _british_spelling() -> bool:
     return False
 
 
+from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
 from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
@@ -408,7 +409,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # values are the service's to OWN — the ruling that
         # the file manager is its own thing).
         self._file_columns_state = state["fileManagerColumns"]
-        self._camera_refresh_nonce = 0
         self._sections = state["sections"]
         follower_view = state["followerView"]
         self._follower_show_previous = follower_view["showPrevious"]
@@ -489,30 +489,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self,
                                          job_identity=lambda: getattr(self._print_state(), "job_key", None))
         self._camera = MonitorCamera(self._data, config, apply_config, self)
-        # The webcam watchdog: a dead bridge relay bumps the refresh
-        # nonce (a URL change is the ONLY thing that restarts Cura's
-        # loader) and veils the camera until the stream restarts.
-        self._camera_last_refresh_at = 0.0
-        self._camera_last_url = ""
-        self._camera_recovering = False
-        self._webcam_stream_enabled = True
+        # The stream's freshness policy: a dead bridge relay, the
+        # reconnect, the toggle and the wake all resolve to one reload
+        # nonce, and the pane veils itself while a recovery is running.
+        self._camera_recovery = CameraRecovery(
+            active=lambda: bool(getattr(self._data, "active", False)))
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
-        # The wake recovery (a live report): a stream that
-        # survives a suspend shows a FROZEN frame — the image's size
-        # is already set, so the render watchdog cannot see it. A
-        # wake transition reloads the camera source once, the same
-        # way the refresh button does.
+        # The wake watch (a live report): a stream that survives a
+        # suspend shows a FROZEN frame whose image size is already set,
+        # so the render watchdog cannot see it — the wake transition
+        # reloads the source once, the way the refresh button does.
         try:
             from PyQt6.QtGui import QGuiApplication
             app = QGuiApplication.instance()
             if app is not None:
-                self._camera_app_state = app.applicationState()
+                self._camera_recovery.seed_application_state(app.applicationState())
                 app.applicationStateChanged.connect(self._on_app_state_changed)
-            else:
-                self._camera_app_state = None
         except Exception:
-            self._camera_app_state = None
+            pass
         # The machine geometry for the bed-mesh map (4.2.0): 0 means
         # unknown and the map draws the mesh-bounds view.
         self._machine_width = 0.0
@@ -632,30 +627,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_connection_state(self, state: str) -> None:
         if state != "yes":
             return
-        if not self._webcam_stream_enabled:
-            return
-        self._camera_refresh_nonce += 1
-        self._schedule_publish()
+        if self._camera_recovery.connection_restored():
+            self._schedule_publish()
 
     def _on_stream_failed(self) -> None:
-        if not self._webcam_stream_enabled:
-            return
-        from ..diagnostics.CameraTiming import mark
-        mark("T6-watchdog", "camera render stalled")
-        import time
-        now = time.monotonic()
-        # The FIRST failure retries immediately: a camera's first
-        # fetch can die on a cold-start hiccup (DNS or first contact)
-        # while the very next request sails — the live
-        # report: leaving and re-entering the Monitor tab, a fresh
-        # request, started the stream. Once a retry cycle is running,
-        # the 10 s cadence keeps a dead stream from spinning the
-        # loader in a tight loop.
-        if not self._camera_recovering or now - self._camera_last_refresh_at >= 10.0:
-            self._camera_last_refresh_at = now
-            self._camera_refresh_nonce += 1
-        self._camera_recovering = True
-        self._publish()
+        # The render watchdog and the bridge's own failure signal land
+        # on the same recovery: the cadence and the veil are the
+        # policy's.
+        if self._camera_recovery.stream_stalled():
+            self._publish()
 
     def setMachineGeometry(self, width, depth, center_is_zero) -> None:
         """The physical bed dimensions from the machine stack (4.2.0,
@@ -673,18 +653,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def _on_app_state_changed(self, state) -> None:
-        from PyQt6.QtCore import Qt
-        previous = self._camera_app_state
-        self._camera_app_state = state
-        if state == Qt.ApplicationState.ApplicationActive and previous not in (None, Qt.ApplicationState.ApplicationActive):
-            # Woke up: reload the camera source once — for the ACTIVE
-            # monitor only; a deposed cached monitor must not
-            # publish. No veil — the stream may come back instantly,
-            # and a stuck veil would read as a failure the user must
-            # recover.
-            if not getattr(self._data, "active", False):
-                return
-            self._camera_refresh_nonce += 1
+        if self._camera_recovery.application_state_changed(state):
             self._publish()
 
     @pyqtSlot()
@@ -698,10 +667,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._on_stream_failed()
 
     def _on_stream_recovered(self) -> None:
-        if not self._camera_recovering:
-            return
-        self._camera_recovering = False
-        self._publish()
+        if self._camera_recovery.stream_restored():
+            self._publish()
 
     def _on_console_store(self):
         # Klipper's output arrives from the gcode-store poll; the
@@ -1200,7 +1167,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["sectionReasonDetail"] = REASON_DETAIL.get(section, "")
         values.update(self._controls.values)
         values.update(self._camera.values)
-        values["webcamStreamEnabled"] = self._webcam_stream_enabled
+        values["webcamStreamEnabled"] = self._camera_recovery.stream_enabled
         values.update(self._toolhead.values)
         values.update(self._console.values)
         # The console error bell (a live request): while
@@ -1270,8 +1237,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             controlsLocked=self._controls_locked, controlsCollapsed=self._controls_collapsed,
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
             consoleHeight=self._console_height,
-            cameraRefreshNonce=self._camera_refresh_nonce,
-            cameraRecovering=self._camera_recovering,
+            cameraRefreshNonce=self._camera_recovery.nonce,
+            cameraRecovering=self._camera_recovery.recovering,
             connectionDetail=self._data.connection_detail,
             sectionExpandedMap=dict(self._sections),
             sectionLayout=self._section_layout,
@@ -1340,24 +1307,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         this one both ignore it."""
         first_attach = False
         try:
-            url = self._camera.url if self._webcam_stream_enabled else ""
+            url = self._camera.url if self._camera_recovery.stream_enabled else ""
             if url:
-                last_url = self._camera_last_url
-
-                def _stripped(u):
-                    cut = u.find("?")
-                    return u[:cut] if cut >= 0 else u
-                changed = _stripped(url) != _stripped(last_url or "")
-                if url != last_url:
-                    self._camera_last_url = url
-                if changed:
-                    # Any camera-URL transition deserves a fresh load:
-                    # the first attach's initial request dies silently
-                    # in the loader (the report — the manual refresh
-                    # worked because it changed the URL).
-                    first_attach = not last_url
-                    self._camera_refresh_nonce += 1
-                    self._publication.set("cameraRefreshNonce", self._camera_refresh_nonce)
+                bumped, first_attach = self._camera_recovery.note_url(url)
+                if bumped:
+                    self._publication.set("cameraRefreshNonce", self._camera_recovery.nonce)
             self.setCameraUrl(QUrl(url))
         except AttributeError:
             pass
@@ -1898,9 +1852,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def refreshWebcams(self):
         # The nonce feeds a cache-busting query parameter so the live
         # stream itself reloads, not just the webcam list.
-        if not self._webcam_stream_enabled:
+        if not self._camera_recovery.refresh_requested():
             return
-        self._camera_refresh_nonce += 1
         self._data.refresh_webcams()
         self._publish()
     @pyqtSlot(bool)
@@ -2345,18 +2298,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         URL goes blank so the loader stops pulling, and the
         watchdog/refresh paths stand down. ON republishes the URL and
         bumps the nonce so the pane re-applies the stream."""
-        if self._webcam_stream_enabled is bool(enabled):
+        if not self._camera_recovery.set_stream_enabled(enabled):
             return
-        self._webcam_stream_enabled = bool(enabled)
-        if not self._webcam_stream_enabled:
-            self._camera.suspend_stream()
-        else:
+        if self._camera_recovery.stream_enabled:
             # The bridge's local listener died with the suspend —
             # rebuild it before the URL republishes, or the pane
             # pulls a dead loopback URL and freezes (the live
             # report: only a camera re-select revived it).
             self._camera.resume_stream()
-        self._camera_refresh_nonce += 1
+        else:
+            self._camera.suspend_stream()
         self._publish()
 
     @pyqtSlot(bool)
