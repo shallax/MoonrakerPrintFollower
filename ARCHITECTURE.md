@@ -170,7 +170,9 @@ correct package ownership.
 | `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
 | `FileBrowserPresentation.py` | File-browser drafts, confirmation state and row presentation | Monitor model, printer dispatch policy or network ownership |
 | `FileFormatting.py` | Pure file-table units and local-time labels | Qt, network or a screen model |
-| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
+| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection and the LOCAL-file upload (its own multipart path) | MoonrakerMonitorModel |
+| `ThumbnailCache.py` | The listing thumbnails' whole lifecycle: the bounded fetch queue, the in-flight reply registry with its identity check, the generation that invalidates both together, the temp tree the bodies land in and the cache the listing rekeys on rename | Rows, the walk or a listing rebuild |
+| `ReplyBodyReader.py` | The hard byte cap on the replies the file chrome reads itself: one drain per readyRead, overflow aborts the transfer and drops the bytes, one disposal per reply | Transfer workflows or reply policy beyond the cap |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `SectionLayoutPolicy.py` | The static pane→section table (Controls 13, Information 2, Status 7) and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
 | `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |

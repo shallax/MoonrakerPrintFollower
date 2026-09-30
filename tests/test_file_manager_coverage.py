@@ -423,7 +423,7 @@ class ServiceCase(unittest.TestCase):
         self.service.changed.connect(lambda: self.changes.append(True))
         # The service mints a scratch thumb tree per bind; take the
         # current one with it so a run leaves no litter behind.
-        self.addCleanup(shutil.rmtree, self.service._thumb_root, True)
+        self.addCleanup(shutil.rmtree, self.service._thumbnails._root, True)
 
     def request(self, fragment):
         # The newest match: a refresh re-walks the same paths, and the
@@ -561,14 +561,14 @@ class LifecycleTests(ServiceCase):
         # rebind, which would leave the previous machine's rows live.
         self.service.open()
         self.directory("path=gcodes&", [("a.gcode", {})])
-        old_root = self.service._thumb_root
-        with patch("mpf.files.browser.FileManager.shutil.rmtree", side_effect=OSError("busy")):
+        old_root = self.service._thumbnails._root
+        with patch("mpf.files.browser.ThumbnailCache.shutil.rmtree", side_effect=OSError("busy")):
             self.service.bind()
             self.assertEqual(self.service.rows_resident, 0)
-            self.assertNotEqual(self.service._thumb_root, old_root)
-            self.assertTrue(os.path.isdir(self.service._thumb_root))
+            self.assertNotEqual(self.service._thumbnails._root, old_root)
+            self.assertTrue(os.path.isdir(self.service._thumbnails._root))
             self.service.unbind()
-        self.addCleanup(shutil.rmtree, self.service._thumb_root, True)
+        self.addCleanup(shutil.rmtree, self.service._thumbnails._root, True)
 
     def test_bind_and_unbind_cancel_the_lane_and_clear_the_projection(self):
         self.open_listing()
@@ -687,7 +687,7 @@ class RenameTests(ServiceCase):
         self.service.open()
         self.directory("path=gcodes&", [("a.gcode", {"thumbnails": [
             {"width": 300, "relative_path": ".thumbs/a-300x300.png"}]})])
-        with patch.object(self.service, "_fetch_thumb"):
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails(self.service.current_rows())
         self.assertIn("a.gcode", self.service.thumbnail_payload())
         # The confirming refresh clears the cache afterwards: the rekey
@@ -787,7 +787,7 @@ class DirectoryMutationTests(ServiceCase):
     def test_folder_rename_rekeys_thumbs_selection_and_the_nested_prefix(self):
         # Everything the popup holds by path must follow the folder:
         # the thumb cache, the selection, and the current directory.
-        with patch.object(self.service, "_fetch_thumb"):
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails([
                 self.service.row_for("prints/deep.gcode"),
                 self.service.row_for("top.gcode"),
@@ -1019,7 +1019,7 @@ class ThumbnailTests(ServiceCase):
         from unittest.mock import Mock
         reply = ScriptedReply(body=b"1234")
         reply.abort = Mock()
-        self.service._watch_reply_body(reply, 8)
+        self.service._bodies.watch(reply, 8)
         reply.readyRead.emit()
         self.assertEqual(bytes(reply._mpf_body), b"1234")
         reply._body = b"56789" * 100
@@ -1029,50 +1029,50 @@ class ThumbnailTests(ServiceCase):
         self.assertTrue(reply._mpf_body_overflow)
         self.assertGreater(len(reply._body), 0)  # surplus never copied
         with self.assertRaises(ValueError):
-            self.service._take_reply_body(reply, 8)
+            self.service._bodies.take(reply, 8)
 
     def test_response_exactly_at_cap_preserves_all_chunks(self):
         reply = ScriptedReply(body=b"1234")
-        self.service._watch_reply_body(reply, 8)
+        self.service._bodies.watch(reply, 8)
         reply.readyRead.emit()
         reply._body = b"5678"
-        self.assertEqual(self.service._take_reply_body(reply, 8), b"12345678")
+        self.assertEqual(self.service._bodies.take(reply, 8), b"12345678")
 
     def test_closed_reply_read_preserves_the_already_received_error_body(self):
         reply = ScriptedReply(body=b'{"error":"refused"}')
-        self.service._watch_reply_body(reply, 64)
+        self.service._bodies.watch(reply, 64)
         reply.readyRead.emit()
         reply.read = lambda _limit: None
-        self.assertEqual(self.service._take_reply_body(reply, 64), b'{"error":"refused"}')
+        self.assertEqual(self.service._bodies.take(reply, 64), b'{"error":"refused"}')
 
     def thumb_row(self, name="a.gcode"):
         return FileRow(filename=name, relpath=name, thumb_path=".thumbs/a-300x300.png",
                        thumb_small=".thumbs/a-32x32.png")
 
     def seed_thumb(self, relpath="a.gcode"):
-        self.service._thumbs[relpath] = {"state": "loading", "url": ""}
-        self.service._thumb_active = 1
+        self.service._thumbnails._entries[relpath] = {"state": "loading", "url": ""}
+        self.service._thumbnails._active = 1
 
     def test_a_row_already_holding_its_slot_is_not_enqueued_again(self):
         # Sliding a row in and out of view must not re-fetch it: the
         # slot's state is the guard.
         emissions = []
         self.service.thumbsChanged.connect(lambda: emissions.append(True))
-        with patch.object(self.service, "_fetch_thumb"):
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails([self.thumb_row()])
-            active = self.service._thumb_active
+            active = self.service._thumbnails._active
             self.service.request_thumbnails([self.thumb_row()])
         self.assertEqual(len(emissions), 1)
-        self.assertEqual(self.service._thumb_active, active)
+        self.assertEqual(self.service._thumbnails._active, active)
 
     def test_the_queue_is_bounded_and_a_void_row_takes_the_placeholder(self):
         rows = [FileRow(filename=f"f{i}.gcode", relpath=f"f{i}.gcode",
                         thumb_path=".thumbs/t-32x32.png") for i in range(6)]
-        with patch.object(self.service, "_fetch_thumb"):
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails(rows)
-            self.assertEqual(self.service._thumb_active, 3)
-            self.assertEqual(len(self.service._thumb_queue), 3)
-        with patch.object(self.service, "_fetch_thumb"):
+            self.assertEqual(self.service._thumbnails._active, 3)
+            self.assertEqual(len(self.service._thumbnails._queue), 3)
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails([FileRow(filename="bare.gcode", relpath="bare.gcode")])
         self.assertEqual(self.service.thumbnail_payload()["bare.gcode"]["state"], "none")
 
@@ -1081,43 +1081,55 @@ class ThumbnailTests(ServiceCase):
         with patch("tempfile.mkdtemp", side_effect=OSError("tmp gone")):
             self.service.request_thumbnails(rows)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
-        self.assertEqual(self.service._thumb_active, 0)
+        self.assertEqual(self.service._thumbnails._active, 0)
         with patch("tempfile.mkdtemp", side_effect=OSError("tmp gone")):
-            self.service._thumbs = {}
+            self.service._thumbnails._entries = {}
             self.service.request_thumbnails(rows, large=True)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state_large"], "failed")
+
+    def test_a_fetch_that_cannot_start_publishes_the_thumbnails_alone(self):
+        # A landing is one signal on the thumbnail channel, never a
+        # listing rebuild. The failure that never reached a reply is the
+        # path most likely to be wired to the wrong channel, so it is
+        # the one pinned.
+        thumbs = []
+        self.service.thumbsChanged.connect(lambda: thumbs.append(True))
+        with patch("tempfile.mkdtemp", side_effect=OSError("tmp gone")):
+            self.service.request_thumbnails([self.thumb_row()])
+        self.assertTrue(thumbs)
+        self.assertEqual(self.changes, [])
 
     def test_a_fetch_reply_writes_the_cache_entry_and_releases_its_slot(self):
         reply = ScriptedReply(body=self.PNG)
         self.transport.network = SimpleNamespace(get=lambda request: reply)
         self.service.request_thumbnails([self.thumb_row()])
-        self.assertIs(self.service._thumb_replies.get("a.gcode"), reply)
+        self.assertIs(self.service._thumbnails._replies.get("a.gcode"), reply)
         reply.finished.emit()
         entry = self.service.thumbnail_payload()["a.gcode"]
         self.assertEqual(entry["state"], "ready")
         self.assertTrue(entry["url"].startswith("file://"))
-        self.assertEqual(self.service._thumb_active, 0)
-        self.assertNotIn("a.gcode", self.service._thumb_replies)
+        self.assertEqual(self.service._thumbnails._active, 0)
+        self.assertNotIn("a.gcode", self.service._thumbnails._replies)
 
     def test_a_thumbnail_error_and_a_non_png_body_both_fail_the_cell(self):
         # The hourglass must never spin forever: whatever the reply
         # carries, a cell that cannot show an image reads "failed".
         self.seed_thumb()
-        self.service._thumb_finished("a.gcode", ThumbReply(
+        self.service._thumbnails._finished("a.gcode", ThumbReply(
             error=QNetworkReply.NetworkError.ContentNotFoundError),
-            self.service._thumb_generation, "/tmp/never-written.png", False)
+            self.service._thumbnails._generation, "/tmp/never-written.png", False)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
         self.seed_thumb()
-        self.service._thumb_finished("a.gcode", ThumbReply(body=b"not a png"),
-                                     self.service._thumb_generation, "/tmp/never-written.png", False)
+        self.service._thumbnails._finished("a.gcode", ThumbReply(body=b"not a png"),
+                                     self.service._thumbnails._generation, "/tmp/never-written.png", False)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
 
     def test_a_large_fetch_publishes_its_own_url_and_file(self):
         path = os.path.join(tempfile.mkdtemp(prefix="mpfxtest-thumb-test-"), "large.png")
         self.addCleanup(shutil.rmtree, os.path.dirname(path), True)
         self.seed_thumb()
-        self.service._thumb_finished("a.gcode", ThumbReply(body=self.PNG),
-                                     self.service._thumb_generation, path, True)
+        self.service._thumbnails._finished("a.gcode", ThumbReply(body=self.PNG),
+                                     self.service._thumbnails._generation, path, True)
         entry = self.service.thumbnail_payload()["a.gcode"]
         self.assertEqual(entry["state_large"], "ready")
         self.assertTrue(entry["url_large"].startswith("file://"))
@@ -1129,12 +1141,12 @@ class ThumbnailTests(ServiceCase):
         # cleaned up under a pending reply): it must not raise.
         missing = "/nonexistent-thumb-dir/thumb.png"
         self.seed_thumb()
-        self.service._thumb_finished("a.gcode", ThumbReply(body=self.PNG),
-                                     self.service._thumb_generation, missing, True)
+        self.service._thumbnails._finished("a.gcode", ThumbReply(body=self.PNG),
+                                     self.service._thumbnails._generation, missing, True)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state_large"], "failed")
         self.seed_thumb()
-        self.service._thumb_finished("a.gcode", ThumbReply(body=self.PNG),
-                                     self.service._thumb_generation, missing, False)
+        self.service._thumbnails._finished("a.gcode", ThumbReply(body=self.PNG),
+                                     self.service._thumbnails._generation, missing, False)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
 
     def test_a_reply_that_refuses_disposal_still_closes_the_fetch(self):
@@ -1142,29 +1154,29 @@ class ThumbnailTests(ServiceCase):
         # that raises there must not strand the queue.
         self.seed_thumb()
         reply = ThumbReply(body=self.PNG, disposal_raises=True)
-        self.service._thumb_replies["a.gcode"] = reply
-        self.service._thumb_finished("a.gcode", reply, self.service._thumb_generation,
-                                     os.path.join(self.service._thumb_root, "t.png"), False)
-        self.assertEqual(self.service._thumb_active, 0)
-        self.assertEqual(self.service._thumb_replies, {})
+        self.service._thumbnails._replies["a.gcode"] = reply
+        self.service._thumbnails._finished("a.gcode", reply, self.service._thumbnails._generation,
+                                     os.path.join(self.service._thumbnails._root, "t.png"), False)
+        self.assertEqual(self.service._thumbnails._active, 0)
+        self.assertEqual(self.service._thumbnails._replies, {})
 
     def test_a_stale_reply_retires_even_when_disposal_raises(self):
         self.seed_thumb()
         reply = ThumbReply(disposal_raises=True)
-        self.service._thumb_replies["a.gcode"] = reply
-        self.service._thumb_finished("a.gcode", reply, self.service._thumb_generation - 1,
+        self.service._thumbnails._replies["a.gcode"] = reply
+        self.service._thumbnails._finished("a.gcode", reply, self.service._thumbnails._generation - 1,
                                      "/tmp/never-written.png", False)
-        self.assertEqual(self.service._thumb_active, 0)
-        self.assertEqual(self.service._thumb_replies, {})
+        self.assertEqual(self.service._thumbnails._active, 0)
+        self.assertEqual(self.service._thumbnails._replies, {})
 
     def test_abort_thumbs_survives_replies_that_refuse_to_abort(self):
-        self.service._thumb_replies = {"a.gcode": ThumbReply(disposal_raises=True)}
-        self.service._thumb_queue = [("a.gcode", "gcodes", ".thumbs/a.png", False)]
-        self.service._thumb_active = 1
-        self.service._abort_thumbs()
-        self.assertEqual(self.service._thumb_replies, {})
-        self.assertEqual(self.service._thumb_queue, [])
-        self.assertEqual(self.service._thumb_active, 0)
+        self.service._thumbnails._replies = {"a.gcode": ThumbReply(disposal_raises=True)}
+        self.service._thumbnails._queue = [("a.gcode", "gcodes", ".thumbs/a.png", False)]
+        self.service._thumbnails._active = 1
+        self.service._thumbnails.abort()
+        self.assertEqual(self.service._thumbnails._replies, {})
+        self.assertEqual(self.service._thumbnails._queue, [])
+        self.assertEqual(self.service._thumbnails._active, 0)
 
     def test_abort_uploads_survives_replies_that_refuse_to_abort(self):
         self.service._upload_replies["upload-1"] = (ThumbReply(disposal_raises=True), "a.gcode")
@@ -1172,11 +1184,11 @@ class ThumbnailTests(ServiceCase):
         self.assertEqual(self.service._upload_replies, {})
 
     def test_clear_thumbnails_survives_a_tree_removal_failure(self):
-        self.service._thumbs["a.gcode"] = {"state": "ready", "url": "file:///x.png"}
-        with patch("mpf.files.browser.FileManager.shutil.rmtree", side_effect=OSError("busy")):
+        self.service._thumbnails._entries["a.gcode"] = {"state": "ready", "url": "file:///x.png"}
+        with patch("mpf.files.browser.ThumbnailCache.shutil.rmtree", side_effect=OSError("busy")):
             self.service.clear_thumbnails()
         self.assertEqual(self.service.thumbnail_payload(), {})
-        self.addCleanup(shutil.rmtree, self.service._thumb_root, True)
+        self.addCleanup(shutil.rmtree, self.service._thumbnails._root, True)
 
 
 # ---- uploads -----------------------------------------------------------

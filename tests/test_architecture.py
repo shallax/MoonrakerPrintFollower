@@ -160,8 +160,9 @@ class SourceContractTests(unittest.TestCase):
             'FileDownload': {'RemoteFileService'},
             'FileBrowserPresentation': {'FileFormatting', 'FileManagerPolicy', 'FilesViewModel'},
             'FileFormatting': set(),
-            'FileManager': {'FileManagerPolicy', 'MoonrakerProtocol'},
+            'FileManager': {'FileManagerPolicy', 'MoonrakerProtocol', 'ReplyBodyReader', 'ThumbnailCache'},
             'FileManagerPolicy': set(),
+            'ReplyBodyReader': set(),
             'FilesViewModel': set(),
             'FollowController': set(),
             'FollowerColourScheme': {'PreviewColours'},
@@ -248,6 +249,7 @@ class SourceContractTests(unittest.TestCase):
             'SocketFraming': set(),
             'StateStore': set(),
             'TemperaturePresentation': {'MonitorTemperatureHistory'},
+            'ThumbnailCache': set(),
             'ToolheadController': {'MonitorPermissions', 'ToolheadPolicy'},
             'ToolheadPolicy': set(),
             'TravelStates': set(),
@@ -364,11 +366,11 @@ class SourceContractTests(unittest.TestCase):
             # ALWAYS true and failed every successful thumbnail fetch
             # (a live report). Compare against the enum.
             self.assertIsNone(re.search(r"\.error\(\)\s*[!=]=\s*0\b", source), path.name)
-        manager = (PLUGINS / "FileManager.py").read_text(encoding="utf-8")
-        self.assertIn("self._thumb_replies[relpath] = reply", manager)
+        thumbnails = (PLUGINS / "ThumbnailCache.py").read_text(encoding="utf-8")
+        self.assertIn("self._replies[relpath] = reply", thumbnails)
         self.assertIn(
-            "lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)",
-            manager,
+            "lambda r=reply, p=relpath, g=generation, t=path, l=large: self._finished(p, r, g, t, l)",
+            thumbnails,
         )
         # Uranium's Signal stores plain functions weakly — a lambda
         # connected to Message.actionTriggered is collected before the

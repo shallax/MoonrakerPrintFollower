@@ -13,13 +13,11 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import tempfile
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
-from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QUrl, QVariant, pyqtSignal
+from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QVariant, pyqtSignal
 from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
 
 from ...moonraker.MoonrakerProtocol import (
@@ -54,20 +52,14 @@ from .FileManagerPolicy import (
     rename_target,
     upload_relpath,
 )
+from .ReplyBodyReader import ReplyBodyReader
+from .ThumbnailCache import ThumbnailCache
 
 MAX_DIRECTORIES = 50
-MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024
 MAX_UPLOAD_REPLY_BYTES = 1024 * 1024
 
 
 class FileManager(QObject):
-    # The thumbnail fetch queue's concurrency cap: scrolling past rows
-    # enqueues their downloads, which fire together as the queue
-    # drains — a bounded burst, never chained through the previous
-    # request's completion handler (that serialised the queue and
-    # stretched the settle across the whole listing).
-    MAX_THUMB_FETCHES = 3
-
     changed = pyqtSignal()
     # Local explanations for per-row actions (metascan outcomes) —
     # the model routes these into the console feed like the
@@ -105,16 +97,13 @@ class FileManager(QObject):
         self._refreshed_at: Optional[float] = None
         self._walk_error: Optional[str] = None
         self._print_attempt: Optional[tuple] = None
-        self._thumbs: Dict[str, Dict[str, str]] = {}
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
-        # In-flight thumbnail replies ride this registry until their
-        # handlers run — the transport's own lifetime pattern (see
-        # _fetch_thumb: a bare closure connected to a network signal
-        # is a use-after-free trap in PyQt).
-        self._thumb_replies: Dict[str, QNetworkReply] = {}
-        self._thumb_generation = 0
-        self._thumb_queue: List[tuple] = []
-        self._thumb_active = 0
+        # The replies this service reads itself (thumbnails and the
+        # upload's acknowledgement) borrow their bodies through one
+        # bounded reader, and the thumbnails' queue/reply/cache
+        # lifecycle is its own owner.
+        self._bodies = ReplyBodyReader(self)
+        self._thumbnails = ThumbnailCache(client.transport, self._bodies, self)
+        self._thumbnails.changed.connect(self.thumbsChanged)
         # Upload operations key on their operation id, never the
         # destination path: a second upload of the same name must not
         # orphan the first's reply or let it emit a stale verdict.
@@ -139,9 +128,8 @@ class FileManager(QObject):
         switches — a stale popup must never carry the previous
         machine's rows (round-2 A15)."""
         self._generation += 1
-        self._thumb_generation += 1
         self._client.transport.cancel_owner("file-manager")
-        self._abort_thumbs()
+        self._thumbnails.reset()
         self._abort_uploads()
         self._rows = {}
         self._dirs = set()
@@ -151,19 +139,11 @@ class FileManager(QObject):
         self._refreshed_at = None
         self._walk_error = None
         self._print_attempt = None
-        self._thumbs = {}
-        self._thumb_queue = []
-        self._thumb_active = 0
         # The rows are gone: the projection cache must not serve the
         # previous machine's view (the cache keys on the revisions —
         # bump both or a current_rows() call re-serves the old rows).
         self._data_rev += 1
         self._history_rev += 1
-        try:
-            shutil.rmtree(self._thumb_root, ignore_errors=True)
-        except Exception:
-            pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -171,9 +151,8 @@ class FileManager(QObject):
     def unbind(self) -> None:
         """Printer deactivated: cancel the lane and clear everything."""
         self._generation += 1
-        self._thumb_generation += 1
         self._client.transport.cancel_owner("file-manager")
-        self._abort_thumbs()
+        self._thumbnails.reset()
         self._abort_uploads()
         self._rows = {}
         self._dirs = set()
@@ -183,18 +162,10 @@ class FileManager(QObject):
         self._refreshed_at = None
         self._walk_error = None
         self._print_attempt = None
-        self._thumbs = {}
-        self._thumb_queue = []
-        self._thumb_active = 0
         # The rows are gone: the projection cache must not serve the
         # previous machine's view (see bind).
         self._data_rev += 1
         self._history_rev += 1
-        try:
-            shutil.rmtree(self._thumb_root, ignore_errors=True)
-        except Exception:
-            pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -400,7 +371,7 @@ class FileManager(QObject):
             else:
                 self._rows.pop(f"gcodes/{relpath}", None)
                 self._selection.discard(relpath)
-                self._thumbs.pop(relpath, None)
+                self._thumbnails.drop(relpath)
                 # The emit publishes right now: bump the revision or
                 # the cache re-serves the deleted row until the
                 # final refresh's walk lands.
@@ -458,9 +429,7 @@ class FileManager(QObject):
             self._rows.pop(old_key, None)
             self._rows[f"gcodes/{target}"] = new_row
             self._data_rev += 1
-            thumb = self._thumbs.pop(relpath, None)
-            if thumb is not None:
-                self._thumbs[target] = thumb
+            self._thumbnails.adopt(relpath, target)
             self.note.emit(f"Renamed to {new_row.filename}.")
             self.changed.emit()
             self.refresh()
@@ -530,7 +499,7 @@ class FileManager(QObject):
             self._upload_seq += 1
             op_id = f"upload-{self._upload_seq}"
             self._upload_replies[op_id] = (reply, relpath)
-            self._watch_reply_body(reply, MAX_UPLOAD_REPLY_BYTES)
+            self._bodies.watch(reply, MAX_UPLOAD_REPLY_BYTES)
             reply.uploadProgress.connect(
                 lambda sent, total, g=generation: self.uploadProgress.emit(
                     max(0, min(100, int(sent * 100 / total))))
@@ -550,7 +519,7 @@ class FileManager(QObject):
         if entry is not None and entry[0] is reply:
             self._upload_replies.pop(op_id, None)
         try:
-            response_body = self._take_reply_body(reply, MAX_UPLOAD_REPLY_BYTES)
+            response_body = self._bodies.take(reply, MAX_UPLOAD_REPLY_BYTES)
         except ValueError:
             response_body = b""
         if generation != self._generation:
@@ -720,13 +689,7 @@ class FileManager(QObject):
         if current == directory or current.startswith(prefix):
             current = target + current[len(directory):]
             self._directory = current.split("/") if current else []
-        moved_thumbs = {}
-        for relpath, entry in list(self._thumbs.items()):
-            if relpath == directory or relpath.startswith(prefix):
-                moved_thumbs[target + relpath[len(directory):]] = entry
-            else:
-                moved_thumbs[relpath] = entry
-        self._thumbs = moved_thumbs
+        self._thumbnails.rekey(directory, target)
         moved_selection = {target + relpath[len(directory):] for relpath in self._selection
                            if relpath.startswith(prefix)}
         self._selection = ({relpath for relpath in self._selection if not relpath.startswith(prefix)}
@@ -772,222 +735,18 @@ class FileManager(QObject):
         self.changed.emit()
 
     def request_thumbnails(self, rows: Sequence[FileRow], large: bool = False) -> None:
-        """The visible rows' thumbnails: one one-shot fetch per row
-        per variant, following the METADATA's thumbnail relative_path
-        (``.thumbs/<name>-<size>.png``). The plain ``<file>.png``
-        sibling does not exist — a live Moonraker answers it 404 for
-        every file. Rows whose metadata has no thumbnail record as
-        "none" (the placeholder) and are never fetched. The cache is
-        keyed by relpath with TWO slots: the list cells fetch the
-        small (>= 32 px) thumbnail — the largest preview's UI-thread
-        decode stutters the list — and the print dialog asks for the
-        large one with ``large=True``. A refresh clears the cache;
-        thumbnails regenerate with the file."""
-        changed_any = False
-        for row in rows:
-            relpath = str(row.relpath)
-            entry = self._thumbs.get(relpath) or {}
-            slot = "state_large" if large else "state"
-            url_slot = "url_large" if large else "url"
-            if entry.get(slot):
-                continue
-            changed_any = True
-            thumb_path = row.thumb_path if large else (row.thumb_small or row.thumb_path)
-            entry[slot] = "none" if not thumb_path else "loading"
-            entry[url_slot] = ""
-            self._thumbs[relpath] = entry
-            if thumb_path:
-                # Enqueue, never fetch directly: the queue drains at a
-                # bounded concurrency and the hourglass spins until the
-                # callback lands.
-                self._thumb_queue.append((relpath, row.root, thumb_path, large))
-        if changed_any:
-            self.thumbsChanged.emit()
-        self._drain_thumbs()
-
-    def _drain_thumbs(self) -> None:
-        while self._thumb_active < self.MAX_THUMB_FETCHES and self._thumb_queue:
-            relpath, root, thumb_path, large = self._thumb_queue.pop(0)
-            self._thumb_active += 1
-            self._fetch_thumb(relpath, root, thumb_path, large)
-
-    def _fetch_thumb(self, relpath: str, root: str, thumb_path: str, large: bool) -> None:
-        generation = self._thumb_generation
-        try:
-            directory = tempfile.mkdtemp(prefix="thumb-", dir=self._thumb_root)
-            path = os.path.join(directory, os.path.basename(thumb_path) or "thumb.png")
-            # relative_path is relative to the gcode FILE's parent: a
-            # folder-resident file's thumbnail lives under
-            # <root>/<dirname(relpath)>/.thumbs/, not <root>/.thumbs/
-            # (live-proven against Moonraker's metadata builder).
-            parent = relpath.rsplit("/", 1)[0] if "/" in relpath else ""
-            prefix = f"{quote(root, safe='/')}/{quote(parent, safe='/')}" if parent else quote(root, safe='/')
-            request = self._client.transport.request(
-                f"server/files/{prefix}/{quote(thumb_path, safe='/')}", timeout_ms=10000)
-            request.setRawHeader(b"Accept", b"image/png")
-            reply = self._client.transport.network.get(request)
-            # The reply rides the registry until its handler runs, and
-            # the signal connects into a BOUND method — the transport's
-            # own lifetime pattern (MoonrakerTransport.send_json). A
-            # bare closure connected to QNetworkReply.finished is a
-            # use-after-free trap in PyQt: the live crash
-            # report was a SIGSEGV in PyQtSlot::call on the main
-            # thread, delivered from a QtNetwork signal right after
-            # the popup opened. All fetch state (the reply, relpath,
-            # target path, generation) binds as a default argument so
-            # nothing can be collected mid-flight.
-            self._thumb_replies[relpath] = reply
-            self._watch_reply_body(reply, MAX_THUMBNAIL_BYTES)
-            reply.finished.connect(
-                lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)
-            )
-        except Exception:
-            entry = self._thumbs.get(relpath) or {}
-            if large:
-                entry["state_large"] = "failed"
-            else:
-                entry["state"] = "failed"
-            self._thumbs[relpath] = entry
-            self.changed.emit()
-            # The slot must always come back, whatever failed — a
-            # leaked permit is a permanently stuck queue.
-            self._thumb_active = max(0, self._thumb_active - 1)
-            self._drain_thumbs()
-
-    def _watch_reply_body(self, reply, limit):
-        reply._mpf_body = bytearray()
-        reply._mpf_body_limit = limit
-        reply._mpf_body_overflow = False
-        reply.setReadBufferSize(256 * 1024)
-        reply.readyRead.connect(self._reply_body_ready)
-
-    def _reply_body_ready(self):
-        reply = self.sender()
-        if reply is not None:
-            self._drain_reply_body(reply, reply._mpf_body_limit)
-
-    @staticmethod
-    def _drain_reply_body(reply, limit):
-        if getattr(reply, "_mpf_body_overflow", False):
-            return
-        body = getattr(reply, "_mpf_body", bytearray())
-        reply._mpf_body = body
-        # Qt 6.6 returns None when an errored/closed reply has no more
-        # readable bytes. Keep any body already drained by readyRead.
-        body.extend(bytes(reply.read(limit - len(body) + 1) or b""))
-        if len(body) > limit:
-            reply._mpf_body_overflow = True
-            body.clear()
-            if not getattr(reply, "_mpf_body_finished", False):
-                reply.abort()
-
-    def _take_reply_body(self, reply, limit):
-        self._drain_reply_body(reply, limit)
-        if getattr(reply, "_mpf_body_overflow", False):
-            raise ValueError("reply exceeds the size cap")
-        return bytes(reply._mpf_body)
-
-    def _thumb_finished(self, relpath: str, reply, generation: int, path: str, large: bool) -> None:
-        reply._mpf_body_finished = True
-        # The identity check keeps a stale reply (a refresh cleared
-        # the cache while it was still in flight) from unregistering
-        # its successor's fetch under the same key.
-        if self._thumb_replies.get(relpath) is reply:
-            self._thumb_replies.pop(relpath, None)
-        # One slot frees: the queue drains the next waiting row.
-        self._thumb_active = max(0, self._thumb_active - 1)
-        if generation != self._thumb_generation:
-            # The cache was cleared (refresh) or the printer changed:
-            # this reply's bytes belong to the previous view, and the
-            # reply itself retires HERE — the network access manager
-            # would keep it alive otherwise (the adversarial round's
-            # catch).
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-            self._drain_thumbs()
-            return
-        try:
-            # PyQt6 enum comparison: ``error() != 0`` is ALWAYS true —
-            # the enum members never equal plain ints, so the success
-            # path raised on every fetch (the live report:
-            # no thumbnails, all cells failed). Compare against the
-            # enum itself, the transport's form.
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                raise ValueError("thumbnail fetch failed")
-            data = self._take_reply_body(reply, MAX_THUMBNAIL_BYTES)
-            # No thumbnail to display: the hourglass must
-            # NEVER spin forever (the live ruling) —
-            # an empty or non-PNG body falls back to the
-            # placeholder like any failure.
-            if len(data) < 8 or data[:8] != b"\x89PNG\r\n\x1a\n":
-                raise ValueError("no thumbnail")
-            with open(path, "wb") as handle:
-                handle.write(data)
-            entry = self._thumbs.get(relpath) or {}
-            if large:
-                entry["state_large"] = "ready"
-                entry["url_large"] = QUrl.fromLocalFile(path).toString()
-            else:
-                entry["state"] = "ready"
-                entry["url"] = QUrl.fromLocalFile(path).toString()
-            self._thumbs[relpath] = entry
-        except Exception:
-            entry = self._thumbs.get(relpath) or {}
-            if large:
-                entry["state_large"] = "failed"
-            else:
-                entry["state"] = "failed"
-            self._thumbs[relpath] = entry
-        try:
-            reply.deleteLater()
-        except Exception:
-            pass
-        self.thumbsChanged.emit()
-        # One slot frees: the queue drains the next waiting row
-        # immediately — the fetches fire together, not chained.
-        self._drain_thumbs()
-
-    def _abort_thumbs(self) -> None:
-        """Hard-stop every in-flight thumbnail fetch (printer change or
-        shutdown). The bookkeeping resets FIRST: abort fires each
-        reply's finished handler inline, and a drained registry means
-        those handlers cannot issue new fetches that the reset would
-        orphan into a deleted temp tree."""
-        replies = list(self._thumb_replies.values())
-        self._thumb_replies = {}
-        self._thumb_queue = []
-        self._thumb_active = 0
-        for reply in replies:
-            try:
-                reply.abort()
-            except Exception:
-                pass
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
+        """The visible rows' thumbnails (the popup's own call). The
+        cache owns the queue, the replies, the temp tree and the
+        invalidation; this facade only names the row set."""
+        self._thumbnails.request(rows, large)
 
     def thumbnail_payload(self) -> Dict[str, Dict[str, str]]:
-        return {relpath: dict(entry) for relpath, entry in self._thumbs.items()}
+        return self._thumbnails.payload()
 
     def clear_thumbnails(self) -> None:
-        # In-flight fetches retire through the generation guard — the
-        # cache alone resets here, so a refresh genuinely regenerates
-        # every thumbnail with the file. The temp tree goes with the
-        # cache: the published file:// URLs die in the same publish,
-        # and stale replies write nothing (the generation guard runs
-        # first).
-        self._thumb_generation += 1
-        self._thumbs = {}
-        self._thumb_queue = []
-        self._thumb_active = 0
-        try:
-            shutil.rmtree(self._thumb_root, ignore_errors=True)
-        except Exception:
-            pass
-        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-%d-" % os.getpid())
+        """Thumbnails regenerate with the file (a refresh is the refetch
+        of everything visible)."""
+        self._thumbnails.clear()
         self.thumbsChanged.emit()
 
     def _rejoin_history(self) -> None:

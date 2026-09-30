@@ -14,7 +14,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         model.fileManagerThumbsChanged.connect(lambda: count.append(1))
         # A real change in the payload, then a burst of signals: the
         # flush emits once, and a no-change flush emits nothing.
-        model._file_manager._thumbs["x.gcode"] = {"state": "ready", "url": ""}
+        model._file_manager._thumbnails._entries["x.gcode"] = {"state": "ready", "url": ""}
         for _ in range(3):
             model._file_manager.thumbsChanged.emit()
         self.qt.events(200)

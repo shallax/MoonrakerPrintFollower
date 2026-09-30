@@ -691,7 +691,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
                 }}, None)
                 break
         self.qt.events()
-        with harness.patch.object(model._file_manager, "_fetch_thumb") as fetch:
+        with harness.patch.object(model._file_manager._thumbnails, "_fetch") as fetch:
             model.fileRequestPrint("benchy.gcode")
             fetch.assert_called_once()
             # The dialog asks for the LARGE variant (the grid cells
