@@ -49,6 +49,7 @@ from .controls.MonitorCommands import MonitorCommands
 from .controls.MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
 from .MonitorPublication import MonitorPublication
+from .PauseAtLayerPresentation import PauseAtLayerPresentation
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
@@ -72,9 +73,6 @@ from ..settings.StateStore import StateStore
 from .controls.MonitorTuning import MonitorTuning
 from .toolhead.ToolheadController import ToolheadController
 from .toolhead.ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
-# The pause gates, shared with the Preview card: the popover's own
-# candidate is re-read, its refusals are not re-worded.
-from ..preview.PreviewFormatting import pause_can_toggle, pause_unavailable
 from ..whatsnew.WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
 
 from ..settings.MigrationPresentation import migration_banner_text, migration_diagnostics_text
@@ -350,7 +348,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # candidate from it) and the three intents. Optional, like the
         # anchor seams above: a model without them publishes no pause
         # block and drops the intents.
-        self._pause_at_layer_block = pause_at_layer_block
+        self._pause_at_layer = PauseAtLayerPresentation(
+            block=pause_at_layer_block, anchor=lambda: self._follower_layer_anchor)
         self._request_pause_toggle = request_pause_toggle
         self._request_pause_remove = request_pause_remove
         self._request_pause_clear = request_pause_clear
@@ -1113,8 +1112,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The popover's pause block: the freshly computed anchor is the
         # fallback candidate, so a popover that has never been slid
         # schedules at the layer it is actually showing.
-        values.update(self._pause_at_layer_values(
-            snapshot, values["plateProgressAnchor"], values["plateLayerCount"]))
+        values.update(self._pause_at_layer.values(
+            snapshot, _coerce_anchor(values["plateProgressAnchor"]), values["plateLayerCount"]))
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
@@ -2437,84 +2436,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._request_pause_clear is not None:
             self._request_pause_clear()
 
-    def _published_pause_block(self):
-        """The coordinator's pause block, as published (the card's own
-        values). Anything but a mapping — no seam, no coordinator
-        publish yet — publishes no block at all, so the properties keep
-        their defaults."""
-        source = self._pause_at_layer_block
-        block = source() if source is not None else None
-        return block if isinstance(block, Mapping) else {}
-
-    def _pause_at_layer_values(self, snapshot, anchor, layer_count):
-        """The pause block the POPOVER reads: the coordinator's rows and
-        schedule (never a second derivation of them), with the candidate
-        re-read for the layer the popover itself stands on — its
-        committed follower anchor while it holds one, else the live
-        layer it follows. Cura's Preview selection is a different
-        question, so only the candidate-independent keys cross
-        unchanged.
-
-        The candidate's own gates are re-derived with the same helpers
-        the card's are, over the same schedule read back out of the
-        rows: the button the popover draws must be armed exactly when
-        the coordinator would accept the request."""
-        block = self._published_pause_block()
-        if not block:
-            return {}
-        index = self._follower_layer_anchor
-        if index < 0:
-            index = _coerce_anchor(anchor)
-        # The END of the layer the popover stands on: a 1-based human
-        # layer, 0 while no layer is known (the card's own contract).
-        candidate = index + 1 if index >= 0 else 0
-        selected = candidate - 1 if candidate > 0 else None
-        items = block.get("pauseAtLayerItems") or []
-        manual = {item["layer"] - 1 for item in items if item.get("state") != "baked"}
-        baked = {item["layer"] - 1 for item in items if item.get("state") == "baked"}
-        baked_block = selected is not None and selected in baked
-        active = bool(block.get("pauseAtLayerActive"))
-        current = getattr(getattr(snapshot, "layer", None), "index", None)
-        total = getattr(getattr(snapshot, "layer", None), "total", None)
-        if total is None:
-            total = layer_count or None
-        scheduled = selected is not None and selected in manual
-        indexed = bool(layer_count)
-        can_toggle = indexed and not baked_block and pause_can_toggle(active, selected, current, total)
-        return {
-            "pauseAtLayerActive": active,
-            "pauseAtLayerCandidate": candidate,
-            "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
-            "pauseAtLayerSummary": block.get("pauseAtLayerSummary", ""),
-            "pauseAtLayerItems": items,
-            "pauseAtLayerUnavailableText": ("Print not indexed" if active and not indexed
-                                            else "a pause is baked into the gcode at this layer" if baked_block
-                                            else pause_unavailable(active, can_toggle, scheduled, current, selected)),
-            # The rows' own facts, unchanged by whose layer is selected.
-            "pauseAtLayerHasBaked": bool(block.get("pauseAtLayerHasBaked")),
-            "pauseAtLayerHasClearable": bool(block.get("pauseAtLayerHasClearable")),
-        }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def memory_accounting(self):
         """The model's memory story in one view: the service's RAM
@@ -2530,21 +2451,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             pinned = self._index_service.pinned_decoded_bytes()
         return dict({"packedBytes": packed, "decodedBytes": decoded,
                      "pinnedDecodedBytes": pinned}, **self.plate_renderer.accounting())
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     @pyqtSlot()
     def setFollowerGestureBake(self):
