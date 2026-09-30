@@ -21,6 +21,19 @@ from unittest.mock import patch
 from tests import composed_runtime_support as harness
 
 
+def local_url(path):
+    """The renderer's own spelling of a raster file.
+
+    png_file returns the QUrl.fromLocalFile form, and the sweeps resolve
+    a URL back to a path before they compare or unlink, so a hand-built
+    'file://' prefix only round trips on POSIX. On Windows it resolves
+    to nothing, the unlink raises into the caller's OSError guard and a
+    reference test then passes for the wrong reason.
+    """
+    from PyQt6.QtCore import QUrl
+    return QUrl.fromLocalFile(str(path)).toString()
+
+
 class PlateRenderControllerTests(harness.NativeRenderSchedulerTests):
     def controller(self, model):
         return model.plate_renderer
@@ -132,7 +145,7 @@ class PlateRenderControllerTests(harness.NativeRenderSchedulerTests):
         # repeat must not tear down the hold it is reporting.
         model = self.monitor()
         controller = self.controller(model)
-        url = "file:///tmp/mpf/held-nav.png"
+        url = local_url(pathlib.Path(controller._raster_cache_dir) / "held-nav.png")
         controller.hold_gesture_raster(url)
         self.assertEqual(controller._gesture_raster, url)
         controller.hold_gesture_raster(url)
@@ -177,8 +190,8 @@ class PlateRenderControllerTests(harness.NativeRenderSchedulerTests):
         dead = directory / "discard-dead.png"
         held.write_bytes(b"held")
         dead.write_bytes(b"dead")
-        held_url = "file://" + str(held)
-        dead_url = "file://" + str(dead)
+        held_url = local_url(held)
+        dead_url = local_url(dead)
         controller.hold_gesture_raster(held_url)
         controller._unlink_asset_files(("full", None, held_url, None, dead_url, None, None))
         self.assertTrue(held.exists(), "the discard sweep unlinked the gesture's held raster")
@@ -278,8 +291,9 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
             return image
 
         def vanished(image, directory, stem):
-            # The URL the job believes it wrote: the file never landed.
-            return "file://" + str(pathlib.Path(directory) / (stem + ".png"))
+            # The URL the job believes it wrote: a real spelling of the
+            # path, and the file never landed at it.
+            return local_url(pathlib.Path(directory) / (stem + ".png"))
 
         with patch.object(module, "render_layer_prefix", render), patch.object(module, "png_file", vanished):
             model.plate_renderer._schedule_rewind_checkpoints(surface)
