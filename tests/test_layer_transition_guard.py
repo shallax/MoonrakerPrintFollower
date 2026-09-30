@@ -29,9 +29,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 import unittest
 
-from mpf.printing.PrintState import LayerResolver
-from mpf.settings.PrinterConfig import PrinterConfig
-from mpf.printing.RemoteJobService import RemoteJobService
+from mpf.Printing.PrintState import LayerResolver
+from mpf.Settings.PrinterConfig import PrinterConfig
+from mpf.Printing.RemoteJobService import RemoteJobService
 from tests.qt_runtime_support import QT_AVAILABLE
 
 # The print's geometry: 0.2 mm layers, a first layer of the same height.
@@ -213,7 +213,7 @@ def _transition_index():
     sits exactly on a point of layer 1's toolpath — the coincidence that
     turned an early anchor into a published half-layer."""
     from array import array
-    from mpf.gcode.MotionIndex import LayerMotionIndex
+    from mpf.GCode.MotionIndex import LayerMotionIndex
 
     def offsets(count):
         return array("Q", [m * 10 for m in range(count)])
@@ -273,7 +273,7 @@ class PlateAnchorAtTheTransitionTests(unittest.TestCase):
         service.bind(self.job)
         index = _transition_index()
         service._view = self.qt.load("IndexView").IndexView(self.job, index)
-        from mpf.gcode.PlateProgress import prepare_layer
+        from mpf.GCode.PlateProgress import prepare_layer
         for layer in range(2):
             service._decoded_lru[layer] = prepare_layer(index, layer)
         return service

@@ -85,7 +85,7 @@ class MonitorConnectionTests(harness.MonitorConnectionTests):
                         "the cleared monitor publishes the absent shape")
 
     def test_the_poll_intervals_follow_the_session_policy(self):
-        from mpf.moonraker.MoonrakerSession import RequestCategory
+        from mpf.Moonraker.MoonrakerSession import RequestCategory
         self.client.session.forced = {RequestCategory.AUXILIARY: 4321}
         self.activate()
         self.assertEqual(4321, self.data._timers[RequestCategory.AUXILIARY].interval())
@@ -163,7 +163,7 @@ class MonitorRequestTests(harness.MonitorRequestTests):
         self.activate()
         self.client.effective_feed_mode = "websocket"
         self.data.later = harness.Mock()
-        from mpf.moonraker.MoonrakerSession import RequestCategory
+        from mpf.Moonraker.MoonrakerSession import RequestCategory
         before = len(self.client.transport.sent)
         self.assertTrue(self.data.request("objects", "GET", "printer/objects/list",
                                           lambda payload, error: None,

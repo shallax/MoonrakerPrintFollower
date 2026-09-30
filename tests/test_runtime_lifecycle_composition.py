@@ -1,5 +1,5 @@
 """Executable runtime lifecycle composition contracts."""
-from mpf.monitor.MonitorPublication import SIGNAL_GROUPS
+from mpf.Monitor.MonitorPublication import SIGNAL_GROUPS
 from tests import composed_runtime_support as harness
 
 class ComposedComponentTests(harness.ComposedComponentTests):
@@ -469,7 +469,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
                       "the demanded layer never reached the full cache")
 
     def test_service_failure_signals_are_logged(self):
-        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "application" / "PrintCoordinator.py").read_text(encoding="utf-8")
+        source = (harness.pathlib.Path(__file__).resolve().parents[1] / "mpf" / "Application" / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("files.failed.connect", source)
         self.assertIn("index.failed.connect", source)
 

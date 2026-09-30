@@ -60,7 +60,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         2 x backing rows (8 at 4x) and read 4x-wide live. The pin
         holds the footprint to the physical stroke plus the
         engine's own AA spread, on any engine."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0}
         raster = render_navigation_layer(
@@ -87,7 +87,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         independent raster presented at 400% must show the physical
         stroke scaled by the zoom (~1.3 logical rows), never the old
         floor's fixed footprint magnified to 8 presented rows."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.Plate.PlateQt import render_navigation_layer, png_file
         from PyQt6.QtCore import QPointF
         monitor, window, face = self._follower_popover()
         face.setProperty("lineScale", 0.7)
@@ -171,7 +171,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         a separately-painted grid layer (a second layer pans at its
         own pace). The 10 mm graduation's ink must sit in the
         raster itself."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0,
                     "bedWidth": 250.0, "bedDepth": 250.0}
@@ -194,7 +194,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         the grid and the toolpaths shift by EXACTLY the same pixels
         through a pan. Two layers (a canvas grid over the raster)
         lag and shift differently."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.Plate.PlateQt import render_navigation_layer, png_file
         from PyQt6.QtCore import QPointF
         monitor, window, face = self._follower_popover()
         face.setProperty("lineScale", 0.7)
@@ -355,7 +355,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         show NO printed geometry (only the grey base when enabled);
         the full and intermediate states keep their pictures, and a
         complete split draws the full layer."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         # A 21-motion stroke: a mid split paints a real prefix.
         stroke = [[20.0 + motion * 6.5, 125.0, float(motion)]
                   for motion in range(21)]
@@ -421,7 +421,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         a zoom-4 raster's 10 mm graduation paints ~1-2 columns,
         never the fixed 4 the old baked grid left at 400% (the live
         report's thick-grid complaint)."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0, "zoom": 4.0,
                     "bedWidth": 250.0, "bedDepth": 250.0}
@@ -538,7 +538,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         separated once the zoom resolves the gap beyond the stroke —
         the rejected floor widened the subpixel line into the
         neighbouring stroke's gap."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         two = {"classes": {"WALL-OUTER": [
             LINE[0],
             [[20.0, 125.5, 2.0], [150.0, 125.5, 3.0]],

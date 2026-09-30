@@ -222,7 +222,7 @@ class HarnessSpecTests(unittest.TestCase):
         #   * the MODEL is the single authority on whether it is up,
         #   * every leg that loads a print presses the button.
         cura = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "cura", "CuraIntegration.py")
+            os.path.abspath(__file__)))), "mpf", "CuraHost", "CuraIntegration.py")
         with open(cura, encoding="utf-8") as handle:
             integration = handle.read()
         self.assertNotIn("QMessageBox", integration)
@@ -230,7 +230,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("confirm_replace", integration)
 
         card_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "preview")
+            os.path.abspath(__file__)))), "mpf", "Preview")
         with open(os.path.join(card_dir, "MoonrakerPreviewCard.qml"), encoding="utf-8") as handle:
             qml = handle.read()
         # The prompt's body is its own document (ReplacePromptDialog.qml)
@@ -261,7 +261,7 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("visible: base.replacePromptVisible", qml)
 
         coordinator = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "application", "PrintCoordinator.py")
+            os.path.abspath(__file__)))), "mpf", "Application", "PrintCoordinator.py")
         with open(coordinator, encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn('self._presentation.publish({"replacePromptVisible": True})', source)

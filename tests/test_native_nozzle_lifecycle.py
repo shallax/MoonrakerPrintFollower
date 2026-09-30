@@ -4,7 +4,7 @@ piece, the compatibility-mode early-out, the activity/parent/visible
 repairs, and the happy path."""
 import unittest
 
-from mpf.cura.NativeNozzleLifecycle import keep_native_nozzle_visible
+from mpf.CuraHost.NativeNozzleLifecycle import keep_native_nozzle_visible
 
 
 class FakePass:

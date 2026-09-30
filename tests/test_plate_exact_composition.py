@@ -22,7 +22,7 @@ class ExactCompositionPolicyTests(unittest.TestCase):
 
     def setUp(self):
         self.engine = QJSEngine()
-        source = (Path(__file__).resolve().parents[1] / "mpf" / "plate" /
+        source = (Path(__file__).resolve().parents[1] / "mpf" / "Plate" /
                   "PlateExactComposition.js").read_text(encoding="utf-8")
         loaded = self.engine.evaluate(source.replace(".pragma library", ""))
         self.assertFalse(loaded.isError(), loaded.toString())

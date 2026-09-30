@@ -2,7 +2,7 @@
 
 import unittest
 
-from mpf.gcode.PlateSplitTracker import PlateSplitTracker
+from mpf.GCode.PlateSplitTracker import PlateSplitTracker
 
 
 class PlateSplitTrackerTests(unittest.TestCase):

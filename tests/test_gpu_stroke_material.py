@@ -19,7 +19,7 @@ class StrokeMaterialTests(unittest.TestCase):
 
     def test_material_ordering_shader_lifetime_and_uniform_layout(self):
         from PyQt6.QtGui import QColor, QMatrix4x4
-        from mpf.plate import GpuStrokeMaterial as module
+        from mpf.Plate import GpuStrokeMaterial as module
         first = module.FollowerStrokeMaterial(QColor(40, 80, 120, 128), width=4, aa=True)
         same = module.FollowerStrokeMaterial(QColor(40, 80, 120, 128), width=4, aa=True)
         wider = module.FollowerStrokeMaterial(QColor(40, 80, 120, 128), width=6, aa=True)
@@ -69,7 +69,7 @@ class StrokeMaterialTests(unittest.TestCase):
         self.assertEqual(values[24:28], (1.0, 2.5, 1.0, 1.0))
 
     def test_cancelled_pack_and_stdlib_optional_metrics(self):
-        from mpf.plate.GpuStrokeMaterial import _pack_stdlib, pack_shader
+        from mpf.Plate.GpuStrokeMaterial import _pack_stdlib, pack_shader
 
         cancelled = threading.Event()
         cancelled.set()

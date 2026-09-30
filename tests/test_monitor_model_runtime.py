@@ -617,7 +617,7 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_extrude_and_jog_selection_persists(self):
         # A live report: the chosen extrude options were
         # not saved between sessions.
-        from mpf.monitor.MoonrakerMonitorModel import _read_state
+        from mpf.Monitor.MoonrakerMonitorModel import _read_state
         model = self.monitor()
         self.deliver_state("standby")
         model.setExtrudeDistance(25)
@@ -1121,7 +1121,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(payload["sectionSizes"], {"info": 240.0})
 
     def test_the_store_delete_drops_only_the_named_keys(self):
-        from mpf.settings.StateStore import StateStore
+        from mpf.Settings.StateStore import StateStore
         import tempfile
         import os
         with tempfile.TemporaryDirectory() as directory:
@@ -1574,7 +1574,7 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_endstop_and_eta_surfaces(self):
         # The Improve-ETA action is a small download glyph beside the
         # Remaining value, not a full-width button row.
-        improve = harness.JOB_SECTION_QML[harness.JOB_SECTION_QML.index('Qt.resolvedUrl("../resources/svg/Download.svg")'):harness.JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
+        improve = harness.JOB_SECTION_QML[harness.JOB_SECTION_QML.index('Qt.resolvedUrl("../Resources/Svg/Download.svg")'):harness.JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
         self.assertIn("Download.svg", improve)
         self.assertNotIn("Improve ETA — download", harness.MONITOR_QML)
         for token in ("endstopItems", "endstopSummary",

@@ -45,7 +45,7 @@ fixed the abort. It is load-sensitive. The test already wraps
 
 ## Batch B — file-browser QML
 
-Five substeps. Leaves under `mpf/files/browser/`: toolbar, recents, directory
+Five substeps. Leaves under `mpf/Files/Browser/`: toolbar, recents, directory
 strip, search, filters, filter-option row, column chooser, grid, pagination.
 `FileGridHeader.qml` and `FileRowDelegate.qml` were deliberately NOT split out:
 the header and delegate consume the grid's own column geometry, so as separate

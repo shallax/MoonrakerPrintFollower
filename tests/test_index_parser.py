@@ -4,9 +4,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from mpf.gcode import GCodeParser
-from mpf.gcode.GCodeIndex import build_index_from_file
-from mpf.gcode.IndexHydrator import hydrate_layer_from_file
+from mpf.GCode import GCodeParser
+from mpf.GCode.GCodeIndex import build_index_from_file
+from mpf.GCode.IndexHydrator import hydrate_layer_from_file
 
 
 class TokenRecognitionTests(unittest.TestCase):

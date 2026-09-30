@@ -1,7 +1,7 @@
 """References the engine check cannot see, resolved the runtime way.
 
 A glyph whose URL misses the file is not a component error, it is an
-empty slot in the UI, so a document that lost its `../resources/svg/`
+empty slot in the UI, so a document that lost its `../Resources/Svg/`
 prefix on a move ships silently. A source that names a plugin file by
 path fails the same way: the module reads the wrong file, or the
 failure is swallowed and the code falls back.
@@ -228,44 +228,44 @@ class ResourceReferenceTests(unittest.TestCase):
         entrypoints = {(source.relative_to(PLUGINS.root).as_posix(), target.relative_to(PLUGINS.root).as_posix())
                        for source, _line, target in runtime_paths()}
         self.assertEqual(entrypoints, {
-            ("cura/MoonrakerOutputDevice.py", "files/transfers/MoonrakerUploadDialog.qml"),
-            ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorDashboard.qml"),
-            ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorBedMesh.qml"),
-            ("cura/MoonrakerFollowerMachineAction.py", "settings/MoonrakerFollowerConfiguration.qml"),
-            ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardPanelHost.qml"),
-            ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardOverlayHost.qml"),
-            ("whatsnew/WhatsNewOverlay.py", "whatsnew/WhatsNewOverlay.qml"),
-            ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
-            ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
+            ("CuraHost/MoonrakerOutputDevice.py", "Files/Transfers/MoonrakerUploadDialog.qml"),
+            ("CuraHost/MoonrakerOutputDevicePlugin.py", "Monitor/MoonrakerMonitorDashboard.qml"),
+            ("CuraHost/MoonrakerOutputDevicePlugin.py", "Monitor/MoonrakerMonitorBedMesh.qml"),
+            ("CuraHost/MoonrakerFollowerMachineAction.py", "Settings/MoonrakerFollowerConfiguration.qml"),
+            ("Preview/PreviewPresentation.py", "Preview/MoonrakerPreviewCardPanelHost.qml"),
+            ("Preview/PreviewPresentation.py", "Preview/MoonrakerPreviewCardOverlayHost.qml"),
+            ("WhatsNew/WhatsNewOverlay.py", "WhatsNew/WhatsNewOverlay.qml"),
+            ("Plate/GpuStrokeMaterial.py", "Resources/Shaders/stroke.vert.qsb"),
+            ("Plate/GpuStrokeMaterial.py", "Resources/Shaders/stroke.frag.qsb"),
         })
 
     def test_stale_upload_dialog_path_is_detected(self):
-        source = (PLUGINS.root / "cura/MoonrakerOutputDevice.py").read_text(encoding="utf-8")
+        source = (PLUGINS.root / "CuraHost/MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as directory:
             # Compare canonical paths on macOS (/var -> /private/var) and Windows (8.3 aliases).
             root = pathlib.Path(directory).resolve()
-            caller = root / "cura/MoonrakerOutputDevice.py"
+            caller = root / "CuraHost/MoonrakerOutputDevice.py"
             caller.parent.mkdir()
             caller.write_text(source, encoding="utf-8")
-            dialog = root / "files/transfers/MoonrakerUploadDialog.qml"
+            dialog = root / "Files/Transfers/MoonrakerUploadDialog.qml"
             dialog.parent.mkdir(parents=True)
             dialog.write_text("import QtQuick\nItem {}\n", encoding="utf-8")
             self.assertTrue(all(target.is_file() for _, _, target in runtime_paths(root)))
-            old = 'plugin_path("files", "transfers", "MoonrakerUploadDialog.qml")'
+            old = 'plugin_path("Files", "Transfers", "MoonrakerUploadDialog.qml")'
             self.assertIn(old, source)
-            caller.write_text(source.replace(old, 'plugin_path("monitor", "MoonrakerUploadDialog.qml")'),
+            caller.write_text(source.replace(old, 'plugin_path("Monitor", "MoonrakerUploadDialog.qml")'),
                               encoding="utf-8")
             missing = [target for _, _, target in runtime_paths(root) if not target.is_file()]
-            self.assertEqual(missing, [root / "monitor/MoonrakerUploadDialog.qml"])
+            self.assertEqual(missing, [root / "Monitor/MoonrakerUploadDialog.qml"])
 
     def test_missing_shader_and_unreadable_runtime_path_are_detected(self):
         with tempfile.TemporaryDirectory() as directory:
             # Compare canonical paths on macOS (/var -> /private/var) and Windows (8.3 aliases).
             root = pathlib.Path(directory).resolve()
             caller = root / "Shader.py"
-            caller.write_text('path = plugin_path("resources", "shaders", "missing.qsb")\n', encoding="utf-8")
+            caller.write_text('path = plugin_path("Resources", "Shaders", "missing.qsb")\n', encoding="utf-8")
             targets = [target for _, _, target in runtime_paths(root)]
-            self.assertEqual(targets, [root / "resources/shaders/missing.qsb"])
+            self.assertEqual(targets, [root / "Resources/Shaders/missing.qsb"])
             self.assertFalse(targets[0].exists())
             caller.write_text('path = plugin_path(dynamic_name)\n', encoding="utf-8")
             with self.assertRaisesRegex(AssertionError, "not explicit"):

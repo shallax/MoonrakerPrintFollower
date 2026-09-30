@@ -48,7 +48,7 @@ class GpuCanvasIsolationTests(harness.PlateFaceRenderTests):
 
     def test_layer_ghost_and_reverse_scrubbing_never_read_software_geometry(self):
         from PyQt6.QtCore import pyqtProperty
-        from mpf.plate.PlateQt import PlateLayer
+        from mpf.Plate.PlateQt import PlateLayer
 
         class CountingLayer(PlateLayer):
             def __init__(self, payload):

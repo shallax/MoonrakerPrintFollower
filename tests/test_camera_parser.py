@@ -2,8 +2,8 @@
 import unittest
 from unittest import mock
 
-from mpf.monitor.camera.CameraStatistics import CameraStatistics
-from mpf.monitor.camera.MJPEGParser import MJPEGParser
+from mpf.Monitor.Camera.CameraStatistics import CameraStatistics
+from mpf.Monitor.Camera.MJPEGParser import MJPEGParser
 
 
 class CameraParserTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class CameraParserTests(unittest.TestCase):
         self.assertEqual(self.statistics.frames_parsed, 5)
 
     def test_snapshot_limit_discards_the_partial_response(self):
-        with mock.patch('mpf.monitor.camera.MJPEGParser.MAX_IN_PROGRESS_FRAME_BYTES', 4):
+        with mock.patch('mpf.Monitor.Camera.MJPEGParser.MAX_IN_PROGRESS_FRAME_BYTES', 4):
             self.assertTrue(self.parser.append_snapshot(b'ab'))
             self.assertTrue(self.parser.append_snapshot(b'cd'))
             self.assertEqual(self.parser.take_snapshot(), b'abcd')

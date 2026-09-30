@@ -25,9 +25,9 @@ from unittest.mock import patch
 
 import mpf
 
-from mpf.files.browser.FileFormatting import (file_disk_text, file_duration_short, file_filament, file_row_payload, file_size, file_temperature, file_timestamp)
-from mpf.monitor.MonitorFormatting import (chart_label, chart_temperature_objects, core_values, day_offset_suffix, duration, endstop_values, estimate_remaining, factor_percent, fan_writable, filament_diameter, filament_total_mm_from_file, friendly, layer_readout, height_readout, literal_default, mesh_profiles, number, object_kind, parse_bed_mesh, parse_mcu_stats, peripheral_values, preview_eta_text, print_job_caption, result, wanted_object, format_bytes, normalise_mesh, filament_total_mm_from_gcode, infer_macro_parameters, preview_block, preview_temperature_pair)
-from mpf.monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
+from mpf.Files.Browser.FileFormatting import (file_disk_text, file_duration_short, file_filament, file_row_payload, file_size, file_temperature, file_timestamp)
+from mpf.Monitor.MonitorFormatting import (chart_label, chart_temperature_objects, core_values, day_offset_suffix, duration, endstop_values, estimate_remaining, factor_percent, fan_writable, filament_diameter, filament_total_mm_from_file, friendly, layer_readout, height_readout, literal_default, mesh_profiles, number, object_kind, parse_bed_mesh, parse_mcu_stats, peripheral_values, preview_eta_text, print_job_caption, result, wanted_object, format_bytes, normalise_mesh, filament_total_mm_from_gcode, infer_macro_parameters, preview_block, preview_temperature_pair)
+from mpf.Monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
                                         R_BUSY, R_CLEARED_PAUSE, R_DISCONNECTED, R_ESTOPPED,
                                         R_LOCKED, R_NO_PAUSED_PRINT, R_NOTHING_TO_PAUSE,
                                         R_NOT_PRINTING, R_PAUSE_FIRST, R_PAUSED_NOTE,
@@ -36,20 +36,20 @@ from mpf.monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALR
                                         can_restart, can_resume, can_set_absolute,
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
-from mpf.monitor.temperature.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
+from mpf.Monitor.Temperature.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
                                                chart_payload, series_metadata)
-from mpf.printing.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
-from mpf.settings.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
+from mpf.Printing.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
+from mpf.Settings.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
                                           _record, _remove_old_state_file, _verify_new_files,
                                           _write_new_files, read_source, run_migration,
                                           split_record, write_backup)
-from mpf.settings.PluginPersistence import PluginPersistence
-from mpf.preview.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
+from mpf.Settings.PluginPersistence import PluginPersistence
+from mpf.Preview.PreviewFormatting import (pause_can_toggle, pause_eta, pause_items, pause_summary,
                                        pause_unavailable, status_icon, status_text)
-from mpf.settings.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
+from mpf.Settings.PrinterConfig import (CAMERA_FPS_DEFAULT, CAMERA_FPS_MAX, CAMERA_FPS_MIN, FeedMode,
                                    PrinterConfig, PrinterConfigStore, normalise_url,
                                    normalise_temperature_chart, upload_path_safe)
-from mpf.settings.StateStore import StateStore
+from mpf.Settings.StateStore import StateStore
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 from tests.source_root import SourceRoot
 
@@ -70,16 +70,16 @@ if QT_AVAILABLE:
     _RUNTIME = runtime()
     _QT = _RUNTIME.__enter__()
 
-    from mpf.monitor.camera.CameraBridge import CameraBridge
-    from mpf.gcode.GCodeIndexService import GCodeIndexService
-    from mpf.gcode.IndexView import IndexView
-    from mpf.gcode.MotionIndex import LayerMotionIndex
-    from mpf.monitor.camera.MonitorCamera import MonitorCamera
-    from mpf.monitor.controls.MonitorCommands import MonitorCommands
-    from mpf.monitor.controls.MonitorTuning import MonitorTuning
-    from mpf.printing.PauseController import PauseController
-    from mpf.cura.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
-    from mpf.monitor.layout.UiStateStore import UiStateStore
+    from mpf.Monitor.Camera.CameraBridge import CameraBridge
+    from mpf.GCode.GCodeIndexService import GCodeIndexService
+    from mpf.GCode.IndexView import IndexView
+    from mpf.GCode.MotionIndex import LayerMotionIndex
+    from mpf.Monitor.Camera.MonitorCamera import MonitorCamera
+    from mpf.Monitor.Controls.MonitorCommands import MonitorCommands
+    from mpf.Monitor.Controls.MonitorTuning import MonitorTuning
+    from mpf.Printing.PauseController import PauseController
+    from mpf.CuraHost.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
+    from mpf.Monitor.Layout.UiStateStore import UiStateStore
 
 
 def observation(**overrides):
@@ -1536,7 +1536,7 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
             with open(destination, "wb") as handle:
                 handle.write(b"[general]\n")
 
-        with patch("mpf.settings.PersistenceMigration.os.replace", side_effect=truncate):
+        with patch("mpf.Settings.PersistenceMigration.os.replace", side_effect=truncate):
             self.assertFalse(write_backup(self.cura_cfg, target))
         with open(target, "rb") as handle:
             self.assertEqual(handle.read(), b"[general]\n")
@@ -2580,7 +2580,7 @@ if QT_AVAILABLE:
             # included: the pass's own hydration hands the interpreter
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
-            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
+            with patch("mpf.GCode.IndexTasks.hydrate_layer_from_file",
                        side_effect=lambda index, path, layer, should_stop=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
@@ -2619,7 +2619,7 @@ if QT_AVAILABLE:
                 return original(kind, work, lease)
 
             self.service._submit = counted
-            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
+            with patch("mpf.GCode.IndexTasks.hydrate_layer_from_file",
                        side_effect=OSError("the file went away")):
                 self.service._advance()
                 self.assertEqual(submitted, ["fullprep"],
@@ -3394,7 +3394,7 @@ class SettingsPageMigrationMirrorTests(unittest.TestCase):
                 "UM.Settings.DefinitionContainer": SimpleNamespace(
                     DefinitionContainer=type("DefinitionContainer", (), {})),
             }):
-            from mpf.cura.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
+            from mpf.CuraHost.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
             action = MoonrakerFollowerMachineAction(application, follower)
         self.addCleanup(action.deleteLater)
         return action
@@ -3480,14 +3480,14 @@ class PluginPackageCoverageTests(unittest.TestCase):
         output = SimpleNamespace(name="output")
         action = SimpleNamespace(name="action")
         fakes = {name: ModuleType(name) for name in (
-            "mpf.cura.MoonrakerPrintFollower", "mpf.cura.MoonrakerOutputDevicePlugin",
-            "mpf.cura.MoonrakerFollowerMachineAction", "mpf.diagnostics.LeakProbe")}
-        fakes["mpf.cura.MoonrakerPrintFollower"].MoonrakerPrintFollower = lambda app: follower
-        fakes["mpf.cura.MoonrakerOutputDevicePlugin"].MoonrakerOutputDevicePlugin = (
+            "mpf.CuraHost.MoonrakerPrintFollower", "mpf.CuraHost.MoonrakerOutputDevicePlugin",
+            "mpf.CuraHost.MoonrakerFollowerMachineAction", "mpf.Diagnostics.LeakProbe")}
+        fakes["mpf.CuraHost.MoonrakerPrintFollower"].MoonrakerPrintFollower = lambda app: follower
+        fakes["mpf.CuraHost.MoonrakerOutputDevicePlugin"].MoonrakerOutputDevicePlugin = (
             lambda app, owner: output)
-        fakes["mpf.cura.MoonrakerFollowerMachineAction"].MoonrakerFollowerMachineAction = (
+        fakes["mpf.CuraHost.MoonrakerFollowerMachineAction"].MoonrakerFollowerMachineAction = (
             lambda app, owner, output_plugin: action)
-        fakes["mpf.diagnostics.LeakProbe"].start_leak_probe = (
+        fakes["mpf.Diagnostics.LeakProbe"].start_leak_probe = (
             lambda runtime, application: probed.append((runtime, application)))
         with patch.dict(sys.modules, fakes):
             wired = mpf.register(app)

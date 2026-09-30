@@ -178,7 +178,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The sparse-repair regression: 0,1,3,4 valid and
         # 2 missing — the repair regenerates 2 and COPIES the valid
         # entries into the new file; nothing complementary-holes.
-        from mpf.gcode.PlateProgress import decode_layer
+        from mpf.GCode.PlateProgress import decode_layer
         writer = self.store.open_for_write("print-key", 5)
         for layer in (0, 1, 3, 4):
             self.store.append(writer, layer, self._payload(layer))
@@ -605,7 +605,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.service._prepared.persist(0, self._payload(0), len(self.service.view.ranges))
         self.service._full_next = len(self.service._view.ranges)
         self.service._prepared.saved = False
-        from mpf.gcode.PreparedStore import PreparedCache
+        from mpf.GCode.PreparedStore import PreparedCache
         real_finish = PreparedCache.finish_write
         attempts = []
 
@@ -856,7 +856,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # cost the move removes. The store's append is recorded through
         # the class, so the identity assertion holds for every path that
         # can reach it.
-        from mpf.gcode.PreparedStore import PreparedCache
+        from mpf.GCode.PreparedStore import PreparedCache
         index = harness.make_index(layers=6, motions=40)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
@@ -914,7 +914,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # new writer WITHOUT re-walking the layer — the codec's
         # refusal stands across sessions, the entry never becomes an
         # EMPTY hole, and only the genuine hole regenerates.
-        from mpf.gcode.PreparedStore import STATE_UNCACHEABLE
+        from mpf.GCode.PreparedStore import STATE_UNCACHEABLE
         writer = self.store.open_for_write("print-key", 5)
         for layer in (0, 1, 4):
             self.store.append(writer, layer, self._payload(layer))
@@ -1072,7 +1072,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                              "a checkpointed layer never round-tripped")
         # Session B: fresh stores, fresh service, the same identity
         # (the same process — a real disk-backed restart).
-        from mpf.gcode.PreparedStore import PreparedCache
+        from mpf.GCode.PreparedStore import PreparedCache
         self.store = PreparedCache(self._dir.name)
         module = self.qt.load("GCodeIndexService")
         self.service = module.GCodeIndexService(self.files, object(),
@@ -1120,7 +1120,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # and different geometry (40 motions vs 20) over the SAME
         # layer count, so a layer-count check cannot save us.
         self.service.close()
-        from mpf.gcode.PreparedStore import PreparedCache
+        from mpf.GCode.PreparedStore import PreparedCache
         self.store = PreparedCache(self._dir.name)
         self.service = module.GCodeIndexService(self.files, object(),
                                                 prepared=self.store)
@@ -1187,7 +1187,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             "print-key", self.store.load_table("print-key")["table"], 0)
 
         self.service.close()
-        from mpf.gcode.PreparedStore import PreparedCache
+        from mpf.GCode.PreparedStore import PreparedCache
         self.store = PreparedCache(self._dir.name)
         self.service = module.GCodeIndexService(self.files, object(),
                                                 prepared=self.store)

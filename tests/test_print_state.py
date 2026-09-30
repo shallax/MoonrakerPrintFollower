@@ -5,9 +5,9 @@ from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 import unittest
 
-from mpf.printing.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
-from mpf.settings.PrinterConfig import PrinterConfig
-from mpf.printing.RemoteJobService import RemoteJobService
+from mpf.Printing.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.Settings.PrinterConfig import PrinterConfig
+from mpf.Printing.RemoteJobService import RemoteJobService
 
 
 class PrintStateTests(unittest.TestCase):

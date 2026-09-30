@@ -405,7 +405,7 @@ def runtime():
             Importing it as a submodule of the stand-in package looks
             equivalent and is not: a module reached that way has its
             relative imports rewritten against the stand-in, so a
-            cross-domain ``from ..gcode.Foo import`` climbs above the
+            cross-domain ``from ..GCode.Foo import`` climbs above the
             package root and the import fails. The real dotted module is
             imported instead — which also means a test that patches what
             it loaded patches the object the rest of the tree imported,

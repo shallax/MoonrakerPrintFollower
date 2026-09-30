@@ -19,7 +19,7 @@ def main():
                 break
     if not executable:
         parser.error('Install Qt Shader Tools or supply --qsb; release packages already contain the bundles')
-    directory = Path(__file__).resolve().parents[1] / 'mpf' / 'resources' / 'shaders'
+    directory = Path(__file__).resolve().parents[1] / 'mpf' / 'Resources' / 'Shaders'
     for name in ('stroke.vert', 'stroke.frag'):
         source = directory / name
         # Format 64 is readable by Qt 6.4 and later. Cura 5.7's pinned

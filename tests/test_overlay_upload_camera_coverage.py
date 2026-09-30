@@ -48,7 +48,7 @@ if QT_AVAILABLE:
 
         def __init__(self):
             super().__init__()
-            from mpf.whatsnew.WhatsNew import entries
+            from mpf.WhatsNew.WhatsNew import entries
             self.checks = 0
             self.dismissals = 0
             self._content = entries()
