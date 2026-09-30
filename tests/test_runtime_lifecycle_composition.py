@@ -313,13 +313,13 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         model = self.monitor()
         payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, 0.0, 1.0]]]},
                    "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2}
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
 
         def layers(anchor):
             return {"prev": payload if anchor > 0 else None,
                     "current": payload, "next": payload}
-        w1 = model._qt_window(surface, layers(200), 200)
-        w2 = model._qt_window(surface, layers(201), 201)
+        w1 = model.plate_renderer.window_for(surface, layers(200), 200)
+        w2 = model.plate_renderer.window_for(surface, layers(201), 201)
         self.assertIs(w1["current"], w2["prev"],
                       "adjacent windows rebuilt the shared render object")
         self.assertIs(w1["next"], w2["current"],
@@ -327,7 +327,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # The layer object carries its motion count across roles.
         self.assertEqual(w1["current"].motions, 2)
         # A -> B -> A: the same retained object (capacity 6).
-        w3 = model._qt_window(surface, layers(200), 200)
+        w3 = model.plate_renderer.window_for(surface, layers(200), 200)
         self.assertIs(w3["current"], w1["current"],
                       "the revisit rebuilt the retained render object")
 
@@ -336,7 +336,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # N and N+1 keep their retained rasters; and a full 100%
         # seek publishes no scrub vector (finding 4's gate).
         model = self.monitor()
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         # The scheduler only demands once a context exists — feed it
         # and let the staged flush land.
         model.setFollowerPlot("popover", 0.0, 0.0, 1.0, 1.0, 0.0, 300.0)
@@ -348,20 +348,20 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         def layers(anchor):
             return {"prev": payload if anchor > 0 else None,
                     "current": payload, "next": payload}
-        model._qt_window(surface, layers(200), 200)
+        model.plate_renderer.window_for(surface, layers(200), 200)
         counts = dict(surface.render_count)
-        model._qt_window(surface, layers(201), 201)
+        model.plate_renderer.window_for(surface, layers(201), 201)
         self.assertEqual(surface.render_count.get(200), counts.get(200),
                          "the adjacent window re-rendered the retained layer")
         self.assertEqual(surface.render_count.get(201), counts.get(201),
                          "the adjacent window re-rendered the retained layer")
         # The 100% seek carries no scrub vector; the partial split does.
         full = {"layers": {"current": payload}, "split": 2, "motionTotal": 2}
-        self.assertIsNone(model._scrub_vector_for(full))
+        self.assertIsNone(model.plate_renderer.scrub_vector(full))
         empty = {"layers": {"current": payload}, "split": 0, "motionTotal": 2}
-        self.assertIsNone(model._scrub_vector_for(empty))
+        self.assertIsNone(model.plate_renderer.scrub_vector(empty))
         partial = {"layers": {"current": payload}, "split": 1, "motionTotal": 2}
-        self.assertIsNotNone(model._scrub_vector_for(partial))
+        self.assertIsNotNone(model.plate_renderer.scrub_vector(partial))
 
     def test_the_follower_view_signal_precedes_the_plate_payloads(self):
         # The signal ordering: followerAttached must

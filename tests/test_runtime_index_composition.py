@@ -322,11 +322,11 @@ class ComposedComponentTests(harness.ComposedComponentTests):
 
     def test_the_render_cache_is_bounded_and_generation_isolated(self):
         model = self.monitor()
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = {"classes": {}, "travels": [], "travelStarts": [],
                    "travelEnds": [], "motions": 1}
         for layer in range(10):
-            model._qt_layer(surface, payload, layer)
+            model.plate_renderer._qt_layer(surface, payload, layer)
         self.assertLessEqual(len(surface.layers), 6)
         self.assertNotIn(0, surface.layers,
                          "the oldest render object never evicted")

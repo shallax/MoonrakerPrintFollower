@@ -10,7 +10,7 @@ class RendererOnlySeekBenchmarks(harness.RendererOnlySeekBenchmarks):
         # Request/read/decode/publish stages are deliberately absent.
         model = self.monitor()
         self._feed(model, "popover", width=563, height=492)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         print("seek matrix (popover 563x492, ms):")
         colds = {}
 
@@ -50,24 +50,24 @@ class RendererOnlySeekBenchmarks(harness.RendererOnlySeekBenchmarks):
         # the full one.
         model = self.monitor()
         self._feed(model, "popover", width=563, height=492)
-        model._seek_trace_enabled = True
+        model.plate_renderer._seek_trace_enabled = True
         # The harness drives _qt_window directly (no slider slots):
         # the trace opens on the seek's entry mark.
-        model._trace("T1 seek entry", {"layer": 200})
-        surface = model._plate_surfaces["popover"]
+        model.plate_renderer.trace("T1 seek entry", {"layer": 200})
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._dense(500000)
         start = harness.time.monotonic()
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None},
                          200, "motion index", 250000)
         self._pump_rasters(model, "popover")
-        kinds = [entry.get("kind") for entry in model._seek_trace
+        kinds = [entry.get("kind") for entry in model.plate_renderer._seek_trace
                  if entry["stage"] == "T9 raster start"]
         self.assertTrue(kinds, "the trace recorded no raster demand")
         self.assertEqual(kinds[0], "prefix",
                          "the prefix did not run before the full raster")
         commits = [(entry["ms"], entry.get("kind"))
-                   for entry in model._seek_trace
+                   for entry in model.plate_renderer._seek_trace
                    if entry["stage"] == "T11 raster committed"]
         for ms, kind in commits:
             print("T11 %s committed at %7.1f ms" % (kind, ms))
@@ -82,16 +82,16 @@ class RendererOnlySeekBenchmarks(harness.RendererOnlySeekBenchmarks):
         # long the commit waited on it — the seek's perceived
         # latency includes the wait, so the trace carries it.
         model = self.monitor()
-        model._seek_trace_enabled = True
+        model.plate_renderer._seek_trace_enabled = True
         model.seekAnchorTicked()
         model.setFollowerLayerAnchor(5)
-        entry = model._seek_trace[0]
+        entry = model.plate_renderer._seek_trace[0]
         self.assertEqual(entry["stage"], "T1 seek entry")
         self.assertGreaterEqual(entry.get("debounce_ms", 0.0), 0.0)
         # A programmatic seek without a tick carries no debounce.
-        model._seek_trace = []
+        model.plate_renderer._seek_trace = []
         model.setFollowerLayerAnchor(7)
-        self.assertNotIn("debounce_ms", model._seek_trace[0])
+        self.assertNotIn("debounce_ms", model.plate_renderer._seek_trace[0])
 
     def test_the_png_transport_cost(self):
         # The complete PNG transport (encode + write + atomic

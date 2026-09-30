@@ -189,12 +189,14 @@ correct package ownership.
 | `MoonrakerOutputDevicePlugin.py` | Cura output-device registration and adapter construction | Upload policy |
 | `MoonrakerPrintFollower.py` | Stable Cura extension facade and runtime ownership | Domain algorithms |
 | `PlateProgress.py` | Prepared layer geometry, motion ranges and display payload construction | Qt scene graph or commands |
+| `PlateRenderController.py` | The native renderer: per-surface render contexts, bounded demand scheduling, raster workers and their tickets, cache assets and decoded pins | Print state, presentation settings or Qt publication |
 | `PlateQt.py` | Qt-facing layer assets and preparation adapters | Printer tracking policy |
 | `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
 | `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
 | `PrintCoordinator.py` | Cross-domain orchestration over injected services and immutable observations | Protocol or geometry algorithms |
 | `PrintIdentity.py` | Pure current-print identity checks | I/O or mutable lifecycle |
 | `PrintStartOwner.py` | Print-start acknowledgement and operation lifetime | HTTP transport |
+| `RenderSurface.py` | One surface's render record: view/plot context, retained layer wrappers, demand, navigation slot and generation | Scheduling, workers or resource lifetime |
 | `TravelStates.py` | Per-tool retraction balance and travel classification | Rendering or networking |
 | `UiStateStore.py` | Persistent section-layout UI state through the shared store | Monitor domain state |
 | `FeatureTracker.py` | Slicer feature, extrusion and travel state while scanning a layer | Files, caches or scheduling |
@@ -564,6 +566,17 @@ Monitor data is a deeply frozen snapshot. Controllers receive data/command/tunin
 capabilities, not the model or follower. Tuning owns its revisions and debounce
 lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
+
+The native render path sits behind that model, not inside it.
+`PlateRenderController` owns both surfaces' render records, their one-job-at-a-time
+demand schedulers, the raster workers and the tickets that identify them, the
+per-instance raster cache directory, the assets a live face still references and
+the decoded payload pins the retained wrappers hold. The model keeps the Qt facade:
+its properties and slots become delegates over the snapshots the controller returns,
+and every renderer result enters the existing publication transaction rather than a
+second stream of UI updates. The controller is handed narrow capabilities — an owner
+for decoded pinning, callables for attach, the popover gate and the presentation
+scene inputs, and the model's publication — and never reaches back into the model.
 
 The Monitor's state lives in the plugin's own persistence (4.5.0): one
 plugin-owned folder beside cura.cfg holding the settings document, the

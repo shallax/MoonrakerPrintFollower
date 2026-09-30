@@ -7,7 +7,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # N+2; N+1 -> N and A -> B -> A are pure raster hits.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         self._pump_rasters(model, "popover")
         counts = dict(surface.render_count)
@@ -32,13 +32,13 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # render key, and the full/prefix dimensions alike.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
         model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0, 2.0)
         self.qt.events(5)
         self.assertEqual(surface.view["dpr"], 2.0,
                          "the backing scale never reached the surface's view")
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
@@ -59,9 +59,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # and the promoted buffer retires its predecessor's file.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -86,7 +86,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # A CONTENT change (the split): the background update
         # promotes a new URL. The old file enters bounded retirement;
         # presentation can still hold it independently of the wrapper.
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -95,7 +95,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
             harness.time.sleep(0.01)
         self.assertNotEqual(surface.nav["url"], nav_url,
                             "the split change never updated the navigation raster")
-        model._prune_raster_cache(keep=0)
+        model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(harness.os.path.exists(QUrl(nav_url).toLocalFile()),
                          "the retired navigation buffer kept its file")
         # The legend checkboxes and the line width are the scene's
@@ -129,9 +129,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # its file unlinks and the ready URL stands.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -144,13 +144,13 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         stale_key = surface.nav["key"]
         stale_ticket = ("popover", -1, 0, 0, stale_key, "nav", 50,
                         surface.job_epoch - 1, 99)
-        model._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+        model.plate_renderer._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
                               "file:///tmp/mpf/raster-probe/stale-nav.png", stale_key),
                              stale_ticket)
         self.assertEqual(surface.nav["url"], ready,
                          "a stale epoch's navigation raster promoted")
         # A key mismatch (the demand moved on) discards too.
-        model._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
+        model.plate_renderer._nav_committed(("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
                               "file:///tmp/mpf/raster-probe/other-nav.png",
                               ("other-key",)), ("popover", -1, 0, 0,
                                                 ("other-key",), "nav", 50,
@@ -172,9 +172,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # starts attached (the live-follow default), whose compatible
         # gate and window throttle would mask the exact-match policy
         # these tests pin.
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         submitted = []
         real_job = module._RasterJob
 
@@ -191,7 +191,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
 
         with harness.patch.object(module, "_RasterJob", CountingJob), \
                 harness.patch.object(module, "render_navigation_layer", failing):
-            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                              5, "motion index", 50)
             model._publish()
             self.qt.events(5)
@@ -216,7 +216,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # Detached now the anchor exists: the attached compatible
         # gate and window throttle would mask the exact-match policy.
         model.setFollowerAttached(False)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -236,9 +236,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self._feed(model, "popover", width=400, height=300)
         # Detached: the follower starts attached, and the attached
         # throttle would defer the moved demand this test schedules.
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -251,7 +251,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model.setFollowerAttached(False)
         # A new demand schedules a second job; the print switches
         # while it is still in flight.
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
         self.qt.events(5)
         self.assertIsNotNone(surface.nav["job"],
@@ -266,10 +266,10 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                           "the switch kept the old failure latch")
         # The old job's late terminals stay inert whatever they carry.
         from PyQt6.QtGui import QImage
-        model._nav_committed(("cancelled",),
+        model.plate_renderer._nav_committed(("cancelled",),
                              ("popover", -1, 0, 0, ("stale",), "nav", 120,
                               old_epoch, 99))
-        model._nav_committed(
+        model.plate_renderer._nav_committed(
             ("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
              "file:///tmp/mpf/raster-probe/old-print.png", ("stale",)),
             ("popover", -1, 0, 0, ("stale",), "nav", 120, old_epoch, 99))
@@ -278,7 +278,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                          "an old print's terminal republished its raster")
         # The new print schedules its own warm raster as soon as its
         # data arrives — the slot is genuinely free.
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          3, "motion index", 10)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -292,9 +292,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         from PyQt6.QtCore import QUrl
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -304,12 +304,12 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         nav_file = QUrl(surface.nav["url"]).toLocalFile()
         self.assertTrue(harness.os.path.exists(nav_file))
         # A prune that keeps NOTHING still keeps the retained asset.
-        model._prune_raster_cache(keep=0)
+        model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(harness.os.path.exists(nav_file),
                         "the prune unlinked the retained navigation asset")
         # The retirement drops the protection; the next prune collects.
-        model._retire_navigation(surface)
-        model._prune_raster_cache(keep=0)
+        model.plate_renderer.retire_navigation(surface)
+        model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(harness.os.path.exists(nav_file),
                          "the retired navigation asset never got collected")
 
@@ -319,9 +319,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # hot-retry), and no key ever reads as ready.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         submitted = []
         real_job = module._RasterJob
 
@@ -333,7 +333,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
 
         with harness.patch.object(module, "_RasterJob", CountingJob), \
                 harness.patch.object(module, "png_file", return_value=""):
-            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                              5, "motion index", 50)
             model._publish()
             self.qt.events(5)
@@ -364,20 +364,20 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self._feed(model, "popover", width=400, height=300)
         # Detached: the attached compatible-raster gate would let the
         # obsolete split-only job promote.
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         # Detached now the anchor exists: the attached compatible
         # gate would let the obsolete split-only job promote.
         model.setFollowerAttached(False)
-        key_a = model._navigation_key(surface)
+        key_a = model.plate_renderer._navigation_key(surface)
         self.assertIsNotNone(key_a, "the first demand never keyed")
         # The demand moves BEFORE A completes: the slot is busy, so B
         # is deferred and A stays pending.
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 80)
-        key_b = model._navigation_key(surface)
+        key_b = model.plate_renderer._navigation_key(surface)
         self.assertNotEqual(key_b, key_a, "the demand never changed")
         self.assertIsNotNone(surface.nav["job"],
                              "the deferred demand lost its pending job")
@@ -396,10 +396,10 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # A→B→A: the demand returns to A before the stale job lands —
         # identity, not sequence: A's completion promotes because the
         # demand IS A again.
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 90)
         self._pump_rasters(model, "popover")
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
@@ -422,7 +422,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
             service._decoded_sizes[layer] = 5000
         self._feed(model, "popover")
         self._window(model, "popover", 5)
-        popover = model._plate_surfaces["popover"]
+        popover = model.plate_renderer._surfaces["popover"]
         self.assertEqual(set(service._decoded_pins), set(popover.layers.keys()),
                          "the pins do not track the wrappers")
         self._feed(model, "mini", width=90, height=90)
@@ -444,7 +444,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         for _ in range(200):
             self.qt.events(5)
             if all(surface.job is None
-                   for surface in model._plate_surfaces.values()):
+                   for surface in model.plate_renderer._surfaces.values()):
                 break
 
     def test_the_raster_prune_skips_live_references_and_temps(self):
@@ -455,7 +455,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         self._window(model, "popover", 5)
-        directory = model._raster_cache_dir
+        directory = model.plate_renderer._raster_cache_dir
         old = harness.os.path.join(directory, "old.png")
         live = harness.os.path.join(directory, "live.png")
         temp = harness.os.path.join(directory, "job.png.tmp-99")
@@ -463,16 +463,16 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
             with open(path, "wb") as handle:
                 handle.write(b"x")
         from PyQt6.QtCore import QUrl
-        model._plate_surfaces["popover"].layers[5]._raster_data = \
+        model.plate_renderer._surfaces["popover"].layers[5]._raster_data = \
             QUrl.fromLocalFile(live).toString()
-        model._prune_raster_cache(keep=0)
+        model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(harness.os.path.exists(old), "the unreferenced file survived")
         self.assertTrue(harness.os.path.exists(live), "the live reference was unlinked")
         self.assertTrue(harness.os.path.exists(temp), "the in-flight temp was unlinked")
         # Quiesce the submitted job before the teardown deletes the
         # model: a straggler's commit on a deleted model is the
         # teardown segfault.
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         if surface.job is not None:
             surface.job["cancel"].set()
         for _ in range(200):
@@ -489,7 +489,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         self._window(model, "popover", 5)
-        directory = model._raster_cache_dir
+        directory = model.plate_renderer._raster_cache_dir
         sub = harness.os.path.join(directory, "sub")
         harness.os.makedirs(sub, exist_ok=True)
         live = harness.os.path.join(directory, "spelled-live.png")
@@ -500,12 +500,12 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # through the round trip, which is the shape the Windows leg's
         # '/' spelling takes on this platform.
         spelled = harness.os.path.join(sub, "..", "spelled-live.png")
-        model._plate_surfaces["popover"].layers[5]._raster_data = \
+        model.plate_renderer._surfaces["popover"].layers[5]._raster_data = \
             QUrl.fromLocalFile(spelled).toString()
-        model._prune_raster_cache(keep=0)
+        model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(harness.os.path.exists(live),
                         "the reference's own spelling did not protect the file")
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         if surface.job is not None:
             surface.job["cancel"].set()
         for _ in range(200):
@@ -516,16 +516,16 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_two_models_own_independent_raster_directories(self):
         model_a = self.monitor()
         model_b = self.monitor()
-        self.assertNotEqual(model_a._raster_cache_dir, model_b._raster_cache_dir)
+        self.assertNotEqual(model_a.plate_renderer._raster_cache_dir, model_b.plate_renderer._raster_cache_dir)
         self._feed(model_a, "popover", width=400, height=300)
         payload = self._payload(100)
-        a_surface = model_a._plate_surfaces["popover"]
-        model_a._qt_window(a_surface, {"prev": None, "current": payload,
+        a_surface = model_a.plate_renderer._surfaces["popover"]
+        model_a.plate_renderer.window_for(a_surface, {"prev": None, "current": payload,
                                        "next": None}, 5, "motion index", None)
         self._pump_rasters(model_a, "popover")
-        self.assertEqual(harness.os.listdir(model_b._raster_cache_dir), [],
+        self.assertEqual(harness.os.listdir(model_b.plate_renderer._raster_cache_dir), [],
                          "model A wrote into model B's directory")
-        self.assertGreater(len(harness.os.listdir(model_a._raster_cache_dir)), 0)
+        self.assertGreater(len(harness.os.listdir(model_a.plate_renderer._raster_cache_dir)), 0)
 
     def test_the_raster_commit_runs_on_the_owner_thread(self):
         # : the worker hands the images through
@@ -533,7 +533,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # fires) runs on the model's thread.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         from PyQt6.QtCore import QThread
         threads = []
