@@ -319,6 +319,40 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertEqual(coordinator._loads._load_job, coordinator.snapshot.job_key)
         self.assertEqual(parts.cura.loads, [])
 
+    def test_an_index_arriving_mid_load_readies_it_without_ending_the_load(self):
+        # The index's arrival is its own event (index.changed -> the
+        # refresh); a load still waiting on Cura's render is not
+        # finished by it. ONE refresh must then carry both — the fresh
+        # index in the snapshot AND the load still active — with the
+        # lease handoff not run, because both terms come from the same
+        # poll: a snapshot readied off the index that also retired the
+        # load would end the hourglass on a render that has not begun.
+        parts = self._printing(self._make())
+        coordinator = parts.coordinator
+        parts.client.connected = True
+        coordinator._loads._load_job = coordinator.snapshot.job_key
+        parts.files.path = "/downloads/cube.gcode"
+        parts.files._lease = "LEASE-1"
+        parts.cura.loading = True
+        parts.index.phase = "indexing"
+        parts.index.changed.emit()
+        self.assertTrue(coordinator.snapshot.load_active)
+        self.assertFalse(coordinator.snapshot.index_ready)
+        self.assertEqual(coordinator.snapshot.plate_pass_fraction, None)
+        parts.index.phase = ""
+        parts.index.view = harness._view()
+        observed = len(parts.preview.observed)
+        parts.index.changed.emit()
+        self.assertTrue(coordinator.snapshot.index_ready)
+        self.assertTrue(coordinator.snapshot.load_active)
+        self.assertEqual(coordinator._loads._load_job, coordinator.snapshot.job_key)
+        self.assertEqual(parts.cura.loads, [])
+        self.assertEqual(len(parts.preview.observed), observed + 1)
+        snapshot, status, config, view = parts.preview.observed[-1]
+        self.assertIs(view, parts.index.view)
+        self.assertTrue(snapshot.index_ready)
+        self.assertEqual(status["print_stats"]["filename"], "cube.gcode")
+
     def test_the_trace_line_names_the_resolution_source(self):
         parts = self._make(config=harness.PrinterConfig(trace_layer=True))
         from mpf.application import PrintCoordinator as coordinator_module
@@ -344,6 +378,45 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         parts.coordinator.refresh()
         self.assertEqual(parts.preview.invalidations, before + 1)
         self.assertEqual(parts.index.followed, [])
+
+    def test_a_reconnect_re_observes_the_frame_it_pinned(self):
+        # The link's own boundary: while it is down the refresh only
+        # invalidates the view — it observes nothing and asks for no
+        # hydration — and the refresh after the link returns hands the
+        # preview the frame THAT refresh pinned, never an earlier one,
+        # so a reconnect cannot publish a snapshot assembled from the
+        # dead poll.
+        parts = self._printing(self._make())
+        parts.client.connected = True
+        parts.index.view = harness._view()
+        parts.preview.observe_result = ("Following", (3, 4))
+        parts.coordinator.refresh()
+        self.assertEqual(parts.preview.observed[0][1]["print_stats"]["print_duration"], 120.0)
+        self.assertEqual(parts.index.hydration[:2], [3, 4])
+        followed = list(parts.index.followed)
+        self.assertTrue(followed)
+
+        parts.client.connected = False
+        invalidations = parts.preview.invalidations
+        observed = len(parts.preview.observed)
+        hydrated = len(parts.index.hydration)
+        parts.coordinator.refresh()
+        self.assertEqual(parts.preview.invalidations, invalidations + 1)
+        self.assertEqual(len(parts.preview.observed), observed)
+        self.assertEqual(len(parts.index.hydration), hydrated)
+        self.assertEqual(parts.index.followed, followed)
+
+        parts.client.connected = True
+        returning = harness._status("printing")
+        returning["print_stats"]["print_duration"] = 300.0
+        parts.client.statusReceived.emit(returning)
+        self.assertEqual(len(parts.preview.observed), observed + 1)
+        snapshot, status, config, view = parts.preview.observed[-1]
+        self.assertEqual(status["print_stats"]["print_duration"], 300.0)
+        self.assertIs(view, parts.index.view)
+        self.assertEqual(snapshot.job_key, parts.coordinator.snapshot.job_key)
+        self.assertEqual(parts.index.hydration[hydrated:hydrated + 2], [3, 4])
+        self.assertEqual(len(parts.index.followed), len(followed) + 1)
 
     def test_the_plate_payload_uses_the_fresh_physical_layer(self):
         # The green-printed fix's second half: plate_progress and
