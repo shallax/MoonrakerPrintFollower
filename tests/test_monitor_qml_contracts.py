@@ -1598,3 +1598,55 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertNotIn("scheduledPauseList", harness.PAUSE_SCHEDULE_QML, "the popover kept the static capped list")
         self.assertNotIn("+ root.hiddenRows", harness.PAUSE_SCHEDULE_QML, "the popover counts a remainder instead of scrolling")
 
+
+    def test_the_progress_faces_leaves_take_the_gates_the_face_owns(self):
+        """The camera, the live toolhead position and the glyph legend
+        stay with the face: each visual leaf takes what it draws as
+        declared inputs. Three of these gates were `visible:`
+        expressions inside the face before the leaves existed, and the
+        state they read is unchanged — this is where that composition is
+        pinned now that a token in one document no longer shows it."""
+        face = harness.PLATE_PROGRESS_FACE_QML
+        # The dot: no index, no dot; detached it goes too (the position
+        # belongs to the live layer, and the frozen anchor is another
+        # layer's picture). Its own document asks only whether a
+        # position and a plot exist.
+        self.assertIn("positionValid: root.available() && root.attached "
+                      "&& root.dot != null && root.dot.valid === true", face)
+        self.assertIn("visible: root.positionValid && root.plot != null",
+                      harness.PLATE_TOOLHEAD_DOT_QML)
+        # The dot rides the DISPLAY transform during a gesture and the
+        # target otherwise: the whole scene rides ONE camera, so the
+        # flip at an interaction boundary never jumps.
+        for term in ("plot: mapping._plot", "viewScale: root._dotScale",
+                     "panX: root._dotPanX", "panY: root._dotPanY",
+                     "plateX: root.displayDotX", "plateY: root.displayDotY"):
+            self.assertIn(term, face)
+        # The glyph overlay is the software fallback's alone, and the two
+        # legend toggles are what turn it on.
+        self.assertIn("visible: !root.gpuRendering && root.available() "
+                      "&& (root.showRetractions || root.showUnretractions)", face)
+        self.assertIn("up: root.showRetractions", face)
+        self.assertIn("down: root.showUnretractions", face)
+        # The scope reports a requested scale and writes no camera of its
+        # own: a second writer of the view transform is precisely what it
+        # must not become.
+        scope = harness.PLATE_ZOOM_SCOPE_QML
+        self.assertIn("signal scaleRequested(real target)", scope)
+        for owned in ("viewPanX", "viewPanY", "displayScale", "displayPanX",
+                      "displayPanY", "_enterInteraction"):
+            self.assertNotIn(owned, scope,
+                             "the scope became a second writer of %s" % owned)
+        # The face's handler lands the view scale FIRST — the soft clamp
+        # reads it — while the retarget still reads the OLD display
+        # transform; assigning the display scale first would degenerate
+        # the anchor to 0.
+        handler = face[face.index("onScaleRequested:"):]
+        handler = handler[:handler.index("\n    }\n")]
+        self.assertLess(handler.index("root._enterInteraction();"),
+                        handler.index("root.viewScale = target;"))
+        retarget = handler[handler.index("} else {"):]
+        self.assertLess(handler.index("root.viewScale = target;"),
+                        handler.index("root._barZoomPan(target)"))
+        self.assertLess(retarget.index("root._barZoomPan(target)"),
+                        retarget.index("root.displayScale = target;"))

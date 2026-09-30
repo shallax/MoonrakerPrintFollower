@@ -2679,7 +2679,11 @@ Item {
             # (scene decoration inside the canvas slot). A detached
             # face draws the frozen layer, which the live position is
             # not: the dot goes with the follow.
-            "visible: root.available() && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true",
+            # The face's dot is its own document (4.6.2): what it asks
+            # is whether a position and a plot exist. The index,
+            # attachment and validity gates are handed in by the face,
+            # and test_monitor_qml_contracts pins that composition.
+            "visible: root.positionValid && root.plot != null",
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.

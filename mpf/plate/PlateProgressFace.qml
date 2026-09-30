@@ -362,10 +362,6 @@ Item {
     // docks it, and two idle seconds park it again (the live
     // request — it starts invisible).
     property bool _scopeDocked: false
-    // The scope's graduation labels: every 25% between 100% and
-    // 2000%, log-positioned along the bar (the live request: the
-    // cap moved from 800% to 2000%).
-    readonly property var zoomGraduations: ViewPolicy.graduations(ViewPolicy.MAX_SCALE, 0.25)
     Timer {
         id: scopeHideTimer
         interval: 5000
@@ -1795,17 +1791,13 @@ Item {
             })
     }
 
-    // A small independent overlay for the software fallback. It reads only
-    // event points, never the complete layer's toolpath QVariant.
-    Canvas {
+    PlateExtruderMarkers {
         id: extruderMarkers
-        objectName: "moonrakerExtruderMarkers"
         anchors.fill: parent
         z: 1
         visible: !root.gpuRendering && root.available() && (root.showRetractions || root.showUnretractions)
-        property var eventLayer: root.progress != null && root.progress.layers != null ? root.progress.layers.current : null
-        property var points: visible && eventLayer != null && eventLayer.extruderEvents !== undefined ? eventLayer.extruderEvents : []
-        property var markerView: ({
+        eventLayer: root.progress != null && root.progress.layers != null ? root.progress.layers.current : null
+        markerView: ({
                 scale: root._dotScale,
                 panX: root._dotPanX,
                 panY: root._dotPanY,
@@ -1814,18 +1806,8 @@ Item {
                 down: root.showUnretractions,
                 compact: root.compact,
                 completed: root.progress != null && root.progress.split != null ? Math.floor(root.progress.split) : (root.attached ? 0 : Infinity),
-                total: eventLayer != null ? eventLayer.motions : 0
+                total: extruderMarkers.eventLayer != null ? extruderMarkers.eventLayer.motions : 0
             })
-        onPointsChanged: requestPaint()
-        onMarkerViewChanged: requestPaint()
-        onVisibleChanged: requestPaint()
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.clearRect(0, 0, width, height);
-            if (!visible)
-                return;
-            Painter.drawExtruderMarkers(ctx, points, markerView, UM.Theme.getColor("text"));
-        }
     }
 
     // The EXACT scene: everything below — the raster stack and the
@@ -2446,34 +2428,15 @@ Item {
             }
         }
     }
-    // The toolhead dot: scene-graph geometry (a Rectangle binding),
-    // never a canvas repaint — the 1 s position publish moves it.
-    // Walking the layer path (the H3 alignment — the dot and the
-    // fill derive from the same index). The picker's faces draw no
-    // dot (the live ruling).
-    Rectangle {
-        id: toolheadDot
+    PlateToolheadDot {
         z: 1
-        objectName: "moonrakerPlateToolheadDot"
-        width: 7 * screenScaleFactor
-        height: width
-        radius: width / 2
-        color: MoonrakerTheme.plateDot
-        border.color: UM.Theme.getColor("main_background")
-        border.width: 2
-        // The dot rides the LAYERS: no index, no dot (the live
-        // report — it rendered over the unavailable card). Detached it
-        // goes too: the position belongs to the live layer, and the
-        // frozen anchor is another layer's picture (the live ruling).
-        visible: root.available() && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true
-        // The transform inlined: a function call (plateToScene) hides
-        // the plot from the binding's dependencies, so a re-fitted
-        // plot (a reflow, the popover's grown size) left the dot on
-        // stale geometry until the next pan (the live report — the
-        // jump landed off the centre). The whole-var read is tracked
-        // and the binding re-runs on every re-fit.
-        x: root.dot != null && mapping._plot != null ? root._dotPanX + (mapping._plot.bed.offsetX + (root.displayDotX - mapping._plot.bed.bedXMin) * mapping._plot.sx) * root._dotScale - width / 2 : 0
-        y: root.dot != null && mapping._plot != null ? root._dotPanY + (mapping._plot.bed.offsetY + (mapping._plot.bed.bedYMax - root.displayDotY) * mapping._plot.sy) * root._dotScale - height / 2 : 0
+        plot: mapping._plot
+        viewScale: root._dotScale
+        panX: root._dotPanX
+        panY: root._dotPanY
+        plateX: root.displayDotX
+        plateY: root.displayDotY
+        positionValid: root.available() && root.attached && root.dot != null && root.dot.valid === true
     }
 
     // The zoom/pan gestures (the live request): the wheel zooms about
@@ -2646,145 +2609,35 @@ Item {
         }
     }
 
-    // The zoom scope (the live request): a cockpit-HUD scale beside
-    // the canvas — a RESERVED readout strip for the percentage, and
-    // below it the graduated bar: a complete line at every 100%, a
-    // 50%-in edge pair at the half marks and a 25%-in edge pair at
-    // the quarters. The marker rides the zoom and doubles as the
-    // drag handle; the bottom is the 100% fit.
-    Rectangle {
-        id: zoomScope
+    PlateZoomScope {
         z: 5
-        objectName: "moonrakerPlateZoomScope"
+        frame: root
         visible: root.available() && !root.compact
-        // Wide enough for the "800%" label (the live report: the
-        // percentage overflowed the scope's bounds). Docked it hugs
-        // the right edge; parked it slides fully out of view (the
-        // live request).
-        width: 38 * screenScaleFactor
-        // The full canvas height (the live request: the bar spans
-        // the canvas edge to edge now the reset control lives in
-        // the host's checkbox row).
-        height: parent.height
-        x: root._scopeDocked ? root.width - width - UM.Theme.getSize("narrow_margin").width : root.width + 6 * screenScaleFactor
-        anchors.top: parent.top
-        Behavior on x {
-            NumberAnimation {
-                duration: 180
-                easing.type: Easing.OutCubic
-            }
-        }
-        radius: 3 * screenScaleFactor
-        color: UM.Theme.getColor("main_background")
-        opacity: 0.85
-        border.color: UM.Theme.getColor("lining")
-        border.width: 1
-        Item {
-            // The reserved readout: the label never shares space
-            // with the bar (the live report: the text overlapped
-            // the marker).
-            id: scopeReadout
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 16 * screenScaleFactor
-            UM.Label {
-                anchors.centerIn: parent
-                text: Math.round(root.viewScale * 100) + "%"
-                font: UM.Theme.getFont("small")
-                color: UM.Theme.getColor("text")
-            }
-        }
-        Item {
-            id: scopeBar
-            anchors.top: scopeReadout.bottom
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.margins: 4 * screenScaleFactor
-            // The graduations: every 25% between 100% and 800%,
-            // log-spaced like the marker.
-            Repeater {
-                model: root.zoomGraduations
-                Item {
-                    readonly property real fraction: ViewPolicy.trackFraction(modelData, ViewPolicy.MAX_SCALE)
-                    readonly property bool major: Math.round(modelData * 100) % 100 === 0
-                    readonly property bool half: Math.round(modelData * 100) % 50 === 0
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    y: parent.height - fraction * parent.height
-                    height: major ? 2 : 1
-                    Rectangle {
-                        // The left edge's reach: the full width at the
-                        // majors, 50% in at the halves, 25% in at the
-                        // quarters (the cockpit-HUD request).
-                        anchors.left: parent.left
-                        width: parent.width * (major ? 1.0 : half ? 0.5 : 0.25)
-                        height: parent.height
-                        color: major ? UM.Theme.getColor("border") : UM.Theme.getColor("lining")
-                    }
-                    Rectangle {
-                        // The mirrored right edge's reach (the halves
-                        // and quarters draw as an edge pair).
-                        visible: !major
-                        anchors.right: parent.right
-                        width: parent.width * (half ? 0.5 : 0.25)
-                        height: parent.height
-                        color: UM.Theme.getColor("lining")
-                    }
-                }
-            }
-            Rectangle {
-                // The marker: log-rides the zoom — and doubles as the
-                // drag handle.
-                id: scopeMarker
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - ViewPolicy.trackFraction(root.viewScale, ViewPolicy.MAX_SCALE) * parent.height - height / 2
-                width: parent.width
-                height: 3 * screenScaleFactor
-                radius: height / 2
-                color: UM.Theme.getColor("primary")
-            }
-            MouseArea {
-                // The draggable scale: the pointer's track position
-                // is the zoom — bottom is the 100% fit (centred, no
-                // pan), the top is 800%.
-                anchors.fill: parent
-                onPressed: function (mouse) {
-                    scopeApply(mouse.y);
-                }
-                onPositionChanged: function (mouse) {
-                    if (pressed) {
-                        scopeApply(mouse.y);
-                    }
-                }
-                function scopeApply(y) {
-                    var target = ViewPolicy.scaleFromTrack(y, parent.height, ViewPolicy.MAX_SCALE);
-                    root._enterInteraction();
-                    // A direct manipulation: the display follows the
-                    // handle immediately (like the drag pan), and the
-                    // pan retargets so the viewport CENTRE stays put
-                    // (the live ruling — no bed-origin zoom). The
-                    // view scale lands FIRST (the soft clamp reads
-                    // it), while the retarget still reads the OLD
-                    // display transform — assigning the display
-                    // scale first would degenerate the anchor to 0.
-                    root.viewScale = target;
-                    if (target <= 1.0) {
-                        root.viewPanX = 0.0;
-                        root.viewPanY = 0.0;
-                        root.displayPanX = 0.0;
-                        root.displayPanY = 0.0;
-                        root.displayScale = target;
-                    } else {
-                        var pan = root._barZoomPan(target);
-                        root.viewPanX = pan.x;
-                        root.viewPanY = pan.y;
-                        root.displayPanX = pan.x;
-                        root.displayPanY = pan.y;
-                        root.displayScale = target;
-                    }
-                }
+        viewScale: root.viewScale
+        docked: root._scopeDocked
+        // A direct manipulation: the display follows the handle
+        // immediately (like the drag pan), and the pan retargets so the
+        // viewport CENTRE stays put (the live ruling — no bed-origin
+        // zoom). The view scale lands FIRST (the soft clamp reads it),
+        // while the retarget still reads the OLD display transform —
+        // assigning the display scale first would degenerate the anchor
+        // to 0.
+        onScaleRequested: function (target) {
+            root._enterInteraction();
+            root.viewScale = target;
+            if (target <= 1.0) {
+                root.viewPanX = 0.0;
+                root.viewPanY = 0.0;
+                root.displayPanX = 0.0;
+                root.displayPanY = 0.0;
+                root.displayScale = target;
+            } else {
+                var pan = root._barZoomPan(target);
+                root.viewPanX = pan.x;
+                root.viewPanY = pan.y;
+                root.displayPanX = pan.x;
+                root.displayPanY = pan.y;
+                root.displayScale = target;
             }
         }
     }
