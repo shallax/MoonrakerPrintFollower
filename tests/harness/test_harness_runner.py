@@ -20,7 +20,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import liveness
 import runner
+import static_leg
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
@@ -662,7 +664,7 @@ class StaticLegTests(unittest.TestCase):
         # 20 s of motion then 80 s of one picture: the macOS motion
         # leg's shape, in miniature.
         frames = self._sequence([(20, 10), (80, 90)])
-        verdict = runner.static_verdict(frames)
+        verdict = static_leg.static_verdict(frames)
         self.assertFalse(verdict["ok"])
         self.assertEqual(verdict["span_s"], 80)
         self.assertEqual(verdict["share"], 0.8)
@@ -675,26 +677,26 @@ class StaticLegTests(unittest.TestCase):
         frames = [bytes([10]) * 8] * 30
         frames += [bytes([40 if index % 2 else 41]) * 8 for index in range(70)]
         self.assertEqual(len(set(frames)), 3)
-        verdict = runner.static_verdict(frames)
+        verdict = static_leg.static_verdict(frames)
         self.assertFalse(verdict["ok"])
         self.assertEqual(verdict["span_s"], 70)
 
     def test_a_moving_leg_passes(self):
         frames = [bytes([(index * 7) % 250]) * 8 for index in range(200)]
-        verdict = runner.static_verdict(frames)
+        verdict = static_leg.static_verdict(frames)
         self.assertTrue(verdict["ok"])
-        self.assertLess(verdict["span_s"], runner.STATIC_LEG_SECONDS)
+        self.assertLess(verdict["span_s"], static_leg.STATIC_LEG_SECONDS)
 
     def test_a_still_span_under_the_absolute_floor_passes(self):
         # Legitimate idle: one step waiting on a model, a budget of
         # 15-30 s. The longest span on a leg that is not one of the
         # frozen macOS ones is 59 s, and no budget reaches the floor.
         frames = self._sequence([(30, 10), (45, 90), (30, 200)])
-        self.assertTrue(runner.static_verdict(frames)["ok"])
+        self.assertTrue(static_leg.static_verdict(frames)["ok"])
 
     def test_a_leg_too_short_to_judge_is_not_judged(self):
-        self.assertIsNone(runner.static_verdict([]))
-        self.assertIsNone(runner.static_verdict([b"\x00" * 8]))
+        self.assertIsNone(static_leg.static_verdict([]))
+        self.assertIsNone(static_leg.static_verdict([b"\x00" * 8]))
 
     def test_a_still_span_nobody_drove_is_not_judged(self):
         # The group-status case in miniature: the leg pushes simulator
@@ -704,7 +706,7 @@ class StaticLegTests(unittest.TestCase):
         # 63 — after it. A span with no input inside it cannot say
         # anything about the screen.
         frames = self._sequence([(62, 90), (20, 10)])
-        verdict = runner.static_verdict(frames, interactions=[63.0])
+        verdict = static_leg.static_verdict(frames, interactions=[63.0])
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
         self.assertEqual(verdict["span_s"], 62)  # the span is still measured
@@ -715,7 +717,7 @@ class StaticLegTests(unittest.TestCase):
         # earlier version of this rule read the input's TRAILING edge
         # and counted that very click as proof the stillness was fine.
         frames = self._sequence([(7, 10), (61, 90), (20, 10)])
-        verdict = runner.static_verdict(frames, interactions=[68.4])
+        verdict = static_leg.static_verdict(frames, interactions=[68.4])
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
 
@@ -724,7 +726,7 @@ class StaticLegTests(unittest.TestCase):
         # was clicking at it. That is the failure the rule exists for,
         # and an interaction well inside the span must still fail it.
         frames = self._sequence([(20, 10), (80, 90)])
-        verdict = runner.static_verdict(frames, interactions=[30.0])
+        verdict = static_leg.static_verdict(frames, interactions=[30.0])
         self.assertFalse(verdict["ok"])
         self.assertTrue(verdict["driven"])
 
@@ -734,8 +736,8 @@ class StaticLegTests(unittest.TestCase):
         # 20..99, so an input at 98 has had no time to show and one at
         # 40 has.
         frames = self._sequence([(20, 10), (80, 90)])
-        self.assertFalse(runner.static_verdict(frames, interactions=[98.0])["driven"])
-        self.assertTrue(runner.static_verdict(frames, interactions=[40.0])["driven"])
+        self.assertFalse(static_leg.static_verdict(frames, interactions=[98.0])["driven"])
+        self.assertTrue(static_leg.static_verdict(frames, interactions=[40.0])["driven"])
 
     def test_an_unalignable_leg_keeps_the_old_verdict(self):
         # None means the steps could not be placed in the recording
@@ -743,7 +745,7 @@ class StaticLegTests(unittest.TestCase):
         # must then judge everything exactly as it did before rather
         # than quietly retiring itself.
         frames = self._sequence([(20, 10), (80, 90)])
-        verdict = runner.static_verdict(frames, interactions=None)
+        verdict = static_leg.static_verdict(frames, interactions=None)
         self.assertFalse(verdict["ok"])
         self.assertTrue(verdict["driven"], "unalignable means judged, not exempt")
 
@@ -751,7 +753,7 @@ class StaticLegTests(unittest.TestCase):
         # An empty list is alignment that SUCCEEDED and found no input:
         # different from None, and it means nothing here was driven.
         frames = self._sequence([(20, 10), (80, 90)])
-        verdict = runner.static_verdict(frames, interactions=[])
+        verdict = static_leg.static_verdict(frames, interactions=[])
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
 
@@ -766,40 +768,40 @@ class StaticLegTests(unittest.TestCase):
                 {"class": "diagnostic-probe", "at_s": 12.0, "duration_ms": 500},
                 {"class": "ui-interaction", "at_s": 40.0, "duration_ms": 0},
             ]}, handle)
-        self.assertEqual(runner._interaction_seconds(SCRATCH), [10.0, 40.0])
+        self.assertEqual(static_leg._interaction_seconds(SCRATCH), [10.0, 40.0])
 
     def test_evidence_that_cannot_place_its_steps_is_not_aligned(self):
         with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
             json.dump({"steps": [{"class": "ui-interaction", "duration_ms": 10}]}, handle)
-        self.assertIsNone(runner._interaction_seconds(SCRATCH))
-        self.assertIsNone(runner._interaction_seconds(os.path.join(SCRATCH, "absent")))
+        self.assertIsNone(static_leg._interaction_seconds(SCRATCH))
+        self.assertIsNone(static_leg._interaction_seconds(os.path.join(SCRATCH, "absent")))
 
     def test_boot_only_first_install_has_no_screen_input_to_judge(self):
         with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
             json.dump({"mode": "firstinstall", "steps": [],
                        "classification": {"steps": {"ui-interaction": 0}}}, handle)
-        interactions = runner._interaction_seconds(SCRATCH)
+        interactions = static_leg._interaction_seconds(SCRATCH)
         self.assertEqual(interactions, [])
         frames = self._sequence([(10, 10), (61, 90), (23, 200)])
-        verdict = runner.static_verdict(frames, interactions=interactions)
+        verdict = static_leg.static_verdict(frames, interactions=interactions)
         self.assertTrue(verdict["ok"])
         self.assertFalse(verdict["driven"])
         # An unknown leg with the same empty record has no such exemption.
         with open(os.path.join(SCRATCH, "evidence.json"), "w", encoding="utf-8") as handle:
             json.dump({"mode": "suite", "steps": [],
                        "classification": {"steps": {"ui-interaction": 0}}}, handle)
-        self.assertIsNone(runner._interaction_seconds(SCRATCH))
+        self.assertIsNone(static_leg._interaction_seconds(SCRATCH))
 
     def test_the_response_margin_is_the_documented_one(self):
         # Two seconds: the decode samples at 1 fps and a step's offset
         # from the recorder's start carries about a second of ffmpeg
         # startup error.
-        self.assertEqual(runner.STATIC_DRIVEN_RESPONSE_S, 2.0)
+        self.assertEqual(static_leg.STATIC_DRIVEN_RESPONSE_S, 2.0)
 
     def test_the_frame_length_is_the_duration(self):
         # The decode is one frame per second, so a run's length IS its
         # seconds and no frame rate has to be carried alongside.
-        source = Path(runner.__file__).read_text(encoding="utf-8")
+        source = Path(static_leg.__file__).read_text(encoding="utf-8")
         self.assertIn("fps=1,scale=", source)
         self.assertIn("static_verdict(frames, interactions=interactions)", source)
 
@@ -813,8 +815,12 @@ class StaticLegTests(unittest.TestCase):
         harvest = source.index("harvest_cura_log(RUN_DIR)")
         judge = source.index("static_leg_report(RUN_DIR)", harvest)
         self.assertLess(harvest, judge, "every recording must be closed first")
-        self.assertIn('"static_leg"', source)
-        self.assertIn("for root, _dirs, names in os.walk(run_dir)", source)
+        # The walk and the evidence merge belong to the owner the exit
+        # path calls; the ordering above is the runner's own.
+        owner = Path(static_leg.__file__).read_text(encoding="utf-8")
+        self.assertIn('"static_leg"', owner)
+        self.assertIn("for root, _dirs, names in os.walk(run_dir)", owner)
+        self.assertIn("static_leg.report(run_dir, CAPTURE, CAPTURE_REASON)", source)
 
     def test_a_failed_leg_is_still_judged(self):
         # A leg that failed its scenario must still get its static
@@ -861,9 +867,9 @@ class StaticLegTests(unittest.TestCase):
         # galleries (the longest non-frozen span is 59 s) and the
         # share separates a leg that froze (39-92% of its duration)
         # from one that spent a step waiting.
-        self.assertEqual(runner.STATIC_LEG_SECONDS, 60.0)
-        self.assertEqual(runner.STATIC_LEG_SHARE, 0.35)
-        self.assertEqual(runner.STATIC_FRAME_MAD, 1.0)
+        self.assertEqual(static_leg.STATIC_LEG_SECONDS, 60.0)
+        self.assertEqual(static_leg.STATIC_LEG_SHARE, 0.35)
+        self.assertEqual(static_leg.STATIC_FRAME_MAD, 1.0)
 
 
 class RendererLivenessTests(unittest.TestCase):
@@ -1390,18 +1396,30 @@ class CaptureGateTests(unittest.TestCase):
         # (RendererLivenessTests holds the behaviour; this is the
         # structural half).
         source = Path(runner.__file__).read_text(encoding="utf-8")
-        verdict = source[source.index("def liveness_of("):]
-        verdict = verdict[:verdict.index("\ndef liveness_gating(")]
+        # The reading and the gating are the presentation owner's; the
+        # runner hands its capture gate in at every call, so the reading
+        # still cannot see one and the decision is still its own
+        # function, recorded with the outcome.
+        owner = Path(liveness.__file__).read_text(encoding="utf-8")
+        verdict = owner[owner.index("def liveness_of("):]
+        verdict = verdict[:verdict.index("\ndef gating(")]
         self.assertNotIn("CAPTURE", verdict)
-        gating = source[source.index("def liveness_gating("):]
-        gating = gating[:gating.index("\ndef liveness_outcome(")]
-        self.assertIn("if not CAPTURE:", gating)
+        self.assertNotIn("capture", verdict)
+        gating = owner[owner.index("def gating("):]
+        gating = gating[:gating.index("\ndef outcome_records(")]
+        self.assertIn("if not capture:", gating)
         # Every outcome carries the decision and its reason, so the
         # artifact names the scenarios a leg did not act on.
-        outcome = source[source.index("def liveness_outcome("):]
+        outcome = owner[owner.index("def outcome_records("):]
         outcome = outcome[:outcome.index("\ndef stalled_scenarios(")]
-        self.assertIn("liveness_gating(", outcome)
-        self.assertIn('"judged": judged, "gating": gating', outcome)
+        self.assertIn("gating(", outcome)
+        self.assertIn('"judged": judged, "gating": reading', outcome)
+        # And the runner's own delegates are the only place the gate is
+        # read, so no leg can take a reading without declaring one.
+        self.assertIn("return liveness.outcome_records(samples, CAPTURE)", source)
+        # And the gate reaches the reading only through that one call:
+        # no leg may take a reading without declaring its own gate.
+        self.assertNotIn("liveness.gating(", source)
         # And both lines are announced, whatever the mode: a stall where
         # the leg acts on it, a report-only diagnostic where it does not.
         printer = source[source.index('run["frames_outcome"] = outcomes'):]

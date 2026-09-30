@@ -502,7 +502,15 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn('"fresh_window": fresh', driver_source)
         with open(_runner.__file__, encoding="utf-8") as handle:
             source = handle.read()
-        self.assertIn('"cmd": "frames"', source)
+        # The runner drives both ends of every scenario and publishes the
+        # record; the sample itself and its verdict belong to the
+        # presentation owner beside it.
+        import liveness as _liveness
+        with open(_liveness.__file__, encoding="utf-8") as handle:
+            owner = handle.read()
+        self.assertIn('"cmd": "frames"', owner)
+        self.assertIn("def probe(rpc, phase, scenario_id):", owner)
+        self.assertIn("def outcome_records(", owner)
         self.assertIn("def frames_probe(", source)
         self.assertIn("def liveness_outcome(", source)
         start = source.index('frames_probe("start", spec["id"])')
@@ -516,11 +524,11 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn('run["frames_outcome"] = outcomes', source)
         self.assertIn("ui_test: NO FRAMES", source)
         self.assertIn("ui_test: HEARTBEAT REPORT-ONLY", source)
-        self.assertIn("def liveness_gating(", source)
+        self.assertIn("def gating(", owner)
         # The sample asks for the heartbeat and carries its deadline:
         # a count read cold would call an idle window frozen.
-        self.assertIn('"heartbeat": True', source)
-        self.assertIn("FRAME_HEARTBEAT_DEADLINE_MS", source)
+        self.assertIn('"heartbeat": True', owner)
+        self.assertIn("FRAME_HEARTBEAT_DEADLINE_MS", owner)
         # And the enums go out as names: PyQt6 hands back the wrapper
         # (QWindow.Visibility) and int() on it raises — the first live
         # run of the probe answered every sample with that TypeError.
