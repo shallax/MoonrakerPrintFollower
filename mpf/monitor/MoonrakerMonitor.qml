@@ -9,9 +9,9 @@ import "../plate"
 import "../widgets"
 import "camera"
 import "console"
-import "controls"
+import "info"
+import "status"
 import "temperature"
-import "../resources/theme"
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader
 // (setMonitorViewQmlPath) creates this document and expects a
@@ -141,7 +141,7 @@ Component {
         function buildConfigureRows(paneId) {
             var layout = root.printer != null ? root.printer.sectionLayoutFor(paneId) : null;
             var order = layout ? layout.order : [];
-            var container = paneId === "information" ? infoContent : statusContent;
+            var container = paneId === "information" ? infoPanel.content : statusPanel.content;
             var byId = {};
             for (var i = 0; i < container.children.length; i++) {
                 var header = root.sectionHeader(container.children[i]);
@@ -357,19 +357,19 @@ Component {
                 children[i].fitHidden = hide;
         }
         function updateInfoReadoutFits() {
-            fitGroup(infoReadoutRow, 2, 0, infoPanel);
+            fitGroup(infoPanel.readoutRow, 2, 0, infoPanel);
             // The spacer between the groups is a child too.
-            fitGroup(infoReadoutRow, 2, 3, infoPanel);
+            fitGroup(infoPanel.readoutRow, 2, 3, infoPanel);
         }
         function updateStatusReadoutFits() {
             // The ETA pairs lead, then the layer count, then (past
             // the margin child) the stacked progress group, then
             // the flow pair at the strip's end (the live ruling).
-            fitGroup(statusReadoutRow, 2, 0, statusPanel);
-            fitGroup(statusReadoutRow, 2, 2, statusPanel);
-            fitGroup(statusReadoutRow, 2, 4, statusPanel);
-            fitGroup(statusReadoutRow, 3, 7, statusPanel);
-            fitGroup(statusReadoutRow, 2, 10, statusPanel);
+            fitGroup(statusPanel.readoutRow, 2, 0, statusPanel);
+            fitGroup(statusPanel.readoutRow, 2, 2, statusPanel);
+            fitGroup(statusPanel.readoutRow, 2, 4, statusPanel);
+            fitGroup(statusPanel.readoutRow, 3, 7, statusPanel);
+            fitGroup(statusPanel.readoutRow, 2, 10, statusPanel);
         }
         onInfoCollapsedChanged: {
             Qt.callLater(root.updateInfoReadoutFits);
@@ -412,8 +412,8 @@ Component {
             // CURRENT effective layout, so one arrival-time pass
             // covers both windows.
             if (root.printer != null) {
-                root.applySectionOrder(infoContent, "information");
-                root.applySectionOrder(statusContent, "status");
+                root.applySectionOrder(infoPanel.content, "information");
+                root.applySectionOrder(statusPanel.content, "status");
             }
             // The camera's configured flag is maintained imperatively
             // (root bindings here freeze); a printer attach is one of
@@ -530,15 +530,13 @@ Component {
         readonly property bool infoExpandLocked: root.infoCollapsed && (root.infoAutoCollapsed || root.webcamSqueezed || root.infoExpandBlocked)
         property bool statusCollapsed: root.statusPersistedCollapsed || root.statusAutoCollapsed
         readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
-        property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
         Connections {
             target: root.printer
             function onTypedControlsChanged() {
-                meshSection.refreshMap();
-                // The detail card refreshes its own map in its own
-                // scope; this handler only owns the auto-close, and it
-                // must still run when the card is not instantiated.
+                // The mini map's refresh is the pane's own; this
+                // handler only owns the auto-close, and it must still
+                // run when the card is not instantiated.
                 if (root.printer == null) {
                     root.openPopOver = "";
                 } else if (!root.printer.bedMeshAvailable && root.openPopOver === "mesh") {
@@ -557,356 +555,47 @@ Component {
             anchors.margins: UM.Theme.getSize("default_margin").width
             spacing: UM.Theme.getSize("default_margin").width
 
-            Cura.RoundedRectangle {
+            InfoPane {
                 id: infoPanel
-                objectName: "infoPanel"
-                // The collapsed readout may outrun a short pane: the
-                // PANE clips, so no child can ever spill past its
-                // bounds (the live report: every readout overflowed).
-                clip: true
+                printerModel: root.printer
+                // The frozen fold contract's own state, read here and
+                // written back through the pane's intents.
+                infoCollapsed: root.infoCollapsed
+                infoExpandLocked: root.infoExpandLocked
+                hotendText: root.infoHotendText
+                bedText: root.infoBedText
+                miniChartSeries: root.miniChartSeries
+                miniChartHasSeries: root.miniChartHasSeries
                 // The pane's own width is where its fold LANDS — the one
                 // signal left where the camera is pinned at its floor
                 // (see the rule): the stage's width alone would stall
                 // the cascade one pane short.
                 onWidthChanged: root.applyNarrowWindowRules()
                 onHeightChanged: root.updateInfoReadoutFits()
-                // Collapsed, the pane shrinks to the toggle button and its
-                // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
-                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 200 * screenScaleFactor)
-                // Shrink-only: max == preferred keeps the wide layout
-                // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                // No Layout.leftMargin here: the host RowLayout's
-                // anchors.margins already indents every pane, and the
-                // doubled left edge read wider than the right pane's
-                // (the report).
-                border.color: UM.Theme.getColor("lining")
-                border.width: UM.Theme.getSize("default_lining").width
-                color: UM.Theme.getColor("main_background")
-                radius: UM.Theme.getSize("default_radius").width
-
-                // While collapsed, a click anywhere on the strip expands
-                // the pane; the header button stays on top of this area.
-                MouseArea {
-                    visible: root.infoCollapsed
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        // Auto-collapsed-by-width is not a clickable
-                        // expand: only a wider window restores the
-                        // pane (the header button's guard, and the
-                        // console's strip precedent). Unguarded, this
-                        // click discarded the user's own collapse and
-                        // the pane sprang open on the next widen.
-                        if (root.infoExpandLocked) {
-                            return;
-                        }
-                        if (root.printer != null) {
-                            root.printer.setInfoCollapsed(false);
-                        }
-                    }
+                onContentReady: root.applySectionOrder(infoPanel.content, "information")
+                onPopOverToggleRequested: function (name) {
+                    root.openPopOver = root.openPopOver === name ? "" : name;
                 }
-
-                RowLayout {
-                    id: infoHeader
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.topMargin: UM.Theme.getSize("default_margin").height / 2
-                    anchors.leftMargin: UM.Theme.getSize("thin_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("thin_margin").width
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    // The toggle hugs the edge the pane collapses into:
-                    // this pane is leftmost, so the button leads.
-                    Cura.SecondaryButton {
-                        id: infoCollapseButton
-                        Layout.alignment: Qt.AlignVCenter
-                        fixedWidthMode: true
-                        // Square at the OLD button width: the theme
-                        // adds its padding around the 32px content, so
-                        // the height tracks the rendered width (the
-                        // ruling).
-                        width: 28 * screenScaleFactor
-                        iconSize: 12 * screenScaleFactor
-                        height: width
-                        implicitHeight: width
-
-                        // The SAME theme-chevron family as the console
-                        // and status toggles (the ruling: all
-                        // pane collapse buttons uniform). This pane is
-                        // leftmost and collapses left.
-                        iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
-                        onClicked: {
-                            // Auto-collapsed-by-width is not a
-                            // clickable toggle: only a wider window
-                            // restores the pane (the console's
-                            // too-narrow precedent).
-                            if (root.infoExpandLocked) {
-                                return;
-                            }
-                            // The NEW state is computed locally: the
-                            // property binding may not have re-evaluated
-                            // yet when this handler reads it back.
-                            var collapsing = root.printer == null || !root.infoCollapsed;
-                            if (root.printer != null) {
-                                root.printer.setInfoCollapsed(collapsing);
-                            }
-                            // Collapsing the pane hides the pop-over's
-                            // opener with it — the card must close too
-                            // (the UX adjudication: only the section-
-                            // collapse deviation stands).
-                            if (collapsing) {
-                                root.openPopOver = "";
-                            }
-                        }
-                        UM.ToolTip {
-                            visible: parent.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: root.infoExpandLocked ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
-                        }
-                    }
-                    // The configure trigger: the column configurer's
-                    // glyph, adjacent to the collapse toggle (the
-                    // adjudicated placement).
-                    Cura.SecondaryButton {
-                        id: infoConfigureButton
-                        objectName: "configureInfoSectionsButton"
-                        visible: !root.infoCollapsed
-                        Layout.alignment: Qt.AlignVCenter
-                        fixedWidthMode: true
-                        width: 28 * screenScaleFactor
-                        height: width
-                        implicitHeight: width
-                        text: "⇄"
-                        onClicked: {
-                            root.buildConfigureRows("information");
-                            // Positioned imperatively at open time,
-                            // the dashboard popup's lesson: mapToItem
-                            // bindings evaluate once and latch the
-                            // pre-layout position (the live report:
-                            // the status card opened inside the
-                            // controls pane).
-                            var infoEdge = infoHeader.mapToItem(root, infoHeader.x, 0);
-                            infoConfigurePopOver.x = infoEdge.x;
-                            infoConfigurePopOver.y = infoEdge.y + infoHeader.height + UM.Theme.getSize("thin_margin").height;
-                            root.openPopOver = "sections-info";
-                        }
-                        UM.ToolTip {
-                            visible: parent.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: "Configure the information sections."
-                        }
-                    }
-                    UM.Label {
-                        Layout.fillWidth: true
-                        visible: !root.infoCollapsed
-                        text: "Information"
-                        font: UM.Theme.getFont("large_bold")
-                        elide: Text.ElideRight
-                    }
+                onConfigureRequested: {
+                    root.buildConfigureRows("information");
+                    // Positioned imperatively at open time,
+                    // the dashboard popup's lesson: mapToItem
+                    // bindings evaluate once and latch the
+                    // pre-layout position (the live report:
+                    // the status card opened inside the
+                    // controls pane).
+                    var infoEdge = infoPanel.mapToItem(root, infoPanel.headerAnchor.x, infoPanel.headerAnchor.y);
+                    infoConfigurePopOver.x = infoEdge.x;
+                    infoConfigurePopOver.y = infoEdge.y + UM.Theme.getSize("thin_margin").height;
+                    root.openPopOver = "sections-info";
                 }
-
-                Flickable {
-                    id: infoFlick
-                    visible: !root.infoCollapsed
-                    anchors.top: infoHeader.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.topMargin: UM.Theme.getSize("default_margin").height
-                    anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    // No right inset: the content's own 14px gutter is
-                    // the only dead band right of the sections (the
-                    // 4.5.0 live ruling — a margin's width, no more).
-                    anchors.bottomMargin: UM.Theme.getSize("default_margin").height
-                    clip: true
-                    contentWidth: width
-                    contentHeight: infoContent.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: UM.ScrollBar {
-                        id: infoScrollbar
-                    }
-
-                    ColumnLayout {
-                        id: infoContent
-                        objectName: "moonrakerInfoContent"
-                        // The stored order applies HERE — before the
-                        // first frame paints (the 4.5.0 live find).
-                        Component.onCompleted: root.applySectionOrder(infoContent, "information")
-                        // The constant gutter (the status pane's own
-                        // precedent): binding the content width to the
-                        // LIVE scrollbar width feeds the polish loop —
-                        // the scrollbar overlays the gutter instead of
-                        // squeezing the content in a feedback cycle.
-                        // Layout.fillWidth is inert here (the Flickable
-                        // is not a layout) — the 4.5.0 live find's
-                        // 1px crush; the explicit width stays, trimmed
-                        // to the 14px gutter alone.
-                        width: infoFlick.width - 14
-                        // Spacing lives on the children: collapsed sections
-                        // must contribute nothing so headers stack flush.
-                        spacing: 0
-                        MeshSection {
-                            id: meshSection
-                            visible: root.printer == null || root.printer.sectionHiddenMap["meshmap"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            onPopOverToggleRequested: function (name) {
-                                root.openPopOver = root.openPopOver === name ? "" : name;
-                            }
-                        }
-                        PlateProgressSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["plateprogress"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            onPopOverToggleRequested: function (name) {
-                                root.openPopOver = root.openPopOver === name ? "" : name;
-                            }
-                        }
-                        PlateSection {
-                            // During a print the picker shows either
-                            // the plate (when the print carries the
-                            // exclude-object data) or the download
-                            // offer (the live rulings); it clears
-                            // with the job epoch.
-                            visible: root.printer != null && root.printer.sectionHiddenMap["plate"] !== true && (root.printer.printActive || root.printer.plateHasObjects)
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            onPopOverToggleRequested: function (name) {
-                                root.openPopOver = root.openPopOver === name ? "" : name;
-                            }
-                        }
-                        TempHistorySection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["temphistory"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            miniSeries: root.miniChartSeries
-                            miniHasSeries: root.miniChartHasSeries
-                            onPopOverToggleRequested: function (name) {
-                                root.openPopOver = root.openPopOver === name ? "" : name;
-                            }
-                        }
-                    }
-                }
-
-                Connections {
-                    target: root.printer
-                    function onSectionLayoutChanged() {
-                        root.applySectionOrder(infoContent, "information");
-                        root.applySectionOrder(statusContent, "status");
-                        root.buildConfigureRows("information");
-                        root.buildConfigureRows("status");
-                    }
-                }
-
-                // The collapsed strip: the toggle stays at the top and the
-                // pane title reads bottom-to-top directly under it (the
-                // mirror of the controls pane, which reads top-to-bottom).
-                Item {
-                    id: infoCollapsedTitleBox
-                    visible: root.infoCollapsed
-                    anchors.top: infoHeader.bottom
-                    anchors.topMargin: UM.Theme.getSize("thin_margin").height
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: infoCollapsedTitle.implicitHeight
-                    height: infoCollapsedTitle.implicitWidth
-                    UM.Label {
-                        id: infoCollapsedTitle
-                        text: "Information"
-                        font: UM.Theme.getFont("medium_bold")
-                        color: UM.Theme.getColor("text_inactive")
-                        rotation: -90
-                        anchors.centerIn: parent
-                    }
-                }
-                // The collapsed readout (the 2026-09-17
-                // ruling): the hotend and bed temperatures from the
-                // PRINTER's peripherals fill the empty space BELOW
-                // the title — regular text, not the title's face.
-                // The collapsed readout (the 2026-09-17
-                // ruling): the hotend and bed temperatures from the
-                // PRINTER's peripherals in ONE rotated flat row of
-                // explicit children — the structure the
-                // engine actually lays out (the wrapper/implicit
-                // strips stayed zero-sized there, the live report).
-                Item {
-                    id: infoCollapsedReadoutBox
-                    visible: root.infoCollapsed
-                    clip: true
-                    anchors.top: infoCollapsedTitleBox.bottom
-                    anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
-                    anchors.horizontalCenter: infoCollapsedTitleBox.horizontalCenter
-                    // The box hugs the content: its height tracks
-                    // the row's implicit width, so the centred row
-                    // fills it and the strip starts at the margin
-                    // under the title (direct row positioning hid
-                    // the content on the engine, the live
-                    // report). 18 is the label line height.
-                    width: 18 * screenScaleFactor
-                    height: infoReadoutRow.implicitWidth
-                    Row {
-                        id: infoReadoutRow
-                        anchors.centerIn: parent
-                        spacing: 2 * screenScaleFactor
-                        rotation: -90
-                        // The fit hides through OPACITY, never
-                        // the visibility flag: an invisible group
-                        // keeps its place in the layout, so the
-                        // survivors can never re-centre in the box
-                        // (the live report) — the strip stays
-                        // anchored under
-                        // the title.
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            visible: root.infoHotendText !== "—"
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Thermometer.svg")
-                        }
-                        UM.Label {
-                            objectName: "infoCollapsedReadoutText"
-                            property bool fitHidden: false
-                            visible: root.infoHotendText !== "—"
-                            opacity: fitHidden ? 0 : 1
-                            text: root.infoHotendText
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
-                        Item {
-                            visible: root.infoBedText !== "—"
-                            width: 8 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                        }
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            visible: root.infoBedText !== "—"
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Bed.svg")
-                        }
-                        UM.Label {
-                            property bool fitHidden: false
-                            visible: root.infoBedText !== "—"
-                            opacity: fitHidden ? 0 : 1
-                            text: root.infoBedText
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
+                onCollapseToggled: function (collapsing) {
+                    // Collapsing the pane hides the pop-over's opener
+                    // with it — the card must close too (the UX
+                    // adjudication: only the section-collapse
+                    // deviation stands).
+                    if (collapsing) {
+                        root.openPopOver = "";
                     }
                 }
             }
@@ -953,592 +642,56 @@ Component {
                     }
                 }
             }
-            Cura.RoundedRectangle {
+            StatusPane {
                 id: statusPanel
-                objectName: "statusPanel"
-                // The collapsed readout may outrun a short pane: the
-                // PANE clips, so no child can ever spill past its
-                // bounds (the live report).
-                clip: true
-                onHeightChanged: root.updateStatusReadoutFits()
+                printerModel: root.printer
+                // The frozen fold contract's own state, read here and
+                // written back through the pane's intents.
+                statusCollapsed: root.statusCollapsed
+                statusExpandLocked: root.statusExpandLocked
+                etaAvailable: root.etaAvailable
+                finishAvailable: root.finishAvailable
+                layerCountAvailable: root.layerCountAvailable
+                flowAvailable: root.flowAvailable
                 // The pane's own width is where its fold LANDS — the one
                 // signal left where the camera is pinned at its floor
                 // (see the rule): the stage's width alone would stall
                 // the cascade one pane short.
                 onWidthChanged: root.applyNarrowWindowRules()
-                // Collapsed, the pane shrinks to the toggle button and its
-                // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
-                Layout.minimumWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 260 * screenScaleFactor)
-                // Shrink-only: max == preferred keeps the wide layout
-                // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                border.color: UM.Theme.getColor("lining")
-                border.width: UM.Theme.getSize("default_lining").width
-                color: UM.Theme.getColor("main_background")
-                radius: UM.Theme.getSize("default_radius").width
-
-                // While collapsed, a click anywhere on the strip expands
-                // the pane; the header button stays on top of this area.
-                MouseArea {
-                    visible: root.statusCollapsed
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        // Auto-collapsed-by-width is not a clickable
-                        // expand: only a wider window restores the
-                        // pane (the information pane's strip and the
-                        // console's strip carry the same guard).
-                        if (root.statusExpandLocked) {
-                            return;
-                        }
-                        if (root.printer != null) {
-                            root.printer.setStatusCollapsed(false);
-                        }
+                onHeightChanged: root.updateStatusReadoutFits()
+                onContentReady: root.applySectionOrder(statusPanel.content, "status")
+                onConfigureRequested: {
+                    root.buildConfigureRows("status");
+                    // Positioned imperatively at open time, the
+                    // dashboard popup's lesson: mapToItem bindings
+                    // evaluate once and latch the pre-layout position.
+                    var statusEdge = statusPanel.mapToItem(root, statusPanel.headerAnchor.x, statusPanel.headerAnchor.y);
+                    statusConfigurePopOver.x = statusEdge.x - statusConfigurePopOver.width;
+                    statusConfigurePopOver.y = statusEdge.y + UM.Theme.getSize("thin_margin").height;
+                    root.openPopOver = "sections-status";
+                }
+                onCollapseToggled: function (collapsing) {
+                    // Collapsing the pane hides the pop-over's opener
+                    // with it — the card must close too (the UX
+                    // adjudication: only the section-collapse
+                    // deviation stands).
+                    if (collapsing) {
+                        root.openPopOver = "";
                     }
                 }
+            }
+        }
 
-                RowLayout {
-                    id: statusHeader
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.topMargin: UM.Theme.getSize("default_margin").height / 2
-                    anchors.leftMargin: UM.Theme.getSize("thin_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("thin_margin").width
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.Label {
-                        Layout.fillWidth: true
-                        visible: !root.statusCollapsed
-                        text: "Printer status"
-                        font: UM.Theme.getFont("large_bold")
-                        elide: Text.ElideRight
-                    }
-                    Rectangle {
-                        // The connection dot rides the Printer status
-                        // pane's title — the chosen spot for
-                        // the always-readable connection state. Green
-                        // when connected, red when not.
-                        Layout.alignment: Qt.AlignVCenter
-                        visible: !root.statusCollapsed
-                        width: 10 * screenScaleFactor
-                        height: 10 * screenScaleFactor
-                        radius: 5 * screenScaleFactor
-                        color: connectionDotColour
-                        HoverHandler {
-                            id: tooltipHover2
-                        }
-                        UM.ToolTip {
-                            visible: tooltipHover2.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            // The transport detail rides the dot's
-                            // tooltip: "connected over websocket" or
-                            // "connected over HTTP polling" (the
-                            // chosen spot for it).
-                            text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
-                        }
-                    }
-                    // Open the Moonraker UI in a browser, icon-style in the
-                    // title row.
-                    UM.SimpleButton {
-                        id: frontendButton
-                        visible: !root.statusCollapsed
-                        Layout.alignment: Qt.AlignVCenter
-                        width: 28 * screenScaleFactor
-                        height: 28 * screenScaleFactor
-                        color: UM.Theme.getColor("text_inactive")
-                        hoverColor: UM.Theme.getColor("text")
-                        iconSource: UM.Theme.getIcon("LinkExternal")
-                        onClicked: {
-                            if (root.printer != null) {
-                                root.printer.openFrontend();
-                            }
-                        }
-
-                        HoverHandler {
-                            id: tooltipHover3
-                        }
-                        UM.ToolTip {
-                            visible: tooltipHover3.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: "Open the Moonraker frontend."
-                        }
-                    }
-                    // The configure trigger, beside its collapse
-                    // toggle (the adjudicated placement).
-                    Cura.SecondaryButton {
-                        id: statusConfigureButton
-                        objectName: "configureStatusSectionsButton"
-                        visible: !root.statusCollapsed
-                        Layout.alignment: Qt.AlignVCenter
-                        fixedWidthMode: true
-                        width: 28 * screenScaleFactor
-                        height: width
-                        implicitHeight: width
-                        text: "⇄"
-                        onClicked: {
-                            root.buildConfigureRows("status");
-                            // Imperative positioning, the same reason
-                            // as the information card.
-                            var statusEdge = statusHeader.mapToItem(root, statusHeader.x + statusHeader.width, 0);
-                            statusConfigurePopOver.x = statusEdge.x - statusConfigurePopOver.width;
-                            statusConfigurePopOver.y = statusEdge.y + statusHeader.height + UM.Theme.getSize("thin_margin").height;
-                            root.openPopOver = "sections-status";
-                        }
-                        UM.ToolTip {
-                            visible: parent.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: "Configure the printer-status sections."
-                        }
-                    }
-                    // The toggle hugs the right edge: the pane is on the
-                    // right of the screen and collapses into that edge.
-                    // Left when collapsed (expand left), right when open.
-                    Cura.SecondaryButton {
-                        id: statusCollapseButton
-                        Layout.alignment: Qt.AlignVCenter
-                        fixedWidthMode: true
-                        // Square at the OLD button width: the theme
-                        // adds its padding around the 32px content, so
-                        // the height tracks the rendered width (the
-                        // ruling).
-                        width: 28 * screenScaleFactor
-                        iconSize: 12 * screenScaleFactor
-                        height: width
-                        implicitHeight: width
-
-                        // The SAME theme-chevron family as the console
-                        // and info toggles; this pane is rightmost and
-                        // collapses right.
-                        iconSource: root.statusCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
-                        onClicked: {
-                            // Auto-collapsed-by-width is not a
-                            // clickable toggle: only a wider window
-                            // restores the pane (the information
-                            // pane's toggle carries the same guard).
-                            if (root.statusExpandLocked) {
-                                return;
-                            }
-                            if (root.printer != null) {
-                                root.printer.setStatusCollapsed(!root.statusCollapsed);
-                            }
-                        }
-                        UM.ToolTip {
-                            visible: parent.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: root.statusExpandLocked ? "The window is too narrow — widen it to show the printer status." : (root.statusCollapsed ? "Show the printer status." : "Hide the printer status.")
-                        }
-                    }
-                }
-
-                Flickable {
-                    id: statusFlick
-                    objectName: "moonrakerStatusFlick"
-                    visible: !root.statusCollapsed
-                    anchors.top: statusHeader.bottom
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.topMargin: UM.Theme.getSize("default_margin").height
-                    anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    // No right inset: the content's own 14px gutter is
-                    // the only dead band right of the sections — the
-                    // same ruling the information pane above carries,
-                    // and the inset that used to double the pane's
-                    // right gap against the scroll bar.
-                    anchors.bottomMargin: UM.Theme.getSize("default_margin").height
-                    clip: true
-                    contentWidth: width
-                    contentHeight: statusContent.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: UM.ScrollBar {
-                        id: statusScrollbar
-                    }
-
-                    Column {
-                        id: statusContent
-                        objectName: "moonrakerStatusContent"
-                        // The stored order applies HERE — the column's
-                        // own completion, after its children exist and
-                        // BEFORE the first frame paints (the 4.5.0 live
-                        // find: any later apply is a visible jump).
-                        Component.onCompleted: root.applySectionOrder(statusContent, "status")
-                        // The constant gutter, exactly as the information
-                        // pane above rules it: the scrollbar overlays the
-                        // gutter rather than squeezing the content in a
-                        // live-width feedback cycle. Layout.fillWidth is
-                        // inert here (a Flickable is not a layout), so the
-                        // explicit viewport-relative width is the only
-                        // thing keeping the column at its own implicit
-                        // width while the sections paint past the pane.
-                        width: statusFlick.width - 14
-                        // Spacing lives on the children: collapsed sections
-                        // must contribute nothing so headers stack flush.
-                        // Sections own their implicit heights. A positioner
-                        // stacks them without a second layout solver feeding
-                        // changing row heights back through the whole pane.
-                        spacing: 0
-                        JobSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["job"] !== true
-                            width: statusContent.width
-                            printerModel: root.printer
-                        }
-
-                        TempsSection {
-                            width: statusContent.width
-                            visible: root.printer != null && root.printer.temperatureItems.length > 0 && root.printer.sectionHiddenMap["temps"] !== true
-                            printerModel: root.printer
-                        }
-
-                        FansInfoSection {
-                            width: statusContent.width
-                            visible: root.printer != null && root.printer.fanItems.length > 0 && root.printer.sectionHiddenMap["fansinfo"] !== true
-                            printerModel: root.printer
-                        }
-                        FilamentSection {
-                            width: statusContent.width
-                            visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
-                            printerModel: root.printer
-                        }
-                        SystemInfoSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
-                            width: statusContent.width
-                            printerModel: root.printer
-                        }
-                        McusSection {
-                            width: statusContent.width
-                            visible: root.printer != null && root.printer.mcuItems.length > 0 && root.printer.sectionHiddenMap["mcus"] !== true
-                            printerModel: root.printer
-                        }
-                    }
-                }
-
-                // The collapsed strip: the toggle stays at the top and the
-                // pane title reads bottom-to-top directly under it.
-                // The loading prompt (the 2026-09-16 request): an
-                // overlay ABOVE the flick, never a layout child — a
-                // layout child flipping visibility reflowed the
-                // section stack and fed a polish loop (the
-                // Windows run).
-                Item {
-                    anchors.fill: statusFlick
-                    visible: !root.statusCollapsed && (root.printer == null || root.printer.monitorLoading)
-                    UM.Label {
-                        anchors.centerIn: parent
-                        text: "Loading printer data…"
-                        color: UM.Theme.getColor("text_inactive")
-                        font: UM.Theme.getFont("default")
-                    }
-                }
-
-                Item {
-                    id: statusCollapsedTitleBox
-                    visible: root.statusCollapsed
-                    anchors.top: statusHeader.bottom
-                    anchors.topMargin: UM.Theme.getSize("thin_margin").height
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: statusCollapsedTitle.implicitHeight
-                    height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
-                    UM.Label {
-                        id: statusCollapsedTitle
-                        text: "Printer status"
-                        font: UM.Theme.getFont("medium_bold")
-                        color: UM.Theme.getColor("text_inactive")
-                        rotation: 90
-                        anchors.centerIn: parent
-                        anchors.verticalCenterOffset: 12 * screenScaleFactor
-                    }
-                    Rectangle {
-                        // The dot stays visible while the pane is
-                        // collapsed too — leading the title, in its
-                        // own band at the top.
-                        anchors.top: parent.top
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.topMargin: 3 * screenScaleFactor
-                        width: 10 * screenScaleFactor
-                        height: 10 * screenScaleFactor
-                        radius: 5 * screenScaleFactor
-                        color: connectionDotColour
-                    }
-                }
-                // The collapsed readout (the 2026-09-17
-                // ruling): the dual-stacked progress bars fill the
-                // empty space BELOW the title — print above layer,
-                // thin tracks at the pill weight, each labelled and
-                // shown only while it means something. The fills run
-                // top-to-bottom, the strip's reading direction.
-                Item {
-                    id: statusCollapsedBarsBox
-                    visible: root.statusCollapsed
-                    clip: true
-                    anchors.top: statusCollapsedTitleBox.bottom
-                    // The standard margin: the readout's text must
-                    // sit LEVEL with the controls pane's readout (the
-                    // live report).
-                    anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
-                    anchors.horizontalCenter: statusCollapsedTitleBox.horizontalCenter
-                    // The box hugs the content: its height tracks
-                    // the row's implicit width, so the centred row
-                    // fills it and the strip starts at the margin
-                    // under the title (the live report). 18 is the
-                    // label line height.
-                    width: 18 * screenScaleFactor
-                    height: statusReadoutRow.implicitWidth
-                    // ONE rotated flat row of explicit children —
-                    // the structure the engine lays out.
-                    // Each bar is its own pair: glyph, label, then
-                    // the TRACK — whose 60 px span lies ALONG the
-                    // row's main axis, so the rotation makes it run
-                    // along the strip (vertical) with the 4 px
-                    // thickness across. The fill grows from the
-                    // label end along the span.
-                    Row {
-                        id: statusReadoutRow
-                        anchors.centerIn: parent
-                        spacing: 2 * screenScaleFactor
-                        rotation: 90
-                        // The fit hides through OPACITY, never
-                        // the visibility flag: the survivors keep
-                        // their places (the live report).
-                        // The ETA leads the strip (the live ruling):
-                        // duration and finish clock, with the preview
-                        // pane's own glyphs — the hourglass then the
-                        // clock.
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            // Unavailable values do not render — the
-                            // value and its glyph both hide (the
-                            // live ruling).
-                            visible: root.etaAvailable
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Hourglass.svg")
-                            HoverHandler {
-                                id: tooltipHover4
-                            }
-                            UM.ToolTip {
-                                visible: tooltipHover4.hovered
-                                targetPoint: Qt.point(parent.width / 2, 0)
-                                x: 0
-                                y: parent.height + UM.Theme.getSize("default_margin").height
-                                width: UM.Theme.getSize("tooltip").width
-                                // The improve-Eta mirror names the
-                                // action (the panel's catch): the
-                                // strip's glyph is not the button.
-                                text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                            }
-                        }
-                        UM.Label {
-                            objectName: "statusCollapsedReadoutLabel"
-                            property bool fitHidden: false
-                            visible: root.etaAvailable
-                            opacity: fitHidden ? 0 : 1
-                            text: root.printer != null ? root.printer.monitorEta : "—"
-                            // The longest ETA form must clear the slot
-                            // or the value wraps — the same live-report
-                            // width the finish clock's slot carries.
-                            width: 84 * screenScaleFactor
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                            HoverHandler {
-                                id: tooltipHover5
-                            }
-                            UM.ToolTip {
-                                visible: tooltipHover5.hovered
-                                targetPoint: Qt.point(parent.width / 2, 0)
-                                x: 0
-                                y: parent.height + UM.Theme.getSize("default_margin").height
-                                width: UM.Theme.getSize("tooltip").width
-                                text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                            }
-                        }
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            visible: root.finishAvailable
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Clock.svg")
-                        }
-                        UM.Label {
-                            objectName: "statusCollapsedReadoutLabel"
-                            property bool fitHidden: false
-                            visible: root.finishAvailable
-                            opacity: fitHidden ? 0 : 1
-                            text: root.printer != null ? root.printer.monitorFinish : "—"
-                            // The finish reads day-first on a print
-                            // crossing midnight, and that form is the
-                            // widest the strip holds: the slot must
-                            // clear it or the value wraps (the live
-                            // report).
-                            width: 84 * screenScaleFactor
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            // The layer count (the live ruling): after
-                            // the ETA, before the print progress, with
-                            // the preview card's layer glyph.
-                            visible: root.layerCountAvailable
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Layer.svg")
-                        }
-                        UM.Label {
-                            objectName: "statusCollapsedReadoutLabel"
-                            property bool fitHidden: false
-                            visible: root.layerCountAvailable
-                            opacity: fitHidden ? 0 : 1
-                            // Implicit width (the live ruling: the
-                            // layer info may reflow — it changes
-                            // slowly — so the gap to the print bar
-                            // stays tight while "888 / 888" still
-                            // fits).
-                            text: root.printer != null ? root.printer.monitorLayer : "—"
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
-
-                        Item {
-                            // The margin between the layer count and
-                            // the progress group (the live ruling) —
-                            // the stacked fills themselves stay
-                            // touching.
-                            visible: root.printer != null && root.printer.printActive
-                            width: 8 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                        }
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            visible: root.printer != null && root.printer.printActive
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Progress.svg")
-                        }
-                        UM.Label {
-                            objectName: "statusCollapsedReadoutLabel"
-                            property bool fitHidden: false
-                            visible: root.printer != null && root.printer.printActive
-                            opacity: fitHidden ? 0 : 1
-                            text: "Progress"
-                            width: 60 * screenScaleFactor
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                        }
-                        Rectangle {
-                            id: progressTrack
-                            property bool fitHidden: false
-                            visible: root.printer != null && root.printer.printActive
-                            opacity: fitHidden ? 0 : 1
-                            width: 60 * screenScaleFactor
-                            // THE STACKED BAR (the live ruling): the
-                            // print fill is the BOTTOM half and the
-                            // layer fill the TOP half, touching at
-                            // the centre line — no gap. Without layer
-                            // info the print fill takes the whole
-                            // height. The transparent body with the
-                            // 2 px text outline frames the extent, so
-                            // the fills read against the work
-                            // remaining.
-                            height: 18 * screenScaleFactor
-                            color: "transparent"
-                            border.width: 2 * screenScaleFactor
-                            border.color: UM.Theme.getColor("text")
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.bottom: parent.bottom
-                                // The three fills share the height in
-                                // thirds when the pause is scheduled,
-                                // halves without one, and the print
-                                // takes the whole height without
-                                // layer info (the live ruling).
-                                height: parent.height * (root.printer != null && root.printer.monitorLayerProgress >= 0 ? (root.printer.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
-                                // monitorProgress is a PERCENTAGE
-                                // (0..100) while the clamp read it as
-                                // a fraction — anything past 1%
-                                // pegged the bar full (the live
-                                // report). The layer value is
-                                // already 0..1.
-                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress / 100 : 0))
-                                color: UM.Theme.getColor("primary")
-                            }
-                            Rectangle {
-                                // The next scheduled pause's fill (the
-                                // live ruling): the MIDDLE of the
-                                // stack, the mesh's neon orange — NOT
-                                // RENDERED while no pause lies ahead
-                                // (the gate, not a zero width).
-                                objectName: "statusNextPauseFill"
-                                visible: root.printer != null && root.printer.nextPauseFraction >= 0
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                height: parent.height / 3
-                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.nextPauseFraction : 0))
-                                color: MoonrakerTheme.neonOrange
-                            }
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.top: parent.top
-                                height: parent.height * (root.printer != null && root.printer.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
-                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
-                                color: UM.Theme.getColor("primary")
-                            }
-                        }
-                        UM.ColorImage {
-                            color: UM.Theme.getColor("text")
-                            property bool fitHidden: false
-                            visible: root.flowAvailable
-                            opacity: fitHidden ? 0 : 1
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("../resources/svg/Flow.svg")
-                        }
-                        UM.Label {
-                            // The flow pair's own name (the harness
-                            // rule): the OTHER strip labels share
-                            // statusCollapsedReadoutLabel, and the
-                            // standby scenario proves the available
-                            // flow renders while the unavailable
-                            // groups hide.
-                            objectName: "statusCollapsedFlowLabel"
-                            property bool fitHidden: false
-                            visible: root.flowAvailable
-                            opacity: fitHidden ? 0 : 1
-                            text: root.printer != null ? root.printer.monitorFlowRate : ""
-                            // "888.8 mm^3/s" must sit comfortably
-                            // (the live ruling).
-                            width: 110 * screenScaleFactor
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
+        // The stored section layout: one signal re-applies BOTH panes'
+        // order and rebuilds BOTH configure cards — the stage's own
+        // pass, kept above the panes.
+        Connections {
+            target: root.printer
+            function onSectionLayoutChanged() {
+                root.applySectionOrder(infoPanel.content, "information");
+                root.applySectionOrder(statusPanel.content, "status");
+                root.buildConfigureRows("information");
+                root.buildConfigureRows("status");
             }
         }
 
