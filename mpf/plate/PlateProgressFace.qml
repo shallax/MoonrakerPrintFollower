@@ -5,6 +5,7 @@ import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "PreviewColours.js" as PreviewColours
 import "PlateExactComposition.js" as ExactComposition
+import "PlateViewPolicy.js" as ViewPolicy
 import "../resources/theme"
 
 // The plate map's progress face (4.6.0): the OctoApp-style
@@ -364,13 +365,7 @@ Item {
     // The scope's graduation labels: every 25% between 100% and
     // 2000%, log-positioned along the bar (the live request: the
     // cap moved from 800% to 2000%).
-    readonly property var zoomGraduations: {
-        var steps = [];
-        for (var v = 1.0; v <= 20.0 + 1e-9; v += 0.25) {
-            steps.push(v);
-        }
-        return steps;
-    }
+    readonly property var zoomGraduations: ViewPolicy.graduations(ViewPolicy.MAX_SCALE, 0.25)
     Timer {
         id: scopeHideTimer
         interval: 5000
@@ -448,19 +443,15 @@ Item {
         interval: 16
         repeat: true
         onTriggered: {
-            var step = 0.30;
-            var newScale = root.displayScale + (root.viewScale - root.displayScale) * step;
-            if (Math.abs(root.viewScale - newScale) < 0.005) {
-                newScale = root.viewScale;  // the exact snap at the end
-            }
+            var newScale = ViewPolicy.easeScale(root.displayScale, root.viewScale, 0.30);
             root.displayScale = newScale;
             // The derived pan runs EVERY tick — held or not: the
             // focal glide pans the scene while a drag's accumulated
             // deltas ride on top, so the cursor's bed point stays
             // put even with the button down (the live origin-zoom
             // report — the raster once scaled in place while held).
-            root.displayPanX = root._zoomAnchorX - root._zoomBedX * root.displayScale + root._panDragDeltaX;
-            root.displayPanY = root._zoomAnchorY - root._zoomBedY * root.displayScale + root._panDragDeltaY;
+            root.displayPanX = ViewPolicy.glidePan(root._zoomAnchorX, root._zoomBedX, root.displayScale, root._panDragDeltaX);
+            root.displayPanY = ViewPolicy.glidePan(root._zoomAnchorY, root._zoomBedY, root.displayScale, root._panDragDeltaY);
             if (newScale === root.viewScale) {
                 zoomAnimator.stop();
                 if (root._exactReady() && !viewGesture.pressed) {
@@ -1106,83 +1097,17 @@ Item {
         return root.available() && !root.compact && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true;
     }
 
-    // The one pan rule (the centred-follow ruling): the bed always
-    // fills the view, so a pan is clamped to the interval that keeps
-    // the plot's rectangle covering the face; an axis where the bed is
-    // smaller than the face (the full-bed fit) centres there instead —
-    // the standing "no pan at full zoom" ruling.
     // The zoom/pan soft clamp's margin: at least this many pixels of
     // the bed stay visible on every side, however far the camera
     // pans (the live ruling).
     property real _panSoftMargin: 100.0
 
-    function _clampPan(x, y) {
-        var plot = mapping._plot;
-        if (plot == null) {
-            return {
-                "x": 0.0,
-                "y": 0.0
-            };
-        }
-        var scale = root.viewScale;
-        var bed = plot.bed;
-        var left = bed.offsetX * scale;
-        var right = left + bed.plotWidth * scale;
-        var top = bed.offsetY * scale;
-        var bottom = top + bed.plotHeight * scale;
-        var lowX = width - right;
-        var highX = -left;
-        var lowY = height - bottom;
-        var highY = -top;
-        return {
-            "x": lowX > highX ? 0.0 : Math.min(highX, Math.max(lowX, x)),
-            "y": lowY > highY ? 0.0 : Math.min(highY, Math.max(lowY, y))
-        };
-    }
-
     function _softClampPan(x, y) {
-        // The zoom/pan soft clamp: the camera moves freely while
-        // any of the bed shows, but the bed may never leave the
-        // viewport wholly — _panSoftMargin pixels stay visible on
-        // every side (the live ruling: a fully off-bed view is
-        // never useful, and the corner camera must not snap the bed
-        // to the viewport's edge).
-        var plot = mapping._plot;
-        if (plot == null) {
-            return {
-                "x": x,
-                "y": y
-            };
-        }
-        var scale = root.viewScale;
-        var bed = plot.bed;
-        var left = bed.offsetX * scale;
-        var right = left + bed.plotWidth * scale;
-        var top = bed.offsetY * scale;
-        var bottom = top + bed.plotHeight * scale;
-        var lowX = root._panSoftMargin - right;
-        var highX = width - root._panSoftMargin - left;
-        var lowY = root._panSoftMargin - bottom;
-        var highY = height - root._panSoftMargin - top;
-        return {
-            "x": lowX > highX ? x : Math.min(highX, Math.max(lowX, x)),
-            "y": lowY > highY ? y : Math.min(highY, Math.max(lowY, y))
-        };
+        return ViewPolicy.softClampPan(mapping._plot, root.viewScale, width, height, root._panSoftMargin, x, y);
     }
 
     function _panOnToolhead(x, y) {
-        var scene = mapping.plateToScene(x === undefined ? root.displayDotX : x, y === undefined ? root.displayDotY : y);
-        if (scene == null) {
-            return null;
-        }
-        // The jump centres the dot on the canvas, unclamped: the
-        // plate may show empty space beyond the bed edge (the live
-        // request — the jump must always put the toolhead at the
-        // middle, never pin the bed to the view's edge).
-        return {
-            "x": width / 2 - scene.x * root.viewScale,
-            "y": height / 2 - scene.y * root.viewScale
-        };
+        return ViewPolicy.centrePan(mapping._plot, x === undefined ? root.displayDotX : x, y === undefined ? root.displayDotY : y, root.viewScale, width, height);
     }
 
     // The one-shot jump (the pop-over's button): the toolhead's bed
@@ -1230,37 +1155,21 @@ Item {
     onDisplayDotYChanged: _followToolhead()
     onKeepCentredChanged: _followToolhead()
 
-    // The ONE physical stroke-width calculation, shared by the ghost,
-    // pending, printed and travel painters: nominal bed mm through
-    // the live plot's px-per-mm and the view zoom, times the user's
-    // line scale. The plot is aspect-preserved so sx equals sy (the
-    // mapping's own contract). Screen-space annotations — the
-    // toolhead dot, the travel glyphs, the grid — never read this.
+    // The stroke widths every painter and the native renderer share,
+    // read live off the view carrier the threaded canvases see.
     function toolpathWidthPx() {
-        if (root.pixelLineWidth) {
-            return Math.min(8, Math.max(1, Math.round(root.lineScale)));
-        }
-        var plot = mapping._plot;
-        if (plot == null) {
-            return 0;
-        }
-        // The SAME geometry-width policy the native renderer's pen
-        // applies (the parity contract): the nominal width scaled to
-        // the presentation, then the same device-coverage floor —
-        // min(2/dpr, 1) logical px — so a sub-floor stroke presents
-        // at the same full-intensity footprint on both renderers.
-        // Without the floor the native raster's backed downscale
-        // faded thin strokes while the canvas stroked them raw, and
-        // the two halves of ONE layer read as different inks.
-        var width = root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root._view.scale) * root._view.lineScale * (root._view.compact ? root.compactStrokeBoost : 1.0);
-        var dpr = root._view.dpr !== undefined ? Math.max(1.0, root._view.dpr) : 1.0;
-        return Math.max(width, Math.min(2.0 / dpr, 1.0));
+        return ViewPolicy.toolpathWidth({
+            pixelLineWidth: root.pixelLineWidth,
+            lineScale: root.lineScale,
+            plot: mapping._plot,
+            view: root._view,
+            nominalMm: root.nominalToolpathWidthMm,
+            compactBoost: root.compactStrokeBoost
+        });
     }
 
     function travelWidthPx() {
-        if (root.trueThickness)
-            return 1.0;
-        return root.toolpathWidthPx() * root.travelVisualRatio;
+        return ViewPolicy.travelWidth(root.toolpathWidthPx(), root.travelVisualRatio, root.trueThickness);
     }
 
     function _barZoomPan(target) {
@@ -1269,15 +1178,7 @@ Item {
         // change — the bar must never zoom around the bed origin.
         // The retarget reads the CURRENT display transform, exactly
         // like the wheel's cursor anchor.
-        var cx = root.width / 2;
-        var cy = root.height / 2;
-        var panX = cx - (cx - root.displayPanX) / root.displayScale * target;
-        var panY = cy - (cy - root.displayPanY) / root.displayScale * target;
-        var clamped = root._softClampPan(panX, panY);
-        return {
-            "x": clamped.x,
-            "y": clamped.y
-        };
+        return root._softClampPan(ViewPolicy.focalPan(root.width / 2, root.displayPanX, root.displayScale, target), ViewPolicy.focalPan(root.height / 2, root.displayPanY, root.displayScale, target));
     }
 
     // The raster stack's painted state: the split the progress canvas
@@ -2834,17 +2735,11 @@ Item {
             if (mapping._plot == null) {
                 return;
             }
-            // A mouse wheel sends discrete angle notches, while a touchpad
-            // sends many small pixel deltas during one gesture. Treating
-            // every touchpad event as a whole notch made macOS zoom race
-            // from bed fit to the limit. Keep the wheel's 25% step and
-            // scale touchpad movement continuously by its pixel distance.
             var pixels = wheel.pixelDelta.y;
             var angle = wheel.angleDelta.y;
             if (pixels === 0 && angle === 0)
                 return;
-            var factor = pixels !== 0 ? Math.pow(1.25, pixels / 180.0) : (angle > 0 ? 1.25 : 0.8);
-            var target = Math.min(20.0, Math.max(1.0, root.viewScale * factor));
+            var target = ViewPolicy.wheelScale(pixels, angle, root.viewScale, ViewPolicy.MAX_SCALE);
             if (target === root.viewScale && root.displayScale === root.viewScale) {
                 return;
             }
@@ -2870,16 +2765,16 @@ Item {
                 // point puts it; only the 100% fit (above)
                 // recentres.
                 root.viewScale = target;
-                root.viewPanX = wheel.x - (wheel.x - root.displayPanX) / root.displayScale * target;
-                root.viewPanY = wheel.y - (wheel.y - root.displayPanY) / root.displayScale * target;
+                root.viewPanX = ViewPolicy.focalPan(wheel.x, root.displayPanX, root.displayScale, target);
+                root.viewPanY = ViewPolicy.focalPan(wheel.y, root.displayPanY, root.displayScale, target);
                 var clamped = root._softClampPan(root.viewPanX, root.viewPanY);
                 root.viewPanX = clamped.x;
                 root.viewPanY = clamped.y;
             }
             root._zoomAnchorX = wheel.x;
             root._zoomAnchorY = wheel.y;
-            root._zoomBedX = (wheel.x - root.viewPanX) / root.viewScale;
-            root._zoomBedY = (wheel.y - root.viewPanY) / root.viewScale;
+            root._zoomBedX = ViewPolicy.focalBed(wheel.x, root.viewPanX, root.viewScale);
+            root._zoomBedY = ViewPolicy.focalBed(wheel.y, root.viewPanY, root.viewScale);
             // The wheel re-owns the camera promise: the ease runs
             // from the CURRENT display (held-drag pan included) and
             // the deltas from here on ride the glide.
@@ -3057,7 +2952,7 @@ Item {
             Repeater {
                 model: root.zoomGraduations
                 Item {
-                    readonly property real fraction: Math.log(modelData) / Math.log(20.0)
+                    readonly property real fraction: ViewPolicy.trackFraction(modelData, ViewPolicy.MAX_SCALE)
                     readonly property bool major: Math.round(modelData * 100) % 100 === 0
                     readonly property bool half: Math.round(modelData * 100) % 50 === 0
                     anchors.left: parent.left
@@ -3089,7 +2984,7 @@ Item {
                 // drag handle.
                 id: scopeMarker
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - (Math.log(root.viewScale) / Math.log(20.0)) * parent.height - height / 2
+                y: parent.height - ViewPolicy.trackFraction(root.viewScale, ViewPolicy.MAX_SCALE) * parent.height - height / 2
                 width: parent.width
                 height: 3 * screenScaleFactor
                 radius: height / 2
@@ -3109,8 +3004,7 @@ Item {
                     }
                 }
                 function scopeApply(y) {
-                    var fraction = Math.min(1.0, Math.max(0.0, (parent.height - y) / parent.height));
-                    var target = Math.pow(20.0, fraction);
+                    var target = ViewPolicy.scaleFromTrack(y, parent.height, ViewPolicy.MAX_SCALE);
                     root._enterInteraction();
                     // A direct manipulation: the display follows the
                     // handle immediately (like the drag pan), and the

@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import UM 1.5 as UM
 import MoonrakerPrintFollower 1.0
+import "PlateViewPolicy.js" as ViewPolicy
 import "../resources/theme"
 
 // The plate family's shared bed-space canvas (4.6.0): the ONE
@@ -141,14 +142,7 @@ Item {
     function plateToScene(x, y) {
         // The single printer-to-widget transform — polygons, the hit
         // test and the dot all use it.
-        var plot = root._plot;
-        if (plot == null) {
-            return null;
-        }
-        return {
-            "x": plot.bed.offsetX + (x - plot.bed.bedXMin) * plot.sx,
-            "y": plot.bed.offsetY + (plot.bed.bedYMax - y) * plot.sy
-        };
+        return ViewPolicy.toScene(root._plot, x, y);
     }
 
     // The per-payload hit index: the rows carrying usable polygons with
