@@ -277,7 +277,7 @@ class TestingDocPinTests(unittest.TestCase):
         text = UI_TEST.read_text(encoding="utf-8")
         for name in ("runner.py", "native_host.py", "log_gate.py",
                      "window_geometry.py", "scenario_map.py",
-                     "surface_coverage.py"):
+                     "surface_coverage.py", "liveness.py", "static_leg.py"):
             self.assertIn('cp "$root/tests/harness/%s"' % name, text,
                           "%s is no longer staged" % name)
         self.assertIn('cp -r "$root/tests/harness/scenarios" "$WORK_DIR"/scenarios',
@@ -289,7 +289,7 @@ class TestingDocPinTests(unittest.TestCase):
         staged = {"runner.py", "native_host.py", "log_gate.py",
                   "window_geometry.py", "scenario_map.py",
                   "surface_coverage.py", "simulator.py", "simulator_serve.py",
-                  "gcodegen.py"}
+                  "gcodegen.py", "liveness.py", "static_leg.py"}
         host_only = {"test_harness_specs.py", "test_harness_runner.py",
                      "test_harness_native.py", "test_harness_seed.py",
                      "seed_variants.py"}

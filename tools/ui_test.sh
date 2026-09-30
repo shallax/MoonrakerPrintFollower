@@ -525,6 +525,11 @@ cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
 # imported from this directory), so the flat copy keeps working.
 cp "$root/tests/harness/native_host.py" "$WORK_DIR"/native_host.py
 cp "$root/tests/harness/log_gate.py" "$WORK_DIR"/log_gate.py
+# The runner's instrument modules ride beside it: the staged runner
+# imports them from this directory, so a new one that is not staged
+# fails the boot rather than a host-side import.
+cp "$root/tests/harness/liveness.py" "$WORK_DIR"/liveness.py
+cp "$root/tests/harness/static_leg.py" "$WORK_DIR"/static_leg.py
 cp "$root/tests/harness/window_geometry.py" "$WORK_DIR"/window_geometry.py
 # The suite is a PACKAGE (one module per group plus the shared probe
 # bodies and the assembly point), so the whole directory stages —
