@@ -347,9 +347,12 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the popup, so the pins below follow the code into the document
         # that now holds it. Mounting stays pinned in the shell.
         leaves = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
-                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip")}
-        for name in leaves:
+                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow")}
+        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters"):
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
+        # The option row is the filters leaf's delegate, never a child
+        # of the shell.
+        self.assertIn("FileFilterOptionRow {", leaves["FileManagerFilters"])
         # The left panel carries no printer commands: only the camera list,
         # the read-outs and view configuration remain there.
         self.assertNotIn("root.printer.pausePrint", harness.MONITOR_QML)
@@ -529,14 +532,14 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # The live-test rulings: the 250 ms search settle,
         # the refresh button, the circled search clear, folders as a
         # strip (never in the metadata list).
-        self.assertIn("interval: 250", harness.FILE_MANAGER_QML)
+        self.assertIn("interval: 250", leaves["FileManagerSearch"])
         self.assertIn("refreshFileManager()", harness.FILE_MANAGER_QML)
         self.assertIn('text: "⟳"', leaves["FileManagerToolbar"])
-        self.assertIn("restoreMode: Binding.RestoreBinding", harness.FILE_MANAGER_QML)
-        self.assertIn("id: searchClear", harness.FILE_MANAGER_QML)
+        self.assertIn("restoreMode: Binding.RestoreBinding", leaves["FileManagerSearch"])
+        self.assertIn("id: searchClear", leaves["FileManagerSearch"])
         self.assertIn("activeDirectories", harness.FILE_MANAGER_QML)
         self.assertIn('UM.Theme.getIcon("Folder")', leaves["FileDirectoryStrip"])
-        self.assertIn("filterOptionRow", harness.FILE_MANAGER_QML)
+        self.assertIn("filterOptionRow", leaves["FileManagerFilters"])
         # Probe-proven engine traps: a Repeater with two bare
         # children keeps only the last as its delegate, and
         # Component ids must never be reached through an object
@@ -553,15 +556,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the open dropdown), and the up-directory chip in the
         # folder strip.
         self.assertIn("setFilterValue", harness.FILE_MANAGER_QML)
-        self.assertIn("modelData.radio", harness.FILE_MANAGER_QML)
+        self.assertIn("modelData.radio", leaves["FileManagerFilters"])
         # The toggle dropdowns close on RELEASE outside (the press
         # still opens state capture — a press-outside policy closed
         # before the opener could record it and every dismissal click
         # re-opened the popup); the dialogs close on Escape only.
-        self.assertIn("closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside", harness.FILE_MANAGER_QML)
+        self.assertIn("closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside", leaves["FileManagerFilters"])
         self.assertIn("closePolicy: Popup.CloseOnEscape\n", dialogs['PrintConfirmDialog'])
-        self.assertIn("y: parent.height", harness.FILE_MANAGER_QML)
-        self.assertIn("visible: !root.filterActive(\"slicer\")", harness.FILE_MANAGER_QML)
+        self.assertIn("y: parent.height", leaves["FileManagerFilters"])
+        self.assertIn("visible: !root.filterActive(\"slicer\")", leaves["FileManagerFilters"])
         self.assertIn('text: ".."', leaves["FileDirectoryStrip"])
         self.assertIn('text: "<root>"', leaves["FileManagerToolbar"])
         # Snapshot 2 live refinements: double-click-to-print, the

@@ -2868,6 +2868,10 @@ Item {
             "visible: root.canLoadAllHistory",
             "visible: root.directory.length > 0",
             "visible: searchField.text.length > 0",
+            # The option row's selection face: fixed per category, so
+            # the radio and the checkbox never swap under the pointer.
+            "visible: root.radio",
+            "visible: !root.radio",
             "visible: root.filterActive(\"slicer\")",
             "visible: !root.filterActive(\"slicer\")",
             "visible: root.filterActive(\"modified\")",
