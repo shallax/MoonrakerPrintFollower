@@ -3,8 +3,8 @@ import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
-import "PreviewColours.js" as PreviewColours
 import "PlateExactComposition.js" as ExactComposition
+import "PlatePainter.js" as Painter
 import "PlateViewPolicy.js" as ViewPolicy
 import "../resources/theme"
 
@@ -506,6 +506,72 @@ Item {
     // worker-painted raster lands the identical picture.
     property var plot: mapping._plot
 
+    // The painters' style record, built once per paint. The threaded
+    // canvases read the view through the var carrier (worker paints see
+    // var properties fresh, primitives stale), and classColour is handed
+    // over as a capability because the theme it reads is a QML singleton
+    // a JS library cannot import.
+    function _paintStyle() {
+        return {
+            plot: mapping._plot,
+            scale: root._view.scale,
+            panX: root._view.panX,
+            panY: root._view.panY,
+            lineWidth: root.toolpathWidthPx(),
+            travelWidth: root.travelWidthPx(),
+            trueThickness: root.trueThickness,
+            colourScheme: root.colourScheme,
+            baseColour: MoonrakerTheme.seriesDefault,
+            classColour: root.classColour
+        };
+    }
+
+    // The carried tail's style: painted at the warm raster's backing
+    // with the pan dropped (the canvas item's translation carries it),
+    // and the camera divided back out of the pen so the stroke presents
+    // at the same physical width the camera-free raster baked.
+    function _carryStyle(backing, widthScale) {
+        var style = _paintStyle();
+        style.scale = backing;
+        style.panX = 0.0;
+        style.panY = 0.0;
+        style.lineWidth = root.toolpathWidthPx() * widthScale;
+        style.travelWidth = root.travelWidthPx() * widthScale;
+        return style;
+    }
+
+    function _paintCarry(ctx) {
+        // The gesture's carried tail: the printed lines since the
+        // warm raster's own split, re-painted as vectors at its
+        // backing so the entry drops nothing. The window is one
+        // follow interval of lines and the paint is pan-free — the
+        // canvas item's translation pans it with the raster.
+        ctx.reset();
+        var backing = root._navBacking();
+        ctx.clearRect(0, 0, root.width * backing, root.height * backing);
+        if (!root.available() || mapping._plot == null) {
+            return;
+        }
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        var split = root.progress != null ? root.progress.split : null;
+        if (layer == null || split == null || split <= 0) {
+            return;
+        }
+        var current = _scrubVector();
+        if (current == null) {
+            return;
+        }
+        var navSplit = root.progress != null && root.progress.navigationSplit !== undefined && root.progress.navigationSplit !== null && root.progress.navigationSplit >= 0 ? root.progress.navigationSplit : 0;
+        if (navSplit >= split) {
+            return;
+        }
+        var style = _carryStyle(backing, backing / (root.viewScale > 0 ? root.viewScale : 1.0));
+        Painter.drawLayer(ctx, current, 1.0, split, false, navSplit, style);
+        if (root.showTravels) {
+            Painter.drawTravelClasses(ctx, current, split, navSplit, style);
+        }
+    }
+
     function _rasterOf(layer) {
         // The render key's verdict: a
         // raster counts only while its key matches the surface's
@@ -933,9 +999,10 @@ Item {
         if (!root.available() || mapping._plot == null) {
             return;
         }
+        var style = _paintStyle();
         for (var role of ["prev", "next"]) {
             if (_ghostFallbackNeeded(role))
-                _drawLayer(ctx, _fallbackVector(_ghost(role)), 0.30, -1, false, -1);
+                Painter.drawLayer(ctx, _fallbackVector(_ghost(role)), 0.30, -1, false, -1, style);
         }
         var layer = root.progress.layers.current;
         if (!_partialBase() || layer == null || (_baseOf(layer) && pendingBaseImage.status !== Image.Error)) {
@@ -945,7 +1012,7 @@ Item {
         if (current == null) {
             return;
         }
-        _drawLayer(ctx, current, 0.55, -1, true, -1);
+        Painter.drawLayer(ctx, current, 0.55, -1, true, -1, style);
     }
 
     function _pendingDraws() {
@@ -1799,38 +1866,9 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
-            var plot = markerView.plot;
-            if (!visible || plot == null)
+            if (!visible)
                 return;
-            var cells = {};
-            var scale = markerView.scale;
-            var half = (markerView.compact ? 3 : Math.min(8, Math.max(4, 4 * Math.sqrt(Math.max(1, scale))))) / 2;
-            var outline = [[0, -half], [half, 0], [half * .35, 0], [half * .35, half], [-half * .35, half], [-half * .35, 0], [-half, 0], [0, -half]];
-            ctx.strokeStyle = UM.Theme.getColor("text");
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for (var i = 0; i < points.length; ++i) {
-                var point = points[i];
-                var up = point[3];
-                if (!(up ? markerView.up : markerView.down))
-                    continue;
-                if (point[2] >= markerView.completed && !(markerView.total > 0 && markerView.completed >= markerView.total && point[2] === markerView.total))
-                    continue;
-                var cell = up + ":" + Math.floor(point[0] * Math.abs(plot.sx * scale) / 12) + ":" + Math.floor(point[1] * Math.abs(plot.sy * scale) / 12);
-                if (cells[cell])
-                    continue;
-                cells[cell] = true;
-                var scene = mapping.plateToScene(point[0], point[1]);
-                if (scene == null)
-                    continue;
-                var x = scene.x * scale + markerView.panX;
-                var y = scene.y * scale + markerView.panY;
-                var direction = up ? 1 : -1;
-                ctx.moveTo(x + outline[0][0], y + direction * outline[0][1]);
-                for (var j = 1; j < outline.length; ++j)
-                    ctx.lineTo(x + outline[j][0], y + direction * outline[j][1]);
-            }
-            ctx.stroke();
+            Painter.drawExtruderMarkers(ctx, points, markerView, UM.Theme.getColor("text"));
         }
     }
 
@@ -2299,7 +2337,8 @@ Item {
                     var fresh = resetPainted || root._lastSplit < 0;
                     var from = plan.from;
                     bitmapChanged = bitmapChanged || fresh || split !== root._lastSplit;
-                    _drawLayer(ctx, current, 1.0, split, false, from);
+                    var style = _paintStyle();
+                    Painter.drawLayer(ctx, current, 1.0, split, false, from, style);
                     // The bitmap's coverage below this paint's start: a full
                     // paint covers from the layer's start, a tail paint
                     // relies on the prefix for the rest, a delta paint
@@ -2331,7 +2370,7 @@ Item {
                         root._travelsSourceReady = sourceReady;
                         var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
                         bitmapChanged = bitmapChanged || resetPainted || travelsChanged || split !== root._lastSplit;
-                        _drawTravelClasses(ctx, current, split, travelFrom);
+                        Painter.drawTravelClasses(ctx, current, split, travelFrom, style);
                     }
                     root._lastSplit = split;
                     root._paintsSinceReset += 1;
@@ -2451,246 +2490,6 @@ Item {
             }
         }
     }
-    // The painter's ONE rule, shared by the strokes and the glyphs: the
-    // payload's vertices are the G-code's own motion edges (edge i runs
-    // from points[i - 1] to points[i] and belongs to the motion
-    // points[i][2] names, and a segment's indices never decrease), the
-    // split is a COUNT of printed motions, and an edge is drawn exactly
-    // when its own motion is below it. Both halves of the paint read it
-    // the same way: the full repaint from -1, the accumulated delta on
-    // top of the last count.
-    function _firstEdge(points, from) {
-        // The motions within a segment never decrease: the first
-        // edge at or after `from` is a binary search, never a
-        // linear walk — the tail after a native prefix would
-        // otherwise re-scan the whole printed portion on every
-        // paint.
-        if (from <= 0 || points.length < 2) {
-            return 1;
-        }
-        var low = 1;
-        var high = points.length - 1;
-        while (low < high) {
-            var mid = (low + high) >> 1;
-            if (points[mid][2] < from) {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        // Every motion below `from`: the first edge past the
-        // segment's end — exactly the linear walk's off-the-end
-        // result, which the callers read as "nothing to draw".
-        if (points[low][2] < from) {
-            return points.length;
-        }
-        return low;
-    }
-
-    // The first run of a class that can still meet `from`: the runs
-    // ascend in motion order, so a run whose LAST motion is below the
-    // boundary holds nothing the walk could draw, and the runs below
-    // it can be skipped unread. Without the bound a delta paint reads
-    // EVERY run of the class — on a layer whose runs are short, that
-    // per-run read is the paint's cost, not the stroke it draws.
-    function _firstRunAt(segments, from) {
-        if (from <= 0) {
-            // The reset path repaints from the layer's start.
-            return 0;
-        }
-        var low = 0;
-        var high = segments.length;
-        while (low < high) {
-            var mid = (low + high) >> 1;
-            var points = segments[mid];
-            if (points.length > 0 && points[points.length - 1][2] >= from) {
-                high = mid;
-            } else {
-                low = mid + 1;
-            }
-        }
-        return low;
-    }
-
-    function _edgePrinted(points, i, split) {
-        return i < points.length && (split < 0 || points[i][2] < split);
-    }
-
-    function _paintCarry(ctx) {
-        // The gesture's carried tail: the printed lines since the
-        // warm raster's own split, re-painted as vectors at its
-        // backing so the entry drops nothing. The window is one
-        // follow interval of lines and the paint is pan-free — the
-        // canvas item's translation pans it with the raster.
-        ctx.reset();
-        var backing = root._navBacking();
-        ctx.clearRect(0, 0, root.width * backing, root.height * backing);
-        if (!root.available() || mapping._plot == null) {
-            return;
-        }
-        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
-        var split = root.progress != null ? root.progress.split : null;
-        if (layer == null || split == null || split <= 0) {
-            return;
-        }
-        var current = _scrubVector();
-        if (current == null) {
-            return;
-        }
-        var navSplit = root.progress != null && root.progress.navigationSplit !== undefined && root.progress.navigationSplit !== null && root.progress.navigationSplit >= 0 ? root.progress.navigationSplit : 0;
-        if (navSplit >= split) {
-            return;
-        }
-        var scale = backing;
-        // The pen follows the content: toolpathWidthPx() carries the
-        // live zoom for the camera-ridden canvases, and the camera is
-        // divided back out here so the stroke presents at the same
-        // physical width the camera-free raster baked — the same
-        // division the renderer's own floor makes.
-        var widthScale = backing / (root.viewScale > 0 ? root.viewScale : 1.0);
-        _drawLayer(ctx, current, 1.0, split, false, navSplit, scale, widthScale);
-        if (root.showTravels) {
-            _drawTravelClasses(ctx, current, split, navSplit, scale, widthScale);
-        }
-    }
-
-    function _drawLayer(ctx, layer, alpha, split, base, from, scaleOverride, widthScale) {
-        // The transform inlined: hundreds of thousands of
-        // plateToScene calls per paint were the follower's cost.
-        var plot = mapping._plot;
-        var sx = plot.sx;
-        var sy = plot.sy;
-        var offsetX = plot.bed.offsetX;
-        var offsetY = plot.bed.offsetY;
-        var bedXMin = plot.bed.bedXMin;
-        var bedYMax = plot.bed.bedYMax;
-        // The carry override: painted at the warm raster's backing
-        // with the pan dropped (the item's translation carries it).
-        var backed = scaleOverride !== undefined && scaleOverride > 0;
-        var scale = backed ? scaleOverride : root._view.scale;
-        var panX = backed ? 0.0 : root._view.panX;
-        var panY = backed ? 0.0 : root._view.panY;
-        // The physical stroke: one width for every channel (the
-        // ghost/pending/printed parity rule), subpixel at 100%.
-        ctx.lineWidth = root.toolpathWidthPx() * (widthScale !== undefined && widthScale > 0 ? widthScale : 1.0);
-        // Round joins: the default miter spikes at acute corners with
-        // a length that grows with the stroke width — thick lines
-        // sprouted sharp edges at every text corner (the live report).
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        for (var name in layer.classes) {
-            var segments = layer.classes[name];
-            ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
-            ctx.globalAlpha = alpha;
-            // ONE path per class, stroked ONCE. A beginPath/stroke per
-            // SEGMENT was the follower's dominant cost: every
-            // contiguous run became its own software stroke, hundreds
-            // or thousands per repaint, each 100-500 ms on the live
-            // machine. The fresh path was never what kept a stroke
-            // from bridging a travel — a stroke never joins subpaths,
-            // and moveTo opens one, so batching is pixel-identical for
-            // the opaque classes. For the translucent base (alpha
-            // 0.55) it removes the double-compositing where two runs
-            // overlap, which is the alpha-accumulation this file
-            // documents elsewhere rather than a look worth keeping.
-            ctx.beginPath();
-            // The walk starts at the first run that can still draw, so
-            // the printed runs below the boundary are never read.
-            var first_run = _firstRunAt(segments, from);
-            for (var s = first_run; s < segments.length; ++s) {
-                var points = segments[s];
-                // Every segment is at least one EDGE — two vertices — so
-                // a one-motion extrusion draws its true line, never a
-                // dot: the payload carries the move's start position.
-                if (points.length < 2) {
-                    continue;
-                }
-                var i = _firstEdge(points, from);
-                if (root.trueThickness || (!base && root.colourScheme.mode !== 1)) {
-                    var widths = layer.widths || [];
-                    while (_edgePrinted(points, i, split)) {
-                        ctx.stroke();
-                        ctx.beginPath();
-                        var mm = widths[Math.floor(points[i][2])];
-                        if (root.trueThickness)
-                            ctx.lineWidth = (mm > 0 ? mm : 0.4) * Math.abs(sx * scale);
-                        if (!base)
-                            ctx.strokeStyle = PreviewColours.colour(layer, name, Math.floor(points[i][2]), root.colourScheme);
-                        ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
-                        ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ++i;
-                    }
-                    continue;
-                }
-                if (!_edgePrinted(points, i, split)) {
-                    continue;
-                }
-                // Opened at the first edge's OWN start vertex: the
-                // stroke never bridges a travel, a feature change, or
-                // the boundary the last poll painted. No pan term: the
-                // item's translation carries the view.
-                ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
-                while (_edgePrinted(points, i, split)) {
-                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
-                    ++i;
-                }
-            }
-            ctx.stroke();
-            ctx.globalAlpha = 1.0;
-        }
-    }
-
-    function _drawTravelClasses(ctx, layer, split, from, scaleOverride, widthScale) {
-        if (layer.travelClasses !== undefined) {
-            for (var name in layer.travelClasses)
-                _drawTravels(ctx, layer.travelClasses[name], split, from, scaleOverride, widthScale, name);
-        } else {
-            _drawTravels(ctx, layer.travels, split, from, scaleOverride, widthScale, "TRAVEL");
-        }
-    }
-
-    function _drawTravels(ctx, segments, split, from, scaleOverride, widthScale, name) {
-        if (segments == null) {
-            return;
-        }
-        var backed = scaleOverride !== undefined && scaleOverride > 0;
-        var scale = backed ? scaleOverride : root._view.scale;
-        var panX = backed ? 0.0 : root._view.panX;
-        var panY = backed ? 0.0 : root._view.panY;
-        ctx.strokeStyle = root.classColour(name || "TRAVEL");
-        ctx.globalAlpha = 0.8;
-        ctx.lineWidth = root.travelWidthPx() * (widthScale !== undefined && widthScale > 0 ? widthScale : 1.0);
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        for (var s = 0; s < segments.length; ++s) {
-            var points = segments[s];
-            if (points.length < 2) {
-                continue;
-            }
-            var i = _firstEdge(points, from);
-            if (!_edgePrinted(points, i, split)) {
-                continue;
-            }
-            ctx.beginPath();
-            var scene = mapping.plateToScene(points[i - 1][0], points[i - 1][1]);
-            if (scene == null) {
-                continue;
-            }
-            ctx.moveTo(scene.x * scale + panX, scene.y * scale + panY);
-            while (_edgePrinted(points, i, split)) {
-                scene = mapping.plateToScene(points[i][0], points[i][1]);
-                if (scene != null) {
-                    ctx.lineTo(scene.x * scale + panX, scene.y * scale + panY);
-                }
-                ++i;
-            }
-            ctx.stroke();
-        }
-        ctx.globalAlpha = 1.0;
-    }
-
     // The toolhead dot: scene-graph geometry (a Rectangle binding),
     // never a canvas repaint — the 1 s position publish moves it.
     // Walking the layer path (the H3 alignment — the dot and the
