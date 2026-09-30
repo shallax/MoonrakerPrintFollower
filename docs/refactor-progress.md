@@ -19,6 +19,10 @@ Branch: `chore/v4.6.2`. Base when this ledger opened: `905c628`.
 | H | Canvas drawing | +`PlatePainter.js` 258; face 3128 -> 2927 | `fd08779` | yes |
 | H | asset validity | 4 predicates to the compositor; face -> 2883 | `c39c5e0` | yes |
 | H | the face's visual leaves | dot 42, glyphs 40, scope 133; face -> 2735 | `25899b7` | yes |
+| I | the scenario suite | `scenarios.py` 3377 -> a 18-module package | `3e2ab6b` | yes |
+| I | the runner's instruments | +`liveness.py` 344, `static_leg.py` 229; runner 4886 -> 4391 | `ce5efde` | yes |
+| I | the driver's families | driver 2801 -> 1957; +scene/foreground/frames/interaction/qt_test | `c23e1a5` | yes |
+| I | the staged package's refresh | the repeat-boot smoke leg's own failure, fixed | `1cf8056` | yes |
 
 ## Batch A — baseline repair
 
@@ -471,6 +475,161 @@ gesture's tail painting no wall. The function was restored and the
 face's whole property, id, objectName and function inventory diffed
 against the previous commit to prove nothing else had gone with it.
 
+## Batch I — the suite, the runner's instruments and the driver's families
+
+### The scenario suite
+
+`tests/harness/scenarios.py` held 126 specs and 54 probe bodies in one
+3377-line module. It is a package now: one module per group, the shared probe
+bodies in `probe_source.py`, and an `__init__` that is the assembly point. The
+spec text moved by character range and was never reformatted, so every step
+order, payload, budget, probe reference and comment is the same bytes.
+
+A before/after serialisation under one controlled scratch environment compares
+equal on all 126 ids, every spec body, all 54 constants and the scratch path
+construction. Each group's own sequence is preserved exactly — the visual group
+still runs v19 v1 … v18 v13 v16 — and `GROUPS` spells the order out rather
+than globbing the directory.
+
+The one thing that did change: each group is now contiguous, which the flat
+list was not. Two groups had grown a last scenario after the following block
+was already written (visual's v13/v16 after the probe block, probe's z4 after
+that). The runner never reads the global order — `suite_specs()` and
+`real_run()` are its only readers of `SCENARIOS`, and both filter by group or
+by exact id — so the change is invisible to every consumer, and a pin now
+asserts that selecting a group yields exactly its module's list, in order,
+with no group assembled twice.
+
+Couplings the brief did not name:
+
+- `dir(scenarios)` is how `test_harness_specs` finds every probe constant to
+  compile, and `getattr(scenarios, code)` is how a template step resolves. The
+  assembly point therefore re-exports all 54 by an enumerated list — never a
+  wildcard — and a new pin holds that list equal to the probe module's own
+  constants and identical object-for-object. Without it a constant added to one
+  and forgotten in the other would quietly shrink the compile check.
+- `tests/harness/test_harness_native.py` read `scenarios.py` as a FILE, which
+  no import-shaped grep finds. Its capture-device scan now walks every module
+  in the package, discovered from the directory with a floor, so it reads more
+  files than before rather than fewer. The same treatment covers the driver's
+  new families.
+- The two classification ratchets counted ops in that file's text. They read
+  the package's own modules — a named, bounded set, not the source tree and not
+  a basename lookup — and refuse to report a census over fewer than sixteen
+  modules.
+
+### The runner's two measurement instruments
+
+`liveness.py` (344 lines) owns the presentation record whole: the samples, the
+sample vocabulary, the verdict that separates a stalled scene graph from a
+stalled capture, and the platform gating. `static_leg.py` (229) owns the
+still-frame analysis: the decode, the longest near-identical stretch, whether
+an input step fell inside it, and the verdict written into the leg's artifacts.
+`runner.py` 4886 -> 4391.
+
+Both take what they do not own explicitly: `liveness.probe()` is handed the
+runner's rpc callable, and both take the capture gate as an argument rather
+than reading a global. The reading functions still carry no capture term at
+all, which `test_harness_runner` holds at the new owner — together with the
+other half, that the runner may not call `liveness.gating()` itself, so no leg
+can take a reading without declaring its own gate.
+
+Nine static aliases and three liveness ones were dropped rather than kept. An
+alias that exists only so a test can find the old name is compatibility
+forwarding, and it hides where the name now lives; those tests address the
+owners. What stayed is what the runner calls.
+
+### The driver's probe and interaction families
+
+The server — the loopback socket, the RPC lifecycle, the token rendezvous and
+the GUI-thread dispatcher with all 53 of its verbs — stays in
+`driver/__init__.py` (2801 -> 1957), which is the one driver lifecycle and
+GUI-thread interaction owner the brief requires. Beside it: `scene.py` (the
+windows and the visual tree — one walk, one visibility rule, one geometry read,
+one settle), `foreground.py` (whether the display shows this application, and
+the raise), `frames.py` (the frame counter and the heartbeat item's lifecycle),
+`interaction.py` (the click walks' window union, control resolution, the aim
+point, press delivery, the delivery filter) and `qt_test.py`.
+
+Each module imports exactly the names it uses, enumerated, so no call site
+inside the dispatcher changed and no family reaches back into the server.
+
+Couplings the brief did not name:
+
+- The heartbeat read its QML engine off `HarnessServer._engine` from inside the
+  measurement. The server discovers it at registration and still owns it, so it
+  is handed in now, with the module's own fallbacks intact behind it.
+- `qt_test.py` exists because the first cut had `scene` importing the QTest
+  loader from `interaction` while `interaction` imported the walk from `scene`.
+  The staged import found the cycle immediately. The loader belongs to neither
+  family: the settle and the click paths both need it, and it caches the module
+  it found or the failure it hit. The server reads that failure through an
+  accessor rather than importing a name the loader rebinds.
+- Ten source pins moved to the family that owns what they hold, through one
+  helper that refuses to read a family that is not there. The verbs and the
+  reply fields stay pinned on the dispatcher, which is where they are.
+
+### What the gate caught, and the one defect that reached CI
+
+The staged tree is what a run imports, so every step was proven by staging it
+into a scratch work dir and importing from there: `suite_specs("visual")`
+returns the group in its original order; both instruments resolve and both
+delegates answer; the driver package imports with Uranium's one name stubbed
+and its verb set is the same 53 names, none lost and none gained.
+
+That was not enough. **Both pushed Batch I commits failed the repeat-boot smoke
+leg**, for one reason: the staging replaced the whole staged `scenarios`
+directory. The container imports the package as root, so Python writes
+root-owned `__pycache__` beside the sources, and the host's `rm -rf` then fails
+on every `.pyc` — the second unit could not stage at all. Every other tree the
+script removes under the work dir is host-owned or removed through the
+container's own root; this one was neither. The modules are copied into the
+directory now.
+
+This is exactly the failure class that leg exists for — its own comment names
+it, from Cura's owner-only config writes breaking the next unit's cleanup — and
+it is the sharpest statement of the brief's own warning: a unit test importing
+a module in the checkout, and even a hand-staged import, is not proof that a
+REPEATED run can stage it. The fix was reproduced in isolation first (stage,
+import as root in a container, watch the `rm -rf` report the same per-file
+"Permission denied"; then restage with the copy form over that same bytecode
+and get 126 specs back), then confirmed on the real leg with both smoke units
+passing.
+
+### The test census
+
+Batch I's acceptance asks that every old executable test be accounted for, so
+the methods were counted by AST at both ends of the whole session — by AST, not
+by running them, because a module that fails to import must not be able to drop
+out of the census silently.
+
+`a6f86ff`: 167 modules, 4386 test methods. `bd0b6ac`: 169 modules, 4435. **No
+module lost a method.** The 49 additions are exactly: the painter's 23 and the
+view policy's 18 as new modules, the compositor's 4 asset-predicate tests, the
+harness specs' 2 (the enumerated re-export equals the probe module's own
+constants; selecting a group yields its module's list in order), the harness
+paths' 1 (the staging form and the no-remove rule) and the QML contracts' 1 (the
+gates the face hands each visual leaf, and the scope handler's ordering). Every
+retarget in this session moved an assertion to a new owner; none was weakened,
+skipped, xfailed or deleted.
+
+### Deliberately left
+
+The runner's legs and its step dispatch stay with the runner. `suite_step` and
+the step templates are the op vocabulary the whole suite is written against,
+and `first_install1/2`, `two_boot_run`, `migration1/2` and `scenario1..11` are
+procedures over the runner's own session primitives — `rpc`, `ensure_ready`,
+`shot`, `scenario`, `write_evidence`, `harvest_cura_log`. Extracting them needs
+either those primitives injected one by one or a module that imports the runner
+back, and the second is the circular fragmentation the rules forbid. The
+instruments were the leaf-ward half: the runner calls them and they never call
+back. A coherent runner is preferable to legs that import their own caller.
+
+`CAPTURE`, `CAPTURE_REASON` and `CAPTURE_T0` stay on the runner for the same
+reason, and for one more: the tests set `runner.CAPTURE` directly, and moving
+the name would leave them patching an alias the delegates no longer read —
+which is the fixture-patching landmine, silently passing.
+
 ## Outstanding
 
 - `tests/test_gpu_canvas_isolation.py::test_live_layer_handoff_fades_previous_geometry_then_retires_it`
@@ -484,4 +643,13 @@ against the previous commit to prove nothing else had gone with it.
   and this is not a flake to dismiss. It sits outside this batch's modules, and
   the four unit-leg runs since have not reproduced it. The raster path already
   carries teardown-segfault guards.
-- Batches H-I not started.
+- The runner's legs and its step dispatch, and the capture gate, stay with the
+  runner by decision rather than by omission — the reasoning is in Batch I's
+  "Deliberately left".
+- `tests/harness/runner.py` is 4391 lines and `tests/harness/driver/__init__.py`
+  1957. Both are single coherent owners now (the legs over their session
+  primitives; the socket, the RPC lifecycle and the GUI-thread dispatcher), so
+  neither is a monolith waiting to be cut — but neither is small, and a future
+  pass that wants the legs separated needs the session primitives to become an
+  owner FIRST. That ordering is the whole of it: extracting legs before their
+  primitives produces modules that import their own caller.

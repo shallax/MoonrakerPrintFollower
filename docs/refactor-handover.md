@@ -1,5 +1,12 @@
 # Handover: finishing the coherent-decomposition refactor
 
+> **Both remaining batches are done.** H landed in five commits
+> (`1e52833`..`d51c2ea`) and I in five (`3e2ab6b`..`1cf8056`). The brief below
+> is kept as written, because it is what the work was measured against;
+> `docs/refactor-progress.md` is the authoritative record of what happened,
+> including the couplings neither batch's text named, the splits declined with
+> their reasons, and the one defect that reached CI.
+
 ## What this is
 
 `shallax/MoonrakerPrintFollower` (Cura 5.13 plugin, PyQt6/QML, for Klipper/Moonraker printers) is
@@ -30,8 +37,8 @@ git status --short                     # expect clean
 | E renderer extraction | `MoonrakerMonitorModel.py` 4486 → 3015 | `9e89200` | green |
 | F publication transaction | `_publish()` 438 → 5 lines; model 3015 → 2798 | `fa50016` | green |
 | G python orchestration | `FileManager.py` 1317→1026, `GCodeIndexService.py` 1742→1399, refresh() split into phases; +`ThumbnailCache.py` 264, `PreparedSession.py` 350, `ReplyBodyReader.py` 56 | `96a2026` | run 36721180076 success |
-| H PlateProgressFace.qml | **not started** | — | — |
-| I test suite and harness | **not started** | — | — |
+| H PlateProgressFace.qml | 3234 -> 2735; +ViewPolicy 150, Painter 258, three leaves | `d51c2ea` | green |
+| I suite, runner, driver | scenarios 3377 -> a package, runner 4886 -> 4391, driver 2801 -> 1957 | `1cf8056` | see the ledger |
 
 Batch G also fixed a real publication inconsistency it was not asked to look for: a thumbnail
 fetch that could not start published on `FileManager.changed` — a full listing rebuild — while the
