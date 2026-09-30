@@ -2358,8 +2358,8 @@ Item {
                       'html = "<br>" + html',
                       "consoleDroppedSeen",
                       "consoleRevisionsSeen",
-                      "root.printer.setConsoleExpanded(expanding)",
-                      'setConsoleExpanded(root.printer.sectionExpandedMap["console"] !== false)',
+                      "consolePanel.printerModel.setConsoleExpanded(expanding)",
+                      'setConsoleExpanded(consolePanel.printerModel.sectionExpandedMap["console"] !== false)',
                       # The console is a collapsing pane beneath the
                       # webcam: a top-left chevron toggle, a "Console"
                       # title in the panes' style, and the camera fills
@@ -2376,15 +2376,15 @@ Item {
                       # and not selecting.
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
-            self.assertIn(token, harness.MONITOR_QML + (harness.PLUGINS / "MonitorData.py").read_text(encoding="utf-8"))
+            self.assertIn(token, harness.CONSOLE_PANE_QML + (harness.PLUGINS / "MonitorData.py").read_text(encoding="utf-8"))
         # The input row's hit-region contract (the 5.11/5.12 sweep): the
         # field shrinks and clips INSIDE its own cell, so Send and Clear
         # keep theirs and the presses aimed at them land on them.
-        input_cell = harness.MONITOR_QML[harness.MONITOR_QML.index('objectName: "moonrakerConsoleInput"'):
-                                 harness.MONITOR_QML.index('objectName: "moonrakerConsoleSend"')]
+        input_cell = harness.CONSOLE_PANE_QML[harness.CONSOLE_PANE_QML.index('objectName: "moonrakerConsoleInput"'):
+                                 harness.CONSOLE_PANE_QML.index('objectName: "moonrakerConsoleSend"')]
         self.assertIn("Layout.minimumWidth: 0", input_cell)
         self.assertIn("clip: true", input_cell)
-        self.assertIn('objectName: "moonrakerConsoleClear"', harness.MONITOR_QML)
+        self.assertIn('objectName: "moonrakerConsoleClear"', harness.CONSOLE_PANE_QML)
         # The webcam pane's title moved with the card (CameraPane.qml).
         self.assertIn('text: "Webcam"', harness.CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the
@@ -2392,7 +2392,7 @@ Item {
         # left the feed dead in the default layout). The collapse
         # handlers that exist (4.4.0) drive ONLY the readout fits —
         # their bodies are pinned to the update calls.
-        self.assertNotIn("setConsoleExpanded(!root.infoCollapsed)", harness.MONITOR_QML)
+        self.assertNotIn("setConsoleExpanded(!root.infoCollapsed)", harness.CONSOLE_PANE_QML)
         self.assertIn("onInfoCollapsedChanged: {", harness.MONITOR_QML)
         self.assertIn("Qt.callLater(root.updateInfoReadoutFits)", harness.MONITOR_QML)
         self.assertIn("fitInfoRetry.restart()", harness.MONITOR_QML)
@@ -2408,17 +2408,17 @@ Item {
         # contrast-bumped (the old muted family sat near 2:1).
         for token in ('MoonrakerTheme.errorRed', 'MoonrakerTheme.consoleSuccess', 'MoonrakerTheme.consolePromptError', 'MoonrakerTheme.successGreen', 'MoonrakerTheme.consoleWarn',
                       '&gt; "', '&lt; "', '# "', 'MoonrakerTheme.consoleCommand', 'MoonrakerTheme.consoleHistoryError', 'MoonrakerTheme.consoleHistorySuccess'):
-            self.assertIn(token, harness.MONITOR_QML)
+            self.assertIn(token, harness.CONSOLE_PANE_QML)
         # The selection is captured BEFORE the rebuild wipe (the old
         # order made the restore a silent no-op); the rotation rebuild
         # compensates the content dropped above the viewport.
-        self.assertLess(harness.MONITOR_QML.index("var selStart"), harness.MONITOR_QML.index("consoleDroppedSeen = dropped;"))
+        self.assertLess(harness.CONSOLE_PANE_QML.index("var selStart"), harness.CONSOLE_PANE_QML.index("consoleDroppedSeen = dropped;"))
         for token in ("prevTextHeight", "rotationDrop"):
-            self.assertIn(token, harness.MONITOR_QML)
+            self.assertIn(token, harness.CONSOLE_PANE_QML)
         # The scrollbar's handle drag cancels the pending restore (it
         # drives contentY directly and never fires onMovementStarted).
-        self.assertIn("onPressedChanged:", harness.MONITOR_QML)
-        self.assertIn("if (pressed)", harness.MONITOR_QML)
+        self.assertIn("onPressedChanged:", harness.CONSOLE_PANE_QML)
+        self.assertIn("if (pressed)", harness.CONSOLE_PANE_QML)
         for token in ("consoleHistory", "consolePending", "consoleChanged",
                       "consoleLines", "consoleDropped", "def setConsoleExpanded(",
                       "def sendConsoleCommand(", "def clearConsoleHistory(",
@@ -2436,7 +2436,7 @@ Item {
         # NO-REFLOW RULE: the rows are permanent — the values read "—"
         # until Klipper reports them; nothing hides them any more, and
         # the readout-visibility gate is gone from the model too.
-        self.assertNotIn('visible: root.printer != null && root.printer.filamentReadoutVisible', harness.MONITOR_QML)
+        self.assertNotIn('visible: consolePanel.printerModel != null && consolePanel.printerModel.filamentReadoutVisible', harness.CONSOLE_PANE_QML)
         self.assertNotIn("filamentReadoutVisible", harness.MONITOR_MODEL)
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
@@ -2470,7 +2470,7 @@ Item {
                       # handle's own: the handle rides the edge it moves,
                       # so a local measurement is self-referential (the
                       # run-away-the-pointer bug).
-                      "mapToItem(cameraArea, mouse.x, mouse.y)",
+                      "mapToItem(consolePanel.resizeFrame, mouse.x, mouse.y)",
                       "consolePanel.consoleResizeStartHeight = consolePanel.height",
                       "consoleResizeStartHeight + (consoleResizeStartY - paneY)",
                       "consoleResizeTo",
@@ -2481,10 +2481,10 @@ Item {
                       # edge never detaches from the pointer.
                       "Math.max(consoleCollapsedHeight, Math.min(consoleMaxHeight, height))",
                       "consoleSetExpanded(height > consoleCollapsedHeight + 0.5)",
-                      "root.printer.setConsoleHeight(Math.round(height))",
+                      "consolePanel.printerModel.setConsoleHeight(Math.round(height))",
                       # The clamp window and the stored/effective heights.
                       "consoleCollapseButton.height + 2 * UM.Theme.getSize(\"thin_margin\").height + consoleHandleHeight",
-                      "root.printer.consoleHeight > 0 ? root.printer.consoleHeight : consoleDefaultHeight",
+                      "consolePanel.printerModel.consoleHeight > 0 ? consolePanel.printerModel.consoleHeight : consoleDefaultHeight",
                       "Math.max(consoleMinHeight, Math.min(consoleMaxHeight, consoleStoredHeight))",
                       "consoleDragHeight > 0 ? consoleDragHeight : consoleSettledHeight",
                       "Layout.preferredHeight: consoleExpanded ? consoleCurrentHeight : consoleCollapsedHeight",
@@ -2506,36 +2506,36 @@ Item {
                       # travel (a second live report).
                       "readonly property real consoleBodyFadeSpan: 24 * screenScaleFactor",
                       "(height - (consoleMinHeight - consoleBodyFadeSpan)) / consoleBodyFadeSpan"):
-            self.assertIn(token, harness.MONITOR_QML)
+            self.assertIn(token, harness.CONSOLE_PANE_QML)
         for token in ("consoleHeight", "consoleHeightChanged", "def setConsoleHeight(",
                       "CONSOLE_HEIGHT_MAX", "def _state_height("):
             self.assertIn(token, harness.MONITOR_MODEL)
         # The handle sits ABOVE the header row in the layout, never over
         # it, and the card's height binding owns both states.
-        handle_start = harness.MONITOR_QML.index("id: consoleResizeHandle")
-        button_start = harness.MONITOR_QML.index("id: consoleCollapseButton")
+        handle_start = harness.CONSOLE_PANE_QML.index("id: consoleResizeHandle")
+        button_start = harness.CONSOLE_PANE_QML.index("id: consoleCollapseButton")
         self.assertLess(handle_start, button_start)
-        self.assertIn("consoleResizeCommit", harness.MONITOR_QML[handle_start:button_start])
+        self.assertIn("consoleResizeCommit", harness.CONSOLE_PANE_QML[handle_start:button_start])
         # The card clips: mid-drag it is SHORTER than its inner column's
         # minimum, and its content must never paint over the webcam card.
-        card_start = harness.MONITOR_QML.index("id: consolePanel")
-        self.assertIn("clip: true", harness.MONITOR_QML[card_start:handle_start])
+        card_start = harness.CONSOLE_PANE_QML.index("id: consolePanel")
+        self.assertIn("clip: true", harness.CONSOLE_PANE_QML[card_start:handle_start])
         # The well clips too, and that is a live report: the
         # prompt, the input and its buttons live INSIDE the black border,
         # so a squeezed column must cut them at the well's own edge
         # rather than letting them float outside the terminal's
         # background. The slice ends at the flick's own clip.
-        well_start = harness.MONITOR_QML.index("id: consoleWell")
-        flick_start = harness.MONITOR_QML.index("id: consoleFlick")
+        well_start = harness.CONSOLE_PANE_QML.index("id: consoleWell")
+        flick_start = harness.CONSOLE_PANE_QML.index("id: consoleFlick")
         self.assertLess(well_start, flick_start)
-        self.assertIn("clip: true", harness.MONITOR_QML[well_start:flick_start])
+        self.assertIn("clip: true", harness.CONSOLE_PANE_QML[well_start:flick_start])
         # The pane frame is not optional: a local-coordinate delta is the
         # bug this pin exists to prevent.
-        self.assertNotIn("consoleResizeStartY = mouse.y", harness.MONITOR_QML)
-        self.assertNotIn("consoleResizeStartY - mouse.y", harness.MONITOR_QML)
+        self.assertNotIn("consoleResizeStartY = mouse.y", harness.CONSOLE_PANE_QML)
+        self.assertNotIn("consoleResizeStartY - mouse.y", harness.CONSOLE_PANE_QML)
         # The drag commits ONCE, on release — a commit per move would
         # rewrite the state file at pointer rate.
-        self.assertNotIn("setConsoleHeight(Math.round(height))", harness.MONITOR_QML[handle_start:button_start])
+        self.assertNotIn("setConsoleHeight(Math.round(height))", harness.CONSOLE_PANE_QML[handle_start:button_start])
 
     def test_capture_harness_mocks_every_live_input(self):
         # Determinism discipline: the captures must not read ANY live
@@ -2558,7 +2558,7 @@ Item {
         self.assertIn('patch.object(model_module, "time", fake_time)', harness.CAPTURE_HARNESS)
         # The console pane renders no caret: a blinking cursor made the
         # captures phase-dependent.
-        self.assertIn("cursorVisible: false", harness.MONITOR_QML)
+        self.assertIn("cursorVisible: false", harness.CONSOLE_PANE_QML)
 
     def test_no_controls_disappear_controls_disable(self):
         # NO-REFLOW RULE (the ruling, 2026-09-10): no control
@@ -2750,7 +2750,7 @@ Item {
             # presence signal, not a session gate: it shows only
             # while an unseen error waits and the console is
             # collapsed.
-            "visible: root.printer != null && root.printer.consoleErrorBell",
+            "visible: consolePanel.printerModel != null && consolePanel.printerModel.consoleErrorBell",
             # The Objects section's empty-state line (the
             # live request): the list arrives mid-print, an empty one
             # says so.
@@ -2930,10 +2930,10 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
-            "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
+            "enabled: consolePanel.printerModel != null && consolePanel.printerModel.monitorConnected && consolePanel.printerModel.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, harness.MONITOR_QML + harness.DASHBOARD_QML + harness.PREVIEW_CONTROLS_QML + harness.PRINT_SECTION_QML)
+            self.assertIn(enabled, harness.CONSOLE_PANE_QML + harness.MONITOR_QML + harness.DASHBOARD_QML + harness.PREVIEW_CONTROLS_QML + harness.PRINT_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it. The attach-gate round made the
         # width conditional on the toolpath (the hidden follow button
@@ -2952,15 +2952,15 @@ Item {
         # The abs/rel word's CLICK obeys the same gate as its styling —
         # a locked control must not act (caught in testing).
         self.assertIn("root.printerModel != null && root.printerModel.jogEnabled", harness.TOOLHEAD_SECTION_QML)
-        self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", harness.MONITOR_QML)
+        self.assertIn("enabled: consolePanel.printerModel != null && consolePanel.printerModel.monitorConnected", harness.CONSOLE_PANE_QML)
         # The console is special: the SECTION stays enabled while
         # disconnected (scrolling, selecting and copying the restored
         # history keep working — the ruling); only the input,
         # Send and Clear disable. The well itself turns grey so the
         # disconnected state is obvious.
-        self.assertIn("enabled: root.printer != null\n                                property int consoleRecallIndex", harness.MONITOR_QML)
-        self.assertIn('color: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', harness.MONITOR_QML)
-        self.assertIn("anchors.bottom: parent.bottom", harness.MONITOR_QML)
+        self.assertRegex(harness.CONSOLE_PANE_QML, r"enabled: consolePanel.printerModel != null\s+property int consoleRecallIndex")
+        self.assertIn('color: consolePanel.printerModel != null && consolePanel.printerModel.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', harness.CONSOLE_PANE_QML)
+        self.assertIn("anchors.bottom: parent.bottom", harness.CONSOLE_PANE_QML)
         # The connection DOT rides the Printer status pane's title in
         # BOTH pane states (expanded header and the collapsed strip) —
         # the chosen spot. Plus the camera's Live badge and
@@ -2991,9 +2991,9 @@ Item {
         # their elide — both invisible to token pins. Behavioural pins:
         # no BISECT markers may exist, and the console section must not
         # carry a visibility gate.
-        self.assertNotIn("BISECT", harness.MONITOR_QML)
+        self.assertNotIn("BISECT", harness.CONSOLE_PANE_QML)
         self.assertNotIn("BISECT", harness.DASHBOARD_QML)
-        console = harness.MONITOR_QML[harness.MONITOR_QML.index("id: consoleSection"):harness.MONITOR_QML.index("id: consoleInput")]
+        console = harness.CONSOLE_PANE_QML[harness.CONSOLE_PANE_QML.index("id: consoleSection"):harness.CONSOLE_PANE_QML.index("id: consoleInput")]
         self.assertNotIn("visible: false", console)
 
     def test_publishes_without_aux_do_not_append_history(self):

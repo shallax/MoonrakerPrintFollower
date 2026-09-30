@@ -127,7 +127,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         literals = set(harness.re.findall(r'sectionId: "([^"]+)"', harness.DASHBOARD_QML + harness.MONITOR_QML + harness.PRINT_SECTION_QML + harness.SETUP_SECTION_QML + harness.TOOLHEAD_SECTION_QML + harness.MACROS_SECTION_QML + harness.PROFILES_SECTION_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML + harness.POWER_SECTION_QML + harness.SYSTEM_SECTION_QML + harness.SAVE_SECTION_QML + harness.FILE_MANAGER_SECTION_QML + harness.MESH_SECTION_QML + harness.TEMP_HISTORY_SECTION_QML + harness.FANS_INFO_SECTION_QML + harness.FILAMENT_SECTION_QML + harness.TEMPS_SECTION_QML + harness.SYSTEM_INFO_SECTION_QML + harness.MCUS_SECTION_QML + harness.JOB_SECTION_QML))
         self.assertEqual(literals, harness.SECTION_IDS - {"console"})
         self.assertEqual(len(harness.SECTION_IDS), 22)
-        self.assertIn('sectionExpandedMap["console"]', harness.MONITOR_QML)
+        self.assertIn('sectionExpandedMap["console"]', harness.CONSOLE_PANE_QML)
         # Header width must be owned by its container. Layout-rooted
         # sections use Layout.fillWidth; the two dynamic sections use an
         # explicit Item shell to avoid nested layout feedback. Their live
@@ -673,7 +673,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertNotIn('text: "×"', harness.FILE_MANAGER_QML)
         # The console grab bar hides under the auto-collapse width
         # (the live request).
-        self.assertIn("visible: !consolePanel.tooNarrow", harness.MONITOR_QML)
+        self.assertIn("visible: !consolePanel.tooNarrow", harness.CONSOLE_PANE_QML)
         # Esc on the Monitor page leaves the stage (the
         # live request): Preview when sliced, Prepare otherwise. The
         # popover and chart close on the same key first. The ONE
@@ -684,8 +684,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # The console error bell (the live request): a red
         # bell beside the Console header while collapsed until
         # expanded.
-        self.assertIn("consoleErrorBell", harness.MONITOR_QML)
-        self.assertIn('Qt.resolvedUrl("../resources/svg/Bell.svg")', harness.MONITOR_QML)
+        self.assertIn("consoleErrorBell", harness.CONSOLE_PANE_QML)
+        self.assertIn('Qt.resolvedUrl("../../resources/svg/Bell.svg")', harness.CONSOLE_PANE_QML)
         self.assertIn("consoleErrorBell", harness.MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
         # highlighted (the live report).
@@ -819,8 +819,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # The console history lives in a terminal-styled pane: dark,
         # fixed-width, newest line pinned to the bottom, with a prompt
         # glyph on the input row.
-        for token in ('color: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', "No commands yet — lines you send appear here.", 'text: ">"'):
-            self.assertIn(token, harness.MONITOR_QML)
+        for token in ('color: consolePanel.printerModel != null && consolePanel.printerModel.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', "No commands yet — lines you send appear here.", 'text: ">"'):
+            self.assertIn(token, harness.CONSOLE_PANE_QML)
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
         # mouse (the chosen position, mesh-style).
@@ -842,7 +842,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # probe-points toggle at creation (never after a toggle event).
         self.assertIn("showProbePoints: root.printer != null ? root.printer.showProbePoints : false", harness.MONITOR_QML)
         # A refused console send keeps the typed draft.
-        self.assertIn("if (root.printer.sendConsoleCommand(consoleInput.text)) {", harness.MONITOR_QML)
+        self.assertIn("if (consolePanel.printerModel.sendConsoleCommand(consoleInput.text)) {", harness.CONSOLE_PANE_QML)
         # When every primary sensor is hidden, up to two visible
         # non-primary sensors stand in for the mini chart. The policy
         # lives ONCE in the chart owner (mini_names), and the legend carries
@@ -937,8 +937,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("root.printerModel.improveEtaPhase", harness.JOB_SECTION_QML)
         self.assertIn("download_fraction", harness.MONITOR_MODEL + (harness.PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8"))
         self.assertIn('"monitorLayerProgress"', harness.MONITOR_MODEL)
-        self.assertIn("function monoFamily()", harness.MONITOR_QML)
-        self.assertIn("Qt.fontFamilies()", harness.MONITOR_QML)
+        self.assertIn("function monoFamily()", harness.CONSOLE_PANE_QML)
+        self.assertIn("Qt.fontFamilies()", harness.CONSOLE_PANE_QML)
         # The tooltip sizes to its content (no width cap: the ruling
         # lets it overflow any boundary) and flips above only when
         # there is no room below the cursor.
@@ -946,7 +946,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("y: chartPanel.hoverCursor.y + height + 16 > root.height", harness.MONITOR_QML)
         # Send and Clear share one row beside the input (the
         # side-by-side request) — no RowLayout may open between them.
-        send_clear = harness.MONITOR_QML[harness.MONITOR_QML.index('text: "Send"'):harness.MONITOR_QML.index('text: "Clear"')]
+        send_clear = harness.CONSOLE_PANE_QML[harness.CONSOLE_PANE_QML.index('text: "Send"'):harness.CONSOLE_PANE_QML.index('text: "Clear"')]
         self.assertNotIn("RowLayout {", send_clear)
         # The mesh readout says Height, not a third coordinate, and a
         # live refresh re-snaps a parked cursor.
@@ -968,7 +968,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("ColorDialog {", harness.CHART_COLOUR_DIALOG_QML)
         self.assertIn("setShowProbePoints", harness.MONITOR_QML)
         # Terminal order: the history sits above the input row.
-        self.assertLess(harness.MONITOR_QML.index("id: consoleText"), harness.MONITOR_QML.index("id: consoleInput"))
+        self.assertLess(harness.CONSOLE_PANE_QML.index("id: consoleText"), harness.CONSOLE_PANE_QML.index("id: consoleInput"))
         self.assertIn("All sensors hidden — click to re-enable one in the chart.", harness.TEMP_HISTORY_SECTION_QML)
 
     def test_system_section_has_the_manual_reconnect(self):
@@ -1251,7 +1251,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("britishSpelling", harness.MONITOR_MODEL)
         self.assertIn("Accessible.name: \"Show \"", harness.MONITOR_QML)
         # The console's input row lives inside the dark well.
-        self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", harness.MONITOR_QML)
+        self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", harness.CONSOLE_PANE_QML)
 
     def test_deferred_slider_and_monitor_ux_contracts(self):
         self.assertGreaterEqual(harness.TUNING_SECTION_QML.count("live: false"), 2)
