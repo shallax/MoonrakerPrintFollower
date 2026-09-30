@@ -289,6 +289,11 @@ jobs:
           # The four harness modules are part of this run. Their runner.py
           # lives beside the tests, and dotted imports otherwise hide it.
           PYTHONPATH: tests/harness
+          # coverage's ctrace core is the default below 3.14 and cannot see
+          # Python that Qt's worker threads call into — the renderer's raster
+          # jobs. Those lines then report as missing on every run. sysmon
+          # measures them, so the gate reads the code that ran.
+          COVERAGE_CORE: sysmon
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
           python - <<'PY'
