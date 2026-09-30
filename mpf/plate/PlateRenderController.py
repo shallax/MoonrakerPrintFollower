@@ -319,11 +319,6 @@ class PlateRenderController(QObject):
     def release_asset_owner(self, owner):
         self._asset_owners.pop(owner, None)
 
-    def asset_owner_files(self, owner):
-        """The file set one live face holds, or None for a released or
-        unknown token (the retirement sweep's own view)."""
-        return self._asset_owners.get(owner)
-
     def accounting(self):
         """The renderer's share of the memory story: the wrappers'
         pixel bytes, the raster directory's disk bytes and the largest
