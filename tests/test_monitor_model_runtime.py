@@ -2984,9 +2984,9 @@ Item {
         self.assertIn("connectionDotColour", harness.STATUS_PANE_QML + harness.STATUS_COLLAPSED_READOUT_QML)
         self.assertIn('text: root.printerModel != null && root.printerModel.monitorConnected ? (root.printerModel.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printerModel.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', harness.STATUS_PANE_QML)
         self.assertIn("id: statusCollapsedTitle", harness.STATUS_COLLAPSED_READOUT_QML)
-        self.assertIn('text: "Live"', harness.CAMERA_PANE_QML)
-        self.assertIn('color: MoonrakerTheme.cameraVeil', harness.CAMERA_PANE_QML)
-        self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', harness.CAMERA_PANE_QML)
+        self.assertIn('text: "Live"', harness.CAMERA_VIEWPORT_QML)
+        self.assertIn('color: MoonrakerTheme.cameraVeil', harness.CAMERA_VIEWPORT_QML)
+        self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', harness.CAMERA_VIEWPORT_QML)
         model = self.monitor()
         # The harness may connect asynchronously during construction —
         # pin the TRANSITIONS, which are synchronous.

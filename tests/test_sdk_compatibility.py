@@ -45,6 +45,7 @@ def audited(name):
 CONFIG_QML = "\n".join(audited(name) for name in ("MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml"))
 MONITOR_QML = audited("MoonrakerMonitor.qml")
 CAMERA_PANE_QML = audited("CameraPane.qml")
+CAMERA_VIEWPORT_QML = audited("CameraViewport.qml")
 UPLOAD_QML = audited("MoonrakerUploadDialog.qml")
 ACTION_QML = audited("MoonrakerPreviewCard.qml")
 EMPTY_QML = audited("MoonrakerPreviewCard.qml")
@@ -148,12 +149,12 @@ class SdkCompatibilityTests(unittest.TestCase):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 
     def test_monitor_uses_the_plugin_mjpeg_renderer(self):
-        # The image lives in the camera card (CameraPane.qml): the
-        # negative guards follow it there, or they pass vacuously.
-        self.assertIn("MoonrakerMJPGImage", CAMERA_PANE_QML)
-        self.assertNotIn("Cura.NetworkMJPGImage", CAMERA_PANE_QML)
-        self.assertNotIn("WebEngine", CAMERA_PANE_QML)
-        self.assertNotIn("VideoOutput", CAMERA_PANE_QML)
+        # The image lives in the camera viewport (CameraViewport.qml):
+        # the negative guards follow it there, or they pass vacuously.
+        self.assertIn("MoonrakerMJPGImage", CAMERA_VIEWPORT_QML)
+        self.assertNotIn("Cura.NetworkMJPGImage", CAMERA_VIEWPORT_QML)
+        self.assertNotIn("WebEngine", CAMERA_VIEWPORT_QML)
+        self.assertNotIn("VideoOutput", CAMERA_VIEWPORT_QML)
 
 
 if __name__ == "__main__":
