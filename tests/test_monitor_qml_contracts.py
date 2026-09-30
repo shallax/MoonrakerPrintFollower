@@ -155,16 +155,16 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # critic's misplaced-insertion catch). Objects moved to the
         # controls pane in 4.6.0 — its own ordering pin lives with
         # the dashboard pins below.
-        system_at = harness.MONITOR_QML.index("SystemInfoSection {")
-        mcus_at = harness.MONITOR_QML.index("McusSection {")
+        pane = harness.STATUS_PANE_QML
+        column = pane[pane.index("id: statusContent"):pane.index("StatusCollapsedReadout {")]
+        system_at = column.index("SystemInfoSection {")
+        mcus_at = column.index("McusSection {")
         self.assertLess(system_at, mcus_at)
-        pane_close = harness.MONITOR_QML.index("                    }\n                }\n", system_at)
-        self.assertLess(mcus_at, pane_close)
         # The mesh section's refresh rides an accessor — the monitor's
         # handler calls it through the instantiation id, never the
         # component's own id (the dangling-id fix).
         self.assertIn("function refreshMap()", harness.MESH_SECTION_QML)
-        self.assertIn("meshSection.refreshMap()", harness.MONITOR_QML)
+        self.assertIn("meshSection.refreshMap()", harness.INFO_PANE_QML)
 
     def test_the_narrow_window_rule_hinges_on_the_camera_pane(self):
         # The frozen contract (INSTRUCTIONS.md, "Standing UI rules"): the
@@ -267,15 +267,18 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the status pane's cost must stay the larger one, or the fold
         # order (and with it the reclaim-last guard) is inverted.
         flat = harness.re.sub(r"\s+", " ", harness.MONITOR_QML)
+        panes = {"info": harness.INFO_PANE_QML, "status": harness.STATUS_PANE_QML}
         expanded = {}
-        for pane in ("info", "status"):
+        for pane, source in panes.items():
+            # The widths are the pane's own now; the cost is the host's
+            # arithmetic about them.
             layout = harness.re.search(
                 r'objectName: "%sPanel".*?Layout\.preferredWidth: \(root\.%sCollapsed \? '
                 r'%sCollapseButton\.width \+ 2 \* UM\.Theme\.getSize\("thin_margin"\)\.width : '
                 r'([0-9]+) \* screenScaleFactor\).*?Layout\.minimumWidth: \(root\.%sCollapsed \? '
                 r'%sCollapseButton\.width \+ 2 \* UM\.Theme\.getSize\("thin_margin"\)\.width : '
                 r'([0-9]+) \* screenScaleFactor\)' % (pane, pane, pane, pane, pane),
-                flat,
+                harness.re.sub(r"\s+", " ", source),
             )
             self.assertIsNotNone(layout, "the %s pane's layout widths changed shape" % pane)
             cost = harness.re.search(
@@ -298,6 +301,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # expression — and every expand path carries the guard with the
         # tooltip that explains the refusal (the console's too-narrow
         # precedent).
+        panes = {"info": harness.INFO_PANE_QML, "status": harness.STATUS_PANE_QML}
         flat = harness.re.sub(r"\s+", " ", harness.MONITOR_QML)
         for lock, pane in (("infoExpandLocked", "info"), ("statusExpandLocked", "status")):
             lock_line = harness.re.search(
@@ -306,10 +310,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                 flat,
             )
             self.assertIsNotNone(lock_line, "the %s lock changed shape" % pane)
-            self.assertGreaterEqual(flat.count("if (root.%s) {" % lock), 2,
+            # The lock is the host's; the guards and the refusal's
+            # wording ride the pane that owns the strip and the toggle.
+            pane_flat = harness.re.sub(r"\s+", " ", panes[pane])
+            self.assertGreaterEqual(pane_flat.count("if (root.%s) {" % lock), 2,
                                     "the %s pane needs the guard on its strip and its toggle" % pane)
-        self.assertIn("The window is too narrow — widen it to show the information.", flat)
-        self.assertIn("The window is too narrow — widen it to show the printer status.", flat)
+        self.assertIn("The window is too narrow — widen it to show the information.",
+                      harness.re.sub(r"\s+", " ", harness.INFO_PANE_QML))
+        self.assertIn("The window is too narrow — widen it to show the printer status.",
+                      harness.re.sub(r"\s+", " ", harness.STATUS_PANE_QML))
         # The dashboard's controls pane follows the same rule through the
         # loaded monitor document's camera: its own cost and forward
         # check, the same guard on both expand paths, and the same
@@ -403,7 +412,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertIn(f'objectName: "jobPositionCell{axis}"', harness.JOB_SECTION_QML)
             self.assertIn(f"MoonrakerTheme.axis{axis}", harness.JOB_SECTION_QML)
         self.assertEqual(harness.JOB_SECTION_QML.count("wrapMode: Text.WordWrap"), 0)
-        self.assertIn('text: "Open the Moonraker frontend."', harness.MONITOR_QML)
+        self.assertIn('text: "Open the Moonraker frontend."', harness.STATUS_PANE_QML)
         # The tooltip discipline (the live ruling): every tooltip is a
         # UM.ToolTip child in the Cura placement pattern (below the
         # control, arrow at its top-centre, hover-driven) — never the
@@ -761,13 +770,13 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the toggle inside it is illegal in QML and silently drops the
         # anchor, which is what un-pinned the titles for so long.
         self.assertIn("anchors.top: controlHeader.bottom", harness.DASHBOARD_QML)
-        self.assertIn("anchors.top: infoHeader.bottom", harness.MONITOR_QML)
-        self.assertIn("anchors.top: statusHeader.bottom", harness.MONITOR_QML)
+        self.assertIn("anchors.top: infoHeader.bottom", harness.INFO_PANE_QML)
+        self.assertIn("anchors.top: statusHeader.bottom", harness.STATUS_PANE_QML)
         for token in ('text: "Printer status"', 'title: "Print job"', 'title: "Bed mesh"',
                       "id: infoCollapseButton", "id: statusCollapseButton",
                       "id: infoCollapsedTitle", "id: statusCollapsedTitle",
                       "setInfoCollapsed", "setStatusCollapsed"):
-            self.assertIn(token, harness.MONITOR_QML + harness.MONITOR_MODEL + harness.MESH_SECTION_QML + harness.JOB_SECTION_QML)
+            self.assertIn(token, harness.MONITOR_QML + harness.MONITOR_MODEL + harness.MESH_SECTION_QML + harness.JOB_SECTION_QML + harness.INFO_PANE_QML + harness.INFO_COLLAPSED_READOUT_QML + harness.STATUS_PANE_QML + harness.STATUS_COLLAPSED_READOUT_QML)
         self.assertIn("infoCollapsed", harness.MONITOR_MODEL)
         self.assertIn("statusCollapsed", harness.MONITOR_MODEL)
         self.assertIn("cameraRefreshNonce", harness.MONITOR_MODEL)

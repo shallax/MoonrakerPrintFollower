@@ -2671,7 +2671,7 @@ Item {
             # The picker's gate (the live ruling): during a print the
             # section shows the plate when the data exists, the
             # download offer otherwise; it clears with the job epoch.
-            "visible: root.printer != null && root.printer.sectionHiddenMap[\"plate\"] !== true && (root.printer.printActive || root.printer.plateHasObjects)",
+            "visible: root.printerModel != null && root.printerModel.sectionHiddenMap[\"plate\"] !== true && (root.printerModel.printActive || root.printerModel.plateHasObjects)",
             # The picker's download offer: inside the transient card,
             # shown while the plate is empty.
             "visible: root.printerModel != null && !root.printerModel.plateHasObjects",
@@ -2710,11 +2710,11 @@ Item {
             "visible: root.etaAvailable",
             "visible: root.finishAvailable",
             "visible: root.layerCountAvailable",
-            "visible: root.infoHotendText !== \"—\"",
-            "visible: root.infoBedText !== \"—\"",
+            "visible: root.hotendText !== \"—\"",
+            "visible: root.bedText !== \"—\"",
             # The status strip's progress group (the stacked bar's
             # glyph, label and track share the print gate).
-            "visible: root.printer != null && root.printer.printActive",
+            "visible: root.printerModel != null && root.printerModel.printActive",
             "visible: root.printer != null && root.printer.printActive && root.printer.monitorEta !== \"—\"",
             "visible: root.printer != null && root.printer.printActive && root.printer.monitorFinish !== \"—\"",
             "visible: root.printer != null && root.printer.monitorLayer !== \"—\"",
@@ -2724,7 +2724,6 @@ Item {
             # stack and fed a layout polish loop (the live report).
             # Its labels read empty while no pause lies ahead.
             "visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0",
-            "visible: root.printer != null && root.printer.nextPauseFraction >= 0",
             # The job bar's optimisation band (the live request): a
             # state-gated sweep that vanishes at completion — it never
             # flips per poll once the pass settles.
@@ -2852,7 +2851,7 @@ Item {
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).
-            "visible: !root.statusCollapsed && (root.printer == null || root.printer.monitorLoading)",
+            "visible: !root.statusCollapsed && (root.printerModel == null || root.printerModel.monitorLoading)",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"ready\" && confirmThumb.status !== Image.Error",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"loading\"",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"failed\" || root.thumbStateLarge(root.confirmRelpath()) === \"none\"",
@@ -2932,13 +2931,13 @@ Item {
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section
-        # (Dashboard 13 controls; Monitor 4
-        # information + 6 status after the move and the follower's own
-        # section).
+        # (Dashboard 13 controls; the information pane 4 — the follower's
+        # own section among them — and the printer-status pane 6).
         # A new adopter trips the count — the whitelist's substring
         # blessing must not cover an unbounded family.
         for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 13),
-                                       ("MoonrakerMonitor.qml", 10)):
+                                       ("InfoPane.qml", 4),
+                                       ("StatusPane.qml", 6)):
             self.assertEqual(
                 (harness.PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
                 expected, monitor_file)
@@ -2982,9 +2981,9 @@ Item {
         # BOTH pane states (expanded header and the collapsed strip) —
         # the chosen spot. Plus the camera's Live badge and
         # the disconnected grey veil over stale frames.
-        self.assertIn("connectionDotColour", harness.MONITOR_QML)
-        self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', harness.MONITOR_QML)
-        self.assertIn("id: statusCollapsedTitle", harness.MONITOR_QML)
+        self.assertIn("connectionDotColour", harness.STATUS_PANE_QML + harness.STATUS_COLLAPSED_READOUT_QML)
+        self.assertIn('text: root.printerModel != null && root.printerModel.monitorConnected ? (root.printerModel.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printerModel.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', harness.STATUS_PANE_QML)
+        self.assertIn("id: statusCollapsedTitle", harness.STATUS_COLLAPSED_READOUT_QML)
         self.assertIn('text: "Live"', harness.CAMERA_PANE_QML)
         self.assertIn('color: MoonrakerTheme.cameraVeil', harness.CAMERA_PANE_QML)
         self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', harness.CAMERA_PANE_QML)

@@ -515,8 +515,8 @@ class SectionOrderArrivalTests(harness.SectionOrderArrivalTests):
         # The arrival trigger: the model's change handler applies both
         # panes, reading the CURRENT effective layout.
         arrival = source[source.index("onPrinterChanged:"):source.index("onPrinterChanged:") + 2400]
-        self.assertIn('applySectionOrder(infoContent, "information")', arrival)
-        self.assertIn('applySectionOrder(statusContent, "status")', arrival)
+        self.assertIn('applySectionOrder(infoPanel.content, "information")', arrival)
+        self.assertIn('applySectionOrder(statusPanel.content, "status")', arrival)
         # The removed polling timer: its id may not exist anywhere.
         self.assertNotIn("sectionOrderApply", source)
         # No repeat Timer waits for the printer model to arrive.

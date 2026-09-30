@@ -19,6 +19,7 @@ BED_MESH_DETAIL = (PLUGINS / "BedMeshDetail.qml").read_text(encoding="utf-8")
 PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text(encoding="utf-8")
 PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
+INFO_PANE_QML = (PLUGINS / "InfoPane.qml").read_text(encoding="utf-8")
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text(encoding="utf-8")
 PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
@@ -99,7 +100,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("bedMeshRange", BED_MESH_DETAIL)
         self.assertIn("The Preview's height exaggeration adjusts from its card", BED_MESH_DETAIL)
         self.assertIn("id: infoPanel", MONITOR_QML)
-        self.assertIn('text: "Information"', MONITOR_QML)
+        self.assertIn('text: "Information"', INFO_PANE_QML)
         self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", BED_MESH_MAP_QML)  # aspect-fitted plot
         for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
             self.assertIn("bedMeshVisibilityRequested", qml)
