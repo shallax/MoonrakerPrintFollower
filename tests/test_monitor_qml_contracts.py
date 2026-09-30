@@ -345,11 +345,16 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertIn("property var printerModel: null", dialogs[name])
         # The browser's extracted leaves: each owns one visual region of
         # the popup, so the pins below follow the code into the document
-        # that now holds it. Mounting stays pinned in the shell.
+        # that now holds it. Mounting stays pinned in the shell, except
+        # where the mount itself moved one level down.
         leaves = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
-                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow", "FileColumnChooser")}
-        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileColumnChooser"):
+                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow", "FileColumnChooser", "FileGrid")}
+        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters"):
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
+        # The shell mounts the table, the table mounts the chooser: the
+        # popup sits under the header cell that opens it.
+        self.assertIn("FileGrid {", harness.FILE_MANAGER_QML)
+        self.assertIn("FileColumnChooser {", leaves["FileGrid"])
         # The option row is the filters leaf's delegate, never a child
         # of the shell.
         self.assertIn("FileFilterOptionRow {", leaves["FileManagerFilters"])
@@ -569,8 +574,10 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('text: "<root>"', leaves["FileManagerToolbar"])
         # Snapshot 2 live refinements: double-click-to-print, the
         # themed confirmation background.
-        self.assertIn("onDoubleClicked", harness.FILE_MANAGER_QML)
-        self.assertIn("fileRequestPrint(modelData.relpath)", harness.FILE_MANAGER_QML)
+        self.assertIn("onDoubleClicked", leaves["FileGrid"])
+        # The row reports the relpath; the shell keeps the model write.
+        self.assertIn("root.printRequested(modelData.relpath)", leaves["FileGrid"])
+        self.assertIn("root.printerModel.fileRequestPrint(relpath)", harness.FILE_MANAGER_QML)
         self.assertIn('id: printConfirmDialog', harness.FILE_MANAGER_QML)
         # The Columns menu's themed surface rides the chooser now. The
         # popup stays a Popup in its own document — the dashboard ladder
@@ -586,7 +593,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # small one) and the thumbnail Images decode off the UI
         # thread.
         self.assertIn("thumbUrlLarge(root.confirmRelpath())", dialogs['PrintConfirmDialog'])
-        self.assertIn("asynchronous: true", harness.FILE_MANAGER_QML)
+        self.assertIn("asynchronous: true", leaves["FileGrid"])
         # The dialogs own their Esc: a popup-held focus swallows the
         # key into the overlay (live-proven), so the content FocusScope
         # answers it.
@@ -612,7 +619,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                 printConfirmDialog.close();''', harness.FILE_MANAGER_QML)
         # The walk-error banner's dismiss (the live ruling:
         # it overlays the first row, so it must be closable).
-        self.assertIn('text: "✕"', harness.FILE_MANAGER_QML)
+        self.assertIn('text: "✕"', leaves["FileGrid"])
+        # The banner reports; the shell keeps the model write.
+        self.assertIn("root.walkErrorCleared()", leaves["FileGrid"])
         self.assertIn("root.printerModel.fileClearWalkError()", harness.FILE_MANAGER_QML)
         # The New-folder dialog (the live request).
         self.assertIn("id: createFolderDialog", harness.FILE_MANAGER_QML)
@@ -622,36 +631,40 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # frozen edge, and the header mirrors it: sticky frozen,
         # the flick following the strip's contentX. A horizontal
         # wheel anywhere over the grid scrolls the strip (the wheel
-        # used to work only over the scrollbar).
-        self.assertIn("contentWidth: root.stickyWidth + root.trailingWidth", harness.FILE_MANAGER_QML)
-        self.assertIn("ScrollBar.horizontal: ScrollBar {", harness.FILE_MANAGER_QML)
-        self.assertIn('''                            x: root.stickyWidth
-                            width: root.trailingWidth
-                            height: root.rowHeight
-                            clip: true''', harness.FILE_MANAGER_QML)
-        self.assertIn("x: -gridHorizontal.contentX", harness.FILE_MANAGER_QML)
-        self.assertIn("contentX: gridHorizontal.contentX", harness.FILE_MANAGER_QML)
-        self.assertIn("WheelHandler {", harness.FILE_MANAGER_QML)
-        self.assertIn("orientation: Qt.Horizontal", harness.FILE_MANAGER_QML)
-        self.assertIn("wheel.angleDelta.x", harness.FILE_MANAGER_QML)
+        # used to work only over the scrollbar). The table owns the
+        # scroll strips now, so these pins ride the grid document.
+        self.assertIn("contentWidth: root.stickyWidth + root.trailingWidth", leaves["FileGrid"])
+        self.assertIn("ScrollBar.horizontal: ScrollBar {", leaves["FileGrid"])
+        self.assertIn('''                x: root.stickyWidth
+                width: root.trailingWidth
+                height: root.rowHeight
+                clip: true''', leaves["FileGrid"])
+        self.assertIn("x: -gridHorizontal.contentX", leaves["FileGrid"])
+        self.assertIn("contentX: gridHorizontal.contentX", leaves["FileGrid"])
+        self.assertIn("WheelHandler {", leaves["FileGrid"])
+        self.assertIn("orientation: Qt.Horizontal", leaves["FileGrid"])
+        self.assertIn("wheel.angleDelta.x", leaves["FileGrid"])
         # Search shows the folder breadcrumb under the name (the
         # live request — same-named files in different
         # folders must be tellable).
-        self.assertIn('visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""', harness.FILE_MANAGER_QML)
+        self.assertIn('visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""', leaves["FileGrid"])
         # The title floors hold from the first frame (static seed) —
         # headers never elide, wrap or overflow.
-        self.assertIn('"thumb": 70', harness.FILE_MANAGER_QML)
+        self.assertIn('"thumb": 70', leaves["FileGrid"])
         # The content cells elide through a width cap (an uncapped
         # label keeps its implicit width and overflows).
-        self.assertIn('width: Math.min(implicitWidth, parent.width - (modelData[0] === "Status"', harness.FILE_MANAGER_QML)
-        self.assertIn("root.rowNeedsMetadata(modelData)", harness.FILE_MANAGER_QML)
+        self.assertIn('width: Math.min(implicitWidth, parent.width - (modelData[0] === "Status"', leaves["FileGrid"])
+        self.assertIn("root.rowNeedsMetadata(modelData)", leaves["FileGrid"])
         # Snapshot 3 mutations: the delete confirmation, the rename
         # dialog with its live collision line, and the wiring.
         self.assertIn('id: deleteConfirmDialog', harness.FILE_MANAGER_QML)
         self.assertIn('id: renameDialog', harness.FILE_MANAGER_QML)
         self.assertIn("fileRequestDelete()", harness.FILE_MANAGER_QML)
-        self.assertIn("fileRequestDeleteFile(modelData.relpath)", harness.FILE_MANAGER_QML)
-        self.assertIn("fileRequestRename(modelData.relpath)", harness.FILE_MANAGER_QML)
+        # The row reports the relpath; the shell keeps the model write.
+        self.assertIn("root.deleteRequested(modelData.relpath)", leaves["FileGrid"])
+        self.assertIn("root.printerModel.fileRequestDeleteFile(relpath)", harness.FILE_MANAGER_QML)
+        self.assertIn("root.renameRequested(modelData.relpath)", leaves["FileGrid"])
+        self.assertIn("root.printerModel.fileRequestRename(relpath)", harness.FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
         # pre-selects the stem (the live reports).
         self.assertEqual(sum(source.count("modal: true") for source in dialogs.values()), 7)
