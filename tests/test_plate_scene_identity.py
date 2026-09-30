@@ -2,7 +2,7 @@
 
 import unittest
 
-from mpf.plate.PlateSceneIdentity import (
+from mpf.Plate.PlateSceneIdentity import (
     NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom,
 )
 

@@ -148,7 +148,7 @@ COVERAGE_BAR = 95.0
 # and only when every other file clears the bar; the container remains
 # the authority for the figure itself.
 PLATFORM_BOUND_COVERAGE = {
-    "mpf/diagnostics/LeakProbe.py": "its /proc, mach and libproc readers are Unix-only; "
+    "mpf/Diagnostics/LeakProbe.py": "its /proc, mach and libproc readers are Unix-only; "
                             "the pinned container is the authority for this bar",
 }
 

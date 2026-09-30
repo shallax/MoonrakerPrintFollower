@@ -36,7 +36,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # The seek: B's own geometry at its own bed position, the
         # SAME motions and split arithmetic, and a prefix asset that
         # never resolves — the asynchronous gap is the whole window.
-        from mpf.plate.PlateQt import render_layer_prefix
+        from mpf.Plate.PlateQt import render_layer_prefix
         b_payload = {
             "classes": {"WALL-OUTER": [[[20.0 + motion * 10.0, 200.0, float(motion)]
                                         for motion in range(21)]]},
@@ -70,7 +70,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # The seek completes: B's asset lands and B's own history
         # takes B's position — the assertions above are not a stuck
         # blank.
-        from mpf.plate.PlateQt import png_file
+        from mpf.Plate.PlateQt import png_file
         layer_b.set_prefix(prefix_b, png_file(prefix_b, "/tmp/mpf/raster-probe",
                                               "fixture-ab-%d" % harness.time.monotonic_ns()),
                            10, "fixture-key")
@@ -156,7 +156,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # Parity with the navigation raster's own composite order: the
         # same window, plot and view, backed 1:1 so both rasters share
         # one pixel grid.
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.Plate.PlateQt import render_navigation_layer
         nav_view = {"width": int(face.width()), "height": int(face.height()),
                     "scale": 1.0, "lineScale": 8.0, "compact": False,
                     "panX": 0.0, "panY": 0.0, "dpr": 1.0, "backing": 1.0,
@@ -409,7 +409,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             # settle fires (the production 150 ms re-raster): the
             # composition stays whole through the takeover and the
             # settled picture sits at the NEW positions.
-            from mpf.plate.PlateQt import render_layer_prefix, png_file
+            from mpf.Plate.PlateQt import render_layer_prefix, png_file
             plot_value = face.property("plot")
             if hasattr(plot_value, "toVariant"):
                 plot_value = plot_value.toVariant()

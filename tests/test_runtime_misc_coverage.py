@@ -30,16 +30,16 @@ from unittest.mock import MagicMock, patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedSocket, ScriptedTransport, runtime
 
-from mpf.cura import CuraOutputWriter as cura_output_writer
-from mpf.cura.CuraAdapter import (active_machine_identity, apply_preview_decision,
+from mpf.CuraHost import CuraOutputWriter as cura_output_writer
+from mpf.CuraHost.CuraAdapter import (active_machine_identity, apply_preview_decision,
                                  preview_current_layer, preview_current_path, preview_max_paths,
                                  preview_minimum_layer, preview_minimum_path, reset_preview_layer_data,
                                  set_preview_minimum_path, set_preview_path)
-from mpf.cura.CuraLifecycleBridge import CuraLifecycleBridge
-from mpf.cura.CuraOutputWriter import CuraOutputWriter
-from mpf.files.transfers.DownloadStream import DownloadOperation, DownloadTarget
-from mpf.preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
-from mpf.settings.PrinterConfig import PrinterConfig
+from mpf.CuraHost.CuraLifecycleBridge import CuraLifecycleBridge
+from mpf.CuraHost.CuraOutputWriter import CuraOutputWriter
+from mpf.Files.Transfers.DownloadStream import DownloadOperation, DownloadTarget
+from mpf.Preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
+from mpf.Settings.PrinterConfig import PrinterConfig
 
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
@@ -1610,7 +1610,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime_instance._closed)
 
     def test_the_smoothing_trace_lands_under_the_cache_directory_when_opted_in(self):
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.GCode.CacheNamespaces import CACHE_DIRECTORY_NAME
         with patch.dict(os.environ, {"MOONRAKER_FOLLOWER_SMOOTHING_TRACE": "smoothing.csv"}):
             _, follower = self.build()
         trace_path = follower._runtime.motion._trace_path
@@ -1623,7 +1623,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         # replaced package. The cache directory must never match the
         # package ID, and the purge's own walk must leave it alone
         # (the legacy name dies wholesale — that is exactly the bug).
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.GCode.CacheNamespaces import CACHE_DIRECTORY_NAME
         self.assertNotEqual(CACHE_DIRECTORY_NAME, "MoonrakerPrintFollower")
         with tempfile.TemporaryDirectory() as root:
             legacy = os.path.join(root, "MoonrakerPrintFollower")

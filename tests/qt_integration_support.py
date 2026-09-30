@@ -309,7 +309,7 @@ class ToolheadControllerTests(unittest.TestCase):
                                              "axis_minimum": [0, 0, 0],
                                              "axis_maximum": [200, 200, 200]}})
                 # The 4.2.0 contract: the record rides the data owner.
-                from mpf.monitor.MonitorPermissions import Observation
+                from mpf.Monitor.MonitorPermissions import Observation
                 self.observation = Observation(
                     active=self.active, connection="yes" if self.connected else "unknown",
                     state=state, homed_axes="xyz", assumed_stopped=False,

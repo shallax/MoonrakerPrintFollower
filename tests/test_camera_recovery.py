@@ -10,7 +10,7 @@ import unittest
 
 from PyQt6.QtCore import Qt
 
-from mpf.monitor.camera.CameraRecovery import RETRY_SECONDS, CameraRecovery
+from mpf.Monitor.Camera.CameraRecovery import RETRY_SECONDS, CameraRecovery
 
 
 class Clock:

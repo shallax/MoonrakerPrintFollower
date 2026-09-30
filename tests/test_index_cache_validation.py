@@ -7,9 +7,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from mpf.gcode import IndexCache, IndexCodec
-from mpf.gcode.GCodeIndex import build_index_from_bytes
-from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+from mpf.GCode import IndexCache, IndexCodec
+from mpf.GCode.GCodeIndex import build_index_from_bytes
+from mpf.Moonraker.MoonrakerProtocol import RemoteFileIdentity
 
 
 class PersistentIndexValidationTests(unittest.TestCase):

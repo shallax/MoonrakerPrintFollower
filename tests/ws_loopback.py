@@ -15,7 +15,7 @@ import struct
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from mpf.moonraker.SocketFraming import accept_value
+from mpf.Moonraker.SocketFraming import accept_value
 
 
 class WSHandler(socketserver.BaseRequestHandler):

@@ -1,6 +1,6 @@
 """Deterministic offscreen capture of the Moonraker upload dialog.
 
-Renders mpf/files/transfers/MoonrakerUploadDialog.qml at ~520x420 with a minimal
+Renders mpf/Files/Transfers/MoonrakerUploadDialog.qml at ~520x420 with a minimal
 ``manager`` QObject mirroring the surface the production
 MoonrakerOutputDevice exposes to the dialog (uploadPathOptions,
 initialUploadPath, initialUploadFilename, initialStartPrint,
@@ -176,7 +176,7 @@ def main():
     context.setContextProperty("screenScaleFactor", 1.0)
 
     component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "files", "transfers", "MoonrakerUploadDialog.qml")))
+    component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "Files", "Transfers", "MoonrakerUploadDialog.qml")))
     if component.isError():
         raise RuntimeError("\n".join(e.toString() for e in component.errors()))
 

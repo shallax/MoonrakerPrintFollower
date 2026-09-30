@@ -34,8 +34,8 @@ from unittest.mock import Mock
 
 from tests.qt_runtime_support import QT_AVAILABLE
 
-from mpf.moonraker import SocketFraming
-from mpf.moonraker.SocketFraming import (
+from mpf.Moonraker import SocketFraming
+from mpf.Moonraker.SocketFraming import (
     FrameState,
     FramingError,
     MAX_MESSAGE_BYTES,
@@ -50,7 +50,7 @@ from mpf.moonraker.SocketFraming import (
     parse_frames,
     verify_handshake,
 )
-from mpf.monitor.toolhead.ToolheadPolicy import (
+from mpf.Monitor.Toolhead.ToolheadPolicy import (
     CENTER_Z_MM,
     EXTRUDE_SPEED_MAX,
     JOG_DISTANCE_DEFAULT,
@@ -79,13 +79,13 @@ from mpf.monitor.toolhead.ToolheadPolicy import (
     push_op,
     z0_script,
 )
-from mpf.printing.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
-from mpf.preview.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.Printing.PrintState import LayerResolver, MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.Preview.PreviewFollower import PreviewFollower, preview_override_kind
 
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
-    from mpf.monitor.MonitorData import MonitorData, freeze
-    from mpf.preview.PreviewMotion import PreviewMotion
+    from mpf.Monitor.MonitorData import MonitorData, freeze
+    from mpf.Preview.PreviewMotion import PreviewMotion
 
 
 # --------------------------------------------------------------------------
@@ -478,7 +478,7 @@ class PreviewMotionTests(unittest.TestCase):
         from PyQt6.QtCore import QCoreApplication
         # QTimer needs an application object even when it never fires here.
         self.app = QCoreApplication.instance() or QCoreApplication([])
-        self.patch = patch("mpf.preview.PreviewMotion.time", FakeClock())
+        self.patch = patch("mpf.Preview.PreviewMotion.time", FakeClock())
         # PreviewMotion resolves `time.monotonic` through its own module global.
         self.clock = self.patch.start()
         self.addCleanup(self.patch.stop)

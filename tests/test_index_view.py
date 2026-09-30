@@ -1,8 +1,8 @@
 """Read-only query fallbacks for unavailable or invalid continuous-Z evidence."""
 import unittest
 
-from mpf.gcode.GCodeIndex import build_index_from_bytes
-from mpf.gcode.IndexView import IndexView
+from mpf.GCode.GCodeIndex import build_index_from_bytes
+from mpf.GCode.IndexView import IndexView
 
 
 class ContinuousZInputTests(unittest.TestCase):

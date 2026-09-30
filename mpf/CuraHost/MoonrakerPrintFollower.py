@@ -1,0 +1,69 @@
+"""Stable Cura extension facade; domain behaviour is composed, not inherited."""
+from PyQt6.QtCore import QObject, pyqtSlot
+from UM.Extension import Extension
+
+from ..FollowerRuntime import FollowerRuntime
+from ..WhatsNew.WhatsNewOverlay import WhatsNewOverlay
+
+
+class MoonrakerPrintFollower(QObject, Extension):
+    def __init__(self, application):
+        QObject.__init__(self)
+        Extension.__init__(self)
+        self._runtime = FollowerRuntime(application, self)
+        self._whats_new = WhatsNewOverlay()
+
+    @property
+    def client(self): return self._runtime.client
+    @property
+    def session(self): return self.client.session
+    @property
+    def transport(self): return self.client.transport
+    @property
+    def print_state(self): return self._runtime.coordinator.snapshot
+
+    def index(self): return self._runtime.index
+    @property
+    def bed_mesh(self): return self._runtime.bed_mesh
+    @property
+    def presentation(self): return self._runtime.presentation
+
+    def has_toolpath(self): return self._runtime.cura.has_toolpath
+
+    def request_file_download(self, relpath): self._runtime.file_download.request_save(relpath)
+
+    @property
+    def download_failed(self): return self._runtime.file_download.failed
+    def download_progress(self): return self._runtime.file_download.progress()
+    def cancel_file_download(self): self._runtime.file_download.cancel()
+
+    def current_printer_config(self): return self._runtime.binding.config
+    def current_printer_identity(self): return self._runtime.binding.identity
+    def apply_printer_config(self, config): return self._runtime.binding.apply(config)
+
+    @property
+    def persistence(self): return self._runtime.persistence
+    def notice(self): return self._runtime.notice
+
+    @pyqtSlot()
+    def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
+    def receive_preview_block(self, block): self._runtime.coordinator.receive_preview_block(block)
+    def confirmDownloadForMonitor(self): self._runtime.coordinator.download_for_monitor()
+
+    @pyqtSlot()
+    def toggleFollowingPause(self): self._runtime.coordinator.toggle_attachment()
+
+    def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
+    def setPlateSplit(self, motions): self._runtime.coordinator.set_plate_split(motions)
+    def setFollowerPopoverOpen(self, popover_open): self._runtime.coordinator.set_popover_open(popover_open)
+    # The popover's pause block: the one the Preview card just received.
+    def pauseAtLayerBlock(self): return self._runtime.coordinator.pause_block
+
+    def invalidateIndex(self): self._runtime.index.invalidate()
+
+    def deinitialize(self):
+        self._whats_new.close()
+        # The leak probe stops with the plugin (no dead runtime, no re-stacked timer).
+        from ..Diagnostics.LeakProbe import stop_leak_probe
+        stop_leak_probe()
+        self._runtime.close()

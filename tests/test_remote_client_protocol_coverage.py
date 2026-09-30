@@ -31,9 +31,9 @@ from unittest.mock import Mock, patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedSocket, ScriptedTransport, runtime
 
-from mpf.moonraker import MoonrakerProtocol as protocol
-from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
-from mpf.moonraker.MoonrakerSession import (
+from mpf.Moonraker import MoonrakerProtocol as protocol
+from mpf.Moonraker.MoonrakerProtocol import RemoteFileIdentity
+from mpf.Moonraker.MoonrakerSession import (
     BindingIdentity,
     CommandTracker,
     MoonrakerSession,
@@ -722,13 +722,13 @@ class MoonrakerClientHostImportTests(unittest.TestCase):
     def test_the_module_imports_without_uranium(self):
         # The stdlib-only host suite has no UM package: the client must
         # still import, with logging off rather than an ImportError.
-        module = importlib.import_module("mpf.moonraker.MoonrakerClient")
+        module = importlib.import_module("mpf.Moonraker.MoonrakerClient")
         self.assertTrue(hasattr(module, "MoonrakerClient"))
         with patch.dict(sys.modules, {"UM.Logger": None}):
             module = importlib.reload(module)
         self.assertIsNone(module.Logger)
         # Drop the UM-mocked copy: a later suite must import its own.
-        sys.modules.pop("mpf.moonraker.MoonrakerClient", None)
+        sys.modules.pop("mpf.Moonraker.MoonrakerClient", None)
 
 
 class MoonrakerSessionDefaultsTests(_QtCase):

@@ -2,7 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from mpf.gcode import ArcGeometry, IndexCodec
+from mpf.GCode import ArcGeometry, IndexCodec
 
 
 class IndexColumnValidationTests(unittest.TestCase):

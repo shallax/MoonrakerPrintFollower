@@ -49,7 +49,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         # list-valued projection — the relpath is the row identity,
         # so a rebuild re-anchors delegates by identity, never by
         # position.
-        from mpf.files.browser.FilesViewModel import FilesViewModel
+        from mpf.Files.Browser.FilesViewModel import FilesViewModel
         view = FilesViewModel()
         rows = [{"relpath": "a.gcode", "name": "a"},
                 {"relpath": "b.gcode", "name": "b"},

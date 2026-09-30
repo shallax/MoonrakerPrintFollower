@@ -7,7 +7,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 Place Python, QML and feature-specific behaviour together under the domain or
 screen that owns them; use the package ownership table in `ARCHITECTURE.md`.
-Host adapters stay in `cura/`, cross-domain workflows in `application/`, and
+Host adapters stay in `CuraHost/`, cross-domain workflows in `Application/`, and
 shared primitives in their explicit domain rather than in a consumer screen.
 Do not create compatibility aliases for retired package paths. Update real
 imports, patch targets, harness registrations and resource paths when moving
@@ -350,7 +350,7 @@ change together:
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
-5. `mpf/whatsnew/WhatsNew.py` — a new head entry (headline + user-facing items)
+5. `mpf/WhatsNew/WhatsNew.py` — a new head entry (headline + user-facing items)
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
@@ -469,7 +469,7 @@ file, never inline content:
 1. The component (`FooSection.qml`) — a `ColumnLayout` root
    (`id: root`, `spacing: 0`) with `property var printerModel: null`,
    then the shared `CollapsibleSectionHeader`
-   (`mpf/widgets/CollapsibleSectionHeader.qml`, instantiated directly —
+   (`mpf/Widgets/CollapsibleSectionHeader.qml`, instantiated directly —
    no Loader) with `Layout.fillWidth: true`,
    `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
@@ -541,7 +541,7 @@ binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
 `tests/test_runtime_monitor_composition.py`.
 
-Plugin-drawn glyphs (see `mpf/resources/svg/PadlockLocked.svg`,
+Plugin-drawn glyphs (see `mpf/Resources/Svg/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
 `UM.ColorImage` injects the theme colour into the root `<svg>` element,
 so the glyph follows Cura's theme and scaling automatically. Reference
@@ -896,7 +896,7 @@ by default — request FAILURES always log a warning regardless.
 
 ### Follower shader maintenance
 
-The release archives include `mpf/resources/shaders/stroke.vert.qsb` and
+The release archives include `mpf/Resources/Shaders/stroke.vert.qsb` and
 `stroke.frag.qsb`; Cura users need no compiler or additional dependency.
 `make all`, `make build`, and `make package` generate the bundles before
 packaging; CI and release artifact builds do the same. Windows package and
