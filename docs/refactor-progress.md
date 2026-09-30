@@ -15,6 +15,10 @@ Branch: `chore/v4.6.2`. Base when this ledger opened: `905c628`.
 | D | toolhead QML | `ToolheadSection.qml` 993 -> 401 | `f491998` | yes |
 | D | Preview card + dashboard leaves | card 1211 -> 354, dashboard 1181 -> 980 | `1b58cbc` | yes |
 | E | renderer subsystem | model 4486 -> 3015; +`PlateRenderController.py` 1626, `RenderSurface.py` 94 | `e60823f` | yes |
+| H | camera arithmetic | +`PlateViewPolicy.js` 150; one bed transform | `1e52833` | yes |
+| H | Canvas drawing | +`PlatePainter.js` 258; face 3128 -> 2927 | `fd08779` | yes |
+| H | asset validity | 4 predicates to the compositor; face -> 2883 | `c39c5e0` | yes |
+| H | the face's visual leaves | dot 42, glyphs 40, scope 133; face -> 2735 | `25899b7` | yes |
 
 ## Batch A — baseline repair
 
@@ -368,6 +372,104 @@ index refresh throttle 4 — by the index and persistence set — prepared reope
 integration 46, index hydration 20, prepared store 79, index components 3 — and
 by each commit's own full gate, which runs the whole suite including the four
 `tests/harness/test_harness_*.py` legs `tools/run_some.sh` does not glob.
+
+## Batch H — the progress face, conservatively and in the brief's order
+
+Four commits, in the order the brief set: the pure calculations, the pure
+painters, the presentation predicates, then the visual leaves.
+`PlateProgressFace.qml` 3234 -> 2735.
+
+`PlateViewPolicy.js` (150 lines) takes the camera's whole arithmetic: the
+bed transform, the soft pan clamp, the zoom's focal/eased/inverse terms,
+the scope's track-to-scale pair, its graduations and the physical stroke
+width. The face keeps the camera STATE, the gestures that write it and
+every Item that reads it. `PlateCanvas.plateToScene` resolves through the
+same transform now, so the bed mapping has ONE implementation rather than
+three — the canvas' function, the face's travel walk and the face's
+inlined stroke loop. `PlatePainter.drawLayer` keeps its arithmetic
+inlined and says why: a call per vertex over hundreds of thousands of
+points was the follower's dominant cost.
+
+`PlatePainter.js` (258 lines) takes every stroke: the edge rule and its
+two binary-search bounds, the batched per-class walk with its
+true-thickness and gradient branches, the travel families and the
+retraction glyphs. Each painter takes the context, the payload, the
+boundaries and one style record. `classColour` crosses as a capability
+rather than a scalar because the theme it reads is a QML singleton a JS
+library cannot import — one function of one string, the shape the
+renderer's injected `trace_requested` already takes.
+
+The four layer-asset predicates (`rasterOf`, `baseOf`, `travelsOf`,
+`motionsOf`) went to `PlateExactComposition.js` rather than to a new
+module: every decision taken over them already lived there, and the brief
+forbids a second owner of which frame may be displayed.
+
+The leaves are `PlateToolheadDot.qml`, `PlateExtruderMarkers.qml` and
+`PlateZoomScope.qml`. The scope is the sharper boundary: it reports a
+requested scale through one signal and writes no camera state, which the
+contract holds by asserting its document mentions none of `viewPanX`,
+`viewPanY`, `displayScale`, `displayPanX`, `displayPanY` or
+`_enterInteraction`.
+
+Couplings the brief did not name, fixed in the same pass:
+
+- `_clampPan` had no caller anywhere in the tree. The soft clamp replaced
+  the hard one and the dead function went with its rule paragraph, as did
+  `zoomGraduations` once the scope owned its own model.
+- The zoom cap was spelled `20.0` in five places — the wheel's ceiling,
+  the scope's log base twice, the graduation loop and the track's power.
+  They read `MAX_SCALE`, and a pin holds the wheel and the scope to it.
+- The `scaleOverride`/`widthScale` pair threaded through four painter
+  functions is gone; `_paintStyle()` and `_carryStyle()` answer "which
+  camera is this baked at" once at the call. That also dropped a
+  recomputation: every travel class called `travelWidthPx()`, which calls
+  `toolpathWidthPx()`, so a layer with several travel families
+  recomputed the width per family. The style resolves both once per
+  paint.
+- The glyph overlay reached its sibling `mapping` item for
+  `plateToScene` while its own view record already carried the plot. The
+  transform runs through that plot now and the sibling read is gone.
+- `PlateZoomScope` takes its frame as a declared input rather than
+  reading `parent`. The engine gate loads every document standalone,
+  where a root item has no parent and a `parent.height` binding fails —
+  the gate caught it on the first lint.
+
+Two splits were considered and declined. The GPU stack's `gpuFollower` is
+read by `_exactReady()`, `_updateMotion`, `_updateDot`, the
+`gpuRendering` binding, the preparing cover and `_startHandoff`; a leaf
+would need all of those handed back and would put the ready state in two
+places. The `exactScene` raster stack's Images each write a texture
+mirror on the face and call `_requestProgressPaint`, so extracting them
+would move texture-readiness state out of the one owner the brief
+requires keep it. The unavailable-state placeholder was left too: two
+sibling items with no state and no ownership to transfer.
+
+The four scene-identity keys (`_viewKey`, `_worldKeyOf`, `_pendingKeyOf`,
+`_progressKeyOf`) stay on the face. `_pendingKeyOf` reads an Image's
+status by id and the others read fifteen payload and view values each;
+handing those in would be the context bag the rules forbid, and they are
+the world/anchor epoch state the brief says to keep whole.
+
+Verified by the focused modules — view policy 18, painter 23, exact
+composition 24, plate raster mapping 9, plate geometry 10, plate
+interaction 8, plate navigation 16, prefix ownership 5, zoom raster 9,
+renderer parity 8, follower dpr 5, gpu canvas isolation 2, monitor
+contracts 45, model runtime 114, resource references 7, sdk compatibility
+11 — by each commit's own full gate, and by the pixel oracle: all
+fourteen scenes byte-identical to the committed screenshots after every
+commit, the print-follower scene included. CI's own Screenshot sync job
+agreed independently.
+
+Two mutation checks. The painter's edge comparison changed from `<` to
+`<=` fails three painter tests plus the real-engine geometry suite;
+the tree was restored. And the batch's own gate caught a real defect
+before it was pushed: the painter move's block deletion took
+`_paintCarry` with it, because that function sat between the pure
+helpers it was extracting, and `test_qml_plate_raster_mapping` — a file
+the focused run had not included — failed deterministically on the
+gesture's tail painting no wall. The function was restored and the
+face's whole property, id, objectName and function inventory diffed
+against the previous commit to prove nothing else had gone with it.
 
 ## Outstanding
 
