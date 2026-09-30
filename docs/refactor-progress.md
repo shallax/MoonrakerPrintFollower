@@ -11,6 +11,9 @@ Branch: `chore/v4.6.2`. Base when this ledger opened: `905c628`.
 | A | baseline repair | CI green | `a8ded46` | yes |
 | B | file-browser QML | `FileManager.qml` 2949 -> 725 | `f6688b3` | yes |
 | C | Monitor composition | `MoonrakerMonitor.qml` 3129 -> 892 | `0025b3c` | yes |
+| D | camera QML | `CameraPane.qml` 1403 -> 221 | `bf5ff8d` | yes |
+| D | toolhead QML | `ToolheadSection.qml` 993 -> 401 | `f491998` | yes |
+| D | Preview card + dashboard leaves | card 1211 -> 354, dashboard 1181 -> 980 | `1b58cbc` | yes |
 
 ## Batch A — baseline repair
 
@@ -58,6 +61,55 @@ verbatim on the host.
 
 Verified by the same pixel oracle, six scenes SAME.
 
+## Batch D — camera, toolhead, Preview card, dashboard
+
+Four commits. The camera pane handed the picture and its control bar to
+`CameraViewport` and `CameraControlBar` (1403 -> 221); the toolhead section
+handed the compass, the extrusion cluster and the z nudges to `JogPad`,
+`ExtrusionControls` and `ZOffsetControls` (993 -> 401). Authorization and
+interlock policy stayed with the controller: homed-axis requirements,
+cold-extrusion refusals and live-print restrictions are its own.
+
+The Preview card's sections became leaves: `PreviewStatusStrip`,
+`PauseAtLayerSection`, `BedMeshLegend` and `ReplacePromptDialog` (1211 -> 354).
+The card keeps its published values, its signals and its replacement
+lifecycle; the leaves take declared inputs and report back through one
+narrow signal each. The pause state machine, the strip's state machine and
+the prompt's escape handling moved whole, so no state has two owners.
+
+The controls pane's collapsed strip became `ControlsCollapsedReadout`
+(1181 -> 980): the vertical title, the fixed-width position and z row, the
+availability gates and the whole-pair fit, with the pane handed in as the
+frame the fit measures against. Two candidates were deliberately left on the
+dashboard root. Section configuration owns `configurePaneOpen`, the scrim's
+outside-click, the escape ladder's rung and the one-at-a-time popover rule —
+splitting it would put a second owner on the active popover, which the batch
+forbids. The tuning-slider freeze latch is read by `controlFlick.interactive`
+and by every section instance through `freezeRepeaters`/`frozenItems`, and its
+refocus walk roots at the three section instances by id, so a leaf would need
+the same bindings handed back plus three more — no ownership gained, one
+single-owner invariant put at risk.
+
+Couplings the batch text did not name, fixed in the same pass: the strip's
+`layerHeightRowsVisible` moved with the rows that read it; the pause section
+hides whole on `implicitHeight > 0` because an empty visible Column still
+takes a row gap; the readout leaf carries its asset URLs one directory deeper
+(`../../resources/svg/`); its pane-height hook became a `Connections` on the
+declared frame; and the dashboard's `onPrinterChanged` gate call moved into the
+leaf as its own handler, so a printer switch still re-reads the gates. The
+pause-menu pin in `tests/test_pause_at_layer.py` reads the card together with
+the section document it renders, because the toggle, the summary and the
+scheduled rows it pins moved whole.
+
+Verified by the same pixel oracle — all fourteen scenes byte-identical after
+each half — plus the focused modules: preview 45, preview presentation 34,
+bed mesh 12, camera gestures 34, dashboard layout 17, dashboard interaction 17,
+monitor contracts 44, model runtime 114, monitor controls 86, SDK compatibility
+11, harness specs 18, resource references 7, gate summary 9. One round trip on
+the asset URLs: a reference broken on purpose fails
+`test_every_referenced_svg_resolves_from_its_document` on that exact line, and
+the restored file passes.
+
 ## Outstanding
 
 - `tests/test_gpu_canvas_isolation.py::test_live_layer_handoff_fades_previous_geometry_then_retires_it`
@@ -67,4 +119,4 @@ Verified by the same pixel oracle, six scenes SAME.
 - The pre-commit hook runs its six legs concurrently and its unit leg failed
   once under that load, then passed on an immediate re-run with no tree change.
   Same class as the above: load-sensitive, not diagnosed.
-- Batches D-I not started.
+- Batches E-I not started.
