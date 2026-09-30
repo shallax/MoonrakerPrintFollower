@@ -12,8 +12,8 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self._feed(model, "mini", width=90, height=90, compact=True)
         self._window(model, "popover", 5)
         self._window(model, "mini", 5)
-        popover = model._plate_surfaces["popover"]
-        mini = model._plate_surfaces["mini"]
+        popover = model.plate_renderer._surfaces["popover"]
+        mini = model.plate_renderer._surfaces["mini"]
         self.assertIsNot(popover.layers[5], mini.layers[5],
                          "the surfaces shared a PlateLayer")
         self._pump_rasters(model, "popover")
@@ -45,7 +45,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self._feed(model, "popover", width=600, height=400)
         self._feed(model, "mini", width=90, height=90, compact=True)
         self._window(model, "mini", 3)
-        mini = model._plate_surfaces["mini"]
+        mini = model.plate_renderer._surfaces["mini"]
         self._pump_rasters(model, "mini")
         self._window(model, "popover", 200)
         self._pump_rasters(model, "popover")
@@ -59,7 +59,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # any order, but never before the current.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         landed = {}
 
@@ -82,7 +82,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # again — and once everything is hot, nothing re-renders.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         for _ in range(5):
             self._window(model, "popover", 5)  # the publish churn
@@ -96,7 +96,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # job is in flight starts at most the final current plus its
         # ghosts — the obsolete visited layers never rasterise.
         model = self.monitor()
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._feed(model, "popover", width=400, height=300)
         payload = self._dense(200000)
         self._window(model, "popover", 100, payload)
@@ -125,7 +125,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # requests nothing.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         self._pump_rasters(model, "popover")
         generation = surface.generation
@@ -143,7 +143,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # one wave — never plot-generation-then-view-generation.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         generation = surface.generation
         model.setFollowerPlot("popover", 5.0, 6.0, 1.0, 1.0, 0.0, 300.0)
         model.setFollowerView("popover", 1.2, 0.7, 400, 300, False, 0.0, 0.0)
@@ -157,7 +157,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # render counts stay bounded by the final window.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload()
         for anchor in range(300):
             self._window(model, "popover", anchor, payload)
@@ -171,12 +171,12 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_an_evicted_layer_leaves_no_scheduler_residue(self):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload()
         self._window(model, "popover", 0, payload)
         self._pump_rasters(model, "popover")
         for layer in range(6, 12):
-            model._qt_layer(surface, payload, layer)
+            model.plate_renderer._qt_layer(surface, payload, layer)
         self.assertNotIn(0, surface.layers)
         self.assertNotIn(0, surface.tokens,
                          "the evicted layer's token survived")
@@ -191,9 +191,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # the newer demand (the review's scrub policy).
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        wrapped = model._qt_layer(surface, payload, 5)
+        wrapped = model.plate_renderer._qt_layer(surface, payload, 5)
         generation = surface.generation
         epoch = surface.job_epoch
         key = surface.render_key()
@@ -219,7 +219,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                                "epoch": surface.anchor_epoch, "split": next_split}
             ticket = ("popover", 5, 1, generation, key, "prefix", split,
                       epoch, 100 + index)
-            model._raster_committed(("prefix", prefix, "", split), ticket)
+            model.plate_renderer._raster_committed(("prefix", prefix, "", split), ticket)
             self.assertEqual(wrapped.prefixSplit, landed,
                              "step %d landed the wrong split record" % index)
             if backward:
@@ -241,11 +241,11 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # The serial gates every terminal path.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         surface.nav["job"] = {"key": ("k",), "cancel": None,
                               "epoch": surface.job_epoch, "serial": 7}
-        with harness.patch.object(model, "_schedule_navigation") as schedule:
-            model._nav_committed(("cancelled",),
+        with harness.patch.object(model.plate_renderer, "schedule_navigation") as schedule:
+            model.plate_renderer._nav_committed(("cancelled",),
                                  ("popover", -1, 0, 0, ("k",), "nav", 50,
                                   surface.job_epoch, 6))
         self.assertIsNotNone(surface.nav["job"],
@@ -259,11 +259,11 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # an outstanding demand.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         surface.nav["job"] = {"key": ("k",), "cancel": None,
                               "epoch": surface.job_epoch, "serial": 7}
-        with harness.patch.object(model, "_schedule_navigation") as schedule:
-            model._nav_committed(("cancelled",),
+        with harness.patch.object(model.plate_renderer, "schedule_navigation") as schedule:
+            model.plate_renderer._nav_committed(("cancelled",),
                                  ("popover", -1, 0, 0, ("k",), "nav", 50,
                                   surface.job_epoch, 7))
         self.assertIsNone(surface.nav["job"],
@@ -278,12 +278,12 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         from PyQt6.QtGui import QImage
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         ready = surface.nav["url"]
         shared_key = ("k",)
         surface.nav["job"] = {"key": shared_key, "cancel": None,
                               "epoch": surface.job_epoch, "serial": 7}
-        model._nav_committed(
+        model.plate_renderer._nav_committed(
             ("nav", QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied),
              "file:///tmp/mpf/raster-probe/stale-serial.png", shared_key),
             ("popover", -1, 0, 0, shared_key, "nav", 50,
@@ -299,16 +299,16 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self._feed(model, "popover", width=400, height=300)
         # Detached: the attached compatible-raster gate would keep the
         # split-stale raster eligible.
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         deadline = harness.time.monotonic() + 5.0
         while harness.time.monotonic() < deadline and not surface.nav["url"]:
             self.qt.events(5)
             harness.time.sleep(0.01)
-        self.assertEqual(model._navigation_data_value(surface), surface.nav["url"],
+        self.assertEqual(model.plate_renderer.navigation_data(surface), surface.nav["url"],
                          "the ready raster never published")
         # Detached now the anchor exists: the attached compatible
         # gate would keep the split-stale raster eligible.
@@ -316,9 +316,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # The demand moves: the retained URL retires from the face
         # before the replacement commits (no events — the old key
         # still stands, the demand is already the new one).
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 120)
-        self.assertEqual(model._navigation_data_value(surface), "",
+        self.assertEqual(model.plate_renderer.navigation_data(surface), "",
                          "the stale raster stayed eligible after the demand moved")
         # The replacement commits: its own key publishes.
         old_url = surface.nav["url"]
@@ -327,7 +327,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         while harness.time.monotonic() < deadline and surface.nav["url"] == old_url:
             self.qt.events(5)
             harness.time.sleep(0.01)
-        self.assertEqual(model._navigation_data_value(surface), surface.nav["url"],
+        self.assertEqual(model.plate_renderer.navigation_data(surface), surface.nav["url"],
                          "the replacement raster never became eligible")
 
     def test_a_stale_completion_cannot_touch_the_new_job(self):
@@ -335,7 +335,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # arriving after a job switch is discarded, never committed.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         ticket = ("popover", 5, 1, surface.generation, surface.render_key(),
                   "full", None, surface.job_epoch, 1)
@@ -343,7 +343,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         discarded = surface.stats["discarded"]
         from PyQt6.QtGui import QImage
         blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
-        model._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
+        model.plate_renderer._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
         self.assertEqual(surface.layers, {})
         self.assertEqual(surface.stats["discarded"], discarded + 1)
 
@@ -353,7 +353,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # discards, and the submitted job survives to run.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._dense(200000)
         self._window(model, "popover", 100, payload)
         submitted = dict(surface.job)
@@ -363,7 +363,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                  surface.render_key(), "full", None, surface.job_epoch, 0)
         from PyQt6.QtGui import QImage
         blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
-        model._raster_committed(("full", blank, "", blank, "", blank, ""), stale)
+        model.plate_renderer._raster_committed(("full", blank, "", blank, "", blank, ""), stale)
         self.assertIsNotNone(surface.job,
                              "the stale completion cleared the submitted job")
         self.assertEqual(surface.job["token"], submitted["token"],
@@ -377,9 +377,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # the same generation/epoch. Only serial distinguishes it.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload()
-        wrapped = model._qt_layer(surface, payload, 5)
+        wrapped = model.plate_renderer._qt_layer(surface, payload, 5)
         generation = surface.generation
         epoch = surface.job_epoch
         key = surface.render_key()
@@ -389,7 +389,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                        "state": "running", "cancel": harness.threading.Event(),
                        "epoch": epoch, "serial": 10}
         old_ticket = ("popover", 5, 1, generation, key, "full", None, epoch, 10)
-        model._retire_surface(surface)
+        model.plate_renderer.retire_surface(surface)
 
         surface.tokens[5] = 1
         surface.job = {"layer": 5, "token": 1, "generation": generation,
@@ -398,7 +398,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         from PyQt6.QtGui import QImage
         blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
         discarded = surface.stats["discarded"]
-        model._raster_committed(("full", blank, "", blank, "", blank, ""), old_ticket)
+        model.plate_renderer._raster_committed(("full", blank, "", blank, "", blank, ""), old_ticket)
 
         self.assertIsNotNone(surface.job,
                              "old serial cleared the reopened job")
@@ -417,7 +417,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         failed = surface.stats["failed"]
         cancelled = surface.stats["cancelled"]
         discarded = surface.stats["discarded"]
-        model._raster_committed(("failed", "old worker"), old_ticket)
+        model.plate_renderer._raster_committed(("failed", "old worker"), old_ticket)
         self.assertIsNotNone(surface.job)
         self.assertEqual(surface.job["serial"], 11)
         self.assertEqual(surface.job_failures, 4)
@@ -427,7 +427,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         self.assertEqual(surface.stats["discarded"], discarded + 1)
 
         discarded = surface.stats["discarded"]
-        model._raster_committed(("cancelled",), old_ticket)
+        model.plate_renderer._raster_committed(("cancelled",), old_ticket)
         self.assertIsNotNone(surface.job)
         self.assertEqual(surface.job["serial"], 11)
         self.assertEqual(surface.stats["cancelled"], cancelled)
@@ -438,8 +438,8 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # clears, the failure counts, and the next demand renders.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
-        module = self.qt.load("MoonrakerMonitorModel")
+        surface = model.plate_renderer._surfaces["popover"]
+        module = self.qt.load("PlateRenderController")
 
         def explode(*args, **kwargs):
             raise RuntimeError("injected render failure")
@@ -481,15 +481,15 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # wrapper.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload()
-        wrapped = model._qt_layer(surface, payload, 5)
+        wrapped = model.plate_renderer._qt_layer(surface, payload, 5)
         # A content-equivalent replacement keeps the wrapper — the
         # layer's geometry is immutable per print, and the quiet
         # republish never re-renders (the quiet-publish and revisit
         # pins beside this one).
         refreshed = self._payload()
-        self.assertIs(model._qt_layer(surface, refreshed, 5), wrapped,
+        self.assertIs(model.plate_renderer._qt_layer(surface, refreshed, 5), wrapped,
                       "a content-equivalent payload re-wrapped the layer")
         # The print boundary retires the wrappers wholesale — the
         # epoch, not the payload, owns the identity.
@@ -627,13 +627,13 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
 
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         self._window(model, "popover", 5)
         surface.desired = None  # the discard's re-schedule finds nothing
         if surface.job is not None:
             surface.job["cancel"].set()
             surface.job = None
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         payload = self._payload()
         payload["travels"] = [[[0.0, 0.0, 0.0], [10.0, 10.0, 1.0]]]
         coloured, base, travels = module.render_layer_raster(
@@ -641,7 +641,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         refs = [weakref.ref(image) for image in (coloured, base, travels)]
         stale = ("popover", 5, "stale-token", surface.generation,
                  surface.render_key(), "full", None, surface.job_epoch, 0)
-        model._raster_committed(("full", coloured, "", base, "", travels, ""), stale)
+        model.plate_renderer._raster_committed(("full", coloured, "", base, "", travels, ""), stale)
         self.assertGreaterEqual(surface.stats["discarded"], 1)
         del coloured, base, travels
         gc.collect()
@@ -660,7 +660,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # check stops it before any QPainter work.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._dense(500000)
         self._window(model, "popover", 100, payload)
         self.assertEqual(surface.job["state"], "submitted")
@@ -673,7 +673,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_closing_the_popover_retires_its_demand(self):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         model.setFollowerPopoverOpen(True)
         payload = self._dense(500000)
         self._window(model, "popover", 100, payload)
@@ -692,7 +692,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_a_staged_ba_reversal_commits_a(self):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         generation = surface.generation
         model.setFollowerView("popover", 2.0, 0.7, 400, 300, False, 0.0, 0.0)
         model.setFollowerView("popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
@@ -704,7 +704,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_a_staged_abc_burst_commits_c_once(self):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         generation = surface.generation
         model.setFollowerView("popover", 1.2, 0.7, 563, 492, False, 0.0, 0.0)
         model.setFollowerView("popover", 1.5, 0.7, 563, 492, False, 0.0, 0.0)
@@ -718,16 +718,16 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         model.setFollowerLayerAnchor(5)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
         urls = {}
         for split in (50, 160):
-            model._qt_window(surface, {"prev": None, "current": payload,
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                        "next": None}, 5, "motion index", split)
             self._pump_rasters(model, "popover")
             urls[split] = surface.layers[5].prefixData
         committed = surface.stats["committed"]
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, 5, "motion index", 80)
         wrapped = surface.layers[5]
         self.assertEqual(wrapped.prefixSplit, 50)
@@ -743,7 +743,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # mathematically incapable of committing.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(200)
         self._window(model, "popover", 100, payload)
         old_epoch = surface.job_epoch
@@ -760,7 +760,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         from PyQt6.QtGui import QImage
         blank = QImage(4, 4, QImage.Format.Format_ARGB32_Premultiplied)
         committed_before = surface.stats["committed"]
-        model._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
+        model.plate_renderer._raster_committed(("full", blank, "", blank, "", blank, ""), ticket)
         self.assertEqual(surface.stats["committed"], committed_before,
                          "the old print's raster committed into the new print")
         self.assertFalse(surface.layers[100].rasterValid)

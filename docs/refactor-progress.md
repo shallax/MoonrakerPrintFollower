@@ -110,6 +110,68 @@ the asset URLs: a reference broken on purpose fails
 `test_every_referenced_svg_resolves_from_its_document` on that exact line, and
 the restored file passes.
 
+## Batch E — the renderer subsystem
+
+Two commits, because the surface record stands alone and the lifecycle does not.
+`RenderSurface.py` (94 lines) takes the per-surface record — view/plot context,
+retained layer wrappers, demand, tokens, generation, anchors, the navigation slot
+— and `PlateRenderController.py` (1626) takes the rest: both surfaces' render
+contexts, their one-job-at-a-time demand schedulers, the raster workers and the
+tickets that identify them, the per-instance raster cache directory, the
+asset-reference owners and the gesture hold, the decoded payload pins the
+retained wrappers hold, and the navigation raster's double buffer.
+`MoonrakerMonitorModel.py` 4486 -> 3015. Every public property and slot keeps its
+name, type and default; the model's declarations are now delegates over
+snapshots, so no QML document changed.
+
+The field/callback/teardown map was written before anything moved: 47 moved
+names, every call site, and the six invalidation paths (print switch, model
+destruction with its reverse-connect order, popover close and mini collapse, GPU
+backend switch, supersede cancellation, discard unlink). The state separated
+cleanly along one line — renderer-owned lifecycle versus physical print state and
+user presentation settings — which is the line the extraction follows.
+
+Couplings the batch text did not name, fixed in the same pass:
+
+- The four cadence constants (`_NAV_FOLLOW_BAKE_S`, `_NAV_ZOOM_SETTLE_S`,
+  `_NAV_KEY_FIELDS`, `_PREFIX_CHECKPOINT_S`) moved with the code that reads them.
+  The pin that guards the navigation key's shape now reads `_NAV_KEY_FIELDS` off
+  the module that holds it.
+- The moved methods reached back into the model for the legend toggles and the
+  bed bounds through `getattr(self, ...)`. That borrowing became one `SceneInputs`
+  snapshot taken at the call, injected — the renderer no longer reads a model
+  property.
+- `_seek_trace_enabled`'s config read is the injected `trace_requested` callable,
+  read at the call rather than snapshotted: the switch is a live debug toggle.
+  `followerHoldReport` keeps its own `Logger` call and delegates only its gate.
+- `set_gpu_rendering`'s consumer key is now `(id(controller), surface.name)`.
+  The index service treats the consumer as an opaque hashable and nothing else
+  keyed on the model's identity, so the decoded tier still follows the consumer
+  count across a backend switch.
+- The coverage matrix keys `@pyqtSlot` surfaces by module basename, so
+  `_raster_started`, `_raster_committed` and `_trace` became
+  `PlateRenderController.*` in `tests/harness/scenario_map.py`.
+- Tests that patched `render_navigation_layer`, `render_layer_prefix`,
+  `render_layer_raster`, `_RasterJob`, `png_file` or `QThreadPool` on the MODEL
+  module were patching a namespace the scheduler no longer reads. They now patch
+  the module whose code calls those names. Several were multi-line
+  `patch.object(` calls the first pass missed, and one helper read the fake
+  item's own `_navigation_backing`, which the retarget had wrongly claimed.
+- `ARCHITECTURE.md` gains the two ownership rows plus the render-path paragraph,
+  and `tests/test_architecture.py` names both modules in the ownership table's
+  discovery check and in the model's declared dependencies.
+
+Two splits were considered and declined as forced. The asset registry would need
+a live-URL provider that walks the surfaces' navigation slots, layers and the
+gesture hold before it could decide what to prune — the same records the
+scheduler owns — and prefix and navigation scheduling share one job slot and one
+in-flight rule per surface, so splitting them would put two owners on one frame.
+`PlateQt.py` was reviewed alongside: its painting is already concrete top-level
+helpers (`_paint_segments`, `_paint_below_split`, `_paint_travels`, `_paint_grid`,
+`_geometry_pen`, `_new_canvas`, `_derive_grey`) over `(payload, plot, view)`, and
+the one class there, `PlateLayer`, is cohesive. Nothing was moved and no second
+raster framework was introduced.
+
 ## Outstanding
 
 - `tests/test_gpu_canvas_isolation.py::test_live_layer_handoff_fades_previous_geometry_then_retires_it`
@@ -123,4 +185,4 @@ the restored file passes.
   and this is not a flake to dismiss. It sits outside this batch's modules, and
   the four unit-leg runs since have not reproduced it. The raster path already
   carries teardown-segfault guards.
-- Batches E-I not started.
+- Batches F-I not started.

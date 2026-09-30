@@ -123,13 +123,13 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setFollowerPlot": "b11",
     # The owner-thread raster commit (an internal handler, not a
     # QML-driven surface — exercised through the follower scenarios).
-    "MoonrakerMonitorModel._raster_committed": "b11",
+    "PlateRenderController._raster_committed": "b11",
     # The worker's start report (the scheduler's superseded-before-
     # start accounting — exercised through the follower scenarios).
-    "MoonrakerMonitorModel._raster_started": "b11",
+    "PlateRenderController._raster_started": "b11",
     # The seek-trace stage log (a diagnostics instrument, gated on
     # the seek_trace config — exercised by the trace scenarios).
-    "MoonrakerMonitorModel._trace": "b11",
+    "PlateRenderController.trace": "b11",
     # The plate popovers' open states (the closed-surface freeze).
     "MoonrakerMonitorModel.setFollowerPopoverOpen": "b11",
     "MoonrakerMonitorModel.setFollowerInteracting": "b11",

@@ -57,11 +57,11 @@ if harness.QT_AVAILABLE:
             self.caller.setProperty("screenDpr", 2.0)
             self._call("runPopover")
             self.assertEqual(surface.view.get("dpr"), 2.0)
-            after = self.model._navigation_key(surface)
+            after = self.model.plate_renderer._navigation_key(surface)
             self.assertNotEqual(before, after,
                                 "a DPR change never invalidated the navigation raster")
-            self.assertNotEqual(self.model._nav_key_hard(before),
-                                self.model._nav_key_hard(after),
+            self.assertNotEqual(self.model.plate_renderer._nav_key_hard(before),
+                                self.model.plate_renderer._nav_key_hard(after),
                                 "the DPR change is not hard — the follow throttle "
                                 "would swallow the re-bake")
 
@@ -70,7 +70,7 @@ if harness.QT_AVAILABLE:
             baked = self._navigation_demand(surface, 1.0)
             surface.nav["url"] = "file:///tmp/mpf/raster-probe/nav-stub.png"
             surface.nav["key"] = baked
-            self.assertEqual(self.model._navigation_data_value(surface),
+            self.assertEqual(self.model.plate_renderer.navigation_data(surface),
                              surface.nav["url"],
                              "the warm raster never reached the face")
             self.caller.setProperty("screenDpr", 2.0)
@@ -79,6 +79,6 @@ if harness.QT_AVAILABLE:
             # demand it is a stale picture of the same scene.
             surface.nav["url"] = "file:///tmp/mpf/raster-probe/nav-stub.png"
             surface.nav["key"] = baked
-            self.assertEqual(self.model._navigation_data_value(surface), "",
+            self.assertEqual(self.model.plate_renderer.navigation_data(surface), "",
                              "a DPR-stale navigation raster still reached the face")
 

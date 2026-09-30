@@ -3852,7 +3852,7 @@ QtObject {
             self.qt.events(10)
 
         def _surface(self, name):
-            return self.model._plate_surfaces[name]
+            return self.model.plate_renderer._surfaces[name]
 
         def _navigation_demand(self, surface, dpr):
             """A navigation demand on a hand-set context: no scheduler
@@ -3865,9 +3865,9 @@ QtObject {
             payload = {"classes": {"SKIN": [[[0.0, 0.0, 0.0], [250.0, 0.0, 3.0]]]},
                        "travels": [], "travelStarts": [], "travelEnds": [],
                        "motions": 4}
-            self.model._qt_layer(surface, payload, 5)
+            self.model.plate_renderer._qt_layer(surface, payload, 5)
             surface.desired = {"current": 5, "ghosts": {}, "split": 2}
-            return self.model._navigation_key(surface)
+            return self.model.plate_renderer._navigation_key(surface)
 
         # ---- the slot's signatures ------------------------------------
 

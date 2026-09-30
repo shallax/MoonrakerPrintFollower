@@ -1443,7 +1443,7 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.assertEqual(len(self.publishes), 2,
                          "gesture state alone triggered a full model publish")
         self.assertTrue(self.model._temperature._chart_open)
-        self.assertTrue(self.model._follower_interacting)
+        self.assertTrue(self.model.plate_renderer._interacting)
         self.assertTrue(self.model._picker_popover_open)
 
     def test_live_exact_publications_continue_while_the_warm_image_is_latched(self):
@@ -1455,12 +1455,12 @@ class FollowerViewSlotTests(MonitorModelCase):
         initial = {"layers": {"current": None, "prev": None, "next": None},
                    "anchor": 2, "split": 12, "motionTotal": 100}
         self.print_state = replace(self.print_state, plate_progress=initial)
-        with patch.object(self.model, "_qt_window", return_value={}) as window:
+        with patch.object(self.model.plate_renderer, "window_for", return_value={}) as window:
             self.model._publish()
             self.assertTrue(window.called, "the warm gesture starved exact-scene work")
         self.assertEqual(self.value("plateSplit"), 12)
         self.print_state = replace(self.print_state, plate_progress={**initial, "split": 18})
-        with patch.object(self.model, "_qt_window", return_value={}) as window:
+        with patch.object(self.model.plate_renderer, "window_for", return_value={}) as window:
             self.model._publish()
             self.assertTrue(window.called)
         self.assertEqual(self.value("plateSplit"), 18,
@@ -1469,13 +1469,13 @@ class FollowerViewSlotTests(MonitorModelCase):
     def test_warm_composite_demand_resumes_only_at_settle(self):
         self.model = self.build()
         self.model.setFollowerPopoverOpen(True)
-        surface = self.model._plate_surfaces["popover"]
+        surface = self.model.plate_renderer._surfaces["popover"]
         surface.plot = {"sx": 1.0}
         self.model.setFollowerInteracting(True)
-        with patch.object(self.model, "_navigation_key") as key:
-            self.model._schedule_navigation(surface)
+        with patch.object(self.model.plate_renderer, "_navigation_key") as key:
+            self.model.plate_renderer.schedule_navigation(surface)
             key.assert_not_called()
-        with patch.object(self.model, "_schedule_navigation") as bake:
+        with patch.object(self.model.plate_renderer, "schedule_navigation") as bake:
             self.model.setFollowerInteracting(False)
             bake.assert_called_once_with(surface)
 
@@ -1574,7 +1574,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
     demand scheduler's skips and the navigation commit's guards."""
 
     def surface(self, name="popover", width=400, height=300):
-        surface = self.model_now()._plate_surfaces[name]
+        surface = self.model_now().plate_renderer._surfaces[name]
         surface.view = {"width": width, "height": height, "scale": 1.0,
                         "lineScale": 0.7, "dpr": 1.0, "compact": False}
         # The renderer reads the flat bed bounds directly: a plot
@@ -1601,11 +1601,11 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.assertTrue(surface.gpu_rendering)
         self.assertIsNone(surface.job)
         self.assertIsNone(surface.desired)
-        thread_pool = self.qt.load("MoonrakerMonitorModel").QThreadPool
+        thread_pool = self.qt.load("PlateRenderController").QThreadPool
         with patch.object(thread_pool, "globalInstance", side_effect=AssertionError("GPU scheduled CPU raster")):
-            self.model._schedule_surface(surface)
-            self.model._schedule_navigation(surface)
-            self.model._schedule_rewind_checkpoints(surface)
+            self.model.plate_renderer._schedule_surface(surface)
+            self.model.plate_renderer.schedule_navigation(surface)
+            self.model.plate_renderer._schedule_rewind_checkpoints(surface)
         with patch.object(self.model, "_schedule_publish") as publish:
             self.model.setFollowerGpuRendering("popover", True)
             publish.assert_not_called()
@@ -1626,17 +1626,17 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         layer.set_raster(image, key, "file:///unused.png")
         surface.anchor = 6
         surface.desired = {"current": 6, "ghosts": {}, "split": None}
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         render, threads = module.render_layer_prefix, []
         def counted(*args, **kwargs):
             threads.append(threading.get_ident())
             return render(*args, **kwargs)
         with patch.object(module, "render_layer_prefix", counted), patch.object(self.model, "_publish") as publish:
-            self.model._schedule_surface(surface)
+            self.model.plate_renderer._schedule_surface(surface)
             self.assertIsNone(surface.job)
             self.assertEqual(threads, [], "layer entry ran checkpoint geometry synchronously")
             ticket = layer._rewind_ticket
-            self.model._schedule_surface(surface)
+            self.model.plate_renderer._schedule_surface(surface)
             self.assertEqual(layer._rewind_ticket, ticket)
             deadline = time.monotonic() + 5
             while not layer._rewind_files and time.monotonic() < deadline:
@@ -1648,8 +1648,8 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         paths = [QUrl(url).toLocalFile() for url in layer._rewind_files.values()]
         self.assertTrue(all(os.path.isfile(path) for path in paths))
         self.assertEqual(layer.memory_bytes(), image.sizeInBytes())
-        with patch.object(self.model, "_schedule_surface"), patch.object(self.model, "_schedule_navigation"):
-            self.model._qt_window(surface, {"current": {"motions": 1000, "classes": {}}}, 7)
+        with patch.object(self.model.plate_renderer, "_schedule_surface"), patch.object(self.model.plate_renderer, "schedule_navigation"):
+            self.model.plate_renderer.window_for(surface, {"current": {"motions": 1000, "classes": {}}}, 7)
         self.assertEqual(layer._rewind_files, {})
         self.assertTrue(all(not os.path.exists(path) for path in paths))
 
@@ -1659,10 +1659,10 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.desired = {"current": 6, "ghosts": {}, "split": None}
         ticket = ("popover", 6, 0, 0, surface.render_key(), "checkpoints", None, 0, 42)
         layer._rewind_ticket = ticket
-        path = pathlib.Path(self.model._raster_cache_dir) / "late-checkpoint.png"
+        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "late-checkpoint.png"
         path.write_bytes(b"retired")
         layer.clear_prefix_checkpoints()
-        self.model._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
+        self.model.plate_renderer._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
         self.assertFalse(path.exists())
         self.assertEqual(layer._rewind_files, {})
 
@@ -1681,8 +1681,8 @@ class SurfaceDemandSlotTests(MonitorModelCase):
                                    plate_progress={"layers": layers,
                                                    "anchor": 0, "split": 3,
                                                    "motionTotal": 20})
-        with patch.object(model, "_schedule_surface"), patch.object(
-                model, "_schedule_navigation"):
+        with patch.object(model.plate_renderer, "_schedule_surface"), patch.object(
+                model.plate_renderer, "schedule_navigation"):
             model._publish()
             first = self.value("plateSceneEpoch")
             self.assertTrue(first)
@@ -1717,14 +1717,14 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # re-baking at all (it did, once: the constant sat one above the
         # built length and the coalescing rule fired for every demand).
         # So pin the shape against the constant the guard reads.
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         model = self.model_now()
         model.setFollowerAttached(False)
         surface = self.surface()
         self.wrapper(surface, 6)
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
                            "split": 40}
-        key = model._navigation_key(surface)
+        key = model.plate_renderer._navigation_key(surface)
         self.assertEqual(len(key), module._NAV_KEY_FIELDS,
                          "the built key drifted from the guarded shape")
         self.assertEqual(key[3], 40, "the split left its slot")
@@ -1732,24 +1732,24 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # A split-only drift: invisible to the hard key AND to the
         # coalescing rule — the demand keeps its follow window.
         surface.desired["split"] = 80
-        split_moved = model._navigation_key(surface)
-        self.assertEqual(model._nav_key_hard(split_moved),
-                         model._nav_key_hard(key))
-        self.assertEqual(model._nav_key_zoom(split_moved),
-                         model._nav_key_zoom(key))
+        split_moved = model.plate_renderer._navigation_key(surface)
+        self.assertEqual(model.plate_renderer._nav_key_hard(split_moved),
+                         model.plate_renderer._nav_key_hard(key))
+        self.assertEqual(model.plate_renderer._nav_key_zoom(split_moved),
+                         model.plate_renderer._nav_key_zoom(key))
         # A zoom drift: hard (a stale-zoom raster must never be
         # promoted as compatible — the exact scene serves the gesture)
         # and the ONLY thing the coalescing rule reacts to.
         surface.view["scale"] = 2.0
-        zoomed = model._navigation_key(surface)
-        self.assertNotEqual(model._nav_key_hard(zoomed),
-                            model._nav_key_hard(key))
-        self.assertNotEqual(model._nav_key_zoom(zoomed),
-                            model._nav_key_zoom(key))
+        zoomed = model.plate_renderer._navigation_key(surface)
+        self.assertNotEqual(model.plate_renderer._nav_key_hard(zoomed),
+                            model.plate_renderer._nav_key_hard(key))
+        self.assertNotEqual(model.plate_renderer._nav_key_zoom(zoomed),
+                            model.plate_renderer._nav_key_zoom(key))
         # A synthetic ticket (a test's own short tuple) reads as the
         # whole key, so it can never make the rule fire spuriously.
-        self.assertEqual(model._nav_key_zoom(("a", "b")), ("a", "b"))
-        self.assertIsNone(model._nav_key_zoom(None))
+        self.assertEqual(model.plate_renderer._nav_key_zoom(("a", "b")), ("a", "b"))
+        self.assertIsNone(model.plate_renderer._nav_key_zoom(None))
 
     @staticmethod
     def local_url(path):
@@ -1758,7 +1758,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_the_view_and_plot_slots_ignore_an_unknown_surface(self):
         self.model = self.build()
-        popover = self.model._plate_surfaces["popover"]
+        popover = self.model.plate_renderer._surfaces["popover"]
         self.model.setFollowerView("ghost-popover", 1.0, 0.7, 400, 300, False, 0.0, 0.0)
         self.model.setFollowerPlot("ghost-popover", 0.0, 0.0, 1.0, 1.0, 0.0, 0.0)
         self.assertIsNone(popover.stage["view"])
@@ -1769,19 +1769,19 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # it must leave the surface's context alone.
         surface = self.surface()
         generation = surface.generation
-        self.model._flush_surface_context(surface)
+        self.model.plate_renderer.flush_surface_context(surface)
         self.assertEqual(surface.generation, generation)
 
     def test_the_gesture_bake_stands_down_when_detached(self):
         self.model = self.build()
         self.model.setFollowerAttached(False)
         self.model.setFollowerGestureBake()
-        surface = self.model._plate_surfaces["popover"]
+        surface = self.model.plate_renderer._surfaces["popover"]
         self.assertIsNone(surface.nav["job"], "a detached bake scheduled a navigation job")
         # The mini never carries the interaction raster: the hook is
         # popover-only even when the press arrives from another pane.
-        self.model._nav_gesture_bake("mini")
-        self.assertIsNone(self.model._plate_surfaces["mini"].nav["job"])
+        self.model.plate_renderer.nav_gesture_bake("mini")
+        self.assertIsNone(self.model.plate_renderer._surfaces["mini"].nav["job"])
 
     def test_the_window_guards_answer_an_empty_placeholder(self):
         self.model = self.build()
@@ -1789,9 +1789,9 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # (the QML's undefined slider) lands on the first layer rather
         # than poisoning the desired state.
         self.assertEqual(
-            self.model._qt_window("ghost-popover", {"current": 1}, 3), {})
+            self.model.plate_renderer.window_for("ghost-popover", {"current": 1}, 3), {})
         surface = self.surface()
-        window = self.model._qt_window(
+        window = self.model.plate_renderer.window_for(
             surface, {"prev": None, "current": None, "next": None}, None)
         self.assertEqual(window, {"prev": None, "current": None, "next": None})
         self.assertEqual(surface.anchor, 0)
@@ -1804,10 +1804,10 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model = self.build()
         surface = self.surface()
         surface.view = {"width": 0, "height": 0}
-        self.assertEqual(self.model._navigation_backing(surface), 4.0)
+        self.assertEqual(self.model.plate_renderer._navigation_backing(surface), 4.0)
         surface.view = {"width": 2200, "height": 2200}
         with self.assertLogs("MoonrakerPrintFollower", level="WARNING") as captured:
-            backing = self.model._navigation_backing(surface)
+            backing = self.model.plate_renderer._navigation_backing(surface)
         self.assertLess(backing, 4.0)
         self.assertGreaterEqual(backing, 1.0)
         self.assertTrue(any("backing reduced" in line for line in captured.output))
@@ -1817,7 +1817,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # throttle never stamped must not leave a wake behind.
         surface = self.surface()
         self.assertIsNone(surface.nav["wake_at"])
-        self.model._nav_arm_wake(surface)
+        self.model.plate_renderer._nav_arm_wake(surface)
         self.assertIsNone(surface.nav["wake_at"])
 
     def test_a_navigation_render_cancelled_mid_flight_publishes_nothing(self):
@@ -1829,7 +1829,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model.setFollowerAttached(False)
         self.wrapper(surface, 6)
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         from PyQt6.QtGui import QImage
 
         def superseded(window, plot, view, split=None, cancel=None, **kwargs):
@@ -1840,7 +1840,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
             return QImage(4, 4, QImage.Format.Format_RGB32)
 
         with patch.object(module, "render_navigation_layer", superseded):
-            self.model._schedule_navigation(surface)
+            self.model.plate_renderer.schedule_navigation(surface)
             from PyQt6.QtCore import QThreadPool
             QThreadPool.globalInstance().waitForDone(5000)
             self.qt.events(20)
@@ -1854,7 +1854,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # never landed: the dispatch skips it instead of rendering it.
         surface = self.surface()
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
-        self.model._schedule_surface(surface)
+        self.model.plate_renderer._schedule_surface(surface)
         self.assertEqual(surface.render_count, {})
         self.assertIsNone(surface.job)
 
@@ -1863,15 +1863,15 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         wrapped = self.wrapper(surface, 6, motions=10)
         # A split at or past the layer's end is the whole layer: the
         # base renders, never a prefix.
-        self.assertFalse(self.model._prefix_wanted(surface, 6, 12))
-        self.assertTrue(self.model._prefix_wanted(surface, 6, 4),
+        self.assertFalse(self.model.plate_renderer._prefix_wanted(surface, 6, 12))
+        self.assertTrue(self.model.plate_renderer._prefix_wanted(surface, 6, 4),
                         "an unrendered prefix was not demanded")
         # A prefix whose own split reads invalid is no prefix at all.
         from PyQt6.QtGui import QImage
         wrapped.set_prefix(QImage(2, 2, QImage.Format.Format_RGB32),
                            self.local_url("/tmp/mpf/prefix.png"), -1, ("key",))
         wrapped.set_expected_key(("key",))
-        self.assertTrue(self.model._prefix_wanted(surface, 6, 4))
+        self.assertTrue(self.model.plate_renderer._prefix_wanted(surface, 6, 4))
 
     def test_the_dispatch_rechecks_the_prefix_under_the_queue(self):
         # The queue is composed from one reading of _prefix_wanted and
@@ -1887,8 +1887,8 @@ class SurfaceDemandSlotTests(MonitorModelCase):
             answers.append(split)
             return len(answers) == 1
 
-        with patch.object(type(self.model), "_prefix_wanted", first_only):
-            self.model._schedule_surface(surface)
+        with patch.object(type(self.model.plate_renderer), "_prefix_wanted", first_only):
+            self.model.plate_renderer._schedule_surface(surface)
         self.assertEqual(len(answers), 2, "the dispatch did not re-read the prefix verdict")
         self.assertEqual(surface.job["kind"], "full",
                          "the prefix the re-check refused still reached the renderer")
@@ -1903,22 +1903,22 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.job = {"layer": 6, "token": 1, "generation": 0, "epoch": 0,
                        "serial": 1, "state": "running", "cancel": cancel}
         surface.desired = None
-        self.model._cancel_obsolete_job(surface)
+        self.model.plate_renderer._cancel_obsolete_job(surface)
         self.assertTrue(cancel.is_set(), "a demand-less job kept rendering")
 
     def test_the_seek_trace_ignores_a_stage_outside_a_seek(self):
         # Trace enabled but no seek entry yet: the stage is dropped
         # rather than timestamped from the process start.
         self.model = self.build()
-        self.model._seek_trace_enabled = True
-        self.model._trace("T6 payload obtained", {"surface": "popover"})
-        self.assertEqual(self.model._seek_trace, [])
+        self.model.plate_renderer._seek_trace_enabled = True
+        self.model.plate_renderer.trace("T6 payload obtained", {"surface": "popover"})
+        self.assertEqual(self.model.plate_renderer._seek_trace, [])
 
     def test_the_navigation_commit_refuses_a_dead_surface_and_a_foreign_kind(self):
         surface = self.surface()
-        self.model._nav_committed(("nav", None, self.local_url("/tmp/mpf/n.png"), ("k",)),
+        self.model.plate_renderer._nav_committed(("nav", None, self.local_url("/tmp/mpf/n.png"), ("k",)),
                                   ("ghost-popover", 0, 0, 0, ("k",), "nav", None, 0, 1))
-        self.model._nav_committed(("full", None), ("popover", 0, 0, 0, ("k",), "full", None, 0, 1))
+        self.model.plate_renderer._nav_committed(("full", None), ("popover", 0, 0, 0, ("k",), "full", None, 0, 1))
         self.assertEqual(surface.nav["url"], "", "a foreign ticket promoted a raster")
 
     def test_a_committed_navigation_raster_survives_its_retired_file(self):
@@ -1929,7 +1929,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model.setFollowerAttached(False)
         self.wrapper(surface, 6)
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
-        key = self.model._navigation_key(surface)
+        key = self.model.plate_renderer._navigation_key(surface)
         surface.job_epoch = 0
         surface.nav["serial"] = 4
         surface.nav["job"] = {"key": key, "cancel": self.cancelled_event(),
@@ -1937,7 +1937,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         retired = tempfile.mkdtemp(prefix="mpfxtest-retired-")
         surface.nav["url"] = self.local_url(retired)
         url = self.local_url(os.path.join(tempfile.mkdtemp(prefix="mpfxtest-nav-"), "nav.png"))
-        self.model._nav_committed(("nav", None, url, key),
+        self.model.plate_renderer._nav_committed(("nav", None, url, key),
                                   ("popover", -1, 0, 0, key, "nav", None, 0, 4))
         self.assertEqual(surface.nav["url"], url)
         self.assertEqual(surface.nav["key"], key)
@@ -1955,31 +1955,31 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.wrapper(surface, 6)
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None},
                            "split": None}
-        key = self.model._navigation_key(surface)
+        key = self.model.plate_renderer._navigation_key(surface)
         surface.job_epoch = 0
         surface.nav["serial"] = 4
         surface.nav["job"] = {"key": key, "cancel": self.cancelled_event(),
                               "epoch": 0, "serial": 4, "backing": 4.0}
         # Inside the cache directory, so the prune is a real test of
         # the hold rather than of a directory it never scans.
-        held = os.path.join(self.model._raster_cache_dir, "held-nav.png")
+        held = os.path.join(self.model.plate_renderer._raster_cache_dir, "held-nav.png")
         pathlib.Path(held).write_bytes(b"held")
         surface.nav["url"] = self.local_url(held)
         self.model.setFollowerGestureRaster(surface.nav["url"])
 
         url = self.local_url(os.path.join(tempfile.mkdtemp(prefix="mpfxtest-nav-"),
                                           "nav.png"))
-        self.model._nav_committed(("nav", None, url, key),
+        self.model.plate_renderer._nav_committed(("nav", None, url, key),
                                   ("popover", -1, 0, 0, key, "nav", None, 0, 4))
         self.assertTrue(os.path.exists(held),
                         "the supersede unlinked the gesture's own picture")
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(os.path.exists(held),
                         "the prune collected the gesture's own picture")
         # The gesture ends: the hold releases and the next prune takes
         # the file, so nothing accumulates behind the gesture.
         self.model.setFollowerGestureRaster("")
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(os.path.exists(held),
                          "the hold outlived the gesture that made it")
 
@@ -1989,15 +1989,15 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # the log, and the report has to reach it once asked for.
         module = self.qt.load("MoonrakerMonitorModel")
         self.model = self.build()
-        self.model._seek_trace_enabled = False
+        self.model.plate_renderer._seek_trace_enabled = False
         with patch.object(module, "Logger") as logger:
             self.model.followerHoldReport("held split=1")
         logger.log.assert_not_called()
-        self.model._seek_trace_enabled = True
+        self.model.plate_renderer._seek_trace_enabled = True
         with patch.object(module, "Logger") as logger:
             self.model.followerHoldReport("held split=1")
         logger.log.assert_called_once()
-        self.model._seek_trace_enabled = False
+        self.model.plate_renderer._seek_trace_enabled = False
 
     @staticmethod
     def cancelled_event():
@@ -2006,7 +2006,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_presentation_references_survive_arbitrary_prefix_supersedes(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
         held = directory / "standing-prefix.png"
         full = directory / "held-full.png"
         held.write_bytes(b"prefix")
@@ -2019,19 +2019,19 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # of every wrapper's current URL and the newest-N grace period.
         for index in range(70):
             (directory / ("replacement-%d.png" % index)).write_bytes(b"new")
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertEqual(set(directory.iterdir()), {held, full})
         self.model.setPlateAssetReferences(owner, [self.local_url(str(full))])
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(held.exists())
         self.assertTrue(full.exists())
         self.model.releasePlateAssetOwner(owner)
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(full.exists())
 
     def test_asset_owners_release_independently_and_cannot_be_resurrected(self):
         self.model = self.build()
-        path = pathlib.Path(self.model._raster_cache_dir) / "shared.png"
+        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "shared.png"
         path.write_bytes(b"shared")
         url = self.local_url(str(path))
         first = self.model.acquirePlateAssetOwner()
@@ -2040,12 +2040,12 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model.setPlateAssetReferences(second, [url])
         self.model.releasePlateAssetOwner(first)
         self.model.setPlateAssetReferences(first, [url])
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(path.exists())
-        self.assertNotIn(first, self.model._plate_asset_owners)
+        self.assertNotIn(first, self.model.plate_renderer._asset_owners)
         self.model.releasePlateAssetOwner(second)
         self.model.releasePlateAssetOwner(second)
-        self.model._prune_raster_cache(keep=0)
+        self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertFalse(path.exists())
         self.assertGreater(self.model.acquirePlateAssetOwner(), second)
 
@@ -2054,20 +2054,20 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         owner = self.model.acquirePlateAssetOwner()
         self.model.setPlateAssetReferences(owner, ["", "data:image/png;base64,AA==",
             "https://example.invalid/prefix.png", self.local_url("/tmp/foreign.png")])
-        self.assertEqual(self.model._plate_asset_owners[owner], frozenset())
+        self.assertEqual(self.model.plate_renderer._asset_owners[owner], frozenset())
 
     def test_discard_cleanup_respects_presentation_and_collects_vanished_jobs(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
         held = directory / "held.png"
         abandoned = directory / "abandoned.png"
         held.write_bytes(b"held")
         abandoned.write_bytes(b"abandoned")
         owner = self.model.acquirePlateAssetOwner()
         self.model.setPlateAssetReferences(owner, [self.local_url(str(held))])
-        self.model._unlink_asset_files(("prefix", None, self.local_url(str(held)), 10))
+        self.model.plate_renderer._unlink_asset_files(("prefix", None, self.local_url(str(held)), 10))
         self.assertTrue(held.exists())
-        self.model._raster_committed(
+        self.model.plate_renderer._raster_committed(
             ("prefix", None, self.local_url(str(abandoned)), 10),
             ("vanished", 7, 5, 3, ("k",), "prefix", 10, 2, 9))
         self.assertFalse(abandoned.exists())
@@ -2083,9 +2083,9 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         # A worker that outlived its surface's retirement: the start is
         # counted nowhere and the completion never touches another
         # surface's scheduler.
-        self.model._raster_started(("ghost-popover", 7, 5, 3, None, "full", None, 2, 9))
+        self.model.plate_renderer._raster_started(("ghost-popover", 7, 5, 3, None, "full", None, 2, 9))
         self.assertEqual(surface.stats["started"], 0)
-        self.model._raster_committed(images, ("ghost-popover", 7, 5, 3, ("k",), "full", None, 2, 9))
+        self.model.plate_renderer._raster_committed(images, ("ghost-popover", 7, 5, 3, ("k",), "full", None, 2, 9))
         # The active job whose layer the demand has since left: the
         # picture lands on the wrapper but never counts as committed.
         surface.generation = 3
@@ -2094,7 +2094,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.job = {"layer": 7, "token": 5, "generation": 3, "epoch": 2,
                        "serial": 9, "state": "running", "cancel": self.cancelled_event()}
         surface.desired = {"current": 6, "ghosts": {"prev": None, "next": None}, "split": None}
-        self.model._raster_committed(images, ("mini", 7, 5, 3, ("k",), "full", None, 2, 9))
+        self.model.plate_renderer._raster_committed(images, ("mini", 7, 5, 3, ("k",), "full", None, 2, 9))
         self.assertEqual(surface.stats["discarded"], 1)
         self.assertEqual(surface.stats["committed"], 0)
 
@@ -2111,8 +2111,8 @@ class SurfaceDemandSlotTests(MonitorModelCase):
             def emit(*args):
                 raise RuntimeError("wrapped C/C++ object of type RasterBridge has been deleted")
 
-        self.model._raster_bridge = SimpleNamespace(started=DeadSignal(), done=DeadSignal())
-        self.model._schedule_surface(surface)
+        self.model.plate_renderer._bridge = SimpleNamespace(started=DeadSignal(), done=DeadSignal())
+        self.model.plate_renderer._schedule_surface(surface)
         from PyQt6.QtCore import QThreadPool
         QThreadPool.globalInstance().waitForDone(5000)
         self.qt.events(20)
@@ -2125,9 +2125,9 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         directory = tempfile.mkdtemp(prefix="mpfxtest-sweep-")
         url = self.local_url(directory)
         self.model = self.build()
-        self.model._unlink_asset_files(())
-        self.model._unlink_asset_files(("full", None, url, None, url, None, url))
-        self.model._unlink_asset_files(("prefix", None, url))
+        self.model.plate_renderer._unlink_asset_files(())
+        self.model.plate_renderer._unlink_asset_files(("full", None, url, None, url, None, url))
+        self.model.plate_renderer._unlink_asset_files(("prefix", None, url))
         self.assertTrue(os.path.isdir(directory), "the sweep removed a live directory")
 
 
@@ -2142,37 +2142,37 @@ class SurfaceLifecycleTests(MonitorModelCase):
                                decoded_resident_bytes=lambda: 0,
                                pinned_decoded_bytes=lambda: 0)
         self.model = self.build(index_service=stub)
-        surface = self.model._plate_surfaces["popover"]
+        surface = self.model.plate_renderer._surfaces["popover"]
         for layer in (4, 5):
             surface.layers[layer] = self.qt.load("PlateQt").PlateLayer({"motions": 1, "classes": {}})
         # The follower's service outlives the model: its death hands the
         # decoded payloads back rather than pinning them forever.
-        self.model._release_all_pins()
+        self.model.plate_renderer.release_all_pins()
         self.assertEqual(sorted(released), [4, 5])
 
     def test_a_model_without_the_service_releases_nothing(self):
         # The harness and the tests mount without an index service.
         self.model = self.build()
-        surface = self.model._plate_surfaces["popover"]
+        surface = self.model.plate_renderer._surfaces["popover"]
         surface.layers[4] = self.qt.load("PlateQt").PlateLayer({"motions": 1, "classes": {}})
-        self.model._unpin_surface(surface)
-        self.model._release_all_pins()
+        self.model.plate_renderer.unpin_surface(surface)
+        self.model.plate_renderer.release_all_pins()
 
     def test_the_instance_sweeps_its_own_raster_directory(self):
         self.model = self.build()
-        directory = self.model._raster_cache_dir
+        directory = self.model.plate_renderer._raster_cache_dir
         pathlib.Path(directory, "leftover.png").write_bytes(b"leftover")
-        self.model._cleanup_raster_dir()
+        self.model.plate_renderer.cleanup_raster_cache()
         self.assertFalse(os.path.exists(directory))
         # An un-removable directory must not raise out of the model's
         # own destruction.
-        with patch.object(self.model, "_raster_cache_dir", directory):
+        with patch.object(self.model.plate_renderer, "_raster_cache_dir", directory):
             with patch("shutil.rmtree", side_effect=OSError("no removal")):
-                self.model._cleanup_raster_dir()
+                self.model.plate_renderer.cleanup_raster_cache()
 
     def test_the_memory_accounting_survives_a_hostile_directory(self):
         self.model = self.build()
-        pathlib.Path(self.model._raster_cache_dir, "kept.png").write_bytes(b"kept")
+        pathlib.Path(self.model.plate_renderer._raster_cache_dir, "kept.png").write_bytes(b"kept")
         self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 1)
         # A directory that cannot be listed reads as empty, and a file
         # that cannot be stat'ed is skipped rather than raised.
@@ -2183,16 +2183,16 @@ class SurfaceLifecycleTests(MonitorModelCase):
 
     def test_the_prune_survives_a_hostile_directory(self):
         self.model = self.build()
-        stale = os.path.join(self.model._raster_cache_dir, "r-stale.png")
+        stale = os.path.join(self.model.plate_renderer._raster_cache_dir, "r-stale.png")
         pathlib.Path(stale).write_bytes(b"stale")
         with patch("os.stat", side_effect=OSError("no stat")):
-            self.model._prune_raster_cache(keep=0)
+            self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(os.path.exists(stale), "an unstat'able file was unlinked")
         with patch("os.unlink", side_effect=OSError("no unlink")):
-            self.model._prune_raster_cache(keep=0)
+            self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(os.path.exists(stale))
         with patch("os.listdir", side_effect=OSError("no listing")):
-            self.model._prune_raster_cache(keep=0)
+            self.model.plate_renderer._prune_raster_cache(keep=0)
         os.unlink(stale)
 
     def test_a_closed_picker_keeps_the_last_plate_payload(self):

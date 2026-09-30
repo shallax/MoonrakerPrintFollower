@@ -147,9 +147,9 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         self.qt.events(5)  # the staged flush
 
     def _window(self, model, name, anchor, payload=None):
-        surface = model._plate_surfaces[name]
+        surface = model.plate_renderer._surfaces[name]
         payload = payload or self._payload()
-        model._qt_window(surface, {"prev": payload if anchor > 0 else None,
+        model.plate_renderer.window_for(surface, {"prev": payload if anchor > 0 else None,
                                    "current": payload, "next": payload}, anchor)
 
     def _hot(self, surface, layer):
@@ -169,7 +169,7 @@ class NativeRenderSchedulerTests(unittest.TestCase):
         of turns); the wall-clock deadline is what decides, so a slow
         machine waits rather than fails and a genuine hang still fails
         rather than hangs (the Windows CI flake, 2026-09-24)."""
-        surface = model._plate_surfaces[name]
+        surface = model.plate_renderer._surfaces[name]
 
         def settled():
             if surface.job is not None:
@@ -211,9 +211,10 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         self._feed(model, name, width=width, height=height)
         model.setFollowerAttached(True)
         model.setFollowerPopoverOpen(True)
-        surface = model._plate_surfaces[name]
+        surface = model.plate_renderer._surfaces[name]
         module = self.qt.load("MoonrakerMonitorModel")
-        clock = _FakeClock(module)
+        controller_module = self.qt.load("PlateRenderController")
+        clock = _FakeClock(controller_module)
         starts = {"nav": [], "prefix": []}
         # The counters stamp the SCHEDULER's decision, on this thread,
         # inside the product's own call — which is the instant the
@@ -223,9 +224,9 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # renders entered 88 real ms apart then carried one identical
         # reading, which reads as two bakes starting together when the
         # product's own starts were 12.75 fake seconds apart.
-        model_cls = module.MoonrakerMonitorModel
-        real_schedule_nav = model_cls._schedule_navigation
-        real_schedule_surface = model_cls._schedule_surface
+        controller_cls = controller_module.PlateRenderController
+        real_schedule_nav = controller_cls.schedule_navigation
+        real_schedule_surface = controller_cls._schedule_surface
 
         def schedule_nav(pane, plate_surface, **kwargs):
             # The wake fires with coalesce_zoom=False (the settle's own
@@ -247,9 +248,10 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                 starts["prefix"].append((clock.t, after.get("split")))
 
         self.patches = [patch.object(module, "time", clock),
-                        patch.object(model_cls, "_schedule_navigation",
+                        patch.object(controller_module, "time", clock),
+                        patch.object(controller_cls, "schedule_navigation",
                                      schedule_nav),
-                        patch.object(model_cls, "_schedule_surface",
+                        patch.object(controller_cls, "_schedule_surface",
                                      schedule_surface)]
         for entry in self.patches:
             entry.start()
@@ -258,12 +260,13 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         # The wake seam: the tests fire the wakes themselves at the
         # fake clock's deadlines — a real singleShot would wait out
         # the (simulated) window.
-        model._nav_arm_wake = lambda s: armed.append((s, s.nav.get("wake_at"))) or None
+        model.plate_renderer._nav_arm_wake = lambda s: armed.append((s, s.nav.get("wake_at"))) or None
         # Drop the instance attribute on cleanup: re-attaching the
         # class function here stored it UNBOUND on the instance, so
         # every later call passed the surface as self and the arm
         # died with a missing-surface TypeError.
-        self.addCleanup(lambda: model.__dict__.pop("_nav_arm_wake", None))
+        self.addCleanup(lambda:
+            model.plate_renderer.__dict__.pop("_nav_arm_wake", None))
         return model, surface, clock, armed, starts
 
     @staticmethod
@@ -272,7 +275,7 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
                if entry[1] is not None and clock.t >= entry[1]]
         armed[:] = [entry for entry in armed if entry not in due]
         for surface, deadline in due:
-            model._nav_wake(surface, deadline)
+            model.plate_renderer._nav_wake(surface, deadline)
 
     @staticmethod
     def _await_prefix_job(surface, layer_number, final_split, qt, timeout=15.0):
@@ -331,7 +334,7 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         raise AssertionError("the render queue never drained")
 
     def _poll(self, model, surface, payload, anchor, split, clock, armed, qt):
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, anchor, "motion index", split)
         clock.t += self.POLL_S
         self._fire_due_wakes(model, armed, clock)
@@ -379,9 +382,9 @@ class RendererOnlySeekBenchmarks(NativeRenderSchedulerTests):
     benchmarks."""
 
     def _time_seek(self, model, name, anchor, payload, split=None):
-        surface = model._plate_surfaces[name]
+        surface = model.plate_renderer._surfaces[name]
         start = time.monotonic()
-        model._qt_window(surface, {"prev": payload if anchor > 0 else None,
+        model.plate_renderer.window_for(surface, {"prev": payload if anchor > 0 else None,
                                    "current": payload, "next": payload},
                          anchor, "motion index", split)
         self._pump_rasters(model, name)

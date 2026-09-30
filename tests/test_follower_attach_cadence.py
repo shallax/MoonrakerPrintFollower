@@ -39,11 +39,11 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         self.assertTrue(surface.nav["url"], "the warm raster never landed")
         painted = surface.nav["key"][3]
         self._poll(model, surface, payload, 5, 300, clock, armed, self.qt)
-        self.assertEqual(model._navigation_data_value(surface),
+        self.assertEqual(model.plate_renderer.navigation_data(surface),
                          surface.nav["url"],
                          "the compatible raster retired on a split advance")
         model.setFollowerAttached(False)
-        self.assertEqual(model._navigation_data_value(surface), "",
+        self.assertEqual(model.plate_renderer.navigation_data(surface), "",
                          "the detached demand tolerates a stale split")
         model.setFollowerAttached(True)
         self.assertLess(painted, 300,
@@ -55,20 +55,20 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         payload = self._payload(600)
         self._poll(model, surface, payload, 5, 300, clock, armed, self.qt)
         self._drain_job(model, surface, self.qt)
-        self.assertTrue(model._navigation_data_value(surface))
+        self.assertTrue(model.plate_renderer.navigation_data(surface))
         self._poll(model, surface, payload, 5, 50, clock, armed, self.qt)
-        self.assertEqual(model._navigation_data_value(surface), "",
+        self.assertEqual(model.plate_renderer.navigation_data(surface), "",
                          "a warm raster with future ink survived a physical correction")
 
     def test_attached_nav_discards_a_future_job_after_a_boundary_correction(self):
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
         payload = self._payload(600)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 300)
-        future_key = model._navigation_key(surface)
+        future_key = model.plate_renderer._navigation_key(surface)
         self.assertIsNotNone(surface.nav["job"])
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._drain_job(model, surface, self.qt)
         self.assertNotEqual(surface.nav["key"], future_key,
@@ -79,7 +79,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # hard-key latch holds for the window, one retry per expiry,
         # and the recovery after the window paints the raster.
         model = self.monitor()
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
 
         def failing(window, plot, view, split=None, **kwargs):
             raise RuntimeError("injected navigation render failure")
@@ -107,7 +107,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
             clock.t = max(clock.t + 5.0, surface.nav.get("wake_at") or 0.0)
             self._fire_due_wakes(model, armed, clock)
             self._drain_job(model, surface, self.qt)
-        self.assertEqual(surface.nav["failed"], model._navigation_key(surface))
+        self.assertEqual(surface.nav["failed"], model.plate_renderer._navigation_key(surface))
         # The recovery: the next window's wake renders for real.
         clock.t += 5.0
         self._fire_due_wakes(model, armed, clock)
@@ -183,7 +183,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # handed over for a picture the caller proves is this scene.
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_nav = module.render_navigation_layer
         handed = []
 
@@ -232,7 +232,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # SETTLE FIRST, THEN ADVANCE. The advance has to clear the
         # deadline *the last commit established*, and that deadline is
         # armed from this same fake clock at commit time
-        # (MoonrakerMonitorModel._raster_committed: `_prefix_checkpoint_at
+        # (MoonrakerMonitorModel.plate_renderer._raster_committed: `_prefix_checkpoint_at
         # = time.monotonic() + 5.0`). An older render still in flight — a
         # prefix for the previous split — can commit AFTER the advance,
         # and it then re-arms the window five more simulated seconds out.
@@ -256,7 +256,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # WHICH job finished) and not by an empty queue (also observable
         # in the gap before a job is submitted). A split that is already
         # current needs no render, and then no token is pending either.
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, layer_number, "motion index",
                              final_split)
         self._fire_due_wakes(model, armed, clock)
@@ -296,7 +296,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
         payload = self._payload(600)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_prefix = module.render_layer_prefix
         hold = {"armed": False, "used": False}
         gate = harness.threading.Event()
@@ -348,7 +348,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
             clock.t += 5.0
             layer_number = 5
             wrapped = surface.layers[layer_number]
-            model._qt_window(surface, {"prev": None, "current": payload,
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                        "next": None}, layer_number,
                              "motion index", final_split)
             self._fire_due_wakes(model, armed, clock)
@@ -372,7 +372,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
             # starts — by its token, and asserted rather than assumed.
             clock.t = max(clock.t + 5.0,
                           getattr(wrapped, "_prefix_checkpoint_at", 0.0))
-            model._qt_window(surface, {"prev": None, "current": payload,
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                        "next": None}, layer_number,
                              "motion index", final_split)
             self._fire_due_wakes(model, armed, clock)
@@ -402,7 +402,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
         payload = self._payload(600)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_prefix = module.render_layer_prefix
         gate = harness.threading.Event()
         reached = harness.threading.Event()
@@ -431,7 +431,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
             clock.t = max(clock.t + 5.0,
                           getattr(surface.layers[layer_number],
                                   "_prefix_checkpoint_at", 0.0))
-            model._qt_window(surface, {"prev": None, "current": payload,
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                        "next": None}, layer_number,
                              "motion index", final_split)
             self._fire_due_wakes(model, armed, clock)
@@ -473,7 +473,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         model = self.monitor()
         model, surface, clock, armed, starts = self._attached(model)
         payload = self._payload(600)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_prefix = module.render_layer_prefix
         gate = harness.threading.Event()
         reached = harness.threading.Event()
@@ -497,7 +497,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # flag inside render_layer_prefix would not prove that: the
         # caller still has to write the PNG and emit.
         from PyQt6.QtCore import Qt as _Qt
-        model._raster_bridge.done.connect(
+        model.plate_renderer._bridge.done.connect(
             lambda *args: queued.set(),
             _Qt.ConnectionType.DirectConnection)
 
@@ -513,7 +513,7 @@ class AttachCadenceTests(harness.AttachCadenceTests):
             clock.t = max(clock.t + 5.0,
                           getattr(surface.layers[layer_number],
                                   "_prefix_checkpoint_at", 0.0))
-            model._qt_window(surface, {"prev": None, "current": payload,
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                        "next": None}, layer_number,
                              "motion index", committed)
             self._fire_due_wakes(model, armed, clock)
@@ -606,15 +606,15 @@ class AttachCadenceTests(harness.AttachCadenceTests):
         # The follower now starts attached; the manual seek is the
         # detach (a bare detach is refused with no layer to hold).
         model.setFollowerLayerAnchor(5)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(600)
         self._window(model, "popover", 5, payload)
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, 5, "motion index", 100)
         self._pump_rasters(model, "popover")
-        self.assertFalse(model._prefix_wanted(surface, 5, 150),
+        self.assertFalse(model.plate_renderer._prefix_wanted(surface, 5, 150),
                          "a sub-threshold advance re-rendered the prefix")
-        self.assertTrue(model._prefix_wanted(surface, 5, 250),
+        self.assertTrue(model.plate_renderer._prefix_wanted(surface, 5, 250),
                         "a past-threshold advance left the prefix stale")
 
 

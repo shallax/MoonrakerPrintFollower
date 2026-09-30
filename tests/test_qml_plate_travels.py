@@ -326,7 +326,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             return wall_run(image)[0] is not None and travel_run(image)[0] is not None
 
         # The partial state first — the shape production's own
-        # `_scrub_vector_for` publishes below the split: the prefix
+        # `scrub_vector` publishes below the split: the prefix
         # raster owns the printed history, the canvas the tail, and the
         # travels raster is not shown at all.
         layer = self._native_layer(payload, face, prefix_split=13)
@@ -366,7 +366,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "prefix: the full split's hold had no history to stand")
 
         # The full split: the model publishes NO scrub vector here
-        # (`_scrub_vector_for` returns None at split == motions), so the
+        # (`scrub_vector` returns None at split == motions), so the
         # canvas has no geometry of its own to redraw — the picture it
         # holds is the only copy of the ink it was standing.
         status_of = self._status_probe()

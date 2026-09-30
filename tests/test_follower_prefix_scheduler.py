@@ -8,9 +8,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # printed prefix — only the tail beyond it.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
@@ -27,9 +27,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # immediately schedules a replacement.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
@@ -55,22 +55,22 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # seek is the detach (a bare detach is refused with no layer
         # to hold).
         model.setFollowerLayerAnchor(5)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 60)
         self.assertEqual(wrapped.prefixSplit, 50,
                          "a small advance re-rendered the prefix")
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 160)
         self._pump_rasters(model, "popover")
         self.assertEqual(wrapped.prefixSplit, 160,
                          "the quarter-layer advance never refreshed")
-        model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                          5, "motion index", 40)
         self._pump_rasters(model, "popover")
         self.assertEqual(wrapped.prefixSplit, 40,
@@ -83,9 +83,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # 80-picture may never supersede the new 60-demand.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_prefix = module.render_layer_prefix
         entered = harness.threading.Event()
         release = harness.threading.Event()
@@ -100,12 +100,12 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                                previous=previous, previous_split=previous_split)
 
         with harness.patch.object(module, "render_layer_prefix", blocked_prefix):
-            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                              5, "motion index", 80)
             self.assertTrue(entered.wait(10), "the prefix worker never started")
             self.assertEqual(surface.job["split"], 80,
                              "the running job never carried its split")
-            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                              5, "motion index", 60)
             self.assertTrue(surface.job["cancel"].is_set(),
                             "the same-layer split change never cancelled "
@@ -126,9 +126,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # the revisit at 55 starts from a clean wrapper.
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("PlateRenderController")
         real_prefix = module.render_layer_prefix
         entered = harness.threading.Event()
         release = harness.threading.Event()
@@ -141,11 +141,11 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                                previous=previous, previous_split=previous_split)
 
         with harness.patch.object(module, "render_layer_prefix", blocked_prefix):
-            model._qt_window(surface, {"prev": None, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": None, "current": payload, "next": None},
                              5, "motion index", 80)
             self.assertTrue(entered.wait(10), "the prefix worker never started")
             # The anchor moves: layer 5 slides to the prev ghost.
-            model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+            model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                              6, "motion index", None)
             self.assertTrue(surface.job["cancel"].is_set(),
                             "a prefix whose layer became a ghost stayed live")
@@ -154,7 +154,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
             self.assertEqual(surface.layers[5].prefixSplit, -1,
                              "the ghost's stale prefix landed")
         # A-B-A: the revisit demands its own prefix at the new split.
-        model._qt_window(surface, {"prev": payload, "current": payload, "next": None},
+        model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                          5, "motion index", 55)
         self._pump_rasters(model, "popover")
         self.assertEqual(surface.layers[5].prefixSplit, 55,
@@ -168,15 +168,15 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         # follower now starts attached, whose checkpoint cadence
         # would leave the second split unrendered and its URL reused.
         model.setFollowerLayerAnchor(5)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, 5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
         first = wrapped.prefixData
         self.assertTrue(first.startswith("file://"))
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, 5, "motion index", 160)
         self._pump_rasters(model, "popover")
         self.assertNotEqual(first, wrapped.prefixData,
@@ -188,9 +188,9 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_a_view_change_invalidates_the_prefix(self):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
-        surface = model._plate_surfaces["popover"]
+        surface = model.plate_renderer._surfaces["popover"]
         payload = self._payload(400)
-        model._qt_window(surface, {"prev": None, "current": payload,
+        model.plate_renderer.window_for(surface, {"prev": None, "current": payload,
                                    "next": None}, 5, "motion index", 50)
         self._pump_rasters(model, "popover")
         wrapped = surface.layers[5]
