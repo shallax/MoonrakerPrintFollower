@@ -1487,19 +1487,25 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         ):
             self.assertIn(token, harness.MONITOR_MODEL)
         for token in (
+            "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
+        ):
+            self.assertIn(token, harness.MONITOR_QML)
+        # The schedule's own view carries the rest: the pause column
+        # moved out of the pop-over's card into the view that owns it.
+        for token in (
             'objectName: "moonrakerFollowerPauseButton"',
-            "root.printer.togglePauseAtLayer(root.printer.pauseAtLayerCandidate);",
-            "root.printer.removePauseAtLayer(pauseRow.pauseLayer);",
-            "root.printer.clearPauseAtLayer();",
-            "root.printer.pauseAtLayerItems",
+            "root.printerModel.togglePauseAtLayer(root.printerModel.pauseAtLayerCandidate);",
+            "root.printerModel.removePauseAtLayer(pauseRow.pauseLayer);",
+            "root.printerModel.clearPauseAtLayer();",
+            "root.printerModel.pauseAtLayerItems",
             "model.pauseAtLayerUnavailableText",
-            "root.printer.pauseAtLayerHasClearable === true",
+            "root.printerModel.pauseAtLayerHasClearable === true",
             # The schedule's column and its scrollable list (the live
             # report): the rows belong BESIDE the plate — under it they
             # squeezed the face onto the card's clipped bottom edge —
             # and the list scrolls with the card's own chevrons rather
             # than stopping at a counted remainder.
-            "id: pauseColumn",
+            "id: root",
             "id: pauseBlockModel",
             "model: pauseBlockModel",
             "interactive: contentHeight > height",
@@ -1510,9 +1516,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             "Component.onCompleted: syncPauseRows()",
             '"↑"',
             '"↓"',
-            "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
         ):
-            self.assertIn(token, harness.MONITOR_QML)
+            self.assertIn(token, harness.PAUSE_SCHEDULE_QML)
         # The width split, scoped to each column's own body: the plate
         # holds the width the popover's content had before the schedule
         # moved beside it, and the schedule's column yields whatever is
@@ -1520,11 +1525,11 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # 900 px pane's face and moved every geometry contract this
         # face has, so the pair is pinned where it stands — a bare
         # "minimumWidth: 0" matched anywhere would pass vacuously.
-        plate_column = harness.MONITOR_QML[harness.MONITOR_QML.index("id: plateProgressContent"):harness.MONITOR_QML.index("PlateProgressFace {", harness.MONITOR_QML.index("id: plateProgressContent"))]
+        plate_column = harness.PRINT_FOLLOWER_QML[harness.PRINT_FOLLOWER_QML.index("id: followerContent"):harness.PRINT_FOLLOWER_QML.index("PlateProgressFace {")]
         plate_width = "585 * screenScaleFactor - 2 * UM.Theme.getSize(\"default_margin\").width"
         self.assertIn("Layout.preferredWidth: %s" % plate_width, plate_column)
         self.assertIn("Layout.minimumWidth: %s" % plate_width, plate_column)
-        pause_column = harness.MONITOR_QML[harness.MONITOR_QML.index("id: pauseColumn"):harness.MONITOR_QML.index("id: pauseBlockModel")]
+        pause_column = harness.PAUSE_SCHEDULE_QML[:harness.PAUSE_SCHEDULE_QML.index("id: pauseBlockModel")]
         self.assertIn("Layout.preferredWidth: 340 * screenScaleFactor", pause_column)
         self.assertIn("Layout.minimumWidth: 0", pause_column)
         # The chevrons reuse the card's own expressions, so the
@@ -1533,35 +1538,35 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
         ):
-            self.assertIn(token, harness.MONITOR_QML)
+            self.assertIn(token, harness.PAUSE_SCHEDULE_QML)
         # No control disappears with the schedule: the list, its heading,
         # the reason line and the clear button collapse by HEIGHT while
         # empty (the no-reflow rule's own replacement for a visibility
         # gate). The reason line and the heading share the one idiom.
-        self.assertEqual(harness.MONITOR_QML.count("Layout.preferredHeight: text.length > 0 ? implicitHeight : 0"), 2)
-        self.assertIn("readonly property bool clearAvailable: root.printer != null && root.printer.pauseAtLayerHasClearable === true", harness.MONITOR_QML)
+        self.assertEqual(harness.PAUSE_SCHEDULE_QML.count("Layout.preferredHeight: text.length > 0 ? implicitHeight : 0"), 2)
+        self.assertIn("readonly property bool clearAvailable: root.printerModel != null && root.printerModel.pauseAtLayerHasClearable === true", harness.PAUSE_SCHEDULE_QML)
         # The two actions share one row at the foot of the column (the
         # live request): the pause button takes the slack and Clear keeps
         # a width sized to its own word, side by side rather than stacked.
-        self.assertLess(harness.MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'),
-                        harness.MONITOR_QML.index("id: clearPausesButton"))
+        self.assertLess(harness.PAUSE_SCHEDULE_QML.index('objectName: "moonrakerFollowerPauseButton"'),
+                        harness.PAUSE_SCHEDULE_QML.index("id: clearPausesButton"))
         # The popover's own screen says the short word; the card keeps the
         # longer line (its own file, its own pin). Both the width AND the
         # height collapse with the clear action, so the row's other button
         # expands into the whole foot — a collapsed slot that kept its
         # width would leave the button beside a gap (the live request).
-        clear_block = harness.MONITOR_QML[harness.MONITOR_QML.index("id: clearPausesButton"):harness.MONITOR_QML.index("root.printer.clearPauseAtLayer();")]
+        clear_block = harness.PAUSE_SCHEDULE_QML[harness.PAUSE_SCHEDULE_QML.index("id: clearPausesButton"):harness.PAUSE_SCHEDULE_QML.index("root.printerModel.clearPauseAtLayer();")]
         self.assertIn('text: "Clear"', clear_block)
-        self.assertIn("Layout.preferredWidth: pauseColumn.clearAvailable ? 60 * screenScaleFactor : 0", clear_block)
-        self.assertIn("Layout.preferredHeight: pauseColumn.clearAvailable ? UM.Theme.getSize(\"action_button\").height : 0", clear_block)
-        self.assertIn("enabled: pauseColumn.clearAvailable", clear_block)
+        self.assertIn("Layout.preferredWidth: root.clearAvailable ? 60 * screenScaleFactor : 0", clear_block)
+        self.assertIn("Layout.preferredHeight: root.clearAvailable ? UM.Theme.getSize(\"action_button\").height : 0", clear_block)
+        self.assertIn("enabled: root.clearAvailable", clear_block)
         # Both foot buttons centre their labels: the theme's content row
         # packs from the left, so the fixed-width mode is what centring
         # needs — without it the label hugs its text against the left edge
         # (the live report).
-        pause_block = harness.MONITOR_QML[harness.MONITOR_QML.index('objectName: "moonrakerFollowerPauseButton"'):harness.MONITOR_QML.index("root.printer.togglePauseAtLayer(")]
+        pause_block = harness.PAUSE_SCHEDULE_QML[harness.PAUSE_SCHEDULE_QML.index('objectName: "moonrakerFollowerPauseButton"'):harness.PAUSE_SCHEDULE_QML.index("root.printerModel.togglePauseAtLayer(")]
         for block in (pause_block, clear_block):
             self.assertIn("fixedWidthMode: true", block)
-        self.assertNotIn("scheduledPauseList", harness.MONITOR_QML, "the popover kept the static capped list")
-        self.assertNotIn("+ pauseColumn.hiddenRows", harness.MONITOR_QML, "the popover counts a remainder instead of scrolling")
+        self.assertNotIn("scheduledPauseList", harness.PAUSE_SCHEDULE_QML, "the popover kept the static capped list")
+        self.assertNotIn("+ root.hiddenRows", harness.PAUSE_SCHEDULE_QML, "the popover counts a remainder instead of scrolling")
 
