@@ -419,7 +419,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         # refuses with the policy's reason, nothing reaches the wire.
         model = self.monitor()
         self.deliver_state("standby")
-        model._file_print_confirm = {"relpath": "part.gcode"}
+        model._files._file_print_confirm = {"relpath": "part.gcode"}
         self.deliver_state("printing")
         model.fileConfirmPrint()
         self.assertEqual([r for r in self.transport.requests if r.path == "printer/print/start"], [])

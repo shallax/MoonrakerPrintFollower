@@ -16,19 +16,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from mpf.monitor.MonitorFormatting import (
-    core_values,
-    estimate_remaining,
-    file_row_payload,
-    height_readout,
-    infer_macro_parameters,
-    layer_readout,
-    parse_bed_mesh,
-    parse_mcu_stats,
-    preview_block,
-    preview_temperature_pair,
-    print_job_caption,
-)
+from mpf.files.browser.FileFormatting import (file_row_payload)
+from mpf.monitor.MonitorFormatting import (core_values, estimate_remaining, height_readout, infer_macro_parameters, layer_readout, parse_bed_mesh, parse_mcu_stats, preview_block, preview_temperature_pair, print_job_caption)
 from mpf.monitor.MonitorPermissions import Observation
 from mpf.printing.PrintState import LayerResolver, PhysicalLayer
 from tests.qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime

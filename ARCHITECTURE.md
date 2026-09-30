@@ -165,6 +165,8 @@ correct package ownership.
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
+| `FileBrowserPresentation.py` | File-browser drafts, confirmation state and row presentation | Monitor model, printer dispatch policy or network ownership |
+| `FileFormatting.py` | Pure file-table units and local-time labels | Qt, network or a screen model |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `SectionLayoutPolicy.py` | The static pane→section table (Controls 13, Information 2, Status 7) and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
@@ -1250,3 +1252,13 @@ components own their editable fields and validation. Each publishes only its
 configuration values and receives the settings manager explicitly; changing tabs
 does not recreate a page or discard its draft. The shell merges the four value
 blocks only when saving and preserves all public validation properties.
+
+### File-browser presentation
+
+`FileBrowserPresentation` owns popup drafts, confirmation state, upload progress,
+and file-table projections. It receives a read-only snapshot capability and a
+print-dispatch callback; it cannot reach the Monitor facade. The latter keeps
+its established QML slots and the shared printer permission/start watchdog.
+`FileFormatting` owns table units and labels without a Monitor dependency.
+Thumbnail notifications remain separate from row publication; view changes stay
+synchronous and the closed popup still avoids rebuilding its expensive rows.

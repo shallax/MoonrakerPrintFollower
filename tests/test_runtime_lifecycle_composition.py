@@ -688,8 +688,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
             model.fileConfirmPrint()
             start_print.assert_not_called()
         self.assertEqual(model.fileUploadProgress, "")
-        model._on_upload_progress(40)  # must not raise
-        model._on_upload_finished(True, "bench.gcode")  # must not raise
+        model._files._on_upload_progress(40)  # must not raise
+        model._files._on_upload_finished(True, "bench.gcode")  # must not raise
         self.assertEqual(model.fileUploadProgress, "")
 
     def test_manual_reconnect_cycles_the_client(self):
