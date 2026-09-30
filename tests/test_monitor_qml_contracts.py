@@ -768,10 +768,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("property bool anyPowerLocked", harness.POWER_SECTION_QML)
         self.assertNotIn("anyPowerLocked", harness.DASHBOARD_QML)
         for token in ("powerOffDialog.open()", "controlsCollapsed",
-                      "id: collapsedTitle", "rotation: 90",
                       '"Lock all controls."', '"Unlock all controls."', "PadlockLocked.svg", "PadlockUnlocked.svg",
                       "setControlsLocked", "setControlsCollapsed"):
             self.assertIn(token, harness.DASHBOARD_QML)
+        # The collapsed strip's vertical title rides its own leaf (4.6.2),
+        # which owns the readout row, its gates and the pane fit.
+        for token in ("id: collapsedTitle", "rotation: 90",
+                      'text: "Printer controls"', "property bool controlsCollapsed: false",
+                      "controlsCollapsed: root.controlsCollapsed"):
+            self.assertIn(token, harness.CONTROLS_COLLAPSED_READOUT_QML + harness.DASHBOARD_QML)
         self.assertIn("controlsLocked", harness.MONITOR_MODEL)
         self.assertIn("controlsCollapsed", harness.MONITOR_MODEL)
         # The Information and Printer status panes collapse and persist too.
@@ -1438,8 +1443,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                 self.assertIn(token, section)
         # The preview card's exaggeration slider carries the same
         # corrected formula (the shared ruling — no surface may keep
-        # the drift).
-        preview = (harness.PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+        # the drift). The slider lives in the card's legend leaf.
+        preview = (harness.PLUGINS / "BedMeshLegend.qml").read_text(encoding="utf-8")
         self.assertIn("availableWidth - handle.width", preview)
         self.assertIn("onValueCommitted", harness.DASHBOARD_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML)
         # The keyboard nudge holds the interaction state until its
@@ -1465,7 +1470,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         slider = (harness.PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
         for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, slider)
-        for qml in (harness.BED_MESH_DETAIL_QML, harness.PREVIEW_CONTROLS_QML):
+        # The Preview's own copy lives in the card's legend leaf (4.6.2).
+        for qml in (harness.BED_MESH_DETAIL_QML, harness.BED_MESH_LEGEND_QML):
             self.assertIn("BedMeshRangeSlider", qml)
         self.assertIn('text: root.printerModel != null ? "Low " + root.printerModel.bedMeshMinimum.toFixed(3)', harness.BED_MESH_DETAIL_QML)
 

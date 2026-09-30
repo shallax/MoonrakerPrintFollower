@@ -2686,15 +2686,16 @@ Item {
             "visible: modelData.writable",
             "visible: !modelData.writable",
             # Carve-outs awaiting the ruling (DECISIONS round 6):
-            "visible: base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0 && (base.hasToolpath || base.pauseAtLayerHasBaked)",
+            "visible: root.followingEnabled && root.pauseAtLayerActive && root.pauseAtLayerItems.length > 0 && (root.hasToolpath || root.pauseAtLayerHasBaked)",
             # The toolpath-gated faces (the 2026-09-17 rulings): the
             # attach control, the pause button and its selection line
             # hide without a toolpath; the clear-all hides while only
             # baked rows are listed; the layer/height readout row
             # hides whole while the resolver has no layer.
             "visible: base.hasToolpath",
-            "visible: base.pauseAtLayerHasClearable",
-            "visible: base.layerReadoutAvailable",
+            "visible: root.hasToolpath",
+            "visible: root.pauseAtLayerHasClearable",
+            "visible: root.layerReadoutAvailable",
             # The preview card's layer/height row pair (the readout
             # ruling) — written imperatively from the readout's own
             # availability signal. The height is independently
@@ -2798,7 +2799,14 @@ Item {
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
-            "visible: base.bedMeshAvailable && base.bedMeshVisible",
+            "visible: root.bedMeshAvailable && root.bedMeshVisible",
+            # The pause section hides whole when nothing in it shows:
+            # its hint keeps a permanent slot, so an empty section
+            # would still take a row gap from the card's column. The
+            # gate is the section's OWN height, not a state read —
+            # the same geometry-derived shape the schedule list's
+            # chevrons use.
+            "visible: root.implicitHeight > 0",
             # The follower's zoom-gated toolhead row and the Pending
             # option that only the live view carries (the 4.6.0 live
             # requests).
@@ -2947,9 +2955,9 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
             "enabled: consolePanel.printerModel != null && consolePanel.printerModel.monitorConnected && consolePanel.printerModel.consoleLines.length > 0",
-            "enabled: base.bedMeshAvailable",
+            "enabled: root.bedMeshAvailable",
         ):
-            self.assertIn(enabled, harness.CONSOLE_PANE_QML + harness.MONITOR_QML + harness.DASHBOARD_QML + harness.PREVIEW_CONTROLS_QML + harness.PRINT_SECTION_QML)
+            self.assertIn(enabled, harness.CONSOLE_PANE_QML + harness.MONITOR_QML + harness.DASHBOARD_QML + harness.PREVIEW_CONTROLS_QML + harness.BED_MESH_LEGEND_QML + harness.PRINT_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it. The attach-gate round made the
         # width conditional on the toolpath (the hidden follow button

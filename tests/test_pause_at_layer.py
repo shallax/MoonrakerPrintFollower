@@ -10,7 +10,12 @@ from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
-QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+CARD = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+# The end-of-layer section is its own document (4.6.2): the card
+# declares the pause values and the three intents, the section renders
+# the toggle, the summary and the scheduled rows. The card's rendered
+# surface — what these pins are about — is the two documents together.
+QML = CARD + (PLUGINS / "PauseAtLayerSection.qml").read_text(encoding="utf-8")
 
 
 class PauseAtLayerTests(unittest.TestCase):

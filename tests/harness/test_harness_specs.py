@@ -213,18 +213,24 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertNotIn("QtWidgets", integration)
         self.assertNotIn("confirm_replace", integration)
 
-        card = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "mpf", "preview", "MoonrakerPreviewCard.qml")
-        with open(card, encoding="utf-8") as handle:
+        card_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "mpf", "preview")
+        with open(os.path.join(card_dir, "MoonrakerPreviewCard.qml"), encoding="utf-8") as handle:
             qml = handle.read()
-        self.assertIn('objectName: "moonrakerReplacePrompt"', qml)
-        self.assertIn('objectName: "moonrakerReplaceConfirmButton"', qml)
-        self.assertIn('objectName: "moonrakerReplaceCancelButton"', qml)
-        self.assertIn("modal: true", qml)
+        # The prompt's body is its own document (ReplacePromptDialog.qml)
+        # instantiated by the card; the card still renders it, so the
+        # rendered surface is the two texts together.
+        with open(os.path.join(card_dir, "ReplacePromptDialog.qml"), encoding="utf-8") as handle:
+            dialog = handle.read()
+        self.assertIn("ReplacePromptDialog {", qml)
+        self.assertIn('objectName: "moonrakerReplacePrompt"', dialog)
+        self.assertIn('objectName: "moonrakerReplaceConfirmButton"', dialog)
+        self.assertIn('objectName: "moonrakerReplaceCancelButton"', dialog)
+        self.assertIn("modal: true", dialog)
         # Centred on the window, not nested in the card: the question
         # is the application's, and a 340px corner card is a strange
         # place to ask it from.
-        self.assertIn("anchors.centerIn: Overlay.overlay", qml)
+        self.assertIn("anchors.centerIn: Overlay.overlay", dialog)
         # The state is the model's, and the popup is written from the
         # change handler rather than bound: bindings on setProperty-fed
         # values go stale on this dynamically created component (the
