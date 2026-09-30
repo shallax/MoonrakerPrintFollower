@@ -549,7 +549,11 @@ class SectionOrderArrivalTests(harness.SectionOrderArrivalTests):
                 super().__init__()
                 self._order = order
 
-            @harness.pyqtSlot()
+            # The signature has to match the model's own: the console
+            # pane calls this with a bool while its bindings evaluate,
+            # and a slot declared with no arguments makes Qt abort on
+            # the call rather than fail the assertion that follows.
+            @harness.pyqtSlot(bool)
             def setConsoleExpanded(self, expanded):
                 pass
 
