@@ -79,13 +79,13 @@ class ChartColourPickerTests(harness.ChartColourPickerTests):
     def test_the_first_click_builds_the_picker_and_applies_the_colour(self):
         monitor, _window, printer = self._mount(1100)
         monitor.setProperty("selectedChartSensor", "heater_bed")
-        harness.QMetaObject.invokeMethod(monitor, "openChartColorDialog")
+        harness.QMetaObject.invokeMethod(self.chart_card(monitor), "openChartColorDialog")
         self.pump(10)
         pickers = self.colour_pickers(monitor)
         self.assertEqual(len(pickers), 1, "the picker did not build on the click")
         pickers[0].setProperty("selectedColor", harness.QColor("#123456"))
         # The dialog's own accept signal is the wiring under test: the
-        # monitor's handler must run from the signal, not from a call.
+        # card's handler must run from the signal, not from a call.
         harness.QMetaObject.invokeMethod(pickers[0], "accepted")
         self.pump(10)
         self.assertEqual(printer.sensor_colors, [("heater_bed", "#123456")],
@@ -94,9 +94,10 @@ class ChartColourPickerTests(harness.ChartColourPickerTests):
     def test_a_second_click_reuses_the_built_picker(self):
         monitor, _window, printer = self._mount(1100)
         monitor.setProperty("selectedChartSensor", "extruder")
-        harness.QMetaObject.invokeMethod(monitor, "openChartColorDialog")
+        card = self.chart_card(monitor)
+        harness.QMetaObject.invokeMethod(card, "openChartColorDialog")
         self.pump(10)
-        harness.QMetaObject.invokeMethod(monitor, "openChartColorDialog")
+        harness.QMetaObject.invokeMethod(card, "openChartColorDialog")
         self.pump(10)
         self.assertEqual(len(self.colour_pickers(monitor)), 1,
                          "the click rebuilt the picker instead of reusing it")

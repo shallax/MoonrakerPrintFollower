@@ -2612,6 +2612,9 @@ Item {
             # The bed-mesh detail card: a transient pop-over surface
             # that appears with its opener — nothing under it reflows.
             "visible: root.open && root.printerModel != null && root.printerModel.bedMeshAvailable",
+            # The temperature detail card: the same transient-surface
+            # carve-out.
+            "visible: root.open && root.printerModel != null",
             # The webcam FPS bar: parked until the pane is wide enough
             # and the stream is live — layout-static within the pane.
             "visible: root.cameraBarFits && root.cameraControlLive",

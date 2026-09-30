@@ -395,43 +395,6 @@ Component {
             repeat: false
             onTriggered: root.updateStatusReadoutFits()
         }
-        property bool allChartSensorsHidden: {
-            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
-                    "series": []
-                });
-            if (legend.series.length === 0) {
-                return false;
-            }
-            for (var i = 0; i < legend.series.length; ++i) {
-                if (legend.series[i].visible) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        property string selectedChartSensorLabel: {
-            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
-                    "series": []
-                });
-            for (var i = 0; i < legend.series.length; ++i) {
-                if (legend.series[i].name === root.selectedChartSensor) {
-                    return legend.series[i].label;
-                }
-            }
-            return root.selectedChartSensor;
-        }
-        property string selectedChartColor: {
-            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
-                    "series": []
-                });
-            for (var i = 0; i < legend.series.length; ++i) {
-                if (legend.series[i].name === root.selectedChartSensor) {
-                    return legend.series[i].color;
-                }
-            }
-            return "";
-        }
-
         onPrinterChanged: {
             refreshAvailabilityGates();
             openPopOver = "";
@@ -568,42 +531,6 @@ Component {
         property bool statusCollapsed: root.statusPersistedCollapsed || root.statusAutoCollapsed
         readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
-
-        // The picker's dialog implementation is a platform module, so it
-        // is created on the first click rather than at construction: a
-        // host whose platform builds no colour dialog must still get a
-        // monitor, and the quick swatches work without it either way.
-        property var chartColorDialogComponent: null
-        property var chartColorDialog: null
-
-        function openChartColorDialog() {
-            if (chartColorDialog === null) {
-                if (chartColorDialogComponent === null) {
-                    chartColorDialogComponent = Qt.createComponent("temperature/MoonrakerChartColorDialog.qml");
-                }
-                if (chartColorDialogComponent.status !== Component.Ready) {
-                    console.log("Moonraker colour picker unavailable: " + chartColorDialogComponent.errorString());
-                    return;
-                }
-                chartColorDialog = chartColorDialogComponent.createObject(root);
-                if (chartColorDialog === null) {
-                    console.log("Moonraker colour picker failed to instantiate: " + chartColorDialogComponent.errorString());
-                    return;
-                }
-                chartColorDialog.title = root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color";
-                chartColorDialog.accepted.connect(root.applyChartColorChoice);
-            }
-            chartColorDialog.open();
-        }
-
-        function applyChartColorChoice() {
-            if (chartColorDialog === null || root.printer == null || root.selectedChartSensor === "") {
-                return;
-            }
-            var colour = chartColorDialog.selectedColor;
-            var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
-            root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
-        }
 
         Connections {
             target: root.printer
@@ -1691,217 +1618,24 @@ Component {
             }
         }
 
-        MonitorPopOver {
+        // The overlay frame stays here: the camera column's coordinates
+        // and the one-at-a-time open flag belong to this document. The
+        // chosen sensor is the host's too — the dashboard's escape
+        // ladder clears it — so the card takes it in and answers by
+        // signal.
+        TemperatureDetailPopover {
             id: chartPanel
-            visible: root.openPopOver === "chart" && root.printer != null
+            objectName: "moonrakerChartDetail"
+            open: root.openPopOver === "chart"
+            printerModel: root.printer
+            selectedChartSensor: root.selectedChartSensor
+            onSensorSelected: root.selectedChartSensor = sensor
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
             // Grows with the legend: three rows of sensors fit the base
             // height; each further row adds its line height, capped at
             // the monitor area.
             height: Math.min(590 * screenScaleFactor + Math.max(0, Math.ceil((root.printer != null ? root.printer.temperatureChartLegend.series.length : 0) / 2) - 3) * 30 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            // Reset the tooltip proxies on EVERY close path — the
-            // outside-click layer, the opener's second click and
-            // auto-close all flip `visible` — so a reopen never
-            // flashes the previous hover's values at a stale position.
-            onVisibleChanged: {
-                if (!visible) {
-                    hoverClockProxy = "";
-                    hoverValuesProxy = [];
-                    hoverCursor = Qt.point(-1, -1);
-                }
-            }
-
-            // Proxied hover state for the floating tooltip, which lives
-            // outside the clipped card so it may overflow any boundary.
-            property string hoverClockProxy: ""
-            property var hoverValuesProxy: []
-            property point hoverCursor: Qt.point(-1, -1)
-
-            // The content loads only while the card is open: a
-            // zero-sized Canvas inside a closed card sent the engine
-            // into an endless relayout on pane collapses, and hidden
-            // bindings never evaluate.
-            Loader {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                active: root.openPopOver === "chart"
-                sourceComponent: chartContent
-            }
-        }
-
-        Component {
-            id: chartContent
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: UM.Theme.getSize("thin_margin").height
-
-                TemperatureChart {
-                    id: chartPanelChart
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 180 * screenScaleFactor
-                    Connections {
-                        target: chartPanelChart
-                        function onHoverClockChanged() {
-                            chartPanel.hoverClockProxy = chartPanelChart.hoverClock;
-                        }
-                        function onHoverValuesChanged() {
-                            chartPanel.hoverValuesProxy = chartPanelChart.hoverValues;
-                        }
-                        function onHoverCursorChanged() {
-                            var p = chartPanelChart.mapToItem(root, chartPanelChart.hoverCursor.x, chartPanelChart.hoverCursor.y);
-                            chartPanel.hoverCursor = p;
-                        }
-                    }
-                    // Hidden when the pop-over is closed: the closed
-                    // card's zero-sized canvas must never paint. The
-                    // full payload is the model's dormant object until
-                    // the pop-over opens, so this gate also reads the
-                    // legend (which never goes dormant) for the
-                    // has-data case.
-                    visible: root.openPopOver === "chart" && root.printer != null && root.printer.temperatureChartLegend.series.length > 0
-                    chart: root.printer != null ? root.printer.temperatureChartFull : ({
-                            "series": [],
-                            "showTargets": true,
-                            "showPower": true
-                        })
-                }
-
-                UM.Label {
-                    Layout.fillWidth: true
-                    visible: root.printer != null && root.printer.temperatureChartLegend.series.length === 0
-                    text: "No temperature data yet — the chart fills once the printer reports temperatures."
-                    color: UM.Theme.getColor("text_inactive")
-                    wrapMode: Text.WordWrap
-                }
-
-                UM.Label {
-                    Layout.fillWidth: true
-                    visible: root.allChartSensorsHidden
-                    text: "All sensors hidden — use the legend to show them again."
-                    color: UM.Theme.getColor("text_inactive")
-                    wrapMode: Text.WordWrap
-                }
-
-                // Legend: a two-column grid of visibility toggles with
-                // live values. It binds to the legend property, which
-                // only notifies on real changes, and `toggled` fires on
-                // user interaction only — so the delegates are never
-                // rebuilt at the 1 Hz sample cadence and re-bound
-                // checkboxes cannot rewrite the state file.
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: 2
-                    columnSpacing: UM.Theme.getSize("default_margin").width
-                    rowSpacing: UM.Theme.getSize("narrow_margin").height
-                    Repeater {
-                        model: root.printer != null ? root.printer.temperatureChartLegend.series : []
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: UM.Theme.getSize("narrow_margin").width
-                            UM.CheckBox {
-                                checked: modelData.visible
-                                // The label lives in the neighbouring
-                                // cell — name the control for screen
-                                // readers (panel UX P3).
-                                Accessible.name: "Show " + modelData.label
-                                onToggled: root.printer.setTemperatureSensorVisible(modelData.name, checked)
-                            }
-                            Rectangle {
-                                width: 10 * screenScaleFactor
-                                height: 10 * screenScaleFactor
-                                radius: 5 * screenScaleFactor
-                                color: modelData.color
-                                border.color: root.selectedChartSensor === modelData.name ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                                border.width: root.selectedChartSensor === modelData.name ? 2 : 1
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.selectedChartSensor = root.selectedChartSensor === modelData.name ? "" : modelData.name
-                                }
-                            }
-                            UM.Label {
-                                Layout.fillWidth: true
-                                text: modelData.label
-                                elide: Text.ElideRight
-                            }
-                            UM.Label {
-                                text: {
-                                    // The live value rides the latest
-                                    // projection — one scalar per
-                                    // sensor, never a search through
-                                    // the chart payload.
-                                    var latest = root.printer != null ? root.printer.temperatureChartLatest : null;
-                                    if (latest == null || latest[modelData.name] === undefined) {
-                                        return "—";
-                                    }
-                                    return Number(latest[modelData.name]).toFixed(1) + "°C";
-                                }
-                                color: UM.Theme.getColor("text_inactive")
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: root.selectedChartSensor !== ""
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.Label {
-                        text: root.selectedChartSensorLabel + (root.printer != null && root.printer.britishSpelling ? " colour:" : " color:")
-                        color: UM.Theme.getColor("text_inactive")
-                    }
-                    Repeater {
-                        model: root.printer != null ? root.printer.temperatureChartLegend.palette : []
-                        Rectangle {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            radius: 8 * screenScaleFactor
-                            color: modelData
-                            border.color: root.selectedChartColor === modelData ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                            border.width: root.selectedChartColor === modelData ? 2 : 1
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.printer.setTemperatureSensorColor(root.selectedChartSensor, modelData)
-                            }
-                        }
-                    }
-                    Cura.SecondaryButton {
-                        text: "Custom…"
-                        onClicked: root.openChartColorDialog()
-                        UM.ToolTip {
-                            visible: parent.hovered
-                            targetPoint: Qt.point(parent.width / 2, 0)
-                            x: 0
-                            y: parent.height + UM.Theme.getSize("default_margin").height
-                            width: UM.Theme.getSize("tooltip").width
-                            text: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("default_margin").width
-                    UM.CheckBox {
-                        checked: root.printer != null ? root.printer.temperatureChartLegend.showTargets : true
-                        onToggled: root.printer.setShowTemperatureTargets(checked)
-                    }
-                    UM.Label {
-                        text: "Targets"
-                    }
-                    UM.CheckBox {
-                        checked: root.printer != null ? root.printer.temperatureChartLegend.showPower : true
-                        onToggled: root.printer.setShowTemperaturePower(checked)
-                    }
-                    UM.Label {
-                        text: "Heater power"
-                    }
-                }
-            }
         }
 
         // The overlay frame stays here: this is the document that owns
@@ -2938,8 +2672,11 @@ Component {
             // instead of sliding off the bottom of the stage.
             width: tooltipColumn.implicitWidth + 2 * UM.Theme.getSize("narrow_margin").width
             height: tooltipColumn.implicitHeight + 2 * UM.Theme.getSize("narrow_margin").height
-            x: Math.min(Math.max(0, chartPanel.hoverCursor.x + 14), Math.max(0, root.width - width - 4))
-            y: chartPanel.hoverCursor.y + height + 16 > root.height ? Math.max(0, chartPanel.hoverCursor.y - height - 10) : chartPanel.hoverCursor.y + 16
+            // The card publishes its cursor in its OWN frame; the
+            // overlay's frame is this document's.
+            property point anchorPoint: chartPanel.mapToItem(root, chartPanel.hoverCursor.x, chartPanel.hoverCursor.y)
+            x: Math.min(Math.max(0, anchorPoint.x + 14), Math.max(0, root.width - width - 4))
+            y: anchorPoint.y + height + 16 > root.height ? Math.max(0, anchorPoint.y - height - 10) : anchorPoint.y + 16
 
             Cura.RoundedRectangle {
                 anchors.fill: parent
