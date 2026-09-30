@@ -347,8 +347,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the popup, so the pins below follow the code into the document
         # that now holds it. Mounting stays pinned in the shell.
         leaves = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
-                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow")}
-        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters"):
+                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow", "FileColumnChooser")}
+        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileColumnChooser"):
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
         # The option row is the filters leaf's delegate, never a child
         # of the shell.
@@ -572,7 +572,12 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("onDoubleClicked", harness.FILE_MANAGER_QML)
         self.assertIn("fileRequestPrint(modelData.relpath)", harness.FILE_MANAGER_QML)
         self.assertIn('id: printConfirmDialog', harness.FILE_MANAGER_QML)
-        self.assertIn('background: Rectangle', harness.FILE_MANAGER_QML)
+        # The Columns menu's themed surface rides the chooser now. The
+        # popup stays a Popup in its own document — the dashboard ladder
+        # still opens and closes it through the shell's instance id.
+        self.assertIn('background: Rectangle', leaves["FileColumnChooser"])
+        self.assertIn('objectName: "columnsPopup"', leaves["FileColumnChooser"])
+        self.assertIn("closePolicy: Popup.CloseOnPressOutside\n", leaves["FileColumnChooser"])
         # The confirmation's large thumbnail and the metadata-scan
         # gate (the live reports: the dialog's thumbnail
         # request, and a scan entry offered where it cannot work).
