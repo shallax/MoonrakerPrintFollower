@@ -538,10 +538,10 @@ class FileManagerServiceTests(unittest.TestCase):
         # a freed slot drains the next row.
         rows = [FileRow(filename=f"f{i}.gcode", relpath=f"f{i}.gcode",
                         thumb_path=".thumbs/t-32x32.png") for i in range(6)]
-        with patch.object(self.service, "_fetch_thumb") as fetch:
+        with patch.object(self.service._thumbnails, "_fetch") as fetch:
             self.service.request_thumbnails(rows)
             self.assertEqual(fetch.call_count, 3)
-            self.assertEqual(len(self.service._thumb_queue), 3)
+            self.assertEqual(len(self.service._thumbnails._queue), 3)
 
     def test_failed_thumbnail_fetch_releases_its_slot(self):
         # A fetch that cannot even start (mkdtemp failing after a
@@ -552,15 +552,15 @@ class FileManagerServiceTests(unittest.TestCase):
                         thumb_path=".thumbs/a-32x32.png")]
         with patch("tempfile.mkdtemp", side_effect=OSError("tmp gone")):
             self.service.request_thumbnails(rows)
-        self.assertEqual(self.service._thumb_active, 0)
+        self.assertEqual(self.service._thumbnails._active, 0)
         self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
 
     def test_abort_clears_the_queue_and_the_counter(self):
         rows = [FileRow(filename=f"f{i}.gcode", relpath=f"f{i}.gcode",
                         thumb_path=".thumbs/t-32x32.png") for i in range(5)]
-        with patch.object(self.service, "_fetch_thumb"):
+        with patch.object(self.service._thumbnails, "_fetch"):
             self.service.request_thumbnails(rows)
-            self.assertEqual(self.service._thumb_active, 3)
+            self.assertEqual(self.service._thumbnails._active, 3)
             # The registry must reset BEFORE the aborts fire: an
             # inline finished handler draining a live registry would
             # issue fetches the reset then orphans (the adversarial
@@ -569,15 +569,15 @@ class FileManagerServiceTests(unittest.TestCase):
             seen = []
             class FakeReply:
                 def abort(self):
-                    seen.append(len(service._thumb_replies))
+                    seen.append(len(service._thumbnails._replies))
                 def deleteLater(self):
                     pass
-            service._thumb_replies = {
+            service._thumbnails._replies = {
                 f"f{i}.gcode": FakeReply() for i in range(3)
             }
-            service._abort_thumbs()
-            self.assertEqual(self.service._thumb_active, 0)
-            self.assertEqual(self.service._thumb_queue, [])
+            service._thumbnails.abort()
+            self.assertEqual(self.service._thumbnails._active, 0)
+            self.assertEqual(self.service._thumbnails._queue, [])
             self.assertTrue(seen)
             self.assertTrue(all(size == 0 for size in seen))
 
@@ -597,12 +597,12 @@ class FileManagerServiceTests(unittest.TestCase):
             def deleteLater(self):
                 released.append(True)
         reply = FakeReply()
-        self.service._thumb_replies["a.gcode"] = reply
-        self.service._thumb_active = 1
-        self.service._thumb_finished(
-            "a.gcode", reply, self.service._thumb_generation - 1, "/tmp/x.png", False)
+        self.service._thumbnails._replies["a.gcode"] = reply
+        self.service._thumbnails._active = 1
+        self.service._thumbnails._finished(
+            "a.gcode", reply, self.service._thumbnails._generation - 1, "/tmp/x.png", False)
         self.assertTrue(released)
-        self.assertEqual(self.service._thumb_active, 0)
+        self.assertEqual(self.service._thumbnails._active, 0)
 
 
     """The service against the scripted transport: requests are
