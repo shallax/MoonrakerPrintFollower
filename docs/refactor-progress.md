@@ -14,6 +14,7 @@ Branch: `chore/v4.6.2`. Base when this ledger opened: `905c628`.
 | D | camera QML | `CameraPane.qml` 1403 -> 221 | `bf5ff8d` | yes |
 | D | toolhead QML | `ToolheadSection.qml` 993 -> 401 | `f491998` | yes |
 | D | Preview card + dashboard leaves | card 1211 -> 354, dashboard 1181 -> 980 | `1b58cbc` | yes |
+| E | renderer subsystem | model 4486 -> 3015; +`PlateRenderController.py` 1626, `RenderSurface.py` 94 | `e60823f` | yes |
 
 ## Batch A — baseline repair
 
