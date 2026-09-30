@@ -856,7 +856,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("MB free" in line for line in lines))
         model._file_manager.disk_usage.clear()
-        with harness.patch.object(model, "_start_upload") as start:
+        with harness.patch.object(model._files, "_start_upload") as start:
             model.fileUpload("/tmp/unknown-disk.gcode")
         start.assert_called_once()  # no report → the guard stands down
 
