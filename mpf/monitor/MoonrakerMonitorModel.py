@@ -47,6 +47,7 @@ from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
 from .controls.MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
+from .MonitorPublication import MonitorPublication
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
@@ -253,19 +254,7 @@ def value_property(kind, name, signal, default=None):
     the stored object instead of deep-copying per read.
     """
     def read(self):
-        value = self._values.get(name, default)
-        cached = self._qv_cache.get(name)
-        if cached is None or cached[0] is not value:
-            # One QVariant conversion per VALUE REBUILD, not per read:
-            # at the mature 1800-sample payload a conversion costs
-            # ~6.75 ms (measured in the pinned container), and the
-            # chart is read by several bindings per aux feed. The
-            # stored value's identity is stable across publishes by
-            # design (payloads rebuild only on real changes), so the
-            # cache hits for every unchanged publish.
-            cached = (value, QVariant(value) if kind is QVariant else value)
-            self._qv_cache[name] = cached
-        return cached[1]
+        return self._publication.read(kind, name, default)
     return pyqtProperty(kind, read, notify=signal)
 
 
@@ -323,106 +312,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # the popover's own candidate).
     pauseAtLayerChanged = pyqtSignal()
 
-    _SIGNAL_KEYS = (
-        ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
-                            "platePassFraction",
-                            "improvingEta", "printIndexReady", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
-                            "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
-                            "monitorPosition", "monitorPositionCompact", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
-                            "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining",
-                            "sectionReason", "sectionReasonDetail",
-                            # The round's additions (the panel's catch):
-                            # a key outside its signal's group never
-                            # notifies — the next-pause readout and
-                            # the collapsed cells went stale while
-                            # PAUSED (the other keys in the group
-                            # masked it while printing).
-                            "nextPauseLayer", "nextPauseEta", "nextPauseFraction", "nextPauseBaked",
-                            "monitorPositionX", "monitorPositionY", "monitorPositionZ",
-                            "migrationBannerVisible", "migrationBannerText", "migrationBackupAvailable",
-                            "migrationDiagnosticsVisible", "migrationDiagnosticsText")),
-        ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
-        ("temperatureChartMiniChanged", ("temperatureChartMini",)),
-        ("temperatureChartFullChanged", ("temperatureChartFull",)),
-        ("temperatureChartLatestChanged", ("temperatureChartLatest",)),
-        ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
-        ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
-        ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
-        ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
-        # The follower view's state precedes the plate payloads: a
-        # detaching seek flips followerAttached in the SAME emission
-        # cycle BEFORE the new layer's payload arrives, so QML never
-        # paints the new current layer as a pending base while it
-        # still reads the previous attached state and then clears it
-        # .
-        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerShowRetractions", "followerShowUnretractions", "followerTrueThickness", "followerAntialiasing", "followerKeepCentred", "followerSoftwareRendering", "followerMotionSmoothing", "followerLineScale",
-                                 "followerTravelVisualRatio", "followerAttached", "followerLayerAnchor")),
-        # The popover's pause block: the schedule's rows and the
-        # candidate-derived gates. Its own group — a pause landing
-        # while the follower view stands still must not re-wrap the
-        # plate payloads.
-        ("pauseAtLayerChanged", ("pauseAtLayerActive", "pauseAtLayerCandidate", "pauseAtLayerCanToggle",
-                                 "pauseAtLayerScheduled", "pauseAtLayerSummary", "pauseAtLayerItems",
-                                 "pauseAtLayerUnavailableText", "pauseAtLayerHasBaked",
-                                 "pauseAtLayerHasClearable")),
-        ("plateScrubVectorChanged", ("plateScrubVector",)),
-        ("plateLiveScrubVectorChanged", ("plateLiveScrubVector",)),
-        ("plateProgressChanged", ("plateLayers", "plateSplit", "platePartial", "plateProgressAnchor", "plateProgressAvailable", "plateTrackingAvailable", "plateProgressReason",
-                                  "plateLayerCount", "plateLayerMotionCount",
-                                  "plateLiveLayers", "plateLiveSplit", "plateLivePartial", "plateLiveAnchor", "plateLiveAvailable",
-                                  "plateNavigationData", "plateNavigationSplit",
-                                  "plateNavigationBacking", "plateSceneEpoch")),
-        ("powerDevicesChanged", ("powerDevices",)),
-        ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
-                           "cpuTemperature", "mcuSummary", "mcuItems")),
-        ("endstopsChanged", ("endstopItems", "endstopSummary")),
-        ("actionChanged", ("printActive", "printJobCaption", "canPausePrint", "canResumePrint", "pauseReason", "pauseReasonDetail", "resumeReason", "resumeReasonDetail", "canCancelPrint", "canRestartLastPrint", "actionBusy",
-                           "actionStatus", "actionTimestamp", "emergencyHoldProgress")),
-        ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
-                             "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
-                             "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
-                             "canSaveConfig")),
-        ("emergencyStopChanged", ("emergencyStopClicks",)),
-        ("toolheadChanged", ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed",
-                             "homedAxes", "positionMode", "jogStatus", "jogReason", "jogReasonDetail")),
-        ("restartChanged", ("canRestart", "restartReason", "restartReasonDetail")),
-        ("controlsLockChanged", ("controlsLocked", "controlsCollapsed")),
-        ("infoPaneChanged", ("infoCollapsed",)),
-        ("statusPaneChanged", ("statusCollapsed",)),
-        ("consoleHeightChanged", ("consoleHeight",)),
-        ("sectionsChanged", ("sectionExpandedMap",)),
-        ("sectionLayoutChanged", ("sectionLayout", "sectionHiddenMap")),
-        ("showProbePointsChanged", ("showProbePoints",)),
-        ("cameraRefreshChanged", ("cameraRefreshNonce",)),
-        ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
-        ("cameraFpsChanged", ("cameraFps", "cameraFpsMin", "cameraFpsMax",
-                              "cameraSnapshotMaxFps", "cameraSnapshotAvailable", "cameraSnapshotMode")),
-        ("traceCameraTimingChanged", ("traceCameraTiming",)),
-        ("cameraRecoveringChanged", ("cameraRecovering",)),
-        ("connectionDetailChanged", ("connectionDetail",)),
-        ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
-                                "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
-                                "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
-                                "fileManagerEmptyKind", "fileManagerSelected", "fileManagerSortColumn",
-                                "fileManagerSortAscending", "fileManagerSearch", "fileManagerOpen", "fileManagerFilters",
-                                "filePrintConfirm", "fileDeleteConfirm", "fileRenameTarget",
-                                "fileRenameConflict", "fileUploadConfirm", "fileUploadProgress",
-                                "fileDownloadProgress",
-                                "fileManagerColumnWidths", "fileManagerColumnOrder", "fileManagerColumnHidden",
-                                "fileManagerFilterCounts", "fileManagerFilterOptions", "fileManagerHistoryLoaded",
-                                "fileManagerHistoryExhausted", "fileManagerWalkError")),
-        # Thumbnails publish ALONE (the live report: each
-        # scroll-triggered fetch reply rebuilt the whole payload).
-        ("fileManagerThumbsChanged", ("fileManagerThumbs",)),
-        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending", "consoleErrorBell")),
-        ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
-                                  "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
-                                  "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
-                                  "bedMeshRangeText", "bedMeshPreviewVisible", "bedMeshThresholdLow", "bedMeshThresholdHigh",
-                                  "bedMeshMachineWidth", "bedMeshMachineDepth",
-                                  "bedMeshCenterIsZero")),
-    )
-
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
@@ -432,6 +321,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
                  identity=None, state_store=None, persistence=None, index_service=None, colour_scheme=None):
         super().__init__(output_controller, number_of_extruders)
+        # The publication exists before anything can read a value
+        # property: the declarations below resolve through it.
+        self._publication = MonitorPublication()
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
         # The decoded cache's owner (the follower's index service):
@@ -495,14 +387,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # finds the file already local and skips the re-download.
         self._request_monitor_download = request_monitor_download
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
-        self._qv_cache = {}
         self._improving_eta = False
         self._improve_started_snapshot = None
         self._migration_record_cache = None
         self._migration_record_read = False
         self._peripheral_cache = (None, {})
         self._endstop_cache = (None, {})
-        self._values = {}
         state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
         self._controls_locked = state["controlsLocked"]
@@ -1000,7 +890,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         payload = self._file_manager.thumbnail_payload()
         if previous == payload:
             return
-        self._values["fileManagerThumbs"] = payload
+        self._publication.set("fileManagerThumbs", payload)
         self.fileManagerThumbsChanged.emit()
 
     @staticmethod
@@ -1025,8 +915,35 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish_pending = False
         self._publish()
 
+    @property
+    def _values(self):
+        """The committed map, owned by the publication. Every reader here
+        treats it as read-only; `_publication` is the only thing that
+        replaces or amends it."""
+        return self._publication.values
+
     def _publish(self):
+        """One publication transaction.
+
+        The phases name the statement order they always ran in: the
+        authoritative snapshot and the state transitions that must land
+        before any value reads them; the value build; ONE commit of the
+        whole map; the camera transition, which amends the frame it was
+        computed in; and the notification pass over what moved. The side
+        effects interleaved through the build (the thumbnail request, the
+        print-start watchdog tick, the navigation demand) stay in the
+        phase they always ran in — their position relative to the reads
+        around them is contractual.
+        """
         previous = self._values
+        snapshot = self._observe()
+        self._publication.store(self._compose(snapshot))
+        self._apply_camera_url()
+        self._emit_changed(previous)
+
+    def _observe(self):
+        """The snapshot read and the transitions that precede the values
+        built from it."""
         snapshot = self._print_state()
         # The follower's attach state belongs to ONE print: a new file
         # re-attaches it before the value block reads the state.
@@ -1047,6 +964,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # cleared state. The 90 s timer stays as the last resort
             # for a hung pull.
             self._improving_eta = False
+        return snapshot
+
+    def _compose(self, snapshot):
+        """The value build: the presenters' groups, the policy
+        projections and the layout state, merged in the order the keys
+        were always written in. The collaborators are asked for their
+        group; nothing here writes configuration or dispatches a
+        command on a presenter's behalf."""
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         # Connected with no auxiliary data landed yet: the pane's
         # loading state (the 2026-09-16 request — the empty grey page
@@ -1403,17 +1328,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["migrationBackupAvailable"] = bool(failed and record.get("backupWritten") and record.get("backupName"))
         values["migrationDiagnosticsVisible"] = bool(failed and record.get("bannerDismissed"))
         values["migrationDiagnosticsText"] = migration_diagnostics_text(record) if failed else ""
-        self._values = values
+        return values
+
+    def _apply_camera_url(self) -> None:
+        """The camera transition, on the frame just committed: the URL
+        reaches the output device and a genuine transition bumps the
+        reload nonce IN THE SAME frame — published one cycle late it
+        drove a second stream application after the URL's (the
+        camera-delay fix). The query-only case is the upstream's own
+        noise: the live stream keeps working, so the pane's guard and
+        this one both ignore it."""
         first_attach = False
         try:
             url = self._camera.url if self._webcam_stream_enabled else ""
             if url:
                 last_url = self._camera_last_url
-                # A query-only transition is the upstream's own noise
-                # (a rotated nonce in the reported stream URL): the
-                # live stream keeps working, so no reload and no nonce
-                # bump — the pane's guard ignores the query too. An
-                # origin, port or path transition still reloads.
+
                 def _stripped(u):
                     cut = u.find("?")
                     return u[:cut] if cut >= 0 else u
@@ -1427,17 +1357,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # worked because it changed the URL).
                     first_attach = not last_url
                     self._camera_refresh_nonce += 1
-                    # The bump rides THIS publish's values (the camera-
-                    # delay fix): published one cycle late it drove a
-                    # SECOND stream application after the URL's — the
-                    # QML coalescer collapses the same-cycle pair into
-                    # one.
-                    values["cameraRefreshNonce"] = self._camera_refresh_nonce
+                    self._publication.set("cameraRefreshNonce", self._camera_refresh_nonce)
             self.setCameraUrl(QUrl(url))
         except AttributeError:
             pass
         from ..diagnostics.CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
-        values["traceCameraTiming"] = camera_timing_enabled()
+        self._publication.set("traceCameraTiming", camera_timing_enabled())
         if first_attach:
             # T5: the FINAL url QML consumes, sanitised to
             # scheme/host/port/path (never query credentials).
@@ -1445,14 +1370,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             sanitised.setQuery("")
             camera_timing_mark("T5", "camera URL published: %s" % sanitised.toString())
 
-        # Qt notify signals are part of control ownership. Broadcasting every
-        # signal for every poll was re-evaluating bound ComboBox/Slider values
-        # while the user was interacting with them, and QVariant-list updates
-        # could also rebuild Repeater delegates mid-drag. Only notify the group
-        # whose published values actually changed.
-        for signal_name, keys in self._SIGNAL_KEYS:
-            if any(previous.get(key) != values.get(key) for key in keys):
-                getattr(self, signal_name).emit()
+    def _emit_changed(self, previous) -> None:
+        """Qt notify signals are part of control ownership. Broadcasting
+        every signal for every poll re-evaluated bound ComboBox/Slider
+        values while the user was interacting with them, and
+        QVariant-list updates rebuilt Repeater delegates mid-drag. Only
+        the group whose published values actually changed is notified,
+        in the table's order."""
+        for signal_name in self._publication.changed(previous):
+            getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     # The migration-failure surfaces (the UX ruling): the dialog's

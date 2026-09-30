@@ -1,4 +1,5 @@
 """Executable runtime lifecycle composition contracts."""
+from mpf.monitor.MonitorPublication import SIGNAL_GROUPS
 from tests import composed_runtime_support as harness
 
 class ComposedComponentTests(harness.ComposedComponentTests):
@@ -368,14 +369,13 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # flip BEFORE the new layer's payload lands, or QML paints
         # the new current layer as a pending base for one frame and
         # then clears it.
-        model = self.monitor()
-        names = [name for name, _keys in model._SIGNAL_KEYS]
+        names = [name for name, _keys in SIGNAL_GROUPS]
         self.assertLess(names.index("followerViewChanged"),
                         names.index("plateProgressChanged"))
 
     def test_static_geometry_has_independent_notify_signals(self):
         model = self.monitor()
-        groups = dict(model._SIGNAL_KEYS)
+        groups = dict(SIGNAL_GROUPS)
         for property_name, signal_name in (
                 ("plateScrubVector", "plateScrubVectorChanged"),
                 ("plateLiveScrubVector", "plateLiveScrubVectorChanged")):

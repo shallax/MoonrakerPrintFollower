@@ -944,15 +944,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # The panel's catch: a key declared with a notify signal but
         # absent from that signal's group can never notify — the
         # next-pause readout went stale while PAUSED (the other keys
-        # in the group masked it while printing). Every declaration
-        # must appear in its signal's group; the allowlist holds the
-        # two pre-existing gaps the round did not add.
+        # in the group masked it while printing). The declarations live
+        # on the model and the table lives with the publication owner
+        # that emits from it, so both files are read.
         import ast
-        module = ast.parse(harness.MONITOR_MODEL)
+        module = ast.parse(harness.MONITOR_PUBLICATION)
         groups = {}
         for node in ast.walk(module):
             if isinstance(node, ast.Assign) and any(
-                    getattr(target, "id", "") == "_SIGNAL_KEYS" for target in node.targets):
+                    getattr(target, "id", "") == "SIGNAL_GROUPS" for target in node.targets):
                 for element in ast.walk(node.value):
                     if isinstance(element, ast.Tuple) and len(element.elts) >= 2 \
                             and isinstance(element.elts[0], ast.Constant) \
