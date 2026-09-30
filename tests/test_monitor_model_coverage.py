@@ -365,7 +365,7 @@ class PublishBranchTests(MonitorModelCase):
         from PyQt6.QtGui import QGuiApplication
         with patch.object(QGuiApplication, "instance", staticmethod(lambda: None)):
             self.model = self.build()
-        self.assertIsNone(self.model._camera_app_state)
+        self.assertIsNone(self.model._camera_recovery.application_state)
 
     def test_the_model_hooks_the_application_wake_state(self):
         # The harness runs a core application, so the hook is driven
@@ -376,13 +376,13 @@ class PublishBranchTests(MonitorModelCase):
                               applicationStateChanged=SimpleNamespace(connect=hooked.append))
         with patch.object(QGuiApplication, "instance", staticmethod(lambda: app)):
             self.model = self.build()
-        self.assertEqual(self.model._camera_app_state, "inactive")
+        self.assertEqual(self.model._camera_recovery.application_state, "inactive")
         self.assertEqual(hooked, [self.model._on_app_state_changed])
 
     def test_waking_the_application_reloads_the_camera_once(self):
         from PyQt6.QtCore import Qt
         self.model = self.build()
-        self.model._camera_app_state = Qt.ApplicationState.ApplicationInactive
+        self.model._camera_recovery.seed_application_state(Qt.ApplicationState.ApplicationInactive)
         before = self.model.cameraRefreshNonce
         self.model._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
         self.assertEqual(self.model.cameraRefreshNonce, before + 1)
@@ -395,7 +395,7 @@ class PublishBranchTests(MonitorModelCase):
         # global wake, but only the ACTIVE one may reload its camera.
         from PyQt6.QtCore import Qt
         self.model = self.build()
-        self.model._camera_app_state = Qt.ApplicationState.ApplicationInactive
+        self.model._camera_recovery.seed_application_state(Qt.ApplicationState.ApplicationInactive)
         self.model.setMonitoringActive(False)
         before = self.model.cameraRefreshNonce
         self.model._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
@@ -1487,22 +1487,22 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.assertEqual(self.publishes, [], "a repeat switch republished")
         self.model.setWebcamStreamEnabled(False)
         self.assertFalse(self.value("webcamStreamEnabled"))
-        nonce = self.model._camera_refresh_nonce
+        nonce = self.model._camera_recovery.nonce
         self.model.setWebcamStreamEnabled(True)
         self.assertTrue(self.value("webcamStreamEnabled"))
-        self.assertEqual(self.model._camera_refresh_nonce, nonce + 1,
+        self.assertEqual(self.model._camera_recovery.nonce, nonce + 1,
                          "resuming the stream did not request a fresh one")
 
     def test_the_connection_and_watchdog_guards_stand_down_with_the_stream_off(self):
         self.model = self.build()
         self.model.setWebcamStreamEnabled(False)
-        nonce = self.model._camera_refresh_nonce
+        nonce = self.model._camera_recovery.nonce
         # No stream to reload and none to recover: both paths stand
         # down rather than bumping the nonce or retrying a dead camera.
         self.model._on_connection_state("yes")
-        self.assertEqual(self.model._camera_refresh_nonce, nonce)
+        self.assertEqual(self.model._camera_recovery.nonce, nonce)
         self.model._on_stream_failed()
-        self.assertEqual(self.model._camera_refresh_nonce, nonce)
+        self.assertEqual(self.model._camera_recovery.nonce, nonce)
 
     def test_refresh_webcams_stands_down_with_the_stream_off(self):
         self.model = self.build()

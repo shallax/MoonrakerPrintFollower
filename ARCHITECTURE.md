@@ -157,6 +157,7 @@ correct package ownership.
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
+| `CameraRecovery.py` | The webcam stream's freshness policy: the reload nonce every recovery path moves, the recovery veil and the stream URL's transition rules | Publishing a frame, the bridge transport or the camera's own configuration |
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation and bounded snapshot polling; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
