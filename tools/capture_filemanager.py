@@ -8,7 +8,7 @@ The face reads its printer model through property bindings only, so the
 capture is the same shape as production: one ``printerModel`` object
 exposing the file-manager slice of MoonrakerMonitorModel, exactly as
 ``_publish_file_manager`` builds it — the rows are the dicts
-``MonitorFormatting.file_row_payload`` produces, already formatted. The
+``FileFormatting.file_row_payload`` produces, already formatted. The
 stub is a CAPTURE fixture: it is never imported by the plugin.
 
 Import-path note: Qt 6.11 searches import paths newest-first and a
@@ -45,7 +45,7 @@ def qml_errors(component) -> str:
     return "\n".join(lines) if lines else "<no errors>"
 
 
-# MonitorFormatting.STATUS_COLOURS plus its fallback, with the display
+# FileFormatting.STATUS_COLOURS plus its fallback, with the display
 # text the face shows for each.
 STATUS = {
     "completed": ("Completed", "#43a047"),
@@ -56,7 +56,7 @@ STATUS = {
 
 
 def _row(name, size="1.84 MB", status="completed", **over):
-    """One row as MonitorFormatting.file_row_payload shapes it: every
+    """One row as FileFormatting.file_row_payload shapes it: every
     field is already a formatted string by the time QML sees it."""
     text, colour = STATUS[status]
     row = {

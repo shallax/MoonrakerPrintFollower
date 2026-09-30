@@ -767,7 +767,7 @@ class FileMutationTests(MonitorModelCase):
     def test_a_column_change_saves_only_when_the_service_changed(self):
         self.listing()
         saved = []
-        with patch.object(self.model, "_save_state", lambda: saved.append(1)):
+        with patch.object(self.model._files, "_save_columns", lambda: saved.append(1)):
             self.model.setFileColumnWidth("size", 180)
             self.assertEqual(len(saved), 1)
             self.model.setFileColumnWidth("size", 180)
@@ -782,19 +782,19 @@ class FileMutationTests(MonitorModelCase):
 
     def test_upload_progress_publishes_only_on_a_new_percentage(self):
         self.model = self.build()
-        self.model._file_upload_progress = {"name": "part.gcode", "percent": 0,
+        self.model._files._file_upload_progress = {"name": "part.gcode", "percent": 0,
                                             "state": "uploading", "error": ""}
         self.model._publish()
-        original = self.model._file_upload_progress
+        original = self.model._files._file_upload_progress
         self.model._file_manager.uploadProgress.emit(0)
-        self.assertIs(self.model._file_upload_progress, original)
+        self.assertIs(self.model._files._file_upload_progress, original)
         self.model._file_manager.uploadProgress.emit(40)
-        self.assertIsNot(self.model._file_upload_progress, original)
+        self.assertIsNot(self.model._files._file_upload_progress, original)
         self.assertEqual(self.value("fileUploadProgress")["percent"], 40)
 
     def test_cancelling_an_upload_closes_the_confirmation(self):
         self.model = self.build()
-        self.model._file_upload_confirm = {"path": "/tmp/part.gcode", "filename": "part.gcode"}
+        self.model._files._file_upload_confirm = {"path": "/tmp/part.gcode", "filename": "part.gcode"}
         self.model.fileCancelUpload()
         self.assertEqual(self.value("fileUploadConfirm"), "")
         self.model.fileUpload("")
@@ -804,7 +804,7 @@ class FileMutationTests(MonitorModelCase):
         # Qt swallows a slot's traceback, so the wrapper's whole job is
         # to log the failure and republish an empty popup.
         self.model = self.build()
-        module = self.qt.load("MoonrakerMonitorModel")
+        module = self.qt.load("FileBrowserPresentation")
         fm = self.model._file_manager
         with self.assertLogs(module.__name__, level="ERROR") as captured:
             with patch.object(fm, "open", side_effect=RuntimeError("the slot died")):

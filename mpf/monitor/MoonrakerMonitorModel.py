@@ -58,34 +58,16 @@ from .controls.MonitorCommands import MonitorCommands
 from .controls.MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
-from ..files.browser.FilesViewModel import FilesViewModel
+from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
 from .layout.UiStateStore import UiStateStore
-from datetime import datetime
 
 from ..files.browser.FileManager import FileManager
 from .layout.SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
 from ..files.browser.FileManagerPolicy import (
-    delete_candidates,
-    is_gcode_name,
-    name_collides,
     normalise_columns,
-    path_collides,
-    rename_path,
-    rename_target,
-    upload_relpath,
 )
-from .MonitorFormatting import (
-    core_values,
-    endstop_values,
-    number,
-    print_job_caption,
-    file_disk_text,
-    file_row_payload,
-    file_timestamp,
-    peripheral_values,
-    PlateProjectionMemo,
-)
+from .MonitorFormatting import (core_values, endstop_values, number, print_job_caption, peripheral_values, PlateProjectionMemo)
 from dataclasses import replace
 
 from ..settings.PrinterConfig import (
@@ -185,10 +167,6 @@ def _state_height(value) -> int:
 # The shared chart-config normaliser (PrinterConfig owns the per-printer
 # record; the legacy global JSON still feeds it during migration).
 _chart_state = normalise_temperature_chart
-
-
-
-
 
 
 def _read_state(store=None) -> dict:
@@ -632,12 +610,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._cancel_file_download = cancel_file_download
         if download_failed is not None:
             download_failed.connect(self._on_file_manager_note)
-        self._file_print_confirm = None
-        self._file_delete_confirm = None
-        self._file_rename_target = None
-        self._file_rename_conflict = False
-        self._file_upload_confirm = None
-        self._file_upload_progress = None
         # The "improve ETA" action reuses the facade's load-current-print
         # flow (download + index), passed in as an explicit capability.
         self._request_load = request_load
@@ -754,8 +726,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The files view model (4.3.0): the stable-identity surface
         # behind the list-valued projection — an internal
         # collaborator, never the published surface.
-        self._files_model = FilesViewModel(self)
-        self._files_model_rev = -1
         self._toolhead_state = state["toolhead"]
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
@@ -843,7 +813,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.set_column_state(self._file_columns_state)
         # Metascan outcomes land in the console as local notes (the
         # live report: the option appeared to do nothing).
-        self._file_manager_note = ""
         # The print-start operation's owner (4.3.0): the armed state,
         # the watchdog and the failure verdict moved out of the model
         # into a capabilities-only owner — one owned operation across
@@ -856,13 +825,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the
         # live request).
-        self._file_manager.uploadProgress.connect(self._on_upload_progress)
-        self._file_manager.uploadFinished.connect(self._on_upload_finished)
+        self._files = FileBrowserPresentation(
+            self._file_manager, snapshot=lambda: self._data.snapshot,
+            printer_name=self._printer_name, start_print=self._start_browser_print,
+            note=self._console.note, save_columns=self._save_state, parent=self,
+        )
+        self._files.changed.connect(lambda: self._publish())
         # The light publish: thumb transitions never rebuild the rows.
         self._thumbs_dirty = False
         self._publish_pending = False
         self._file_manager.thumbsChanged.connect(self._publish_thumbs)
-        self._file_manager_open = False
         # The console's saved-state colouring now rides its own 2 s
         # settle after each shard write (ConsoleController); the
         # preference-flush channel retired with the transcript (4.5.0).
@@ -923,7 +895,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The note feeds BOTH the console and the popup's own status
         # line (refusals must be visible where the action happened).
         self._console.note(text)
-        self._file_manager_note = str(text)
         self._publish()
 
     def _on_connection_state(self, state: str) -> None:
@@ -1168,104 +1139,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # — the signal path the toggle uses, fired here.
             self.sectionLayoutChanged.emit()
 
-    def _file_manager_values(self):
-        fm = self._file_manager
-        now = time.time()
-        if not self._file_manager_open:
-            # The popup is closed: the grid's bindings are inert, and
-            # rebuilding the ROW payloads per poll is pure waste —
-            # closing a 400-file listing stalled for seconds (the
-            # live report). The cheap view state still
-            # publishes (the view-mutation contract), only the heavy
-            # rows/recents/thumbs/option-scan is skipped. Reopening
-            # refills everything below.
-            return {
-                "fileManagerRows": [],
-                "fileManagerRecents": [],
-                "fileManagerDirectory": fm.directory,
-                "fileManagerDirectories": fm.subdirectories(),
-                "fileManagerDiskText": file_disk_text(fm.disk_usage),
-                "fileManagerRefreshedAt": f"Last refreshed at {datetime.fromtimestamp(fm.refreshed_at).strftime('%H:%M')}" if fm.refreshed_at else "Not yet refreshed",
-                "fileManagerShown": "",
-                "fileManagerPage": f"Page {fm.page_index()} of {fm.page_number()}" if fm.view.page_size != "all" else "",
-                "fileManagerPageIndex": fm.page_index(),
-                "fileManagerPageCount": fm.page_number(),
-                "fileManagerPageSize": str(fm.view.page_size),
-                "fileManagerPageSelection": "none",
-                "fileManagerEmptyKind": "",
-                "fileManagerSelected": len(fm.selection),
-                "fileManagerSortColumn": fm.view.sort_column,
-                "fileManagerSortAscending": fm.view.sort_ascending,
-                "fileManagerSearch": fm.view.search,
-                "fileManagerFilters": {key: (list(value) if isinstance(value, (list, tuple)) else [value]) for key, value in fm.view.filters.items() if value},
-                "fileManagerFilterCounts": {key: len(value) if isinstance(value, (list, tuple)) else 1 for key, value in fm.view.filters.items() if value},
-                "fileManagerFilterOptions": {},
-                "fileManagerHistoryLoaded": fm.history_loaded,
-                "fileManagerHistoryExhausted": fm.history_exhausted,
-                "fileManagerWalkError": fm.walk_error or "",
-            }
-        printing_relpath = self._printing_relpath()
-        selection = fm.selection
-        rows = []
-        for row in fm.page_rows():
-            payload = file_row_payload(row, now)
-            payload["checked"] = row.relpath in selection
-            payload["printing"] = row.relpath == printing_relpath
-            rows.append(payload)
-        # The view model rebuilds ONLY when the projection's revision
-        # moves — the per-publish cost stays on the cached rows.
-        if fm.projection_count != self._files_model_rev:
-            self._files_model_rev = fm.projection_count
-            self._files_model.set_rows(rows)
-        total = fm.total_count()
-        size = fm.view.page_size
-        if size == "all":
-            shown = f"Showing 1–{total} of {total}" if total else "Showing 0 of 0"
-        else:
-            start = (fm.page_index() - 1) * size + 1 if total else 0
-            end = min(start + size - 1, total) if total else 0
-            shown = f"Showing {start}–{end} of {total}"
-        return {
-            "fileManagerRows": rows,
-            "fileManagerRecents": [{
-                "name": item["filename"],
-                "time": file_timestamp(item.get("end_time"), now),
-                "relpath": item.get("relpath", ""),
-                "thumb": bool(item.get("thumb")),
-            } for item in fm.recents()],
-            "fileManagerDirectory": fm.directory,
-            "fileManagerDirectories": fm.subdirectories(),
-            "fileManagerDiskText": file_disk_text(fm.disk_usage),
-            "fileManagerRefreshedAt": f"Last refreshed at {datetime.fromtimestamp(fm.refreshed_at).strftime('%H:%M')}" if fm.refreshed_at else "Not yet refreshed",
-            "fileManagerShown": shown,
-            "fileManagerPage": f"Page {fm.page_index()} of {fm.page_number()}" if fm.view.page_size != "all" else "",
-            "fileManagerPageIndex": fm.page_index(),
-            "fileManagerPageCount": fm.page_number(),
-            "fileManagerPageSize": str(fm.view.page_size),
-            "fileManagerPageSelection": fm.selection_state(fm.page_rows()),
-            "fileManagerEmptyKind": fm.empty_state(),
-            "fileManagerSelected": len(selection),
-            "fileManagerSortColumn": fm.view.sort_column,
-            "fileManagerSortAscending": fm.view.sort_ascending,
-            "fileManagerSearch": fm.view.search,
-            "fileManagerFilters": {key: (list(value) if isinstance(value, (list, tuple)) else [value]) for key, value in fm.view.filters.items() if value},
-            "fileManagerFilterCounts": {key: len(value) if isinstance(value, (list, tuple)) else 1 for key, value in fm.view.filters.items() if value},
-            "fileManagerFilterOptions": fm.filter_option_counts_cached(now=now),
-            "fileManagerHistoryLoaded": fm.history_loaded,
-            "fileManagerHistoryExhausted": fm.history_exhausted,
-            "fileManagerWalkError": fm.walk_error or "",
-        }
-
-    def _printing_relpath(self):
-        # The ACTIVE print's root-exclusive relpath (round-2 D4), or
-        # "" — the state filter is the load-bearing part: Klipper
-        # never clears print_stats.filename on completion, so a
-        # filename alone would keep the last-printed file badged
-        # "printing" with Delete/Rename disabled forever.
-        state = self._data.snapshot.core.get("print_stats") or {}
-        if str(state.get("state") or "") not in ("printing", "paused"):
-            return ""
-        return str(state.get("filename") or "")
 
     def _publish_thumbs(self) -> None:
         """The thumbnail-only publish, COALESCED: landings arrive in
@@ -1311,7 +1184,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def _publish(self):
-        fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
         # The follower's attach state belongs to ONE print: a new file
@@ -1535,33 +1407,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._endstop_cache = (endstops_key,
                                    endstop_values(self._data.snapshot, self._client.connected))
         values.update(self._endstop_cache[1])
-        values.update(self._file_manager_values())
-        values["fileManagerOpen"] = self._file_manager_open
-        values["filePrintConfirm"] = self._file_print_confirm or ""
-        values["fileDeleteConfirm"] = self._file_delete_confirm or ""
-        values["fileRenameTarget"] = self._file_rename_target or ""
-        values["fileRenameConflict"] = bool(self._file_rename_conflict)
-        values["fileUploadConfirm"] = self._file_upload_confirm or ""
-        values["fileUploadProgress"] = self._file_upload_progress or ""
-        values["fileManagerColumnWidths"] = fm.column_widths()
-        values["fileManagerColumnOrder"] = fm.column_order()
-        values["fileManagerColumnHidden"] = fm.column_hidden()
-        values["fileManagerThumbs"] = self._file_manager.thumbnail_payload() if self._file_manager_open else {}
-        values["fileManagerNote"] = self._file_manager_note
-        # Thumbnails fetch per the RENDER WINDOW, not the page: the
-        # QML's visibleRows change drives the request (the
-        # live report: an "all / page" listing fired hundreds of
-        # thumbnail requests on open — the window bounds them). The
-        # recents strip's own fetch stays here (bounded at 50). The
-        # watchdog below runs regardless — a print confirmed before
-        # the popup closed still needs its verdict.
-        if self._file_manager_open:
-            rows = []
-            for item in self._file_manager.recents():
-                row = self._file_manager.row_for(item.get("relpath") or "") if item.get("relpath") else None
-                if row is not None and row.thumb_path:
-                    rows.append(row)
-            self._file_manager.request_thumbnails(rows)
+        values.update(self._files.values())
+        self._files.request_recent_thumbnails()
         # The print-start watchdog runs on the publish tick — the
         # owner supervises the armed attempt regardless of the popup's
         # state (a print confirmed before the popup closed still
@@ -2001,6 +1848,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     fileManagerWalkError = value_property(str, "fileManagerWalkError", fileManagerChanged, "")
     fileManagerNote = value_property(str, "fileManagerNote", fileManagerChanged, "")
 
+    def _start_browser_print(self, relpath):
+        """Recheck current printer permission at dispatch, not dialog-open time."""
+        observation = getattr(self._data, "observation", None)
+        verdict = can_start_print(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Print start refused: {verdict.reason}")
+            return False
+        self._file_manager.start_print(relpath)
+        stats = self._data.snapshot.core.get("print_stats") or {}
+        self._print_start.arm(str(stats.get("state") or ""))
+        return True
+
     def _printer_name(self):
         try:
             _machine_id, name = self._identity()
@@ -2008,82 +1867,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         except Exception:
             return "the printer"
 
-    def _file_print_confirm_payload(self, relpath):
-        from .MonitorFormatting import file_duration_short, file_filament
-        key = f"gcodes/{relpath}"
-        row = {f"gcodes/{r.relpath}": r for r in self._file_manager.resident_rows()}.get(key)
-        if row is None:
-            return None
-        klippy = self._data.snapshot.server.get("klippy_state")
-        ready = str(klippy or "").lower() == "ready"
-        homed = "xyz" == str((self._data.snapshot.auxiliary.get("toolhead") or {}).get("homed_axes") or "").lower()
-        if ready and not homed:
-            ready_text = "The printer is not homed — the print may not start."
-        elif ready:
-            ready_text = "Printer ready."
-        else:
-            ready_text = f"Printer state: {str(klippy or 'unknown').capitalize()}."
-        return {
-            "relpath": row.relpath,
-            "name": row.filename,
-            "est": file_duration_short(row.estimated_time),
-            "filament": file_filament(row.filament),
-            "printerName": self._printer_name(),
-            "ready": ready and homed,
-            "homed": homed,
-            "readyText": ready_text,
-        }
 
     @pyqtSlot(str)
     def fileRequestPrint(self, relpath):
-        payload = self._file_print_confirm_payload(str(relpath))
-        if payload is None:
-            return
-        # The confirmation shows a LARGE thumbnail: make sure THIS
-        # row's large variant is fetched even when it was opened from
-        # Recents — the page-driven cache covers visible rows' small
-        # variants only.
-        row = self._file_manager.row_for(payload["relpath"])
-        if row is not None and row.thumb_path:
-            self._file_manager.request_thumbnails([row], large=True)
-        self._file_print_confirm = payload
-        self._publish()
+        return self._files.fileRequestPrint(relpath)
 
     @pyqtSlot()
     def fileConfirmPrint(self):
-        confirm = self._file_print_confirm
-        self._file_print_confirm = None
-        if confirm:
-            # The dispatch gate (4.2.0, S3/N2): the dialog's click was
-            # checked when it OPENED; the dispatch re-checks the
-            # CURRENT observation — a print started by another client
-            # in the window must refuse here, not at Moonraker.
-            observation = getattr(self._data, "observation", None)
-            verdict = can_start_print(observation) if observation is not None \
-                else Verdict("disabled", R_UNKNOWN)
-            if verdict.mode != "allowed":
-                self._commands.report_status(f"Print start refused: {verdict.reason}")
-                self._publish()
-                return
-            self._file_manager.start_print(confirm["relpath"])
-            # The state the snapshot held at confirm time: the
-            # matched branch below holds while it stays unchanged, so
-            # a stale terminal state from the SAME file's previous
-            # job can never wipe the fresh attempt (the adversarial
-            # round's repro).
-            stats = self._data.snapshot.core.get("print_stats") or {}
-            self._print_start.arm(str(stats.get("state") or ""))
-            # The print is on its way: the file manager steps aside
-            # NOW and the monitor view returns — the verdict (success
-            # or failure) reports to the console and the note line,
-            # never by waiting inside the popup.
-            self.setFileManagerOpen(False)
-        self._publish()
+        return self._files.fileConfirmPrint()
 
     @pyqtSlot()
     def fileCancelPrint(self):
-        self._file_print_confirm = None
-        self._publish()
+        return self._files.fileCancelPrint()
 
     @pyqtSlot(str)
     def fileDownload(self, relpath):
@@ -2097,14 +1892,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(bool)
     def setFileManagerOpen(self, is_open):
-        self._file_manager_open = bool(is_open)
-        if not self._file_manager_open:
-            self._file_print_confirm = ""
-            self._file_delete_confirm = ""
-            self._file_rename_target = ""
-            self._file_upload_confirm = ""
-            self._file_upload_progress = ""
-        self._publish()
+        return self._files.setFileManagerOpen(is_open)
 
     @pyqtSlot()
     def reconnect(self):
@@ -2117,362 +1905,145 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def fileClearWalkError(self):
-        self._file_manager.clear_walk_error()
-        self._publish()
+        return self._files.fileClearWalkError()
 
     @pyqtSlot()
     def openFileManager(self):
         # The open trigger: the flag gates the heavy payload work
         # (the live report: the closed popup must not keep
         # paying the per-poll cost).
-        self._file_manager_open = True
-        self._file_manager_note = ""
-        try:
-            self._file_manager.bind()
-            self._file_manager.open()
-        except Exception:
-            # A dying slot freezes the whole popup silently (Qt
-            # swallows the traceback) — surface it in the walk-error
-            # state instead of leaving "Loading files…" forever.
-            logging.getLogger(__name__).exception("file manager open failed")
-            self._file_manager.changed.emit()
+        return self._files.openFileManager()
 
     @pyqtSlot()
     def refreshFileManager(self):
-        try:
-            self._file_manager.open()
-        except Exception:
-            logging.getLogger(__name__).exception("file manager refresh failed")
-            self._file_manager.changed.emit()
+        return self._files.refreshFileManager()
 
     @pyqtSlot("QVariantList", bool)
     def fileNavigateTo(self, segments, isUp):
-        if isUp:
-            self._file_manager.navigate_up()
-        else:
-            self._file_manager.navigate_to([str(segment) for segment in segments])
+        return self._files.fileNavigateTo(segments, isUp)
 
     @pyqtSlot(str)
     def setFileSearch(self, query):
-        self._file_manager.view.change_search(str(query))
-        self._file_manager.changed.emit()
+        return self._files.setFileSearch(query)
 
     @pyqtSlot(str)
     def setFileSort(self, column):
-        self._file_manager.view.change_sort(str(column))
-        self._file_manager.changed.emit()
+        return self._files.setFileSort(column)
 
     @pyqtSlot(str)
     def setFilePageSize(self, size):
-        self._file_manager.view.change_page_size("all" if size == "all" else int(size))
-        self._file_manager.changed.emit()
+        return self._files.setFilePageSize(size)
 
     @pyqtSlot(int)
     def setFilePage(self, page):
-        self._file_manager.view.page = max(1, int(page))
-        self._file_manager.changed.emit()
+        return self._files.setFilePage(page)
 
     @pyqtSlot(str, list)
     def setFileFilter(self, category, values):
-        category = str(category)
-        values = list(values)
-        filters = dict(self._file_manager.view.filters)
-        if category in ("modified", "print_time"):
-            # Single-value categories store a SCALAR (the
-            # live report: Print time filtered nothing — the policy
-            # does float(["30"]) and the TypeError fallback matched
-            # every row; Modified's window lookup failed the same
-            # way). One value, or None to clear.
-            filters[category] = values[0] if values else None
-        else:
-            filters[category] = values
-        self._file_manager.view.change_filters(filters)
-        self._file_manager.changed.emit()
+        return self._files.setFileFilter(category, values)
 
     @pyqtSlot()
     def clearFileFilters(self):
-        self._file_manager.view.change_filters({})
-        self._file_manager.changed.emit()
+        return self._files.clearFileFilters()
 
     @pyqtSlot(str)
     def toggleFileSelection(self, relpath):
-        self._file_manager.toggle_selection(str(relpath))
+        return self._files.toggleFileSelection(relpath)
 
     @pyqtSlot()
     def clearFileSelection(self):
-        self._file_manager.clear_selection()
+        return self._files.clearFileSelection()
 
     @pyqtSlot()
     def toggleFilePageSelection(self):
-        self._file_manager.toggle_page_selection()
+        return self._files.toggleFilePageSelection()
 
     @pyqtSlot()
     def fileLoadAllHistory(self):
-        self._file_manager.load_all_history()
+        return self._files.fileLoadAllHistory()
 
     @pyqtSlot(str)
     def fileScanMetadata(self, relpath):
-        self._file_manager.scan_metadata(str(relpath))
+        return self._files.fileScanMetadata(relpath)
 
 
     @pyqtSlot()
     def fileRequestDelete(self):
-        """The bulk delete from the selection (Snapshot 3): the
-        currently-printing file is never offered (the gate
-        — the host 403s it anyway, and the client must not ask)."""
-        rows = self._file_manager.resident_rows()
-        selected = [row for row in rows if row.relpath in self._file_manager.selection]
-        candidates = delete_candidates(selected, self._printing_relpath())
-        if not candidates:
-            return
-        self._file_delete_confirm = {
-            "kind": "file",
-            "relpaths": [row.relpath for row in candidates],
-            "count": len(candidates),
-            "first": candidates[0].filename,
-            "blocked": len(selected) - len(candidates),
-        }
-        self._publish()
+        return self._files.fileRequestDelete()
 
     @pyqtSlot(str)
     def fileRequestDeleteFile(self, relpath):
-        row = self._file_manager.row_for(str(relpath))
-        if row is None or row.relpath == self._printing_relpath():
-            return
-        self._file_delete_confirm = {
-            "kind": "file",
-            "relpaths": [row.relpath], "count": 1, "first": row.filename, "blocked": 0,
-        }
-        self._publish()
+        return self._files.fileRequestDeleteFile(relpath)
 
     @pyqtSlot(str)
     def fileCreateDirectory(self, name):
-        """The popup's New-folder dialog: the service validates the
-        name and owns the outcome notes."""
-        self._file_manager.create_directory(name)
-        self._publish()
+        return self._files.fileCreateDirectory(name)
 
     @pyqtSlot(str)
     def fileRequestDeleteDir(self, path):
-        """The folder delete (a live request — right-click
-        a breadcrumb segment or a strip chip)."""
-        path = str(path).strip("/")
-        if not path:
-            return
-        self._file_delete_confirm = {
-            "kind": "dir", "path": path, "name": path.rsplit("/", 1)[-1],
-            "relpaths": [], "count": 1, "first": path.rsplit("/", 1)[-1], "blocked": 0,
-        }
-        self._publish()
+        return self._files.fileRequestDeleteDir(path)
 
     @pyqtSlot()
     def fileConfirmDelete(self):
-        confirm = self._file_delete_confirm
-        self._file_delete_confirm = None
-        if confirm:
-            if confirm.get("kind") == "dir":
-                self._file_manager.delete_directory(confirm["path"])
-            else:
-                self._file_manager.delete_files(confirm["relpaths"], self._printing_relpath())
-        self._publish()
+        return self._files.fileConfirmDelete()
 
     @pyqtSlot()
     def fileCancelDelete(self):
-        self._file_delete_confirm = None
-        self._publish()
+        return self._files.fileCancelDelete()
 
     @pyqtSlot(str)
     def fileRequestRename(self, relpath):
-        row = self._file_manager.row_for(str(relpath))
-        if row is None or row.relpath == self._printing_relpath():
-            return
-        self._file_rename_target = {"kind": "file", "path": row.relpath, "name": row.filename}
-        self._file_rename_conflict = False
-        self._publish()
+        return self._files.fileRequestRename(relpath)
 
     @pyqtSlot(str)
     def fileRequestRenameDir(self, path):
-        """The folder rename (a live request — right-click
-        a breadcrumb segment or a strip chip)."""
-        path = str(path).strip("/")
-        if not path:
-            return
-        self._file_rename_target = {"kind": "dir", "path": path,
-                                    "name": path.rsplit("/", 1)[-1]}
-        self._file_rename_conflict = False
-        self._publish()
+        return self._files.fileRequestRenameDir(path)
 
     @pyqtSlot(str)
     def filePreviewRename(self, name):
-        """The live collision check while the name is typed (round-1
-        C2/C3: the host's move silently overwrites — the dialog asks
-        first)."""
-        target = self._file_rename_target
-        if not target:
-            return
-        # REPLACE, never mutate (the same publish-contract rule as
-        # the upload progress).
-        self._file_rename_target = dict(target, name=str(name))
-        target = self._file_rename_target
-        if target.get("kind") == "dir":
-            proposal = rename_path(target["path"], name)
-            self._file_rename_conflict = bool(
-                proposal is not None
-                and path_collides(self._file_manager.resident_directories(), proposal))
-        else:
-            row = self._file_manager.row_for(target["path"])
-            proposal = rename_target(row, name) if row is not None else None
-            self._file_rename_conflict = bool(
-                proposal is not None and name_collides(self._file_manager.resident_rows(), proposal))
-        self._publish()
+        return self._files.filePreviewRename(name)
 
     @pyqtSlot()
     def fileConfirmRename(self):
-        target = self._file_rename_target
-        self._file_rename_target = None
-        if target:
-            if target.get("kind") == "dir":
-                self._file_manager.rename_directory(
-                    target["path"], target["name"], overwrite=bool(self._file_rename_conflict))
-            else:
-                self._file_manager.rename_file(
-                    target["path"], target["name"], self._printing_relpath(),
-                    overwrite=bool(self._file_rename_conflict))
-        self._file_rename_conflict = False
-        self._publish()
+        return self._files.fileConfirmRename()
 
     @pyqtSlot()
     def fileCancelRename(self):
-        self._file_rename_target = None
-        self._file_rename_conflict = False
-        self._publish()
+        return self._files.fileCancelRename()
 
     @pyqtSlot(str)
     def fileUpload(self, path):
-        """Snapshot 3 upload (the ruling): LOCAL gcode files
-        only — sliced prints already upload from the Preview view.
-        A name collision asks first; otherwise the upload runs."""
-        # The picker hands over a file:// URL — the service wants a
-        # local path (a plain path passes through unchanged).
-        path = QUrl(str(path or "")).toLocalFile() or str(path or "")
-        name = path.replace("\\", "/").rsplit("/", 1)[-1]
-        if not is_gcode_name(name):
-            self._console.note("Upload refused: only gcode files upload here.")
-            return
-        target = upload_relpath("/".join(self._file_manager.directory), name)
-        if target == self._printing_relpath():
-            # The host streams the printing file from disk: replacing
-            # it mid-print truncates the running job.
-            self._console.note(f"Upload refused: {name} is currently printing.")
-            self._publish()
-            return
-        try:
-            free = self._file_manager.disk_usage.get("free")
-            free = int(free) if free is not None else None
-            needed = os.path.getsize(path)
-        except (TypeError, ValueError, OSError):
-            free, needed = None, 0
-        # None means the walk never reported disk usage — the check
-        # stands down. A REAL zero (a full disk) still refuses: the
-        # old guard treated the two alike and a missing report
-        # disabled the check (the adversarial round's catch).
-        if free is not None and needed and needed > free:
-            self._console.note(f"Upload refused: {name} needs {needed / 1048576:.0f} MB, "
-                               f"{free / 1048576:.0f} MB free on the printer.")
-            self._publish()
-            return
-        if name_collides(self._file_manager.resident_rows(), target):
-            self._file_upload_confirm = {"path": path, "filename": name}
-            self._publish()
-            return
-        self._start_upload(path, name)
-        self._publish()
+        return self._files.fileUpload(path)
 
-    def _start_upload(self, path, name, overwrite=False) -> None:
-        # The popup's payload opens on the FIRST publish after this;
-        # the service's progress and outcome signals drive it from
-        # here on (a live request: a bar while it runs and
-        # a success/fail verdict at the end).
-        self._file_upload_progress = {"name": name, "percent": 0,
-                                      "state": "uploading", "error": ""}
-        # The overwrite nod MUST ride through: without it the service
-        # re-refuses the colliding name and never emits a verdict —
-        # the popup hung on "uploading" forever (the live
-        # report).
-        self._file_manager.upload_file(path, overwrite=overwrite)
 
     @pyqtSlot()
     def fileConfirmUpload(self):
-        confirm = self._file_upload_confirm
-        self._file_upload_confirm = None
-        if confirm:
-            self._start_upload(confirm["path"], confirm["filename"], overwrite=True)
-        self._publish()
+        return self._files.fileConfirmUpload()
 
     @pyqtSlot()
     def fileUploadDismiss(self):
-        self._file_upload_progress = None
-        self._publish()
+        return self._files.fileUploadDismiss()
 
     @pyqtSlot(list)
     def fileRequestVisibleThumbnails(self, relpaths):
-        """The render window's thumbnails (the live report:
-        the page-wide fetch fired hundreds of requests on "all /
-        page" — the QML's visible rows bound them)."""
-        if not self._file_manager_open:
-            return
-        rows = []
-        for relpath in (relpaths or []):
-            row = self._file_manager.row_for(str(relpath))
-            if row is not None and row.thumb_path:
-                rows.append(row)
-        self._file_manager.request_thumbnails(rows)
+        return self._files.fileRequestVisibleThumbnails(relpaths)
 
     @pyqtSlot(str, float)
     def setFileColumnWidth(self, key, width):
-        """Snapshot 3's column resize — the STATE lives in the file
-        manager (the ruling: the file manager is its own
-        thing, composed into the Monitor page)."""
-        if self._file_manager.set_column_width(key, width):
-            self._save_state()
+        return self._files.setFileColumnWidth(key, width)
 
     @pyqtSlot(list)
     def setFileColumnOrder(self, order):
-        if self._file_manager.set_column_order(order):
-            self._save_state()
+        return self._files.setFileColumnOrder(order)
 
     @pyqtSlot(str, bool)
     def setFileColumnVisible(self, key, visible):
-        if self._file_manager.set_column_visible(key, visible):
-            self._save_state()
+        return self._files.setFileColumnVisible(key, visible)
 
-    def _on_upload_progress(self, percent):
-        if not self._file_upload_progress:
-            return
-        percent = int(percent)
-        if percent == self._file_upload_progress["percent"]:
-            return
-        # REPLACE, never mutate: the publish contract treats the
-        # stored dict as immutable (the QVariant cache keys on
-        # identity), and an in-place edit serves a stale copy.
-        self._file_upload_progress = dict(self._file_upload_progress, percent=percent)
-        self._publish()
-
-    def _on_upload_finished(self, ok, detail):
-        if not self._file_upload_progress:
-            return
-        if ok:
-            self._file_upload_progress = dict(self._file_upload_progress,
-                                              state="done", percent=100, error="")
-        else:
-            self._file_upload_progress = dict(self._file_upload_progress,
-                                              state="failed", error=str(detail))
-        self._publish()
 
     @pyqtSlot()
     def fileCancelUpload(self):
-        self._file_upload_confirm = None
-        self._publish()
+        return self._files.fileCancelUpload()
     emergencyHoldProgress = value_property(float, "emergencyHoldProgress", actionChanged, 0.0)
     # The machine geometry (4.2.0): the physical bed the mesh map
     # draws the probed bounds within — 0 means unknown, the map
@@ -2670,17 +2241,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         return self._temperature.setShowTemperaturePower(show)
 
 
-
-
-
-
     @pyqtSlot(bool)
     def setChartOpen(self, opened):
         # The pop-over's hydration gate: the full chart payload
         # materialises only while the pop-over is open; closed, it
         # is the shared dormant object.
         return self._temperature.setChartOpen(opened)
-
 
 
     def _migration_record(self):

@@ -25,19 +25,8 @@ from unittest.mock import patch
 
 import mpf
 
-from mpf.monitor.MonitorFormatting import (chart_label, chart_temperature_objects, core_values,
-                                       day_offset_suffix, duration, endstop_values,
-                                       estimate_remaining, factor_percent, fan_writable,
-                                       file_disk_text, file_duration_short, file_filament,
-                                       file_row_payload, file_size, file_temperature,
-                                       file_timestamp, filament_diameter,
-                                       filament_total_mm_from_file, friendly, layer_readout,
-                                       height_readout, literal_default, mesh_profiles, number,
-                                       object_kind, parse_bed_mesh, parse_mcu_stats,
-                                       peripheral_values, preview_eta_text, print_job_caption,
-                                       result, wanted_object, format_bytes, normalise_mesh,
-                                       filament_total_mm_from_gcode, infer_macro_parameters,
-                                       preview_block, preview_temperature_pair)
+from mpf.files.browser.FileFormatting import (file_disk_text, file_duration_short, file_filament, file_row_payload, file_size, file_temperature, file_timestamp)
+from mpf.monitor.MonitorFormatting import (chart_label, chart_temperature_objects, core_values, day_offset_suffix, duration, endstop_values, estimate_remaining, factor_percent, fan_writable, filament_diameter, filament_total_mm_from_file, friendly, layer_readout, height_readout, literal_default, mesh_profiles, number, object_kind, parse_bed_mesh, parse_mcu_stats, peripheral_values, preview_eta_text, print_job_caption, result, wanted_object, format_bytes, normalise_mesh, filament_total_mm_from_gcode, infer_macro_parameters, preview_block, preview_temperature_pair)
 from mpf.monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
                                         R_BUSY, R_CLEARED_PAUSE, R_DISCONNECTED, R_ESTOPPED,
                                         R_LOCKED, R_NO_PAUSED_PRINT, R_NOTHING_TO_PAUSE,
