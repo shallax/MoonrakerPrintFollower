@@ -421,9 +421,14 @@ def main():
             print("captured", path)
 
         def popover_card(title):
-            cards = [child for child in item.findChildren(QQuickItem)
-                     if child.property("title") == title and child.isVisible()
-                     and "MonitorPopOver" in child.metaObject().className()]
+            # Cards are found through the shell's own pointer barrier:
+            # a card that derives from MonitorPopOver in its own file
+            # carries that file's class name, not the shell's.
+            cards = []
+            for barrier in item.findChildren(QQuickItem, "monitorPopoverPointerBarrier"):
+                card = barrier.parentItem()
+                if card is not None and card.property("title") == title and card.isVisible():
+                    cards.append(card)
             if len(cards) != 1:
                 raise RuntimeError("expected one visible popover: " + title)
             return cards[0]

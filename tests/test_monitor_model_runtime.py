@@ -2612,8 +2612,9 @@ Item {
             # The bed-mesh detail card: a transient pop-over surface
             # that appears with its opener — nothing under it reflows.
             "visible: root.open && root.printerModel != null && root.printerModel.bedMeshAvailable",
-            # The temperature detail card: the same transient-surface
-            # carve-out.
+            # The extracted detail cards (the chart, the exclude-object
+            # picker): transient pop-over surfaces that appear with
+            # their opener — nothing under them reflows.
             "visible: root.open && root.printerModel != null",
             # The webcam FPS bar: parked until the pane is wide enough
             # and the stream is live — layout-static within the pane.
@@ -2657,8 +2658,8 @@ Item {
             # The picker's printed-legend row and its index offer:
             # the printed state derives from the index, so both gate
             # on its availability — inside the transient card.
-            "visible: root.printer != null && root.printer.plateTrackingAvailable",
-            "visible: root.printer != null && root.printer.plateHasObjects && !root.printer.plateTrackingAvailable",
+            "visible: root.printerModel != null && root.printerModel.plateTrackingAvailable",
+            "visible: root.printerModel != null && root.printerModel.plateHasObjects && !root.printerModel.plateTrackingAvailable",
             # The download prompt swaps into noninteractive waiting text
             # inside the transient plate cards once their index is ready.
             "visible: !root.indexReady",
@@ -2673,7 +2674,7 @@ Item {
             "visible: root.printer != null && root.printer.sectionHiddenMap[\"plate\"] !== true && (root.printer.printActive || root.printer.plateHasObjects)",
             # The picker's download offer: inside the transient card,
             # shown while the plate is empty.
-            "visible: root.printer != null && !root.printer.plateHasObjects",
+            "visible: root.printerModel != null && !root.printerModel.plateHasObjects",
             # The follower's dot rides the layers: no index, no dot
             # (scene decoration inside the canvas slot). A detached
             # face draws the frozen layer, which the live position is
