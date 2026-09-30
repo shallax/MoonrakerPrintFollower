@@ -348,8 +348,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # that now holds it. Mounting stays pinned in the shell, except
         # where the mount itself moved one level down.
         leaves = {name: (harness.PLUGINS / (name + ".qml")).read_text(encoding="utf-8")
-                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow", "FileColumnChooser", "FileGrid")}
-        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters"):
+                  for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileFilterOptionRow", "FileColumnChooser", "FileGrid", "FileManagerPagination")}
+        for name in ("FileManagerRecents", "FileManagerToolbar", "FileDirectoryStrip", "FileManagerSearch", "FileManagerFilters", "FileGrid", "FileManagerPagination"):
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
         # The shell mounts the table, the table mounts the chooser: the
         # popup sits under the header cell that opens it.
@@ -659,6 +659,11 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # dialog with its live collision line, and the wiring.
         self.assertIn('id: deleteConfirmDialog', harness.FILE_MANAGER_QML)
         self.assertIn('id: renameDialog', harness.FILE_MANAGER_QML)
+        # The page strip reports the bulk delete; the shell writes the
+        # model and the confirmation opens from its publish. The
+        # page-size menu rides the strip.
+        self.assertIn("root.bulkDeleteRequested()", leaves["FileManagerPagination"])
+        self.assertIn('objectName: "pageSizePopup"', leaves["FileManagerPagination"])
         self.assertIn("fileRequestDelete()", harness.FILE_MANAGER_QML)
         # The row reports the relpath; the shell keeps the model write.
         self.assertIn("root.deleteRequested(modelData.relpath)", leaves["FileGrid"])
