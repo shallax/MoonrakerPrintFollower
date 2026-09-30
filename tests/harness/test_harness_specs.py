@@ -16,6 +16,25 @@ import scenarios as _scenarios
 import runner as _runner
 
 
+def _driver_source(*names):
+    """One driver family's source, by module name.
+
+    The dispatcher stays in the package's __init__; each probe and
+    interaction family owns its own module. A pin reads the module that
+    owns what it holds, so a token that moved is retargeted rather than
+    found anywhere in a concatenated tree.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = []
+    for name in names:
+        path = os.path.join(here, "driver", name)
+        if not os.path.exists(path):
+            raise AssertionError("no driver family at %s" % path)
+        with open(path, encoding="utf-8") as handle:
+            out.append(handle.read())
+    return out if len(out) > 1 else out[0]
+
+
 def _inline_code_values(spec):
     for step in spec.get("steps", ()):
         code = step.get("code")
@@ -121,17 +140,17 @@ class HarnessSpecTests(unittest.TestCase):
         guard = source.index("foreground = foreground_guard()")
         capture = source.index("capture = shot(name)", guard)
         self.assertLess(guard, capture, "the guard must run before the capture")
-        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "driver", "__init__.py")
-        with open(driver, encoding="utf-8") as handle:
-            driver_source = handle.read()
+        # The verb is the dispatcher's; the reading and the raise belong
+        # to the foreground family beside it.
+        driver_source = _driver_source("__init__.py")
+        owner = _driver_source("foreground.py")
         self.assertIn('if cmd == "foreground":', driver_source)
-        self.assertIn("GetWindowThreadProcessId", driver_source)
-        self.assertIn("def _raise_main_window(", driver_source)
+        self.assertIn("GetWindowThreadProcessId", owner)
+        self.assertIn("def _raise_main_window(", owner)
         # A platform with no foreground authority must be recorded,
         # never failed: the calibration is the observed activation.
-        self.assertIn("_FOREGROUND_SEEN", driver_source)
-        self.assertIn('"none"', driver_source)
+        self.assertIn("_FOREGROUND_SEEN", owner)
+        self.assertIn('"none"', owner)
 
     def test_a_press_aims_at_the_body_as_drawn(self):
         # A rotated control (the collapsed rails run at -90°) must be
@@ -139,10 +158,7 @@ class HarnessSpecTests(unittest.TestCase):
         # mixed item axes into scene axes: the aim landed beside the
         # rail, so every press at one hit empty space and every rail
         # rect read "NOT in view" while the rail rendered.
-        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "driver", "__init__.py")
-        with open(driver, encoding="utf-8") as handle:
-            source = handle.read()
+        source = _driver_source("interaction.py")
         self.assertIn("def _aim_point(", source)
         self.assertNotIn("scene.x() + target.width() / 2", source)
         self.assertNotIn("scene.x() + item.width() / 2", source)
@@ -457,33 +473,33 @@ class HarnessSpecTests(unittest.TestCase):
         # item in the window's own scene, verifies the change landed and
         # awaits the frame, and the runner samples it at the start and
         # the end of every scenario.
-        driver = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "driver", "__init__.py")
-        with open(driver, encoding="utf-8") as handle:
-            driver_source = handle.read()
+        # The verb and the sample's own fields are the dispatcher's; the
+        # counter and the heartbeat belong to the frames family.
+        driver_source = _driver_source("__init__.py")
+        owner = _driver_source("frames.py")
         self.assertIn('if cmd == "frames":', driver_source)
-        self.assertIn("frameSwapped.connect", driver_source)
+        self.assertIn("frameSwapped.connect", owner)
         self.assertIn("isExposed", driver_source)
         # The heartbeat is the measurement: an item in the app's own
         # scene graph, driven on the GUI thread this server is served
         # on, verified by read-back, awaited with a bounded deadline,
         # and removed before the verb returns so no still can carry it.
-        self.assertIn("HEARTBEAT_OBJECT", driver_source)
-        self.assertIn('objectName: "mpfLivenessHeartbeat"', driver_source)
-        self.assertIn("item.setParentItem(window.contentItem())", driver_source)
-        self.assertIn("item.setProperty(name, value)", driver_source)
-        self.assertIn("item.property(name)", driver_source)
-        self.assertIn("def _await_frames(", driver_source)
-        self.assertIn("def _remove_heartbeat(", driver_source)
-        self.assertIn("item.setParentItem(None)", driver_source)
-        self.assertIn("item.deleteLater()", driver_source)
+        self.assertIn("HEARTBEAT_OBJECT", owner)
+        self.assertIn('objectName: "mpfLivenessHeartbeat"', owner)
+        self.assertIn("item.setParentItem(window.contentItem())", owner)
+        self.assertIn("item.setProperty(name, value)", owner)
+        self.assertIn("item.property(name)", owner)
+        self.assertIn("def _await_frames(", owner)
+        self.assertIn("def _remove_heartbeat(", owner)
+        self.assertIn("item.setParentItem(None)", owner)
+        self.assertIn("item.deleteLater()", owner)
         # The wait is event-driven and bounded, never one sleep: the
         # deadline is checked against the clock in short qWait slices,
         # so the render loop keeps running while it is awaited.
         self.assertIn("deadline = started + max(0.0, float(deadline_ms) / 1000.0)",
-                      driver_source)
-        self.assertIn("while _FRAMES.count <= before:", driver_source)
-        wait = driver_source[driver_source.index("def _await_frames("):]
+                      owner)
+        self.assertIn("while _FRAMES.count <= before:", owner)
+        wait = owner[owner.index("def _await_frames("):]
         wait = wait[:wait.index("\ndef ")]
         self.assertIn("_settle(min(50.0, left * 1000.0))", wait)
         self.assertNotIn("time.sleep", wait)
@@ -491,8 +507,8 @@ class HarnessSpecTests(unittest.TestCase):
         # and says which change was made and what answered it: a change
         # that did not land, or an item that would not build, made no
         # frame due and must not read as a renderer that stopped.
-        self.assertIn('"verified": False', driver_source)
-        self.assertIn('attempt["verified"] = _same_number(', driver_source)
+        self.assertIn('"verified": False', owner)
+        self.assertIn('attempt["verified"] = _same_number(', owner)
         self.assertIn('reply["heartbeat"] = heartbeat', driver_source)
         self.assertIn('"frame_signal": attached', driver_source)
         # And whether the counter had to attach to a window it was not
@@ -532,8 +548,10 @@ class HarnessSpecTests(unittest.TestCase):
         # And the enums go out as names: PyQt6 hands back the wrapper
         # (QWindow.Visibility) and int() on it raises — the first live
         # run of the probe answered every sample with that TypeError.
-        self.assertIn("def _enum_name(", driver_source)
+        # The enum reader is the shared scene utility both families use.
+        self.assertIn("def _enum_name(", _driver_source("scene.py"))
         self.assertNotIn("int(window.visibility())", driver_source)
+        self.assertNotIn("int(window.visibility())", owner)
 
 
 if __name__ == "__main__":
