@@ -155,6 +155,7 @@ correct package ownership.
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, can_pause, can_resume, …) with disabled reasons; `is_paused` (the authoritative paused bit) and `pause_resume_supported` (the capability signal) ride the observation | Qt, networking or mutable state |
 | `StateStore.py` | The plugin JSON documents' file-semantics owner: the read-modify-write merge, the pretty atomic replace (the injected save primitive — Cura's SaveFile in production), the fsync, the optional cross-process lock and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
+| `PauseAtLayerPresentation.py` | The pause-at-layer block the popover reads: its candidate at the follower's own layer, and the button gates re-derived with the card's own helpers | The schedule itself, the coordinator's rows or the live print state |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `CameraRecovery.py` | The webcam stream's freshness policy: the reload nonce every recovery path moves, the recovery veil and the stream URL's transition rules | Publishing a frame, the bridge transport or the camera's own configuration |

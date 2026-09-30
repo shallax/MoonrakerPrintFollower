@@ -1505,11 +1505,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             "def togglePauseAtLayer(self, layer):",
             "def removePauseAtLayer(self, layer):",
             "def clearPauseAtLayer(self):",
-            # The candidate's source is the FOLLOWER's layer, never
-            # Cura's Preview selection.
-            "index = self._follower_layer_anchor",
         ):
             self.assertIn(token, harness.MONITOR_MODEL)
+        # The candidate's source is the FOLLOWER's layer, never Cura's
+        # Preview selection: the model wires the committed anchor in,
+        # and the projection reads it live, falling back to the plate's
+        # own anchor only for a popover that has never been slid.
+        self.assertIn("anchor=lambda: self._follower_layer_anchor", harness.MONITOR_MODEL)
+        self.assertIn("index = self._anchor()", harness.PAUSE_PRESENTATION)
+        self.assertIn("index = anchor", harness.PAUSE_PRESENTATION)
         for token in (
             "contentWidth: Math.min(940 * screenScaleFactor, root.width - x - UM.Theme.getSize(\"default_margin\").width)",
         ):
