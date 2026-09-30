@@ -265,6 +265,41 @@ class TestingDocPinTests(unittest.TestCase):
         # windows group-status red without retiring the check.
         self.assertIn("A still span nobody drove is not judged", text)
 
+    def test_every_staged_harness_module_reaches_the_work_dir(self):
+        """The staged tree is what the run imports, not the checkout.
+
+        The runner is copied flat into the work dir and imports its
+        siblings from there, so a harness module that grows — or becomes
+        a package — and is not staged fails forty minutes into a gate
+        rather than here. The scenario suite is a PACKAGE: a single-file
+        copy would leave the staged runner importing nothing.
+        """
+        text = UI_TEST.read_text(encoding="utf-8")
+        for name in ("runner.py", "native_host.py", "log_gate.py",
+                     "window_geometry.py", "scenario_map.py",
+                     "surface_coverage.py"):
+            self.assertIn('cp "$root/tests/harness/%s"' % name, text,
+                          "%s is no longer staged" % name)
+        self.assertIn('cp -r "$root/tests/harness/scenarios" "$WORK_DIR"/scenarios',
+                      text, "the scenario package is not staged as a directory")
+        self.assertNotIn('cp "$root/tests/harness/scenarios.py"', text,
+                         "the flat-module copy is back and would stage nothing")
+        # Every module the harness directory holds is either staged into
+        # the work dir, staged into the plugin, or a host-side test leg.
+        staged = {"runner.py", "native_host.py", "log_gate.py",
+                  "window_geometry.py", "scenario_map.py",
+                  "surface_coverage.py", "simulator.py", "simulator_serve.py",
+                  "gcodegen.py"}
+        host_only = {"test_harness_specs.py", "test_harness_runner.py",
+                     "test_harness_native.py", "test_harness_seed.py",
+                     "seed_variants.py"}
+        present = {path.name for path in (ROOT / "tests" / "harness").glob("*.py")}
+        self.assertGreater(len(present), 10, "the harness directory scan found nothing")
+        unaccounted = present - staged - host_only
+        self.assertEqual(unaccounted, set(),
+                         "harness modules neither staged nor host-only: %s"
+                         % sorted(unaccounted))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 """The surface→scenario map (coverage.py's check consumes this).
 
-Values are the suite spec ids in scenarios.py (``a1``..``z14``).
+Values are the suite spec ids in the scenarios package (``a1``..``z14``).
 ``PREFIX_RULES`` cover whole families with one rule; ``EXCLUSIONS``
 are justified surfaces the unit/Qt suites already own or the probe
 evidence defers (the design allows an explicit, justified exclusion

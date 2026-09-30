@@ -23,6 +23,23 @@ from unittest.mock import patch
 import runner
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
+
+
+def _scenario_text():
+    """Every scenario module's source, concatenated.
+
+    The census the two ratchets take belongs to the SUITE, which is a
+    package of group modules. This reads exactly that package — not the
+    source tree, and not a basename lookup that would find a match
+    somewhere else — and refuses to report a census over nothing.
+    """
+    modules = sorted(SCENARIO_PACKAGE.glob("*.py"))
+    if len(modules) < 16:
+        raise AssertionError(
+            "the scenario package holds %d modules: a census over a package "
+            "this small is measuring the wrong thing" % len(modules))
+    return "\n".join(path.read_text(encoding="utf-8") for path in modules)
 # A per-run scratch, never a fixed path: a fixed dir under the shared
 # /tmp/mpf collects files owned by the harness container's root user,
 # which the host-side legs cannot then overwrite (the live gate error).
@@ -129,7 +146,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # The floor is the CURRENT census (2026-09-18, the panel's
         # re-census — the old 93 let 46 real steps convert to probes
         # before the pin fired): 139.
-        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
+        text = _scenario_text()
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
         self.assertGreaterEqual(real, 139)
@@ -165,7 +182,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # real-input op (the driver clicks by objectName/text only,
         # and the probe clicks BY GEOMETRY on the track), so the
         # witness is the inline QTest click.
-        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
+        text = _scenario_text()
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))

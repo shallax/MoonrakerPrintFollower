@@ -7,7 +7,7 @@ value_property keys. ``extract()`` walks the plugin sources and
 returns every surface; ``check(map_)`` fails for any surface the
 scenario map does not cover (an explicit exclusion is the only other
 option). The map lives in scenario_map.py — the scenarios it names live
-in scenarios.py.
+in the scenarios package.
 """
 from __future__ import annotations
 
