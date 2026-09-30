@@ -2441,7 +2441,7 @@ Item {
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
         # alone left "↑ 0.005" wider than "↑ 0.05" (the report).
-        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", harness.TUNING_SECTION_QML)
+        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", harness.ZOFFSET_CONTROLS_QML)
         # The expanded chart's power axis carries its 0-100% legend,
         # pinned (never scaled), drawn INSIDE the plot's right edge
         # (the live ruling — the outside gutter's last glyph clipped

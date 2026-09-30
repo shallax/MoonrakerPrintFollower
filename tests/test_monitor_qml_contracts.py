@@ -41,15 +41,22 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                       "def home(", "def motorsOff(", "def extrude(", "def heatersOff(",
                       "def centerToolhead(", "def zToZero("):
             self.assertIn(token, harness.MONITOR_MODEL)
-        # The toolhead block rides its component (4.3.0) — the pins
-        # follow it there.
-        for token in ("id: toolheadSection", 'title: "Toolhead"', 'jog("x", -1)', 'jog("z", 1)',
-                      "setJogDistance(", 'home("x")', 'home("y")', 'home("z")', '"Motors off"',
-                      '"Extrude"', '"Retract"', "setExtrudeDistance(", "setExtrudeSpeed(",
-                      'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
-                      'text: "↑ Z"', 'text: "↓ Z"', 'text: "Centre toolhead"', 'text: "Z to 0"',
+        # The toolhead block rides its components (4.3.0; the pad and the
+        # extrusion cluster became their own leaves in 4.6.2): the section
+        # keeps the shell, the readouts, the homing rows and the status,
+        # the pad keeps the compass, the cluster keeps the ladders. The
+        # pins follow the tokens.
+        for token in ("id: toolheadSection", 'title: "Toolhead"',
+                      'home("x")', 'home("y")', 'home("z")', '"Motors off"',
+                      'text: "Centre toolhead"', 'text: "Z to 0"',
                       "root.printerModel.monitorPosition"):
             self.assertIn(token, harness.TOOLHEAD_SECTION_QML)
+        for token in ('jog("x", -1)', 'jog("z", 1)', "setJogDistance(",
+                      'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
+                      'text: "↑ Z"', 'text: "↓ Z"'):
+            self.assertIn(token, harness.JOG_PAD_QML)
+        for token in ('"Extrude"', '"Retract"', "setExtrudeDistance(", "setExtrudeSpeed("):
+            self.assertIn(token, harness.EXTRUSION_CONTROLS_QML)
         for token in ('"Cooldown"', "heatersOff"):
             self.assertIn(token, harness.PROFILES_SECTION_QML)
         # The safety clause lives in the policy's copy (4.2.0): the QML
@@ -61,26 +68,28 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # label on top — Cura's own label does not vertically centre.
         # Home-all lives in the Setup section only: the toolhead section
         # keeps per-axis home buttons, so no duplicate home-all controls.
-        self.assertNotIn('home("")', harness.TOOLHEAD_SECTION_QML)
-        self.assertEqual(harness.TOOLHEAD_SECTION_QML.count("PreviewSecondaryButton"), 6)
-        self.assertNotIn("contentItem", harness.TOOLHEAD_SECTION_QML)
+        motion_only = harness.TOOLHEAD_SECTION_QML + harness.JOG_PAD_QML + harness.EXTRUSION_CONTROLS_QML
+        self.assertNotIn('home("")', motion_only)
+        self.assertEqual(harness.JOG_PAD_QML.count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("contentItem", motion_only)
         # The Z-offset nudges carry direction glyphs, up row first, and no
         # +/- signs: the arrows carry the direction.
-        self.assertIn('"↓ " + Math.abs(modelData)', harness.TUNING_SECTION_QML)
-        self.assertIn('"↑ " + modelData', harness.TUNING_SECTION_QML)
-        self.assertLess(harness.TUNING_SECTION_QML.index("model: [0.005"), harness.TUNING_SECTION_QML.index("model: [-0.005"))
-        # The toolhead block is gated by jogEnabled alone, never actionBusy:
-        # taps must keep working while the queue drains. The block rides
-        # its component (4.3.0) — the pins follow it there.
-        self.assertIn("jogEnabled", harness.TOOLHEAD_SECTION_QML)
-        self.assertNotIn("actionBusy", harness.TOOLHEAD_SECTION_QML)
+        self.assertIn('"↓ " + Math.abs(modelData)', harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn('"↑ " + modelData', harness.ZOFFSET_CONTROLS_QML)
+        self.assertLess(harness.ZOFFSET_CONTROLS_QML.index("model: [0.005"), harness.ZOFFSET_CONTROLS_QML.index("model: [-0.005"))
+        # The jog-gated motion controls take jogEnabled alone, never
+        # actionBusy: taps must keep working while the queue drains. The
+        # z-offset nudges are deliberately outside this union — they run on
+        # the controls domain's own interlock.
+        self.assertIn("jogEnabled", motion_only)
+        self.assertNotIn("actionBusy", motion_only)
         # The compass is a 3×3 grid (9 cells) with the empty centre: the
         # four arrows must appear in north-west-east-south order so the
         # south button sits under north, never under west.
-        grid = harness.TOOLHEAD_SECTION_QML[harness.TOOLHEAD_SECTION_QML.index('text: "↑ Y"'):harness.TOOLHEAD_SECTION_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
+        grid = harness.JOG_PAD_QML[harness.JOG_PAD_QML.index('text: "↑ Y"'):harness.JOG_PAD_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
         positions = [grid.index(token) for token in ('text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"')]
         self.assertEqual(positions, sorted(positions))
-        compass = harness.TOOLHEAD_SECTION_QML[harness.TOOLHEAD_SECTION_QML.index('columns: 3'):harness.TOOLHEAD_SECTION_QML.index('ColumnLayout {', harness.TOOLHEAD_SECTION_QML.index('text: "↑ Y"'))]
+        compass = harness.JOG_PAD_QML[harness.JOG_PAD_QML.index('columns: 3'):harness.JOG_PAD_QML.index('ColumnLayout {', harness.JOG_PAD_QML.index('text: "↑ Y"'))]
         self.assertEqual(compass.count('PreviewSecondaryButton {'), 4)
         self.assertEqual(compass.count('Item {'), 5)
 
@@ -732,8 +741,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("consoleErrorBell", harness.MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
         # highlighted (the live report).
-        self.assertIn("extrudeDistance === 5", harness.TOOLHEAD_SECTION_QML)
-        self.assertIn("extrudeSpeed === 1500", harness.TOOLHEAD_SECTION_QML)
+        self.assertIn("extrudeDistance === 5", harness.EXTRUSION_CONTROLS_QML)
+        self.assertIn("extrudeSpeed === 1500", harness.EXTRUSION_CONTROLS_QML)
         # The abs/rel toggle (the live request) and the
         # dropped 15 mm distance button.
         self.assertIn("setPositionMode", harness.TOOLHEAD_SECTION_QML)
@@ -743,7 +752,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # readout (the 2026-09-17 ruling), and the Move distance
         # combo restores the persisted selection.
         self.assertIn('text: "Moves"', harness.TOOLHEAD_SECTION_QML)
-        self.assertIn("jogPresets.indexOf", harness.TOOLHEAD_SECTION_QML)
+        self.assertIn("jogPresets.indexOf", harness.JOG_PAD_QML)
         # Filament state is colour-coded: green detected, orange runout.
         self.assertIn("MoonrakerTheme.filamentDetected", harness.FILAMENT_SECTION_QML)
         self.assertIn("MoonrakerTheme.warningOrange", harness.FILAMENT_SECTION_QML)
@@ -1050,17 +1059,17 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
         self.assertIn('text: "Current Z offset"', harness.PRINT_SECTION_QML)
-        self.assertIn('"Current " + root.printerModel.zOffsetText', harness.TUNING_SECTION_QML)
-        self.assertIn("adjustZOffset", harness.TUNING_SECTION_QML)
+        self.assertIn('"Current " + root.printerModel.zOffsetText', harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn("adjustZOffset", harness.ZOFFSET_CONTROLS_QML)
 
     def test_z_offset_buttons_are_opposites_with_equal_click_zones(self):
-        self.assertIn("id: zOffsetGrid", harness.TUNING_SECTION_QML)
-        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", harness.TUNING_SECTION_QML)
-        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", harness.TUNING_SECTION_QML)
+        self.assertIn("id: zOffsetGrid", harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", harness.ZOFFSET_CONTROLS_QML)
         # A two-column grid (up left, down right): both Repeater
         # delegates fill their cell equally, so click zones stay
         # matched and the labels cannot elide at narrow pane widths.
-        grid = harness.TUNING_SECTION_QML[harness.TUNING_SECTION_QML.index("id: zOffsetGrid"):harness.TUNING_SECTION_QML.index('text: "Clear Z offset"')]
+        grid = harness.ZOFFSET_CONTROLS_QML[harness.ZOFFSET_CONTROLS_QML.index("id: zOffsetGrid"):harness.ZOFFSET_CONTROLS_QML.index('text: "Clear Z offset"')]
         # Up row first, down row second, each four-across with equal
         # layout cells; the up model must precede the down model.
         self.assertLess(grid.index('text: "↑ "'), grid.index('text: "↓ "'))
