@@ -2,6 +2,21 @@
 from tests import qml_engine_support as harness
 
 class CameraFpsControlTests(harness.CameraFpsControlTests):
+
+    def _view(self, pane):
+        """The card's camera viewport: the stream, the picture, the view
+        transform and the gestures that drive it."""
+        view = self.find(pane, "cameraViewport")
+        self.assertIsNotNone(view, "the camera card mounted no viewport")
+        return view
+
+    def _bar(self, pane):
+        """The control bar inside the viewport: the two faces and the
+        dock/park rhythm they share."""
+        bar = self.find(pane, "cameraBar")
+        self.assertIsNotNone(bar, "the camera viewport mounted no control bar")
+        return bar
+
     def test_green_snapshot_range_requires_a_supported_url(self):
         pane, window, model, image, frame = self._fps_pane(700, 700, fps=5.0)
         self._fps_face(window, frame)
@@ -41,13 +56,13 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
     def test_touchpad_camera_zoom_matches_follower_scroll_distance(self):
         pane, window, _model, _image, frame = self._fps_pane(700, 700)
         self._wheel(window, frame, pixels=18)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25 ** 0.1, delta=0.002)
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.25 ** 0.1, delta=0.002)
         for _ in range(9):
             self._wheel(window, frame, pixels=18)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=0.002,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.25, delta=0.002,
                                msg="180 touchpad pixels equal one follower zoom notch")
         self._wheel(window, frame)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25 * 1.25, delta=0.002,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.25 * 1.25, delta=0.002,
                                msg="a mouse wheel still moves one discrete notch")
 
     def test_touchpad_fps_uses_the_same_180_pixel_travel(self):
@@ -84,11 +99,11 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
 
         apply_camera("http://127.0.0.1:59999/webcam2/?mpf_reload=1", True)
         self.pump(30)
-        self.assertTrue(pane.property("cameraControlLive"), "the surface starts live")
+        self.assertTrue(self._view(pane).property("cameraControlLive"), "the surface starts live")
         self.assertTrue(gesture.property("enabled"))
         self._wheel(window, gesture)
         self.pump(30)
-        zoomed = pane.property("cameraZoom")
+        zoomed = self._view(pane).property("cameraZoom")
         self.assertGreater(zoomed, 1.0, "the wheel zooms the live picture")
 
         # The stream OFF: the model's flag drops with its URL, and the
@@ -99,7 +114,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self.pump(30)
         self.assertEqual(image.property("clearCount"), 1, "the stream-off blanks the frame")
         self.assertEqual(image.property("imageWidth"), 0, "and paints no size")
-        self.assertFalse(pane.property("cameraControlLive"))
+        self.assertFalse(self._view(pane).property("cameraControlLive"))
         self.assertFalse(gesture.property("enabled"), "the blank disarms the gestures")
 
         # The stream ON again: the URL returns on a new nonce and the
@@ -111,12 +126,12 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         image.setProperty("imageWidth", 640)
         image.setProperty("imageHeight", 480)
         self.pump(30)
-        self.assertTrue(pane.property("cameraControlLive"),
+        self.assertTrue(self._view(pane).property("cameraControlLive"),
                         "the resumed stream's frame re-arms the control surface")
         self.assertTrue(gesture.property("enabled"))
         self._wheel(window, gesture)
         self.pump(30)
-        self.assertNotEqual(pane.property("cameraZoom"), zoomed, "the wheel zooms again")
+        self.assertNotEqual(self._view(pane).property("cameraZoom"), zoomed, "the wheel zooms again")
         self._wheel(window, gesture, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         self.pump(30)
         self.assertEqual(model.fps_calls, [16.0], "and the rate gesture is back with it")
@@ -209,21 +224,21 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self.assertGreaterEqual(frame.width(), 200, "the scale needs the room it tests for")
         self.assertGreaterEqual(frame.height(), 150, "the scale needs the room it tests for")
         self.assertTrue(control.property("visible"), "the full scale has room here")
-        self.assertFalse(pane.property("cameraBarDocked"), "the bar starts parked")
+        self.assertFalse(self._bar(pane).property("cameraBarDocked"), "the bar starts parked")
         self.assertGreaterEqual(control.x(), frame.width(),
                                 "the scale starts parked out of the frame")
         self._wheel(window, image, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         self.pump(30)
         self.assertEqual(model.fps_calls, [16.0],
                          "one notch is one linear step of the camera's own range")
-        self.assertEqual(pane.property("cameraBarMode"), "fps",
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "fps",
                          "the rate's own gesture brings the rate's own face up")
         self._pump_ms(300)
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
                              "the docked scale rides inside the CAMERA VIEW, not the pane frame")
         self._wait_until(window, lambda _image: control.x() >= frame.width(),
                          timeout=8.0)
-        self.assertFalse(pane.property("cameraBarDocked"), "five idle seconds park it again")
+        self.assertFalse(self._bar(pane).property("cameraBarDocked"), "five idle seconds park it again")
         self.assertGreaterEqual(control.x(), frame.width(),
                                 "the parked scale clears the picture's own edge")
 
@@ -237,26 +252,26 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         control = self.find(pane, "cameraBar")
         self._wheel(window, frame)
         self._pump_ms(300)
-        self.assertEqual(pane.property("cameraBarMode"), "zoom",
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "zoom",
                          "the plain wheel's own face is up")
-        self.assertTrue(pane.property("cameraBarDocked"), "and it is docked")
+        self.assertTrue(self._bar(pane).property("cameraBarDocked"), "and it is docked")
         self._wheel(window, frame, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         # Mid-turn-over, before any timer can run: still the zoom face,
         # with the bar on its way out of the picture.
-        self.assertEqual(pane.property("cameraBarMode"), "zoom",
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "zoom",
                          "the face that is leaving stays up for the slide-out")
-        self.assertTrue(pane.property("_cameraBarTurning"), "the turn-over is under way")
-        self.assertFalse(pane.property("cameraBarShown"),
+        self.assertTrue(self._bar(pane).property("_cameraBarTurning"), "the turn-over is under way")
+        self.assertFalse(self._bar(pane).property("cameraBarShown"),
                          "the turn-over takes the bar off the picture")
         self._wait_until(window,
-                         lambda _image: pane.property("cameraBarMode") == "fps"
-                         and not pane.property("_cameraBarTurning")
-                         and pane.property("cameraBarShown")
+                         lambda _image: self._bar(pane).property("cameraBarMode") == "fps"
+                         and not self._bar(pane).property("_cameraBarTurning")
+                         and self._bar(pane).property("cameraBarShown")
                          and control.x() + control.width() <= frame.width() + 0.5,
                          timeout=3.0)
-        self.assertEqual(pane.property("cameraBarMode"), "fps", "the rate face lands")
-        self.assertFalse(pane.property("_cameraBarTurning"))
-        self.assertTrue(pane.property("cameraBarShown"), "and rides back in")
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "fps", "the rate face lands")
+        self.assertFalse(self._bar(pane).property("_cameraBarTurning"))
+        self.assertTrue(self._bar(pane).property("cameraBarShown"), "and rides back in")
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
                              "the landed face is docked inside the picture")
         self.assertEqual(model.fps_calls, [16.0], "one notch, one rate")
@@ -270,37 +285,37 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # picture is about.
         pane, window, model, image, frame = self._fps_pane(700, 700)
         control = self.find(pane, "cameraBar")
-        self.assertFalse(pane.property("cameraBarPinned"), "the fit pins nothing")
+        self.assertFalse(self._bar(pane).property("cameraBarPinned"), "the fit pins nothing")
         self._wheel(window, frame)
         self._pump_ms(300)
-        self.assertTrue(pane.property("cameraBarPinned"), "a held zoom pins the scale")
+        self.assertTrue(self._bar(pane).property("cameraBarPinned"), "a held zoom pins the scale")
         self._wheel(window, frame, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         # Both waits are the states the assertions are about. Read off
         # a fixed instant instead, they measured how much wall clock the
         # event loop had eaten — how the macOS leg failed, with the bar
         # mid-turn-over. The timeouts are hang guards, an order of
         # magnitude above what the chain owes.
-        self._wait_until(window, lambda _image: pane.property("cameraBarMode") == "fps",
+        self._wait_until(window, lambda _image: self._bar(pane).property("cameraBarMode") == "fps",
                          timeout=2.0)
-        self.assertEqual(pane.property("cameraBarMode"), "fps",
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "fps",
                          "the rate card has the bar for now")
         self._wait_until(window,
-                         lambda _image: pane.property("cameraBarMode") == "zoom"
-                         and pane.property("cameraBarShown")
+                         lambda _image: self._bar(pane).property("cameraBarMode") == "zoom"
+                         and self._bar(pane).property("cameraBarShown")
                          and control.x() + control.width() <= frame.width() + 0.5,
                          timeout=8.0)
-        self.assertEqual(pane.property("cameraBarMode"), "zoom", "the scale comes back")
-        self.assertTrue(pane.property("cameraBarShown"), "and it is on screen")
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "zoom", "the scale comes back")
+        self.assertTrue(self._bar(pane).property("cameraBarShown"), "and it is on screen")
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
                              "docked, not parked")
         self._pump_ms(6000)
-        self.assertTrue(pane.property("cameraBarShown"),
+        self.assertTrue(self._bar(pane).property("cameraBarShown"),
                         "the pinned scale outlasts the idle park")
-        self.assertEqual(pane.property("cameraBarMode"), "zoom")
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "zoom")
         self._double_click(window, frame)
         self._pump_ms(400)
-        self.assertFalse(pane.property("cameraBarPinned"), "the fit releases the pin")
-        self.assertFalse(pane.property("cameraBarShown"),
+        self.assertFalse(self._bar(pane).property("cameraBarPinned"), "the fit releases the pin")
+        self.assertFalse(self._bar(pane).property("cameraBarShown"),
                          "and the bar has nothing left to read")
         self.assertEqual(model.fps_calls, [16.0], "the rate is not a view state")
 
@@ -326,7 +341,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
                                msg="the press takes the rate to the pointer")
         self._pump_ms(5400)
         self.assertTrue(handle.property("pressed"), "the grab survives the stillness")
-        self.assertTrue(pane.property("cameraBarShown"),
+        self.assertTrue(self._bar(pane).property("cameraBarShown"),
                         "a held handle holds the park off")
         self._mouse(window, bar, QEvent.Type.MouseMove, bar.width() / 2, bar.height() / 2,
                     harness.Qt.MouseButton.LeftButton)
@@ -341,9 +356,9 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self.assertFalse(handle.property("pressed"), "the release is a real release")
         self.assertAlmostEqual(pane.property("cameraFps"), 7.88, delta=0.05,
                                msg="the rate is set where the release occurred")
-        self._wait_until(window, lambda _image: not pane.property("cameraBarShown"),
+        self._wait_until(window, lambda _image: not self._bar(pane).property("cameraBarShown"),
                          timeout=8.0)
-        self.assertFalse(pane.property("cameraBarShown"),
+        self.assertFalse(self._bar(pane).property("cameraBarShown"),
                          "the idle five seconds run from the release")
 
     def test_the_bar_carries_the_rate_floor_without_cutting_it_off(self):
@@ -417,12 +432,12 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self.pump(30)
         self.assertEqual(model.fps_calls, [],
                          "the plain wheel is the picture's own gesture")
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=1e-6,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.25, delta=1e-6,
                                msg="one plain notch is one 1.25x zoom step")
         self._wheel(window, frame, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         self.pump(30)
         self.assertEqual(model.fps_calls, [16.0], "the shift wheel is the throttle's")
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.25, delta=1e-6,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.25, delta=1e-6,
                                msg="a shift notch must not move the view")
 
     def test_the_wheel_zooms_about_the_pointer(self):
@@ -434,45 +449,45 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._wheel(window, frame, position=left)
         # Observe the first delivered animation tick. A loaded/offscreen
         # macOS runner may not deliver any timer event within a fixed 50 ms.
-        self._wait_until(window, lambda _image: pane.property("cameraDisplayZoom") > 1.0,
+        self._wait_until(window, lambda _image: self._view(pane).property("cameraDisplayZoom") > 1.0,
                          timeout=5.0)
         # (W/2 - x) / 4 is where the pointer's own point lands once the
         # picture is a quarter bigger: the edge it was over stays put,
         # so a wheel to the left of the centre walks the pan right.
-        self.assertAlmostEqual(pane.property("cameraPanX"),
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"),
                                (frame.width() / 2 - left.x()) * 0.25, delta=1.0,
                                msg="the point under the pointer drifted")
-        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1.0)
-        displayed = pane.property("cameraDisplayZoom")
+        self.assertAlmostEqual(self._view(pane).property("cameraPanY"), 0.0, delta=1.0)
+        displayed = self._view(pane).property("cameraDisplayZoom")
         self.assertGreater(displayed, 1.0, "the image must start gliding")
-        self.assertLess(displayed, pane.property("cameraZoom"),
+        self.assertLess(displayed, self._view(pane).property("cameraZoom"),
                         "a wheel notch must not snap the image to its target")
         anchor = left.x() - frame.width() / 2
-        self.assertAlmostEqual(pane.property("cameraDisplayOffsetX"),
+        self.assertAlmostEqual(self._view(pane).property("cameraDisplayOffsetX"),
                                anchor * (1 - displayed), delta=1.0,
                                msg="the pointer's image point must stay fixed during the glide")
         # Qt timers can be coalesced on a busy/offscreen macOS runner.
         # Wait for the observable endpoint rather than assuming a tick count
         # within 350 ms; the intermediate assertions above still prove easing.
         self._wait_until(window, lambda _image:
-                         pane.property("cameraDisplayZoom") == pane.property("cameraZoom")
-                         and pane.property("cameraDisplayOffsetX") == pane.property("cameraPanOffsetX"),
+                         self._view(pane).property("cameraDisplayZoom") == self._view(pane).property("cameraZoom")
+                         and self._view(pane).property("cameraDisplayOffsetX") == self._view(pane).property("cameraPanOffsetX"),
                          timeout=5.0)
-        self.assertEqual(pane.property("cameraDisplayZoom"), pane.property("cameraZoom"))
-        self.assertEqual(pane.property("cameraDisplayOffsetX"), pane.property("cameraPanOffsetX"))
+        self.assertEqual(self._view(pane).property("cameraDisplayZoom"), self._view(pane).property("cameraZoom"))
+        self.assertEqual(self._view(pane).property("cameraDisplayOffsetX"), self._view(pane).property("cameraPanOffsetX"))
         # Zooming out past the fit stops at the fit and re-centres.
         for _ in range(8):
             self._wheel(window, frame, delta=-120)
             self.pump(5)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.0, delta=1e-6,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.0, delta=1e-6,
                                msg="the fit is the floor")
-        self.assertAlmostEqual(pane.property("cameraPanX"), 0.0, delta=1e-6)
-        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1e-6)
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), 0.0, delta=1e-6)
+        self.assertAlmostEqual(self._view(pane).property("cameraPanY"), 0.0, delta=1e-6)
         self._wait_until(window, lambda _image:
-                         pane.property("cameraDisplayZoom") == 1.0
-                         and pane.property("cameraDisplayOffsetX") == 0.0, timeout=5.0)
-        self.assertEqual(pane.property("cameraDisplayZoom"), 1.0)
-        self.assertEqual(pane.property("cameraDisplayOffsetX"), 0.0)
+                         self._view(pane).property("cameraDisplayZoom") == 1.0
+                         and self._view(pane).property("cameraDisplayOffsetX") == 0.0, timeout=5.0)
+        self.assertEqual(self._view(pane).property("cameraDisplayZoom"), 1.0)
+        self.assertEqual(self._view(pane).property("cameraDisplayOffsetX"), 0.0)
 
     def test_the_drag_pans_the_picture_and_stops_at_the_pictures_edge(self):
         # The pan follows the pointer exactly while there is picture to
@@ -482,19 +497,19 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._wheel(window, frame)
         self._wheel(window, frame)
         self.pump(30)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.5625, delta=1e-6)
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.5625, delta=1e-6)
         self._drag(window, frame, 40, 20)
-        self.assertAlmostEqual(pane.property("cameraPanX"), 40.0, delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), 40.0, delta=1.5,
                                msg="the drag pan lagged the pointer")
-        self.assertAlmostEqual(pane.property("cameraPanY"), 20.0, delta=1.5)
-        self.assertEqual(pane.property("cameraPanOffsetX"), pane.property("cameraPanX"),
+        self.assertAlmostEqual(self._view(pane).property("cameraPanY"), 20.0, delta=1.5)
+        self.assertEqual(self._view(pane).property("cameraPanOffsetX"), self._view(pane).property("cameraPanX"),
                          "a pan inside the limit is applied as it is")
         # A drag past the picture's edge is held AT the edge as it is
         # stored, not only on the way to the transform.
         from PyQt6.QtCore import QEvent
-        limit = pane.property("cameraPanLimitX")
+        limit = self._view(pane).property("cameraPanLimitX")
         self.assertAlmostEqual(limit,
-                               frame.width() * (pane.property("cameraZoom") - 1) / 2, delta=1.5,
+                               frame.width() * (self._view(pane).property("cameraZoom") - 1) / 2, delta=1.5,
                                msg="the limit is the picture's own overhang")
         self.assertLess(limit, 260.0, "the mount must leave room for an overshoot")
         cx, cy = frame.width() / 2, frame.height() / 2
@@ -503,10 +518,10 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + 260, cy,
                     harness.Qt.MouseButton.LeftButton)
         self.pump(20)
-        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), limit, delta=1.5,
                                msg="a drag past the edge stops at the edge")
-        self.assertAlmostEqual(pane.property("cameraPanOffsetX"),
-                               pane.property("cameraPanLimitX"), delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanOffsetX"),
+                               self._view(pane).property("cameraPanLimitX"), delta=1.5,
                                msg="the applied pan is clamped to the picture's edge")
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + 260, cy,
                     harness.Qt.MouseButton.LeftButton)
@@ -515,11 +530,11 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # A resize re-clamps through the binding, with no timer.
         self.resize_window(pane, window, 400, 400)
         self._pump_ms(200)
-        self.assertAlmostEqual(pane.property("cameraPanOffsetX"),
-                               pane.property("cameraPanLimitX"), delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanOffsetX"),
+                               self._view(pane).property("cameraPanLimitX"), delta=1.5,
                                msg="a shrunken pane re-clamps the applied pan")
-        self.assertLess(pane.property("cameraPanOffsetX"),
-                        frame.width() * (pane.property("cameraZoom") - 1) / 2 + 1.0)
+        self.assertLess(self._view(pane).property("cameraPanOffsetX"),
+                        frame.width() * (self._view(pane).property("cameraZoom") - 1) / 2 + 1.0)
 
     def test_a_drag_past_the_edge_never_has_to_be_undone(self):
         # The live report: past the picture's edge the pan stopped, but
@@ -531,7 +546,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._wheel(window, frame)
         self._wheel(window, frame)
         self.pump(30)
-        limit = pane.property("cameraPanLimitX")
+        limit = self._view(pane).property("cameraPanLimitX")
         self.assertGreater(limit, 40.0, "the mount must zoom into a real overhang")
         self.assertLess(limit, 200.0, "the overshoot must fit inside the window")
         from PyQt6.QtCore import QEvent
@@ -547,16 +562,16 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # VALUES are what carry the claim — an overshoot that had to be
         # undone first would still read short here.
         self._wait_until(window,
-                         lambda _image: abs(pane.property("cameraPanX") - limit) <= 1.5,
+                         lambda _image: abs(self._view(pane).property("cameraPanX") - limit) <= 1.5,
                          timeout=8.0)
-        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), limit, delta=1.5,
                                msg="the overshoot is discarded, not banked")
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit + 50, cy,
                     harness.Qt.MouseButton.LeftButton)
         self._wait_until(window,
-                         lambda _image: abs(pane.property("cameraPanX") - (limit - 40)) <= 1.5,
+                         lambda _image: abs(self._view(pane).property("cameraPanX") - (limit - 40)) <= 1.5,
                          timeout=8.0)
-        self.assertAlmostEqual(pane.property("cameraPanX"), limit - 40, delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), limit - 40, delta=1.5,
                                msg="the return leg moves the picture at once")
         self._mouse(window, frame, QEvent.Type.MouseButtonRelease, cx + limit + 50, cy)
         self.pump(20)
@@ -574,11 +589,11 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         bar = self.find(pane, "cameraBar")
         self._wheel(window, frame)
         self._wait_until(window,
-                         lambda _image: pane.property("cameraBarDocked")
-                         and not pane.property("_cameraBarTurning")
+                         lambda _image: self._bar(pane).property("cameraBarDocked")
+                         and not self._bar(pane).property("_cameraBarTurning")
                          and bar.x() + bar.width() <= frame.width() + 0.5,
                          timeout=8.0)
-        limit = pane.property("cameraPanLimitX")
+        limit = self._view(pane).property("cameraPanLimitX")
         self.assertGreater(limit, 40.0, "the mount must zoom into a real overhang")
         from PyQt6.QtCore import QEvent
         cx, cy = frame.width() / 2, frame.height() / 2
@@ -589,22 +604,22 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._mouse(window, frame, QEvent.Type.MouseMove, cx + limit, cy,
                     harness.Qt.MouseButton.LeftButton)
         self._wait_until(window,
-                         lambda _image: abs(pane.property("cameraPanX") - limit) <= 1.5,
+                         lambda _image: abs(self._view(pane).property("cameraPanX") - limit) <= 1.5,
                          timeout=8.0)
-        self.assertAlmostEqual(pane.property("cameraPanX"), limit, delta=1.5,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), limit, delta=1.5,
                                msg="the first move never panned")
         across = bar.x() + bar.width() / 2
         self._mouse(window, frame, QEvent.Type.MouseMove, across, cy,
                     harness.Qt.MouseButton.LeftButton)
         self.pump(20)
-        out = pane.property("cameraPanX")
+        out = self._view(pane).property("cameraPanX")
         # The return leg is the claim: the grab is the camera gesture's
         # until the release, so the picture tracks the pointer even
         # though the outward leg ended over the control.
         self._mouse(window, frame, QEvent.Type.MouseMove, across - 60, cy,
                     harness.Qt.MouseButton.LeftButton)
         self.pump(20)
-        self.assertAlmostEqual(pane.property("cameraPanX"), out - 60, delta=2.0,
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), out - 60, delta=2.0,
                                msg="the drag lost the camera's grab to the control")
         self._mouse(window, frame, QEvent.Type.MouseButtonRelease, across - 60, cy)
 
@@ -654,8 +669,8 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         bar = self.find(pane, "cameraBar")
         self._wheel(window, frame)
         self._wait_until(window,
-                         lambda _image: pane.property("cameraBarDocked")
-                         and not pane.property("_cameraBarTurning")
+                         lambda _image: self._bar(pane).property("cameraBarDocked")
+                         and not self._bar(pane).property("_cameraBarTurning")
                          and bar.x() + bar.width() <= frame.width() + 0.5,
                          timeout=8.0)
         from PyQt6.QtCore import QEvent
@@ -685,16 +700,16 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self._wheel(window, frame)
         self._drag(window, frame, 60, 30)
         self.pump(20)
-        self.assertGreater(pane.property("cameraZoom"), 1.0)
-        self.assertNotEqual(pane.property("cameraPanX"), 0.0)
-        self.assertGreater(pane.property("cameraBarPinned"), False,
+        self.assertGreater(self._view(pane).property("cameraZoom"), 1.0)
+        self.assertNotEqual(self._view(pane).property("cameraPanX"), 0.0)
+        self.assertGreater(self._bar(pane).property("cameraBarPinned"), False,
                            "the zoomed view is the pin's own case")
         self._double_click(window, frame)
-        self.assertAlmostEqual(pane.property("cameraZoom"), 1.0, delta=1e-6,
+        self.assertAlmostEqual(self._view(pane).property("cameraZoom"), 1.0, delta=1e-6,
                                msg="the double click returns the fit")
-        self.assertAlmostEqual(pane.property("cameraPanX"), 0.0, delta=1e-6)
-        self.assertAlmostEqual(pane.property("cameraPanY"), 0.0, delta=1e-6)
-        self.assertFalse(pane.property("cameraBarPinned"),
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), 0.0, delta=1e-6)
+        self.assertAlmostEqual(self._view(pane).property("cameraPanY"), 0.0, delta=1e-6)
+        self.assertFalse(self._bar(pane).property("cameraBarPinned"),
                          "the fit leaves the pin nothing to hold")
 
     def test_the_parked_control_is_clipped_by_the_picture_not_the_pane(self):
@@ -736,7 +751,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # the fraction the rate now holds of that range.
         pane, window, model, _image, frame = self._fps_pane(700, 700, fps=30.0, maximum=60.0)
         self._fps_face(window, frame)
-        self.assertEqual(pane.property("cameraBarMode"), "fps", "the rate face is up")
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "fps", "the rate face is up")
         marker = self.find(pane, "cameraFpsMarker")
         self.assertTrue(self.find(pane, "cameraFpsScale").property("visible"),
                         "the rate face is the visible one")
@@ -831,7 +846,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # no spurious commit at the limit. The step is the camera's own
         # slice of its range, so a narrow camera gets a narrow step.
         pane, window, model, _image, frame = self._fps_pane(700, 700, fps=12.0, maximum=15.0)
-        self.assertEqual(pane.property("fpsStep"), 0.5,
+        self.assertEqual(self._bar(pane).property("fpsStep"), 0.5,
                          "the narrow range steps in halves, not in 1.25x jumps")
         self._wheel(window, frame, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
         self.pump(30)
@@ -880,20 +895,20 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # rate face docks and the control stays where the hand is.
         pane, window, model, _image, frame = self._fps_pane(700, 700)
         area = self.find(pane, "cameraGestureArea")
-        self.assertFalse(pane.property("cameraBarDocked"), "the bar starts parked")
+        self.assertFalse(self._bar(pane).property("cameraBarDocked"), "the bar starts parked")
         self._rate_drag(window, area, -12)
         self.assertEqual(model.fps_calls, [16.0], "12 px up is one step of the range")
-        self.assertEqual(pane.property("cameraBarMode"), "fps",
+        self.assertEqual(self._bar(pane).property("cameraBarMode"), "fps",
                          "the rate's own gesture brings the rate's own face up")
-        self.assertTrue(pane.property("cameraBarDocked"), "a drag docks the face")
-        self.assertEqual(pane.property("cameraZoom"), 1.0,
+        self.assertTrue(self._bar(pane).property("cameraBarDocked"), "a drag docks the face")
+        self.assertEqual(self._view(pane).property("cameraZoom"), 1.0,
                          "the rate drag must never move the picture")
         self._rate_drag(window, area, -12, steps=3)
         self.assertEqual(model.fps_calls, [16.0, 17.0, 18.0, 19.0],
                          "and the steps up are equal ones")
         self._rate_drag(window, area, 12)
         self.assertEqual(model.fps_calls[-1], 18.0, "down the same way")
-        self.assertEqual(pane.property("cameraZoom"), 1.0)
+        self.assertEqual(self._view(pane).property("cameraZoom"), 1.0)
 
     def test_the_steps_are_linear_at_every_point_on_the_scale(self):
         # The live report: the old 1.25x ladder accelerated towards the
@@ -905,7 +920,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
             with self.subTest(maximum=maximum):
                 pane, window, model, _image, frame = self._fps_pane(
                     700, 700, fps=1.0, maximum=maximum)
-                self.assertEqual(pane.property("fpsStep"), step,
+                self.assertEqual(self._bar(pane).property("fpsStep"), step,
                                  "the camera's range sets the step")
                 for _ in range(4):  # the first steps of the range
                     self._wheel(window, frame, modifiers=harness.Qt.KeyboardModifier.ShiftModifier)
@@ -930,7 +945,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         # thrown away, so the first step back moves the rate at once.
         pane, window, model, _image, frame = self._fps_pane(700, 700, fps=26.0, maximum=30.0)
         area = self.find(pane, "cameraGestureArea")
-        self.assertEqual(pane.property("fpsStep"), 1.0, "a one-FPS step here")
+        self.assertEqual(self._bar(pane).property("fpsStep"), 1.0, "a one-FPS step here")
         # The whole picture is the drag's track, so a drag can run the
         # range and then some: from the foot of the picture upward.
         # The first steps land the ceiling, everything after is overrun.
@@ -964,21 +979,21 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         pane, window, _model, _image, _frame = self._fps_pane(700, 700)
         area = self.find(pane, "cameraGestureArea")
         self._rate_drag(window, area, -12, release=False)
-        self.assertTrue(pane.property("cameraBarDocked"), "the drag docked the face")
-        self.assertIsNotNone(pane.property("cameraBarHandle"),
+        self.assertTrue(self._bar(pane).property("cameraBarDocked"), "the drag docked the face")
+        self.assertIsNotNone(self._bar(pane).property("cameraBarHandle"),
                              "the picture reports the grab the scales report")
         self._pump_ms(5400)
-        self.assertTrue(pane.property("cameraBarDocked"),
+        self.assertTrue(self._bar(pane).property("cameraBarDocked"),
                         "five still seconds with the button held must not park it")
         from PyQt6.QtCore import QEvent, Qt
         x, y = area.width() / 2, area.height() / 2 - 12
         self._mouse(window, area, QEvent.Type.MouseButtonRelease, x, y,
                     Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
         self.pump(30)
-        self.assertIsNone(pane.property("cameraBarHandle"), "the release lets go")
-        self._wait_until(window, lambda _image: not pane.property("cameraBarDocked"),
+        self.assertIsNone(self._bar(pane).property("cameraBarHandle"), "the release lets go")
+        self._wait_until(window, lambda _image: not self._bar(pane).property("cameraBarDocked"),
                          timeout=8.0)
-        self.assertFalse(pane.property("cameraBarDocked"),
+        self.assertFalse(self._bar(pane).property("cameraBarDocked"),
                          "and the idle clock starts again at the release")
 
     def test_the_left_drag_still_pans_and_leaves_the_rate_alone(self):
@@ -989,16 +1004,16 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         area = self.find(pane, "cameraGestureArea")
         self._wheel(window, frame)
         self._pump_ms(300)
-        self.assertGreater(pane.property("cameraZoom"), 1.0, "the wheel zoomed in")
-        before = (pane.property("cameraPanX"), pane.property("cameraPanY"))
+        self.assertGreater(self._view(pane).property("cameraZoom"), 1.0, "the wheel zoomed in")
+        before = (self._view(pane).property("cameraPanX"), self._view(pane).property("cameraPanY"))
         self._drag(window, area, 0, -30)
         self.assertEqual(model.fps_calls, [], "a left drag commits no rate")
-        self.assertNotEqual((pane.property("cameraPanX"), pane.property("cameraPanY")), before,
+        self.assertNotEqual((self._view(pane).property("cameraPanX"), self._view(pane).property("cameraPanY")), before,
                             "a left drag still pans")
         # And a right press with no travel leaves the rate where it was.
         self._rate_drag(window, area, 0)
         self.assertEqual(model.fps_calls, [], "a still right press changes nothing")
-        self.assertEqual(pane.property("cameraZoom"), 1.25,
+        self.assertEqual(self._view(pane).property("cameraZoom"), 1.25,
                          "and never returns the fit")
 
     def test_a_right_double_click_never_returns_the_fit(self):
@@ -1009,7 +1024,7 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         area = self.find(pane, "cameraGestureArea")
         self._wheel(window, frame)
         self._pump_ms(300)
-        self.assertGreater(pane.property("cameraZoom"), 1.0, "the wheel zoomed in")
+        self.assertGreater(self._view(pane).property("cameraZoom"), 1.0, "the wheel zoomed in")
         from PyQt6.QtCore import QPoint
         from PyQt6.QtTest import QTest
         scene = area.mapToItem(window.contentItem(),
@@ -1017,8 +1032,8 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         QTest.mouseDClick(window, harness.Qt.MouseButton.RightButton, harness.Qt.KeyboardModifier.NoModifier,
                           QPoint(int(scene.x()), int(scene.y())))
         self.pump(30)
-        self.assertEqual(pane.property("cameraZoom"), 1.25,
+        self.assertEqual(self._view(pane).property("cameraZoom"), 1.25,
                          "a right double click must leave the view where it is")
         self._double_click(window, area)
-        self.assertEqual(pane.property("cameraZoom"), 1.0,
+        self.assertEqual(self._view(pane).property("cameraZoom"), 1.0,
                          "the left double click is still the fit")

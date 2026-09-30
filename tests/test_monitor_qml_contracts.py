@@ -1382,12 +1382,12 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
 
     def test_camera_render_watchdogs_are_wired(self):
         # The live reports: a stream that CONNECTED but never
-        # painted a frame raises no error signal — the pane's stall
+        # painted a frame raises no error signal — the viewport's stall
         # watchdog watches the frame size; and a suspend/wake leaves a
         # frozen frame whose size is already set — the model's wake
         # hook reloads the source.
-        self.assertIn("cameraStallWatchdog", harness.CAMERA_PANE_QML)
-        self.assertIn("cameraRenderStalled()", harness.CAMERA_PANE_QML)
+        self.assertIn("cameraStallWatchdog", harness.CAMERA_VIEWPORT_QML)
+        self.assertIn("cameraRenderStalled()", harness.CAMERA_VIEWPORT_QML)
         self.assertIn("def cameraRenderStalled", harness.MONITOR_MODEL)
         self.assertIn("applicationStateChanged.connect(self._on_app_state_changed)", harness.MONITOR_MODEL)
 
