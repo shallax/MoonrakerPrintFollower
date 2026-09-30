@@ -33,8 +33,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # The restart: the view is gone and the restore has not run.
         service._view = None
         service._restored = False
-        service._prepared_table = None
-        service._prepared_identity = None
+        service._prepared.table = None
+        service._prepared.identity = None
         files._path = target
         # The race: the scrub lands BEFORE the restore completes.
         service.set_manual_anchor(8)
@@ -657,7 +657,7 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         # file.
         for _ in range(600):
             self.qt.events(10)
-            if service._prepared_saved:
+            if service._prepared.saved:
                 break
         seek_to_available(0)
         for _ in range(200):

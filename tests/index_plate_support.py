@@ -660,7 +660,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.service._advance()
-            if self.service._prepared_saved and not self.service._busy:
+            if self.service._prepared.saved and not self.service._busy:
                 return
             QCoreApplication.processEvents()
             time.sleep(0.01)

@@ -29,7 +29,7 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         app, follower, transport = self.follower(preferences=prefs)
         parts = follower._runtime
         self.assertEqual(transport.identity, ("http://imported", "import-key"))
-        self.assertEqual(parts.index._prepared.max_bytes, 384 * 1024 * 1024,
+        self.assertEqual(parts.index._prepared.store.max_bytes, 384 * 1024 * 1024,
                          "the stored budget never reached the prepared store")
         self.assertEqual(parts.index._cache.max_bytes, 384 * 1024 * 1024,
                          "the stored budget never reached the index store")

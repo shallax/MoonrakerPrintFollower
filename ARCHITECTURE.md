@@ -201,6 +201,7 @@ correct package ownership.
 | `PlateProgress.py` | Prepared layer geometry, motion ranges and display payload construction | Qt scene graph or commands |
 | `PlateRenderController.py` | The native renderer: per-surface render contexts, bounded demand scheduling, raster workers and their tickets, cache assets and decoded pins | Print state, presentation settings or Qt publication |
 | `PlateQt.py` | Qt-facing layer assets and preparation adapters | Printer tracking policy |
+| `PreparedSession.py` | The prepared store's session for the file being served: the adopted table, the incremental writer and its retirement, the coverage census, the completeness/published latches and the identity strength gate | The store's format, the RAM tiers or worker scheduling |
 | `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
 | `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
 | `PrintCoordinator.py` | Cross-domain orchestration over injected services and immutable observations | Protocol or geometry algorithms |
