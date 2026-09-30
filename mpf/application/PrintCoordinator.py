@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 import time
+from typing import NamedTuple
 
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
@@ -22,6 +23,58 @@ from ..preview.PreviewFormatting import (
 from ..printing.PrintIdentity import index_view_for_print
 from ..printing.PrintState import LayerResolver, PrintSnapshot
 from ..printing.RemoteJobService import RemoteJobService
+
+
+class _PrintFace(NamedTuple):
+    """This frame's print: the filename the services are bound to, the
+    run key, the frame's own print_stats and the index and plate views
+    that vouch for it, with the metadata that describes it."""
+    filename: str
+    job: object
+    stats: dict
+    view: object
+    plate_view: object
+    metadata: dict
+    estimate: float
+
+
+class _Motion(NamedTuple):
+    """Where the nozzle is this instant: the physical layer the resolver
+    placed it at, the live position in the G-code's own coordinates, the
+    file position once attributed, the matched motion progress and the
+    layer fraction derived from it."""
+    physical: object
+    live_position: object
+    position: object
+    progress: object
+    fraction: object
+    extruding: object
+
+
+class _Totals(NamedTuple):
+    """The print's two running totals: whether a load is still active and
+    the filament total the header parse or the metadata supplied."""
+    load_active: bool
+    filament_total: object
+
+
+class _Pause(NamedTuple):
+    """The next scheduled pause for this frame — one tuple, so the
+    snapshot and the published block cannot show two different ones."""
+    layer: object
+    eta: object
+    fraction: object
+    baked: object
+
+
+class _Plate(NamedTuple):
+    """The follower face's payloads and the numbers the snapshot carries
+    beside them."""
+    progress: object
+    manual: object
+    visited: frozenset
+    lookup_ms: object
+    layer_count: int
 
 
 class PrintCoordinator(QObject):
@@ -212,301 +265,371 @@ class PrintCoordinator(QObject):
             if detail is not None:
                 self._detail = detail
             config = self._binding.config
-            # The toolpath's arrival (the plugin's load rendered, or a
-            # slice) is the moment Cura's controls must come up: the
-            # plugin-driven load fires none of Cura's own activity
-            # events, so Cura's panel and slider stay dormant until an
-            # unrelated event (the live report). Nudge Cura's
-            # own computation on the edge, and once more after the
-            # render settles.
-            has_toolpath = bool(self._cura.has_toolpath)
-            if has_toolpath and not self._had_toolpath:
-                self._had_toolpath = True
-                self._cura.nudge_cura_activity()
-                self._cura.nudge_layer_view()
-                QTimer.singleShot(1500, self._cura.nudge_cura_activity)
-                # The fresh-bind attach's completion (the p1 report):
-                # the bind-time gate saw no toolpath yet — the layer
-                # render lands after the bind — so the follower
-                # attaches when the toolpath ARRIVES. A deliberate
-                # detach latches _user_detached, so a later toolpath
-                # flap can never re-attach over the user's choice
-                # (the panel's catch).
-                if not self._preview.state.attached and not self._user_detached:
-                    self._preview.attach(True)
-            elif not has_toolpath:
-                self._had_toolpath = False
-                # The ruling (2026-09-17): the attach control pins to
-                # detached without a toolpath — the follower detaches
-                # for real when the toolpath goes away.
-                if self._preview.state.attached:
-                    self._preview.attach(False)
-            filename = str((status.get("print_stats") or {}).get("filename") or "")
-            job = self._files.job_key
-            # The view is the index's evidence for the CURRENT print —
-            # both the view's key and the files service's job can be
-            # stale from an earlier load of a DIFFERENT file (the red
-            # run: the hourglass never fired for a fresh print after
-            # any preview load, because the two stale keys agreed with
-            # each other). Compare against the print's own filename.
-            view = index_view_for_print(self._index.view, filename)
-            plate_view = self._plate_source_view(view, status)
-            plate_available = plate_view is not None
-            # The downloaded file's OWN header is the authoritative
-            # filament total; Moonraker's parse of it (the metadata
-            # below) is the fallback. One bounded head read per
-            # downloaded file — the files service emits changed when a
-            # download completes, so this latch runs on the refresh
-            # that immediately follows it.
-            path = self._files.path
-            if path != self._header_total_path:
-                self._header_total_path = path
-                self._header_total_mm = filament_total_mm_from_file(path) if path else None
-            # The downloaded metadata wins; Moonraker's header parse is
-            # the fallback that populates the layer-height readout and
-            # the slicer estimate without any gcode download. The
-            # fallback serves ONLY the payload whose identity matches
-            # the current job — never the previous print's values.
-            status_stats = status.get("print_stats") or {}
-            metadata = self._files.metadata or self._mr_metadata_for(str(status_stats.get("filename") or ""), job)
-            # The toolhead's PHYSICAL position, in the G-code's own
-            # coordinates, computed ONCE from this frame: the layer resolver
-            # corroborates the parser's layer claim against the nozzle's own
-            # Z with it, and the plate split refines the dispatcher's
-            # position with it, exactly as the Preview's follower does (the
-            # same helper, the same space). Both now read the same frame, so
-            # a layer can never be paired with a position from an earlier
-            # one. Absent telemetry is None, and neither consumer then
-            # treats a parser-side value as physical.
-            live_position = live_position_in_gcode_space(
-                status.get("motion_report") or {}, status.get("gcode_move") or {})
-            physical = self._layers.resolve(status, config, plate_view, metadata, self._cura.heights,
-                                            live_position)
-            self._next_pause.track(physical.index)
-            try:
-                estimate = float(metadata.get("estimated_time") or 0)
-            except (TypeError, ValueError):
-                estimate = 0
-            # The file position is resolved ONCE, ahead of BOTH of its
-            # consumers — the layer fraction here and the plate split
-            # below. The plate's path runs with no identity-checked
-            # view at all (the monitor-only index), so a position bound
-            # inside the layer branch left that read unbound. Missing
-            # or non-numeric is None, which each consumer skips: a real
-            # 0 is a position, never an absence.
-            sdcard = status.get("virtual_sdcard")
-            try:
-                position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
-            except (TypeError, ValueError):
-                position = None
-            # The attach diagnosis: which upstream telemetry the split
-            # actually has — the live report's split=None with a valid
-            # anchor must separate an absent virtual_sdcard from an
-            # absent physical position.
-            if position is None and config.trace_layer:
-                Logger.log("d", "plate position: virtualSdcard=%r "
-                               "statusKeys=%s",
-                           list(sdcard.keys()) if isinstance(sdcard, Mapping) else None,
-                           sorted(status.keys()))
-            # The job boundary's refusal: while the printer still
-            # reports the byte offset the finished print left standing,
-            # this frame is that print's — its offset opened the
-            # refinement onto the parked nozzle's old place and painted
-            # the restarted print's first layer with the old fraction.
-            if position is not None and not self._jobs.position_attributed(position):
-                position = 0
-                live_position = None
-            # Match exactly once for this telemetry frame. Presentation
-            # readiness and either view's attach/scrub state do not own the
-            # physical floor; every live consumer receives this same result.
-            motion_progress = None
-            extruder_velocity = number((status.get("motion_report") or {}).get("live_extruder_velocity"), None)
-            extruding = None if extruder_velocity is None else extruder_velocity > 1e-6
-            if plate_available and physical.index is not None:
-                motion_progress = self._index.observe_motion(
-                    physical.index, position, live_position,
-                    paused=status_stats.get("state") == "paused", extruding=extruding)
-            layer_progress = motion_progress.fraction if motion_progress is not None else None
-            # The monitor-only download's terminal conditions (panel P1-1).
-            self._loads.retire_monitor(view is not None)
-            load_active = self._loads.active
-            filament_total = self._header_total_mm
-            if filament_total is None:
-                try:
-                    filament_total = float(metadata.get("filament_total"))
-                except (TypeError, ValueError):
-                    filament_total = None
-            try:
-                elapsed = float((status_stats.get("print_duration") or 0) or 0.0)
-            except (TypeError, ValueError):
-                elapsed = 0.0
-            self._next_pause.update_anchor(job, status_stats.get("state"), elapsed)
-            # The merged rows built ONCE per refresh (the perf
-            # panel's catch): the compute and the publish share them.
-            items = self._next_pause.rebuild(physical.index)
-            (next_pause_layer, next_pause_eta,
-             next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
-            # The follower face's prepared polylines: built HERE from
-            # the index (the worker-side prep rule), not in the model.
-            # Its slider range and preparation-band metadata read the
-            # SAME accepted view the rest of the plate reads.
-            layer_count = len(plate_view.ranges) if plate_view is not None else 0
-            # The face's anchor: the live layer while the follower
-            # follows the print, the manual one while the user has
-            # detached it. An anchor outside this file is not refused:
-            # the service keeps it and withholds it only from the
-            # index's retention bound, so its payload comes back
-            # carrying no current layer (a frozen anchor outlives a
-            # print and the next one may be shorter).
-            plate_progress_payload = None
-            manual_payload = None
-            plate_visited = frozenset()
-            plate_lookup_ms = None
-            if plate_available and (physical.index is not None or self._manual_serving_active()):
-                # The payload is built INSIDE the service — the raw
-                # index's arrays never cross its boundary (the
-                # architecture contract), so the coordinator asks the
-                # service, never the view. The live plate needs a
-                # resolved physical layer; the detached plate can use
-                # its own anchor before the print reaches that layer.
-                # Neither plate API is asked for a None anchor. A
-                # frozen layer carries NO file position: the split is
-                # a live print's boundary, and on another layer it
-                # would be another print's fill.
-                # TWO payloads (the live request): the live one serves
-                # the mini and the attached popover — the mini NEVER
-                # detaches with the popover — and the frozen one the
-                # detached popover alone. Attached-ness is the test,
-                # never anchor equality — a detach that froze the
-                # CURRENT layer still read as following while the print
-                # stayed on it (the live report: detaching did nothing
-                # visible).
-                lookup_start = time.monotonic()
-                if physical.index is not None:
-                    plate_progress_payload = self._index.plate_progress(
-                        physical.index, position, live_position, paused=status_stats.get("state") == "paused",
-                        extruding=extruding, motion=motion_progress)
-                if self._manual_serving_active():
-                    manual_payload = self._index.plate_progress(
-                        self._plate_anchor, None, live_position)
-                # This is ONLY the coordinator-side service lookup.
-                # Prepared-file I/O, decode, raw hydration and preparation
-                # happen asynchronously inside GCodeIndexService and are
-                # intentionally not mislabeled as part of this number.
-                plate_lookup_ms = (time.monotonic() - lookup_start) * 1000.0
-                # The per-layer printed objects: the executed motions'
-                # polygon visits, read back from the layer's start.
-                # The rows go through the SAME normalisation the map
-                # uses — the raw polygon may arrive flat or paired,
-                # and the point-in-polygon test needs pairs (the
-                # green-printed report: the raw rows never matched).
-                exclude_status = status.get("exclude_object") or {}
-                # Memoised per job: a poll that only moved the position
-                # or advanced the clock re-delivers the same definition,
-                # and re-walking every ring here runs O(vertices) of
-                # Python per object on this thread, every poll.
-                if plate_progress_payload is not None:
-                    exclude_rows = self._plate_memo.value(exclude_status, job)["objects"]
-                    visited = getattr(self._index, "plate_visited", None)
-                    if visited is not None and plate_progress_payload.get("split") is not None:
-                        plate_visited = visited(physical.index,
-                                                plate_progress_payload["split"], exclude_rows)
+            # The phases below run in this one order and each reads the
+            # frame pinned above, never self._status: the observed job
+            # transition, the metadata's confirmation, the load and replace
+            # state, the index readiness, the layer resolution, the pause
+            # handling, the Preview's projection and the publication all
+            # describe the same poll.
+            self._sync_toolpath()
+            face = self._resolve_face(status)
+            motion = self._resolve_motion(status, config, face)
+            totals = self._resolve_totals(face)
+            pause = self._resolve_pause(face, motion)
+            plate = self._build_plate_payloads(status, face, motion)
             # The frame is stored WITH the snapshot it produced: _publish()
             # and the signal-driven publishes compose their text from this
             # pair, so the pair can never be two different polls.
             self._frame = status
-            self._snapshot = PrintSnapshot(job, observation, physical,
-                estimate if estimate > 0 else None, self._files.metadata_complete,
-                layer_progress=layer_progress, motion_progress=motion_progress, index_ready=view is not None,
-                download_fraction=self._files.download_fraction,
-                indexing=self._index.phase == "indexing",
-                index_fraction=self._index.progress if self._index.phase == "indexing" else None,
-                next_pause_layer=next_pause_layer,
-                next_pause_eta=next_pause_eta,
-                next_pause_fraction=next_pause_fraction,
-                next_pause_baked=next_pause_baked,
-                load_active=load_active,
-                filament_total=filament_total if filament_total and filament_total > 0 else None,
-                plate_progress=plate_progress_payload,
-                plate_manual_progress=manual_payload,
-                plate_lookup_ms=plate_lookup_ms,
-                plate_layer_count=layer_count,
-                plate_pass_fraction=self._index.plate_pass_fraction()
-                if plate_view is not None else None,
-                plate_visited=plate_visited)
-            if self._snapshot.active and filename:
-                self._maybe_fetch_mr_metadata(filename, job)
-            if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:
-                self._layer_trace_at = time.monotonic()
-                info = (status.get("print_stats") or {}).get("info") or {}
-                gpos = (status.get("gcode_move") or {}).get("gcode_position") or ()
-                mr_meta = self._mr_metadata_for(filename, job)
-                Logger.log("i",
-                    "layer trace: raw_current=%s total=%s state=%s z=%s e=%s progress=%s one_based=%s z_fallback=%s mr_meta=%s mr_meta_keys=%s files_meta=%s heights_n=%s deltas=%s ascent=%.3f z_layer=%s -> layer=%s source=%s",
-                    info.get("current_layer"), info.get("total_layer"),
-                    (status.get("print_stats") or {}).get("state"),
-                    gpos[2] if len(gpos) >= 3 else None, gpos[3] if len(gpos) >= 4 else None,
-                    (status.get("virtual_sdcard") or {}).get("progress"),
-                    config.moonraker_layer_is_one_based, config.z_fallback,
-                    bool(mr_meta), sorted(mr_meta) if mr_meta else [],
-                    bool(self._files.metadata),
-                    len(self._cura.heights),
-                    self._layers._z_deltas, self._layers._z_ascent, self._layers._z_layer,
-                    physical.index, physical.source)
-            # The coordinator owns the mesh observation; the Monitor reads the
-            # presenter's snapshot but never writes it. The presenter's
-            # fingerprint guard makes the per-poll update cheap.
-            self._bed_mesh.update(parse_bed_mesh(status.get("bed_mesh")))
-            self._cura.watch(config.enabled)
-            if self._snapshot.active:
-                # The metadata and index serve the Preview, which needs the
-                # print loaded in Cura. Pulling them for a print that is
-                # merely active wastes the download and shows confusing
-                # "Downloading… / Indexing…" chatter before the user has
-                # loaded anything; the load flow (observe -> request_file)
-                # starts the pull itself.
-                if self._cura.has_toolpath:
-                    self._files.request_metadata()
-                    if config.path_follow and config.enabled:
-                        self._index.request()
-                self._pauses.observe(physical.index)
-            detail = self._loads.advance(job)
-            if detail is not None:
-                self._detail = detail
-            if self._client.connected:
-                # The retention window's anchor is the LIVE layer,
-                # updated every poll even when already hydrated — the
-                # hydration tuple below carries REQUESTED layers
-                # (prefetch included), which must never anchor the
-                # window.
-                current = self._snapshot.layer.index
-                if isinstance(current, int):
-                    self._index.set_followed_layer(current)
-                self._detail, hydration = self._preview.observe(self._snapshot, status, config, view)
-                for layer in hydration: self._index.request_hydration(layer)
-                # The plate's own demand: the follower hydrates the
-                # window even when the preview is detached (the
-                # monitor-only index — the live ruling). The service
-                # dedupes and clamps; this never grows a queue.
-                if plate_available and self._index.phase != "indexing":
-                    if isinstance(current, int):
-                        for layer in (current - 1, current, current + 1):
-                            if layer >= 0:
-                                self._index.request_hydration(layer)
-                    # The detached face's own demand, re-asked every
-                    # poll: the live window's advance is what evicts a
-                    # frozen layer's geometry, so the request has to
-                    # stand every time the print crosses a layer.
-                    if self._plate_anchor is not None:
-                        self._index.set_manual_anchor(self._plate_anchor)
-            else:
-                self._preview.invalidate_view()
-            self._preview.update_eta(self._snapshot, view)
-            self._snapshot = replace(self._snapshot,
-                layer_eta=self._preview.remaining_end(view, self._snapshot.estimated_time))
+            self._snapshot = self._compose_snapshot(observation, face, motion, totals, pause, plate)
+            if self._snapshot.active and face.filename:
+                self._maybe_fetch_mr_metadata(face.filename, face.job)
+            self._trace_layer(status, config, face, motion)
+            self._observe_frame(status, config, face, motion)
+            self._serve_preview(status, config, face)
             self._publish(status)
         finally:
             self._processing = False
+
+    def _sync_toolpath(self) -> None:
+        """The toolpath's arrival (the plugin's load rendered, or a
+        slice) is the moment Cura's controls must come up: the
+        plugin-driven load fires none of Cura's own activity
+        events, so Cura's panel and slider stay dormant until an
+        unrelated event (the live report). Nudge Cura's
+        own computation on the edge, and once more after the
+        render settles."""
+        has_toolpath = bool(self._cura.has_toolpath)
+        if has_toolpath and not self._had_toolpath:
+            self._had_toolpath = True
+            self._cura.nudge_cura_activity()
+            self._cura.nudge_layer_view()
+            QTimer.singleShot(1500, self._cura.nudge_cura_activity)
+            # The fresh-bind attach's completion (the p1 report):
+            # the bind-time gate saw no toolpath yet — the layer
+            # render lands after the bind — so the follower
+            # attaches when the toolpath ARRIVES. A deliberate
+            # detach latches _user_detached, so a later toolpath
+            # flap can never re-attach over the user's choice
+            # (the panel's catch).
+            if not self._preview.state.attached and not self._user_detached:
+                self._preview.attach(True)
+        elif not has_toolpath:
+            self._had_toolpath = False
+            # The ruling (2026-09-17): the attach control pins to
+            # detached without a toolpath — the follower detaches
+            # for real when the toolpath goes away.
+            if self._preview.state.attached:
+                self._preview.attach(False)
+
+    def _resolve_face(self, status) -> _PrintFace:
+        """The print this frame belongs to: its filename, the run key the
+        file and index services are bound to, the frame's print_stats, the
+        index view that vouches for it, the plate's own source view and
+        the metadata that describes it.
+
+        The view is the index's evidence for the CURRENT print —
+        both the view's key and the files service's job can be
+        stale from an earlier load of a DIFFERENT file (the red
+        run: the hourglass never fired for a fresh print after
+        any preview load, because the two stale keys agreed with
+        each other). Compare against the print's own filename.
+        """
+        stats = status.get("print_stats") or {}
+        filename = str(stats.get("filename") or "")
+        job = self._files.job_key
+        view = index_view_for_print(self._index.view, filename)
+        plate_view = self._plate_source_view(view, status)
+        # The downloaded file's OWN header is the authoritative
+        # filament total; Moonraker's parse of it (the metadata
+        # below) is the fallback. One bounded head read per
+        # downloaded file — the files service emits changed when a
+        # download completes, so this latch runs on the refresh
+        # that immediately follows it.
+        path = self._files.path
+        if path != self._header_total_path:
+            self._header_total_path = path
+            self._header_total_mm = filament_total_mm_from_file(path) if path else None
+        # The downloaded metadata wins; Moonraker's header parse is
+        # the fallback that populates the layer-height readout and
+        # the slicer estimate without any gcode download. The
+        # fallback serves ONLY the payload whose identity matches
+        # the current job — never the previous print's values.
+        metadata = self._files.metadata or self._mr_metadata_for(filename, job)
+        try:
+            estimate = float(metadata.get("estimated_time") or 0)
+        except (TypeError, ValueError):
+            estimate = 0
+        return _PrintFace(filename, job, stats, view, plate_view, metadata, estimate)
+
+    def _resolve_motion(self, status, config, face) -> _Motion:
+        """Where the nozzle is this instant, and what that places: the
+        physical layer, the file position, the live position in the
+        G-code's own coordinates and the matched motion progress.
+
+        The toolhead's PHYSICAL position is computed ONCE from this
+        frame: the layer resolver corroborates the parser's layer claim
+        against the nozzle's own Z with it, and the plate split refines
+        the dispatcher's position with it, exactly as the Preview's
+        follower does (the same helper, the same space). Both read the
+        same frame, so a layer can never be paired with a position from
+        an earlier one. Absent telemetry is None, and neither consumer
+        then treats a parser-side value as physical.
+        """
+        status_stats = face.stats
+        live_position = live_position_in_gcode_space(
+            status.get("motion_report") or {}, status.get("gcode_move") or {})
+        physical = self._layers.resolve(status, config, face.plate_view, face.metadata, self._cura.heights,
+                                        live_position)
+        self._next_pause.track(physical.index)
+        # The file position is resolved ONCE, ahead of BOTH of its
+        # consumers — the layer fraction here and the plate split
+        # below. The plate's path runs with no identity-checked
+        # view at all (the monitor-only index), so a position bound
+        # inside the layer branch left that read unbound. Missing
+        # or non-numeric is None, which each consumer skips: a real
+        # 0 is a position, never an absence.
+        sdcard = status.get("virtual_sdcard")
+        try:
+            position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
+        except (TypeError, ValueError):
+            position = None
+        # The attach diagnosis: which upstream telemetry the split
+        # actually has — the live report's split=None with a valid
+        # anchor must separate an absent virtual_sdcard from an
+        # absent physical position.
+        if position is None and config.trace_layer:
+            Logger.log("d", "plate position: virtualSdcard=%r "
+                           "statusKeys=%s",
+                       list(sdcard.keys()) if isinstance(sdcard, Mapping) else None,
+                       sorted(status.keys()))
+        # The job boundary's refusal: while the printer still
+        # reports the byte offset the finished print left standing,
+        # this frame is that print's — its offset opened the
+        # refinement onto the parked nozzle's old place and painted
+        # the restarted print's first layer with the old fraction.
+        if position is not None and not self._jobs.position_attributed(position):
+            position = 0
+            live_position = None
+        # Match exactly once for this telemetry frame. Presentation
+        # readiness and either view's attach/scrub state do not own the
+        # physical floor; every live consumer receives this same result.
+        motion_progress = None
+        extruder_velocity = number((status.get("motion_report") or {}).get("live_extruder_velocity"), None)
+        extruding = None if extruder_velocity is None else extruder_velocity > 1e-6
+        if face.plate_view is not None and physical.index is not None:
+            motion_progress = self._index.observe_motion(
+                physical.index, position, live_position,
+                paused=status_stats.get("state") == "paused", extruding=extruding)
+        layer_progress = motion_progress.fraction if motion_progress is not None else None
+        return _Motion(physical, live_position, position, motion_progress, layer_progress, extruding)
+
+    def _resolve_totals(self, face) -> _Totals:
+        """The monitor-only download's terminal conditions (panel P1-1)
+        and the print's filament total: the downloaded file's own header
+        first, Moonraker's metadata as the fallback."""
+        self._loads.retire_monitor(face.view is not None)
+        load_active = self._loads.active
+        filament_total = self._header_total_mm
+        if filament_total is None:
+            try:
+                filament_total = float(face.metadata.get("filament_total"))
+            except (TypeError, ValueError):
+                filament_total = None
+        return _Totals(load_active, filament_total)
+
+    def _resolve_pause(self, face, motion) -> _Pause:
+        """The next scheduled pause for this frame: the anchor against
+        the frame's own state and duration, then the rows built ONCE
+        (the perf panel's catch) so the compute and the publish share
+        them."""
+        status_stats = face.stats
+        try:
+            elapsed = float((status_stats.get("print_duration") or 0) or 0.0)
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        self._next_pause.update_anchor(face.job, status_stats.get("state"), elapsed)
+        items = self._next_pause.rebuild(motion.physical.index)
+        (next_pause_layer, next_pause_eta,
+         next_pause_fraction, next_pause_baked) = self._next_pause.compute(motion.physical, elapsed, items)
+        return _Pause(next_pause_layer, next_pause_eta, next_pause_fraction, next_pause_baked)
+
+    def _build_plate_payloads(self, status, face, motion) -> _Plate:
+        """The follower face's prepared polylines, built HERE from the
+        index (the worker-side prep rule), not in the model. Its slider
+        range and preparation-band metadata read the SAME accepted view
+        the rest of the plate reads.
+
+        TWO payloads (the live request): the live one serves the mini and
+        the attached popover — the mini NEVER detaches with the popover —
+        and the frozen one the detached popover alone. Attached-ness is
+        the test, never anchor equality — a detach that froze the
+        CURRENT layer still read as following while the print stayed on
+        it (the live report: detaching did nothing visible).
+        """
+        physical = motion.physical
+        plate_available = face.plate_view is not None
+        layer_count = len(face.plate_view.ranges) if plate_available else 0
+        # The face's anchor: the live layer while the follower follows
+        # the print, the manual one while the user has detached it. An
+        # anchor outside this file is not refused: the service keeps it
+        # and withholds it only from the index's retention bound, so its
+        # payload comes back carrying no current layer (a frozen anchor
+        # outlives a print and the next one may be shorter).
+        plate_progress_payload = None
+        manual_payload = None
+        plate_visited = frozenset()
+        plate_lookup_ms = None
+        if plate_available and (physical.index is not None or self._manual_serving_active()):
+            # The payload is built INSIDE the service — the raw index's
+            # arrays never cross its boundary (the architecture
+            # contract), so the coordinator asks the service, never the
+            # view. The live plate needs a resolved physical layer; the
+            # detached plate can use its own anchor before the print
+            # reaches that layer. Neither plate API is asked for a None
+            # anchor. A frozen layer carries NO file position: the split
+            # is a live print's boundary, and on another layer it would
+            # be another print's fill.
+            lookup_start = time.monotonic()
+            if physical.index is not None:
+                plate_progress_payload = self._index.plate_progress(
+                    physical.index, motion.position, motion.live_position,
+                    paused=face.stats.get("state") == "paused",
+                    extruding=motion.extruding, motion=motion.progress)
+            if self._manual_serving_active():
+                manual_payload = self._index.plate_progress(
+                    self._plate_anchor, None, motion.live_position)
+            # This is ONLY the coordinator-side service lookup.
+            # Prepared-file I/O, decode, raw hydration and preparation
+            # happen asynchronously inside GCodeIndexService and are
+            # intentionally not mislabeled as part of this number.
+            plate_lookup_ms = (time.monotonic() - lookup_start) * 1000.0
+            # The per-layer printed objects: the executed motions'
+            # polygon visits, read back from the layer's start.
+            # The rows go through the SAME normalisation the map
+            # uses — the raw polygon may arrive flat or paired,
+            # and the point-in-polygon test needs pairs (the
+            # green-printed report: the raw rows never matched).
+            exclude_status = status.get("exclude_object") or {}
+            # Memoised per job: a poll that only moved the position
+            # or advanced the clock re-delivers the same definition,
+            # and re-walking every ring here runs O(vertices) of
+            # Python per object on this thread, every poll.
+            if plate_progress_payload is not None:
+                exclude_rows = self._plate_memo.value(exclude_status, face.job)["objects"]
+                visited = getattr(self._index, "plate_visited", None)
+                if visited is not None and plate_progress_payload.get("split") is not None:
+                    plate_visited = visited(physical.index,
+                                            plate_progress_payload["split"], exclude_rows)
+        return _Plate(plate_progress_payload, manual_payload, plate_visited,
+                      plate_lookup_ms, layer_count)
+
+    def _compose_snapshot(self, observation, face, motion, totals, pause, plate):
+        """The one snapshot this frame produces: every value is read
+        from the records above, so no two of them can describe two
+        different polls."""
+        return PrintSnapshot(face.job, observation, motion.physical,
+            face.estimate if face.estimate > 0 else None, self._files.metadata_complete,
+            layer_progress=motion.fraction, motion_progress=motion.progress, index_ready=face.view is not None,
+            download_fraction=self._files.download_fraction,
+            indexing=self._index.phase == "indexing",
+            index_fraction=self._index.progress if self._index.phase == "indexing" else None,
+            next_pause_layer=pause.layer,
+            next_pause_eta=pause.eta,
+            next_pause_fraction=pause.fraction,
+            next_pause_baked=pause.baked,
+            load_active=totals.load_active,
+            filament_total=totals.filament_total if totals.filament_total and totals.filament_total > 0 else None,
+            plate_progress=plate.progress,
+            plate_manual_progress=plate.manual,
+            plate_lookup_ms=plate.lookup_ms,
+            plate_layer_count=plate.layer_count,
+            plate_pass_fraction=self._index.plate_pass_fraction()
+            if face.plate_view is not None else None,
+            plate_visited=plate.visited)
+
+    def _trace_layer(self, status, config, face, motion) -> None:
+        """The opt-in resolution trace: which upstream telemetry produced
+        this frame's layer, and from which source."""
+        if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:
+            self._layer_trace_at = time.monotonic()
+            info = face.stats.get("info") or {}
+            gpos = (status.get("gcode_move") or {}).get("gcode_position") or ()
+            mr_meta = self._mr_metadata_for(face.filename, face.job)
+            Logger.log("i",
+                "layer trace: raw_current=%s total=%s state=%s z=%s e=%s progress=%s one_based=%s z_fallback=%s mr_meta=%s mr_meta_keys=%s files_meta=%s heights_n=%s deltas=%s ascent=%.3f z_layer=%s -> layer=%s source=%s",
+                info.get("current_layer"), info.get("total_layer"),
+                face.stats.get("state"),
+                gpos[2] if len(gpos) >= 3 else None, gpos[3] if len(gpos) >= 4 else None,
+                (status.get("virtual_sdcard") or {}).get("progress"),
+                config.moonraker_layer_is_one_based, config.z_fallback,
+                bool(mr_meta), sorted(mr_meta) if mr_meta else [],
+                bool(self._files.metadata),
+                len(self._cura.heights),
+                self._layers._z_deltas, self._layers._z_ascent, self._layers._z_layer,
+                motion.physical.index, motion.physical.source)
+
+    def _observe_frame(self, status, config, face, motion) -> None:
+        """The frame's downstream observers: the mesh presenter, Cura's
+        watch, the active print's own pull, the pause schedule's
+        observation and the load state's advance.
+
+        The coordinator owns the mesh observation; the Monitor reads the
+        presenter's snapshot but never writes it. The presenter's
+        fingerprint guard makes the per-poll update cheap.
+
+        The metadata and index serve the Preview, which needs the print
+        loaded in Cura. Pulling them for a print that is merely active
+        wastes the download and shows confusing "Downloading… /
+        Indexing…" chatter before the user has loaded anything; the load
+        flow (observe -> request_file) starts the pull itself.
+        """
+        self._bed_mesh.update(parse_bed_mesh(status.get("bed_mesh")))
+        self._cura.watch(config.enabled)
+        if self._snapshot.active:
+            if self._cura.has_toolpath:
+                self._files.request_metadata()
+                if config.path_follow and config.enabled:
+                    self._index.request()
+            self._pauses.observe(motion.physical.index)
+        detail = self._loads.advance(face.job)
+        if detail is not None:
+            self._detail = detail
+
+    def _serve_preview(self, status, config, face) -> None:
+        """The Preview's projection of this frame, then the snapshot's
+        layer ETA — the last value the publication reads."""
+        if self._client.connected:
+            # The retention window's anchor is the LIVE layer,
+            # updated every poll even when already hydrated — the
+            # hydration tuple below carries REQUESTED layers
+            # (prefetch included), which must never anchor the
+            # window.
+            current = self._snapshot.layer.index
+            if isinstance(current, int):
+                self._index.set_followed_layer(current)
+            self._detail, hydration = self._preview.observe(self._snapshot, status, config, face.view)
+            for layer in hydration: self._index.request_hydration(layer)
+            # The plate's own demand: the follower hydrates the
+            # window even when the preview is detached (the
+            # monitor-only index — the live ruling). The service
+            # dedupes and clamps; this never grows a queue.
+            if face.plate_view is not None and self._index.phase != "indexing":
+                if isinstance(current, int):
+                    for layer in (current - 1, current, current + 1):
+                        if layer >= 0:
+                            self._index.request_hydration(layer)
+                # The detached face's own demand, re-asked every
+                # poll: the live window's advance is what evicts a
+                # frozen layer's geometry, so the request has to
+                # stand every time the print crosses a layer.
+                if self._plate_anchor is not None:
+                    self._index.set_manual_anchor(self._plate_anchor)
+        else:
+            self._preview.invalidate_view()
+        self._preview.update_eta(self._snapshot, face.view)
+        self._snapshot = replace(self._snapshot,
+            layer_eta=self._preview.remaining_end(face.view, self._snapshot.estimated_time))
 
     def _maybe_fetch_mr_metadata(self, filename, job):
         """The active print's file metadata from Moonraker — a tiny JSON

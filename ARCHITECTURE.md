@@ -40,7 +40,12 @@ no domain algorithms. `PrintCoordinator.py` connects cross-domain events through
 explicit constructor dependencies; components never call back into the coordinator
 through a shared mutable follower object. Its refresh pass is a composition over
 `NextPausePipeline.py` (the pause anchor and computation) and
-`LoadStateTracker.py` (the load state and lease handoff).
+`LoadStateTracker.py` (the load state and lease handoff). The pass itself is a
+sequence of private phases — the toolpath sync, the frame's face (identity, stats
+and metadata), the motion resolution, the running totals, the pause computation,
+the plate payloads, the snapshot composition, the frame's observers, the Preview
+projection and the publication — each reading the one frame the pass pinned and
+handing the next a record, so no two values in a snapshot can describe two polls.
 
 `MoonrakerOutputDevicePlugin.py` is the Monitor/output composition boundary. It
 passes explicit client, configuration and immutable print-state capabilities into
