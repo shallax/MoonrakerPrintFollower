@@ -974,6 +974,12 @@ EXCLUSIONS = {
         "date": "2026-09-19",
         "recheck": "the markers gain an interactive surface",
     },
+    "moonrakerChartDetail": {
+        "reason": "the chart pop-over's card: a noninteractive overlay container whose opener, legend and colour verbs are mapped; the card is addressed only by the picker's lifecycle test",
+        "evidence": "test_qml_chart's ChartColourPickerTests invoke the card's own build-on-first-click verb; capture scene 07 renders the card",
+        "date": "2026-09-30",
+        "recheck": "the chart pop-over scenario lands",
+    },
     "moonrakerEmergencyButton": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",

@@ -1657,6 +1657,15 @@ class ChartColourPickerTests(RealEngineTestCase):
     _mount = ReExpansionGuardTests._mount
 
     @staticmethod
+    def chart_card(document):
+        """The card that owns the picker's build-on-first-click
+        lifecycle. The picker's build and reuse are the CARD's
+        behaviour now; the host only frames it."""
+        card = document.findChild(QObject, "moonrakerChartDetail")
+        assert card is not None, "moonrakerChartDetail"
+        return card
+
+    @staticmethod
     def colour_pickers(document):
         """Every colour dialog under a document. The dialog's own
         selectedColor marks it: nothing else in the tree exposes that

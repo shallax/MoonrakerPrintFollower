@@ -810,8 +810,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # cadence) and toggles on user intent only — re-bound checkboxes
         # used to rewrite the state file every second.
         self.assertIn("temperatureChartLegend.series", harness.MONITOR_QML)
-        self.assertIn("onToggled: root.printer.setTemperatureSensorVisible", harness.MONITOR_QML)
-        self.assertNotIn("onCheckedChanged: root.printer.setTemperatureSensorVisible", harness.MONITOR_QML)
+        self.assertIn("onToggled: root.printerModel.setTemperatureSensorVisible", harness.TEMPERATURE_DETAIL_QML)
+        self.assertNotIn("onCheckedChanged: root.printerModel.setTemperatureSensorVisible", harness.TEMPERATURE_DETAIL_QML)
         # Target bands, not dashed lines (the ruling), and the
         # hover readout carries the clock.
         self.assertIn("Target bands", harness.TEMP_CHART_QML)
@@ -828,8 +828,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # chart is declared exactly once in the pop-over.
         self.assertIn("id: chartHoverTooltip", harness.MONITOR_QML)
         self.assertNotIn("Hover the chart for per-series values", harness.MONITOR_QML)
-        self.assertEqual(harness.MONITOR_QML.count("id: chartPanelChart"), 1)
-        self.assertIn("mapToItem(root, chartPanelChart.hoverCursor", harness.MONITOR_QML)
+        self.assertEqual(harness.TEMPERATURE_DETAIL_QML.count("id: chartPanelChart"), 1)
+        self.assertIn("mapToItem(root, chartPanelChart.hoverCursor", harness.TEMPERATURE_DETAIL_QML)
         self.assertIn("hoverCursor", harness.TEMP_CHART_QML)
         # The top gridline's temperature label must be clamped by the
         # FONT ASCENT into the canvas (it used to baseline at y = -3,
@@ -847,7 +847,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # printer-side infoReadoutText (the 2026-09-17 ruling), which
         # no longer shares the legend's exact expression — the chart's
         # own form is the one occurrence.
-        self.assertEqual(harness.MONITOR_QML.count('toFixed(1) + "°C"'), 1)
+        self.assertEqual(harness.TEMPERATURE_DETAIL_QML.count('toFixed(1) + "°C"'), 1)
         self.assertEqual(harness.TEMP_HISTORY_SECTION_QML.count('toFixed(1) + "°C"'), 1)
         self.assertIn("Math.max(1, height - 22)", harness.TEMP_CHART_QML)
         # The console history lives in a terminal-styled pane: dark,
@@ -976,7 +976,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # lets it overflow any boundary) and flips above only when
         # there is no room below the cursor.
         self.assertIn("width: tooltipColumn.implicitWidth + 2", harness.MONITOR_QML)
-        self.assertIn("y: chartPanel.hoverCursor.y + height + 16 > root.height", harness.MONITOR_QML)
+        self.assertIn("y: anchorPoint.y + height + 16 > root.height", harness.MONITOR_QML)
         # Send and Clear share one row beside the input (the
         # side-by-side request) — no RowLayout may open between them.
         send_clear = harness.CONSOLE_PANE_QML[harness.CONSOLE_PANE_QML.index('text: "Send"'):harness.CONSOLE_PANE_QML.index('text: "Clear"')]
@@ -992,11 +992,12 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # import the module itself, and must build the dialog from its
         # own document on the click — a host whose platform builds no
         # colour dialog still gets the whole monitor.
-        self.assertNotIn("import QtQuick.Dialogs", harness.MONITOR_QML)
-        self.assertIn('Qt.createComponent("temperature/MoonrakerChartColorDialog.qml")', harness.MONITOR_QML)
-        self.assertIn("chartColorDialog", harness.MONITOR_QML)
-        self.assertIn("applyChartColorChoice", harness.MONITOR_QML)
-        self.assertIn('text: "Custom…"', harness.MONITOR_QML)
+        for qml in (harness.MONITOR_QML, harness.TEMPERATURE_DETAIL_QML):
+            self.assertNotIn("import QtQuick.Dialogs", qml)
+        self.assertIn('Qt.createComponent("MoonrakerChartColorDialog.qml")', harness.TEMPERATURE_DETAIL_QML)
+        self.assertIn("chartColorDialog", harness.TEMPERATURE_DETAIL_QML)
+        self.assertIn("applyChartColorChoice", harness.TEMPERATURE_DETAIL_QML)
+        self.assertIn('text: "Custom…"', harness.TEMPERATURE_DETAIL_QML)
         self.assertIn("import QtQuick.Dialogs", harness.CHART_COLOUR_DIALOG_QML)
         self.assertIn("ColorDialog {", harness.CHART_COLOUR_DIALOG_QML)
         self.assertIn("setShowProbePoints", harness.BED_MESH_DETAIL_QML)
@@ -1280,9 +1281,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         slider_source = (harness.PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
         self.assertGreaterEqual(slider_source.count("control.enabled ? UM.Theme.getColor(\"primary\") : UM.Theme.getColor(\"text_disabled\")"), 2)
         # The colour/colour strings follow the user's locale.
-        self.assertIn("britishSpelling", harness.MONITOR_QML)
+        self.assertIn("britishSpelling", harness.MONITOR_QML + harness.TEMPERATURE_DETAIL_QML)
         self.assertIn("britishSpelling", harness.MONITOR_MODEL)
-        self.assertIn("Accessible.name: \"Show \"", harness.MONITOR_QML)
+        self.assertIn("Accessible.name: \"Show \"", harness.TEMPERATURE_DETAIL_QML)
         # The console's input row lives inside the dark well.
         self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", harness.CONSOLE_PANE_QML)
 
