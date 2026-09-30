@@ -279,6 +279,96 @@ coverage 138, model runtime 114, monitor contracts 44, ownership 9, architecture
 the four `tests/harness/test_harness_*.py` legs `tools/run_some.sh` does not
 glob.
 
+## Batch G — the file manager's backend, the coordinator's pass and the prepared session
+
+Three commits, one per part of the brief.
+
+The file manager's second lifecycle left it. `ThumbnailCache.py` (264 lines)
+owns the listing thumbnails whole: the bounded fetch queue, the in-flight reply
+registry with its per-request identity, the generation that invalidates queue
+and replies together, the temp tree the bodies land in and the cache the listing
+rekeys on rename. The cache mutations the callers used to spell themselves —
+rekey, adopt, drop — went with it, because those three were reachable from four
+FileManager methods; the manager keeps only the three it publishes: request,
+payload, clear (1267 -> 1026).
+
+Two couplings the brief did not name. The first was a behaviour inconsistency,
+not a move: the fetch that cannot start published on `FileManager.changed` — a
+full listing rebuild, rows and all — while the same logical failure at the reply
+published on the thumbnail channel alone. A landing is not a listing change:
+both paths now publish on the thumbnail channel, and the new pin asserts the row
+channel stayed silent. The second: the bounded reply-body drain was a copy in
+two places, not one. The upload acknowledgement and the thumbnail fetches had
+each grown the same reader, and moving only the thumbnails would have kept the
+duplicate. `ReplyBodyReader.py` (56 lines) is the one reader both now take,
+injected: a hard byte cap, one drain per readyRead, an overflow that aborts the
+transfer and drops the bytes, one disposal per reply, and a readyRead slot that
+stays a bound method of a live QObject.
+
+The coordinator's pass is a sequence now, not a scope. `refresh()` was one
+318-line body in which every derivation, every collaborator read and every
+publication shared one scope, so the ordering the snapshot depends on was only
+visible by reading the whole thing; it is 49 lines over ten phase methods —
+`_sync_toolpath`, `_resolve_face`, `_resolve_motion`, `_resolve_totals`,
+`_resolve_pause`, `_build_plate_payloads`, `_compose_snapshot`, `_trace_layer`,
+`_observe_frame`, `_serve_preview` — each reading the frame `refresh()` pinned
+and handing the next a record (`_PrintFace`, `_Motion`, `_Totals`, `_Pause`,
+`_Plate`), so no two values in one snapshot can come from two polls (1075 ->
+1199). The coupling the brief did not name: the slicer estimate is derived from
+the same metadata as the face, and is only read at composition — nothing between
+its old position and the snapshot read it — so it moved into `_resolve_face`
+rather than becoming a record of its own. Physical-state ownership is untouched:
+these are methods on the one coordinator, not new collaborators, and the
+statement order is the order it was — the observed job transition, the metadata
+confirmation, the load and replace state, index readiness, layer resolution,
+pause handling, Preview projection and publication, with the layer ETA still the
+last write before the publication reads the snapshot. Two contracts cover the
+boundaries the split touches: a reconnect re-observes the frame the pass pinned
+(and asks for no hydration while the link is down), and an index landing mid-load
+readies the snapshot without ending the load or running the lease handoff.
+
+The prepared store's session has an owner. `PreparedSession.py` (360 lines)
+holds the adopted table, the identity strength gate, the incremental writer with
+its retirement, the coverage census and the completeness and published latches —
+eight fields plus the store itself, written from twelve different methods, and
+163 lines of contiguous ones (1608 -> 1399; `_finish` 154 -> 132, `_advance`
+unchanged at 107). What stayed behind is what is not the session's: the PASS
+FRONTIER is scheduling state and the RAM tiers are residency, so a complete
+clean table still stands the frontier down — through the service's own
+`_adopt_prepared`, who owns the frontier. A worker's store is still captured at
+submission, and the session refuses an append to a retired writer rather than
+deciding who may write. The extraction also surfaced a method with no production
+caller at all: `_prepared_persist` was pinned by tests and called by nothing
+(the demand path appends from the worker that produced the encoding). It
+survives as the session's `persist`, because deleting it would delete the
+pinned statement of that contract rather than a duplicate of anything. Two
+members with no reader anywhere — the store's owner-thread read, and the retry
+count's accessor — were removed instead, and the one-rebuild bound gained its
+own pin.
+
+The pin retargets were mechanical but not cosmetic. The index and persistence
+pins now read the session's own state (`_prepared.saved`, `.complete`,
+`.writer`, `.coverage`) instead of the fields the service used to carry, and the
+two tests that take the store away from a live session (`self.service._prepared
+= None` before the extraction) call `_prepared.rebind(None)` — the same
+statement about the store being absent, now through the owner that holds it.
+`tests/test_qt_follower_integration.py` asserted the configured cache budget on
+`index._prepared.max_bytes`, which is the STORE's cap, not the session's, and
+retargets to `index._prepared.store.max_bytes`. `tests/test_index_prepared_reopen.py`
+gained the layer count its direct `persist` calls now pass explicitly: the
+session takes the view's own count as an argument because a session may hold a
+table from before the view landed. No assertion was weakened, skipped, xfailed
+or deleted.
+
+Verified by the focused modules — file manager 80, file manager coverage 101,
+monitor files runtime 4, upload lifecycle 15, coordinator coverage 89, remote
+job service 16, print state 20, qt follower 56, runtime monitor composition 8,
+index refresh throttle 4 — by the index and persistence set — prepared reopen
+54, runtime index composition 28, runtime lifecycle composition 24, persistence
+integration 46, index hydration 20, prepared store 79, index components 3 — and
+by each commit's own full gate, which runs the whole suite including the four
+`tests/harness/test_harness_*.py` legs `tools/run_some.sh` does not glob.
+
 ## Outstanding
 
 - `tests/test_gpu_canvas_isolation.py::test_live_layer_handoff_fades_previous_geometry_then_retires_it`
@@ -292,4 +382,4 @@ glob.
   and this is not a flake to dismiss. It sits outside this batch's modules, and
   the four unit-leg runs since have not reproduced it. The raster path already
   carries teardown-segfault guards.
-- Batches G-I not started.
+- Batches H-I not started.
