@@ -864,9 +864,29 @@ regenerates canonical captures afterward rather than copying those test images.
 Byte comparison and independent light/dark determinism checks remain strict.
 
 `PlateExactComposition.js` is the single Qt-free owner of the asynchronous
-Canvas delivery transaction, the attached/detached split acceptance rule and
-the exact-picture readiness policy. The QML face now adapts this policy to
-actual Canvas/Image objects. Printed ink is selected by one composition
+Canvas delivery transaction, the attached/detached split acceptance rule, the
+exact-picture readiness policy and the layer payload's own asset validity —
+the raster, base and travel predicates those decisions are taken over. The QML
+face now adapts this policy to actual Canvas/Image objects.
+
+Two further Qt-free libraries sit beside it. `PlateViewPolicy.js` owns the
+camera's arithmetic: the one printer-to-widget bed transform every consumer
+resolves through (`PlateCanvas.plateToScene` included), the soft pan clamp, the
+zoom's focal, eased and inverse terms, the scope's track-to-scale pair and its
+graduations, and the physical stroke width the Canvas painters and the native
+renderer's pen must agree on. `PlatePainter.js` owns the Canvas drawing: the
+motion-edge rule and its two binary-search bounds, the batched per-class layer
+walk, the travel families and the retraction glyphs. Each painter takes the
+context, the payload, the boundaries and one explicit style record naming the
+camera the pixels are baked at; `drawLayer` repeats the bed transform inline
+because a call per vertex over hundreds of thousands of points was the
+follower's dominant cost. The face keeps the camera STATE, the gestures that
+write it, the canvases and the decision of which picture to draw.
+
+`PlateToolheadDot.qml`, `PlateExtruderMarkers.qml` and `PlateZoomScope.qml` are
+the face's visual leaves. Each takes what it draws as declared inputs. The
+scope reports a requested scale through one signal and writes no camera state:
+the view transform has exactly one writer. Printed ink is selected by one composition
 decision, with retained prefix/full assets represented by immutable records
 rather than visibility history or timed holds. The pixel-affecting world identity contains the print/layer
 scene epoch and view. Native incremental prefixes and the 4x warm image remain
