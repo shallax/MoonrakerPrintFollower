@@ -1241,3 +1241,12 @@ measurements, not end-to-end FPS guarantees. A separate prefix-copy probe measur
 about 0.15 ms for 10,000 segments and 2.15 ms for 100,000; it does not measure
 Qt allocation or driver upload. Chunking that path remains a profiling-led
 follow-up, not a demonstrated correctness defect or an RC architecture change.
+
+### Settings page composition
+
+`MoonrakerFollowerConfiguration.qml` owns navigation, the migration banner and
+the save/cancel transaction. Its Connection, Following, Upload and Diagnostics
+components own their editable fields and validation. Each publishes only its
+configuration values and receives the settings manager explicitly; changing tabs
+does not recreate a page or discard its draft. The shell merges the four value
+blocks only when saving and preserves all public validation properties.

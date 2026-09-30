@@ -19,7 +19,7 @@ class MonitorPolicyConsistencyTests(harness.MonitorPolicyConsistencyTests):
 
         follow = (harness.PLUGINS / "FollowController.py").read_text(encoding="utf-8")
         radius = int(_re.search(r"window_radius: int = (\d+)", follow).group(1))
-        self.assertIn(f"(±{radius})", (harness.PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8"))
+        self.assertIn(f"(±{radius})", (harness.PLUGINS / "FollowingSettings.qml").read_text(encoding="utf-8"))
 
     def test_classification_table_is_the_single_object_policy(self):
         from mpf.monitor.MonitorFormatting import object_kind, wanted_object

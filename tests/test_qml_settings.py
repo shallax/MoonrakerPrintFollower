@@ -165,3 +165,56 @@ class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
         self.press_key(window, harness.Qt.Key.Key_Left)
         self.assertEqual(anchor, slider.property("value"),
                          "the second arrow key never stepped back")
+
+
+class SettingsTabCompositionTests(harness.SettingsPageCase):
+    """Each persistent tab owns a disjoint part of the saved configuration."""
+
+    def pages(self, document):
+        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings")
+        result = {}
+        for item in document.findChildren(harness.QQuickItem):
+            name = item.metaObject().className()
+            for kind in types:
+                if name.startswith(kind + "_"):
+                    self.assertNotIn(kind, result)
+                    result[kind] = item
+        self.assertEqual(set(result), set(types))
+        return result
+
+    def test_tabs_publish_disjoint_complete_configuration_blocks(self):
+        document, _ = self.open_settings()
+        pages = self.pages(document)
+        expected = {
+            "ConnectionSettings": {"url", "api_key", "feed_mode", "poll_interval_ms", "aux_interval_ms", "console_interval_ms"},
+            "FollowingSettings": {"enabled", "follow_mode", "moonraker_layer_is_one_based", "path_follow", "path_smoothing", "eta_learn", "auto_preview", "show_toolhead_indicator", "z_fallback", "z_tolerance"},
+            "UploadSettings": {"frontend_url", "output_format", "upload_dialog", "upload_path", "upload_start_print", "upload_remember_state", "upload_autohide_message", "power_devices", "ready_retry_interval_s", "filename_translate_input", "filename_translate_output", "filename_translate_remove"},
+            "DiagnosticsSettings": {"cache_max_mb", "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace", "camera_disabled", "software_follower_renderer"},
+        }
+        seen = set()
+        for name, page in pages.items():
+            values = page.property("values").toVariant()
+            self.assertEqual(set(values), expected[name])
+            self.assertFalse(seen.intersection(values), "two tabs own the same setting")
+            seen.update(values)
+        self.assertEqual(len(seen), 36)
+        for index in (3, 1, 2, 0):
+            self.show_tab(document, index)
+            self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")
+
+    def test_hidden_drafts_survive_switches_and_cancel_does_not_save(self):
+        document, window = self.open_settings(self.settings_config(cache_max_mb=512), tab=self.DIAGNOSTICS_TAB)
+        self.type_cache_size(document, "256")
+        self.show_tab(document, 0)
+        self.show_tab(document, self.DIAGNOSTICS_TAB)
+        self.assertEqual(self.cache_size_field(document).property("text"), "256")
+        self.click_item(window, self.item_with_text(document, "Cancel"))
+        self.assertEqual(self.follower.applied, [])
+        self.assertEqual(self.follower.config.cache_max_mb, 512)
+
+    def test_untouched_poll_interval_survives_save_from_another_tab(self):
+        document, window = self.open_settings(self.settings_config(poll_interval_ms=750), tab=2)
+        self.assertFalse(document.property("pollIntervalMoved"))
+        self.click_item(window, self.save_button(document))
+        self.assertTrue(self.follower.applied)
+        self.assertEqual(self.follower.config.poll_interval_ms, 750)

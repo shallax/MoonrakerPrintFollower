@@ -2578,8 +2578,8 @@ Item {
         # Monitor files must never be exempt, and the set must not
         # grow silently (round-2 security F13). Inside the popup the
         # chrome still uses enabled/opacity, never visible:.
-        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"}
-        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"})
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "MoonrakerUploadDialog.qml"}
+        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
         # The camera's configured gate moved into CameraPane as

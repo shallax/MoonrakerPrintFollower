@@ -328,6 +328,7 @@ class PrinterConfigTests(unittest.TestCase):
 
     def test_diagnostics_settings_save_and_list_in_a_tab(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        config += (PLUGINS / "DiagnosticsSettings.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Diagnostics"', config)
         self.assertIn('"trace_layer": layerTraceBox.checked', config)
         self.assertIn('"trace_http": httpTraceBox.checked', config)
@@ -343,19 +344,22 @@ class PrinterConfigTests(unittest.TestCase):
 
     def test_settings_tab_lists_diagnostic_traces(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        config += (PLUGINS / "DiagnosticsSettings.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         self.assertIn('text: "Log HTTP requests (diagnostics)"', config)
 
     def test_settings_tab_lists_upload(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        config += (PLUGINS / "UploadSettings.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
 
     def test_diagnostics_tab_carries_the_cache_clear(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        config += (PLUGINS / "DiagnosticsSettings.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Clear cached downloads and indexes"', config)
-        self.assertIn("manager.clearCache()", config)
-        self.assertIn("manager.cacheStatus", config)
+        self.assertIn("settings.clearCache()", config)
+        self.assertIn("settings.cacheStatus", config)
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("def clearCache(self)", action)
