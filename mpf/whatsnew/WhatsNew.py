@@ -26,6 +26,20 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.6.2",
+        "headline": "Version 4.6.2 is an internal release: the plugin's "
+            "internals are split into smaller, independent parts, with one "
+            "small fix to the file list.",
+        "items": (
+            "No new features and no interface changes: this release "
+            "reorganises the plugin's internals into smaller, independent "
+            "parts. Everything is expected to work as it did in 4.6.1.",
+            "A thumbnail that fails to start no longer rebuilds the whole "
+            "file listing.",
+        ),
+    },
+
+    {
         "version": "4.6.1",
         "headline": "Version 4.6.1 lets Print Follower track vase prints "
             "smoothly, including the move from flat layers into a spiral.",
