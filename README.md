@@ -29,8 +29,15 @@ A thumbnail that fails to start no longer rebuilds the file listing; file
 refusals also appear in the file popup rather than leaving it waiting.
 The per-printer cache retains full G-code with its index and prepared layers
 across Cura restarts, evicting whole prints by LRU under a 2048 MiB default
-budget. Source-download progress updates as bytes arrive, even with a cached
-index.
+budget. Older unmarked 512 MiB settings adopt the new default; newly chosen
+512 MiB limits remain explicit. Even with a cached index, a missing source
+shows a flipping hourglass while its identity resolves, then byte-based
+download progress. Failures show an unavailable state rather than a perpetual
+spinner. Metadata retries independently; transient transport failures get at
+most two automatic re-download attempts, while deterministic refusals wait
+for an explicit **Load**. Writer backpressure resumes below its low-water
+mark, and cross-volume cache publication copies off the UI thread and
+finishes on normal shutdown.
 
 ## What changed in 4.6.1
 
@@ -841,6 +848,8 @@ High-risk logic is separated into focused modules. The authoritative ownership m
 - `GCodeIndex.py` — streaming/compact parsing, lazy layer hydration and persistent index cache
 - `MoonrakerProtocol.py` — endpoint construction, file identity and coordinate conversion
 - `DownloadStream.py` — bounded streaming G-code downloads
+- `RemoteFileService.py` — per-job metadata, download retry and source lifecycle
+- `RawSourceCache.py` — atomic raw-source publication and restoration within the whole-print cache
 
 ## Development and release checks
 

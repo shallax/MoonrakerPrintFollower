@@ -40,7 +40,10 @@ them. It also includes these visible fixes:
   metadata lookup has an indeterminate indicator, while a failed download
   leaves an explicit unavailable caption rather than an endless progress
   indicator. Backoff retries are bounded; timed-out metadata is retried
-  before a raw source can be persisted. Under a slow link, the bounded
+  independently of a failed download before a raw source can be persisted.
+  Transient transport failures get at most two automatic re-download attempts;
+  deterministic refusals stay visible until an explicit **Load**, not an
+  automatic hydration request. Under a slow link, the bounded
   stream resumes when its writer drains below the low-water mark, including
   an exact-threshold pause that previously could strand buffered bytes.
 
@@ -55,7 +58,8 @@ Implementation and compatibility notes:
 - The raw source publishes atomically after a size check, and eviction removes
   all three representations as one print folder. Restoration checks
   successful remote size and modification metadata, preserves active leases,
-  and copies off the UI thread when hardlinking is unavailable. The index
+  and copies off the UI thread when hardlinking is unavailable; normal shutdown
+  waits for publication to finish. The index
   remains compact until hydration.
 - The plate renderer's test suite built a cache URL as `"file://"` plus a
   path, which round trips through `QUrl(...).toLocalFile()` on POSIX only.

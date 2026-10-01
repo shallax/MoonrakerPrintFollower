@@ -42,10 +42,12 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Full G-code, its index and prepared layers now survive Cura "
             "restarts in a per-printer cache. The source is saved atomically, "
             "and each print is evicted as a whole in least-recently-used "
-            "order; the default limit is 2048 MiB.",
-            "Source-download progress stays visible with a cached index "
-            "and advances while the file arrives, without waiting for "
-            "another printer status update.",
+            "order; the default limit is 2048 MiB (older default settings "
+            "migrate, while new explicit limits remain).",
+            "A missing source shows a flipping hourglass while its identity "
+            "is resolved and a byte-based download bar while it arrives, "
+            "even with a cached index. Failures show an unavailable state; "
+            "transient downloads retry briefly, while refusals wait for Load.",
             "The Monitor, camera, file browser and other internals have "
             "been split into smaller parts. This is a candidate, not "
             "a final release.",
