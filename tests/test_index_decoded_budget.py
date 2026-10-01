@@ -1,5 +1,5 @@
 """Executable index decoded budget contracts."""
-from mpf.GCode import LayerCache as layer_cache
+from mpf.gcode import LayerCache as layer_cache
 from tests import index_plate_support as harness
 
 class DecodedBudgetTests(harness.DecodedBudgetTests):

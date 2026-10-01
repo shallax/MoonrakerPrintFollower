@@ -62,7 +62,7 @@ class PainterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.application = QCoreApplication.instance() or QCoreApplication([])
-        root = Path(__file__).resolve().parents[1] / "mpf" / "Plate"
+        root = Path(__file__).resolve().parents[1] / "mpf" / "plate"
         cls.sources = [(root / name).read_text(encoding="utf-8") for name in SOURCES]
 
     def setUp(self):

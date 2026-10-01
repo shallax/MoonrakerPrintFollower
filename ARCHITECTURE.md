@@ -68,30 +68,30 @@ without becoming the owner of that feature's implementation.
 
 | Package | Responsibility |
 | --- | --- |
-| `Application/` | Cross-domain print orchestration: coordinator, refresh-side load tracking and next-pause pipeline. These intentionally compose domain and presentation capabilities. |
-| `CuraHost/` | Cura entry points, lifecycle, machine binding, output adapters and host-affine file preparation. |
-| `Settings/` | Configuration UI, schema, persistence, migration and shared migration-result presentation. The Machine Action remains a Cura adapter. |
-| `Printing/` | Physical print state, run identity, remote job observations, pause scheduling and print-start ownership; independent of the Preview and Monitor screens. |
-| `Preview/` | Cura Preview attachment/following, display smoothing, presentation and card hosts. |
-| `GCode/` | Parsing, motion interpretation, indexing, cache lifecycle and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
-| `Geometry/` | Pure geometry shared by data processing and presentation. No screen or host dependencies. |
-| `Plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
-| `BedMesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
-| `Monitor/` | Dashboard/model composition, observations and projections, with camera, console, controls, temperature, toolhead and layout subfeatures. |
+| `application/` | Cross-domain print orchestration: coordinator, refresh-side load tracking and next-pause pipeline. These intentionally compose domain and presentation capabilities. |
+| `cura/` | Cura entry points, lifecycle, machine binding, output adapters and host-affine file preparation. |
+| `settings/` | Configuration UI, schema, persistence, migration and shared migration-result presentation. The Machine Action remains a Cura adapter. |
+| `printing/` | Physical print state, run identity, remote job observations, pause scheduling and print-start ownership; independent of the Preview and Monitor screens. |
+| `preview/` | Cura Preview attachment/following, display smoothing, presentation and card hosts. |
+| `gcode/` | Parsing, motion interpretation, indexing, cache lifecycle and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
+| `geometry/` | Pure geometry shared by data processing and presentation. No screen or host dependencies. |
+| `plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
+| `bedmesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
+| `monitor/` | Dashboard/model composition, observations and projections, with camera, console, controls, temperature, toolhead and layout subfeatures. |
 | `files/browser/` | File browser QML, state, policy and stable file-row view model. |
 | `files/transfers/` | Upload/download workflows, the upload dialog, streaming and remote-file leases. |
-| `Moonraker/` | Protocol, HTTP/websocket transport and status session; no screen dependencies. |
-| `Diagnostics/` | Opt-in instrumentation. Camera timing is also consumed by the connection layer, so it is not owned by the camera screen. |
-| `WhatsNew/` | Release-notice content, overlay and its lifecycle. |
-| `Widgets/` | Reusable UI primitives. |
-| `Resources/` | Shared theme, icons, shaders and plugin-root-relative resource paths. |
+| `moonraker/` | Protocol, HTTP/websocket transport and status session; no screen dependencies. |
+| `diagnostics/` | Opt-in instrumentation. Camera timing is also consumed by the connection layer, so it is not owned by the camera screen. |
+| `whatsnew/` | Release-notice content, overlay and its lifecycle. |
+| `widgets/` | Reusable UI primitives. |
+| `resources/` | Shared theme, icons, shaders and plugin-root-relative resource paths. |
 
 `FollowerRuntime.py` remains the composition root at the plugin root. The
-`Application/` workflows may compose screens; this is not permission for core
-`Printing/`, `GCode/`, `Geometry/` or `Settings/` code to import a screen.
+`application/` workflows may compose screens; this is not permission for core
+`printing/`, `gcode/`, `geometry/` or `settings/` code to import a screen.
 `GCodeIndexService` uses `geometry/Polygons.py`, not Monitor formatting helpers.
 Arc geometry, travel/retraction classification and motion-range validation live
-in `GCode/`, so the index and prepared geometry no longer depend on `Plate/`.
+in `gcode/`, so the index and prepared geometry no longer depend on `plate/`.
 
 Python imports remain relative because Cura installs the package under its
 plugin ID. There are no old-package forwarding aliases. Dynamic Python-loaded
@@ -708,7 +708,7 @@ resize mapping and the host's printer-change resets are structural
 entanglements, not section content.
 
 **The theme singleton (4.4.0).** The plugin's colours live in one
-singleton document (`mpf/Resources/Theme/MoonrakerTheme.qml`,
+singleton document (`mpf/resources/theme/MoonrakerTheme.qml`,
 registered by the `qmldir` beside it and imported from a document
 as `import "../resources/theme"`): the axis identity colours, the
 pause orange, the console palette, the strip accents. No

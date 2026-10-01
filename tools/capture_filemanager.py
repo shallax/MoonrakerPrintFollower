@@ -1,6 +1,6 @@
 """Deterministic capture of the file-manager page.
 
-Renders the real mpf/Files/Browser/FileManager.qml in an offscreen engine with the
+Renders the real mpf/files/browser/FileManager.qml in an offscreen engine with the
 real Cura/UM theme components and the real cura-light theme, against a
 stub model carrying the values production publishes.
 
@@ -393,7 +393,7 @@ def render(output_dir: str) -> None:
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "Files", "Browser", "FileManager.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "files", "browser", "FileManager.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 import random
 import unittest
 
-from mpf.Monitor.MonitorFormatting import chart_temperature_objects
-from mpf.Monitor.Temperature.MonitorTemperatureHistory import (
+from mpf.monitor.MonitorFormatting import chart_temperature_objects
+from mpf.monitor.temperature.MonitorTemperatureHistory import (
     DORMANT_CHART,
     FILLING_SECONDS,
     GAP_RESET_SECONDS,

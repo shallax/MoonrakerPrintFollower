@@ -33,7 +33,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from mpf.Monitor.Toolhead.ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
+from mpf.monitor.toolhead.ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
 
 # The scratch root the container bind-mounts; anywhere else uses the

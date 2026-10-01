@@ -8,12 +8,12 @@ import tempfile
 import unittest
 from dataclasses import asdict
 
-from mpf.Settings.PluginPersistence import (
+from mpf.settings.PluginPersistence import (
     SETTINGS_FIELDS,
     STATE_FIELDS,
     PluginPersistence,
 )
-from mpf.Settings.PrinterConfig import PrinterConfig
+from mpf.settings.PrinterConfig import PrinterConfig
 
 
 class FieldTableTests(unittest.TestCase):

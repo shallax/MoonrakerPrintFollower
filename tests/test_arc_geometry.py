@@ -15,7 +15,7 @@ from __future__ import annotations
 from math import atan2, cos, hypot, inf, nan, pi, radians, sin
 import unittest
 
-from mpf.GCode.ArcGeometry import (
+from mpf.gcode.ArcGeometry import (
     MAX_SAGITTA_MM,
     MAX_SEGMENT_MM,
     MAX_SEGMENTS,

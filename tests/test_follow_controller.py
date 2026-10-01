@@ -2,8 +2,8 @@ import unittest
 from types import SimpleNamespace
 
 # Import the real packages; these pure modules do not require Cura or Qt.
-from mpf.Preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
-from mpf.Printing.PrintIdentity import index_view_for_print
+from mpf.preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
+from mpf.printing.PrintIdentity import index_view_for_print
 
 
 class FollowControllerTests(unittest.TestCase):

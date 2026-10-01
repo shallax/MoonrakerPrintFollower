@@ -1,7 +1,7 @@
 import pathlib
 import types
 import unittest
-from mpf.Monitor.MonitorFormatting import mesh_profiles, parse_bed_mesh
+from mpf.monitor.MonitorFormatting import mesh_profiles, parse_bed_mesh
 from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]

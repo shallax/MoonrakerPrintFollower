@@ -100,7 +100,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("Power control is locked by Moonraker while this print is active.", harness.POWER_SECTION_QML)
 
     def test_output_plugin_selects_the_same_dashboard_through_one_model(self):
-        self.assertIn("from ..Monitor.MoonrakerMonitorModel import MoonrakerMonitorModel", harness.OUTPUT_PLUGIN)
+        self.assertIn("from ..monitor.MoonrakerMonitorModel import MoonrakerMonitorModel", harness.OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', harness.OUTPUT_PLUGIN)
         self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', harness.BED_MESH_QML)
 
@@ -409,9 +409,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', harness.FANS_INFO_SECTION_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../Resources/Svg/Thermometer.svg")', harness.TEMP_HISTORY_SECTION_QML)
-        self.assertIn('Qt.resolvedUrl("../Resources/Svg/Download.svg")', harness.JOB_SECTION_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../Resources/Svg/Power.svg")', harness.POWER_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../resources/svg/Thermometer.svg")', harness.TEMP_HISTORY_SECTION_QML)
+        self.assertIn('Qt.resolvedUrl("../resources/svg/Download.svg")', harness.JOB_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("../../resources/svg/Power.svg")', harness.POWER_SECTION_QML)
         # The Position row's axis-coloured cells (the 4.5.0 ruling):
         # three fixed cells in the axis tokens, no-wrap — the row
         # must never reflow per poll (the status stack's polish-loop
@@ -546,7 +546,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('sectionId: "fileManager"', harness.FILE_MANAGER_SECTION_QML)
         self.assertIn('text: "File manager"', harness.FILE_MANAGER_SECTION_QML)
         self.assertIn("fileManagerOpen", harness.DASHBOARD_QML)
-        self.assertIn("FileManager 1.0 Files/Browser/FileManager.qml", harness.QMLDIR)
+        self.assertIn("FileManager 1.0 files/browser/FileManager.qml", harness.QMLDIR)
         # Opening the popup must trigger the walk (the Snapshot 1
         # live-test regression: the button flipped the flag but
         # nothing fetched, and the grid sat on "Loading files…").
@@ -737,7 +737,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # bell beside the Console header while collapsed until
         # expanded.
         self.assertIn("consoleErrorBell", harness.CONSOLE_PANE_QML)
-        self.assertIn('Qt.resolvedUrl("../../Resources/Svg/Bell.svg")', harness.CONSOLE_PANE_QML)
+        self.assertIn('Qt.resolvedUrl("../../resources/svg/Bell.svg")', harness.CONSOLE_PANE_QML)
         self.assertIn("consoleErrorBell", harness.MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
         # highlighted (the live report).
@@ -976,7 +976,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("Layer progress — how far through the current layer.", harness.JOB_SECTION_QML)
         self.assertIn("without loading it into the preview", harness.JOB_SECTION_QML)
         # The glyph's in-progress state: a non-clickable hourglass.
-        self.assertIn('Qt.resolvedUrl("../Resources/Svg/Hourglass.svg")', harness.JOB_SECTION_QML)
+        self.assertIn('Qt.resolvedUrl("../resources/svg/Hourglass.svg")', harness.JOB_SECTION_QML)
         self.assertIn("root.printerModel.improvingEta", harness.JOB_SECTION_QML)
         # Both progress figures carry two decimals.
         self.assertIn("monitorProgress.toFixed(2)", harness.JOB_SECTION_QML)

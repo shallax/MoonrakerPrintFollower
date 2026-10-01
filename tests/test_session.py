@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from tests.fake_moonraker import FakeMoonraker
-from mpf.Moonraker.MoonrakerSession import (
+from mpf.moonraker.MoonrakerSession import (
     BindingIdentity,
     MoonrakerSession,
     MoonrakerSessionState,

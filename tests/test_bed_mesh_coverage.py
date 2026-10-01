@@ -11,8 +11,8 @@ compile and the vertex upload inside Cura's OpenGL renderer need a real GL
 context, so those calls are asserted against a recording factory; frames
 are the offscreen harness's job, not a unit test's.
 
-Measured on the last run — mpf/BedMesh/BedMeshSceneNode.py 99%,
-mpf/BedMesh/BedMeshPresenter.py 100%. Leftovers, both defensive code that the
+Measured on the last run — mpf/bedmesh/BedMeshSceneNode.py 99%,
+mpf/bedmesh/BedMeshPresenter.py 100%. Leftovers, both defensive code that the
 public entry points cannot reach:
 
   BedMeshSceneNode.py:87   the trailing `return [*stops[-1][1], alpha]`:
@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
-from mpf.Monitor.MonitorFormatting import parse_bed_mesh
+from mpf.monitor.MonitorFormatting import parse_bed_mesh
 from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 
 try:  # the stdlib-only host suite runs without numpy
@@ -196,8 +196,8 @@ class BedMeshHarness(unittest.TestCase):
         self.stubs = install_scene_stubs()
         # The synthetic host package caches submodules process-wide; without the
         # pops a module stays bound to an earlier test's stub classes.
-        sys.modules.pop("mpf.BedMesh.BedMeshSceneNode", None)
-        sys.modules.pop("mpf.BedMesh.BedMeshPresenter", None)
+        sys.modules.pop("mpf.bedmesh.BedMeshSceneNode", None)
+        sys.modules.pop("mpf.bedmesh.BedMeshPresenter", None)
         self.node_class = self.qt.load("BedMeshSceneNode").BedMeshSceneNode
         self.presenter_class = self.qt.load("BedMeshPresenter").BedMeshPresenter
 

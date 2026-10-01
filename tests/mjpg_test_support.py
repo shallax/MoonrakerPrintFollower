@@ -17,9 +17,9 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
-            from mpf.Monitor.Camera.FrameDecoder import FrameDecoder
-            from mpf.Monitor.Camera.MJPEGParser import MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT
-            from mpf.Monitor.Camera.MoonrakerMJPGImage import MoonrakerMJPGImage, RENDER_INTERVAL_MS
+            from mpf.monitor.camera.FrameDecoder import FrameDecoder
+            from mpf.monitor.camera.MJPEGParser import MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT
+            from mpf.monitor.camera.MoonrakerMJPGImage import MoonrakerMJPGImage, RENDER_INTERVAL_MS
         finally:
             _started.__exit__(None, None, None)
 except ImportError:

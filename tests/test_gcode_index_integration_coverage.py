@@ -36,7 +36,7 @@ CuraIntegration.py
 """
 from __future__ import annotations
 
-import mpf.GCode.GCodeIndex as gcode_index
+import mpf.gcode.GCodeIndex as gcode_index
 
 import gzip
 import hashlib
@@ -52,12 +52,12 @@ from array import array
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mpf.GCode.MotionIndex import FLOOR_LOOKBACK, LayerMotionIndex
-from mpf.GCode.IndexCache import PersistentIndexCache
-from mpf.GCode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION, _read_exact
-from mpf.GCode.GCodeIndex import _emit_progress, build_index_from_bytes, build_index_from_file
-from mpf.GCode.IndexHydrator import hydrate_layer_from_file
-from mpf.Moonraker.MoonrakerProtocol import RemoteFileIdentity
+from mpf.gcode.MotionIndex import FLOOR_LOOKBACK, LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION, _read_exact
+from mpf.gcode.GCodeIndex import _emit_progress, build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
+from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
 
 
@@ -867,7 +867,7 @@ class CuraIntegrationTests(unittest.TestCase):
         # disconnects signals by handle, and a host collected first would
         # leave those handles dangling.
         self._hosts = []
-        import mpf.CuraHost.CuraIntegration as module
+        import mpf.cura.CuraIntegration as module
         self.module = module
 
         class SliceBackend(QObject):

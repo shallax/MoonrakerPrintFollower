@@ -56,7 +56,7 @@ class PenguinTimelineTests(unittest.TestCase):
         printer.scenario(gcode_fixture="penguin")
         printer.state["print_stats"]["state"] = "printing"
         printer.scenario(gcode_playback_s=20)
-        from mpf.Moonraker.MoonrakerProtocol import live_position_in_gcode_space
+        from mpf.moonraker.MoonrakerProtocol import live_position_in_gcode_space
         for _ in range(80):
             printer.push_patch()
             self.assertEqual(

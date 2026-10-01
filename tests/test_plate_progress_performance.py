@@ -35,9 +35,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-import mpf.GCode.PlateProgress as plate_progress
-from mpf.GCode.ArcGeometry import MAX_SAGITTA_MM
-from mpf.GCode.PlateProgress import (
+import mpf.gcode.PlateProgress as plate_progress
+from mpf.gcode.ArcGeometry import MAX_SAGITTA_MM
+from mpf.gcode.PlateProgress import (
     MAX_TRAVEL_POINTS,
     _SIMPLIFY_WORK_LIMIT,
     _budgeted,

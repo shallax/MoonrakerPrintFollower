@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from mpf.Monitor.MonitorPublication import SIGNAL_GROUPS
+from mpf.monitor.MonitorPublication import SIGNAL_GROUPS
 from tests import monitor_test_support as harness
 
 

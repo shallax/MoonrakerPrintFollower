@@ -11,7 +11,7 @@ import unittest
 
 from PyQt6.QtCore import QVariant
 
-from mpf.Monitor.MonitorPublication import SIGNAL_GROUPS, MonitorPublication
+from mpf.monitor.MonitorPublication import SIGNAL_GROUPS, MonitorPublication
 
 
 class MonitorPublicationTests(unittest.TestCase):

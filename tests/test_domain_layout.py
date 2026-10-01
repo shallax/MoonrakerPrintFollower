@@ -50,15 +50,15 @@ def underneath(module, package):
 # Exact module exceptions are intentional: allowing the whole diagnostics or
 # Moonraker package here would let a core service acquire a screen/transport.
 RULES = {
-    "mpf.Geometry": (("mpf.Geometry",), ()),
-    "mpf.Printing": (("mpf.Printing",), ()),
-    "mpf.GCode": (("mpf.GCode", "mpf.Geometry", "mpf.Printing"),
-                  ("mpf.Moonraker.MoonrakerProtocol",)),
-    "mpf.Settings": (("mpf.Settings",), ()),
-    "mpf.Moonraker": (("mpf.Moonraker",), ("mpf.Diagnostics.CameraTiming",)),
-    "mpf.Files.Browser": (("mpf.Files.Browser",), ("mpf.Moonraker.MoonrakerProtocol",)),
-    "mpf.Files.Transfers": (("mpf.Files.Transfers", "mpf.Moonraker"),
-                           ("mpf.Settings.PrinterConfig",)),
+    "mpf.geometry": (("mpf.geometry",), ()),
+    "mpf.printing": (("mpf.printing",), ()),
+    "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.printing"),
+                  ("mpf.moonraker.MoonrakerProtocol",)),
+    "mpf.settings": (("mpf.settings",), ()),
+    "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
+    "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
+    "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),
+                           ("mpf.settings.PrinterConfig",)),
 }
 
 
@@ -73,7 +73,7 @@ class DomainLayoutTests(unittest.TestCase):
     def test_all_local_imports_resolve_and_core_packages_do_not_import_screens(self):
         modules = {module_name(path): path for path in ROOT.rglob("*.py")}
         self.assertGreater(len(modules), 90, "the recursive scan found too little source")
-        self.assertIn("mpf.Monitor.Camera.MonitorCamera", modules)
+        self.assertIn("mpf.monitor.camera.MonitorCamera", modules)
         edges = 0
         for module, path in modules.items():
             targets = imported_modules(path.read_text(encoding="utf-8"), module, modules,
@@ -86,33 +86,33 @@ class DomainLayoutTests(unittest.TestCase):
         self.assertGreater(edges, 100, "the import scan silently missed dependency edges")
 
     def test_nested_module_and_package_imports_are_both_resolved(self):
-        known = {"mpf.Monitor.Camera.MonitorCamera", "mpf.GCode.ArcGeometry"}
-        source = "from ..Monitor.Camera.MonitorCamera import MonitorCamera\nfrom . import ArcGeometry\n"
-        self.assertEqual(imported_modules(source, "mpf.GCode.Index", known), known)
-        self.assertEqual(imported_modules("from .Camera import MonitorCamera", "mpf.Monitor", known,
-                                          package=True), {"mpf.Monitor.Camera.MonitorCamera"})
+        known = {"mpf.monitor.camera.MonitorCamera", "mpf.gcode.ArcGeometry"}
+        source = "from ..monitor.camera.MonitorCamera import MonitorCamera\nfrom . import ArcGeometry\n"
+        self.assertEqual(imported_modules(source, "mpf.gcode.Index", known), known)
+        self.assertEqual(imported_modules("from .camera import MonitorCamera", "mpf.monitor", known,
+                                          package=True), {"mpf.monitor.camera.MonitorCamera"})
 
     def test_nested_screen_import_cannot_evade_the_core_boundary(self):
-        self.assertFalse(allowed_dependency("mpf.GCode.Index", "mpf.Monitor.Camera.MonitorCamera"))
-        self.assertFalse(allowed_dependency("mpf.GCode.Index", "mpf.Plate.PreviewColours"))
-        self.assertFalse(allowed_dependency("mpf.Printing.PrintState", "mpf.Preview.PreviewFollower"))
-        self.assertFalse(allowed_dependency("mpf.Moonraker.MoonrakerClient", "mpf.Diagnostics.LeakProbe"))
-        self.assertTrue(allowed_dependency("mpf.GCode.Index", "mpf.Geometry.Polygons"))
-        self.assertTrue(allowed_dependency("mpf.Moonraker.MoonrakerClient", "mpf.Diagnostics.CameraTiming"))
+        self.assertFalse(allowed_dependency("mpf.gcode.Index", "mpf.monitor.camera.MonitorCamera"))
+        self.assertFalse(allowed_dependency("mpf.gcode.Index", "mpf.plate.PreviewColours"))
+        self.assertFalse(allowed_dependency("mpf.printing.PrintState", "mpf.preview.PreviewFollower"))
+        self.assertFalse(allowed_dependency("mpf.moonraker.MoonrakerClient", "mpf.diagnostics.LeakProbe"))
+        self.assertTrue(allowed_dependency("mpf.gcode.Index", "mpf.geometry.Polygons"))
+        self.assertTrue(allowed_dependency("mpf.moonraker.MoonrakerClient", "mpf.diagnostics.CameraTiming"))
 
     def test_owned_feature_files_are_colocated(self):
         features = {
-            "Monitor/Camera": ("CameraPane.qml", "MonitorCamera.py", "MoonrakerMJPGImage.py", "CameraBridge.py"),
-            "Monitor/Console": ("ConsoleController.py", "ConsolePolicy.py"),
-            "Monitor/Temperature": ("TemperatureChart.qml", "MonitorTemperatureHistory.py"),
-            "Monitor/Toolhead": ("ToolheadSection.qml", "ToolheadController.py", "ToolheadPolicy.py"),
-            "Files/Browser": ("FileManager.qml", "FileManager.py", "FileManagerPolicy.py", "FilesViewModel.py"),
-            "Files/Transfers": ("UploadController.py", "MoonrakerUploadDialog.qml", "FileDownload.py", "RemoteFileService.py", "DownloadStream.py"),
-            "Preview": ("PreviewFollower.py", "PreviewPresentation.py", "MoonrakerPreviewCard.qml"),
-            "Printing": ("PrintState.py", "RemoteJobService.py", "PauseScheduleService.py"),
-            "Settings": ("PrinterConfig.py", "PluginPersistence.py", "MoonrakerFollowerConfiguration.qml"),
-            "BedMesh": ("BedMeshPresenter.py", "BedMeshSceneNode.py", "BedMeshMap.qml", "BedMeshRangeSlider.qml"),
-            "GCode": ("GCodeIndex.py", "GCodeIndexService.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
+            "monitor/camera": ("CameraPane.qml", "MonitorCamera.py", "MoonrakerMJPGImage.py", "CameraBridge.py"),
+            "monitor/console": ("ConsoleController.py", "ConsolePolicy.py"),
+            "monitor/temperature": ("TemperatureChart.qml", "MonitorTemperatureHistory.py"),
+            "monitor/toolhead": ("ToolheadSection.qml", "ToolheadController.py", "ToolheadPolicy.py"),
+            "files/browser": ("FileManager.qml", "FileManager.py", "FileManagerPolicy.py", "FilesViewModel.py"),
+            "files/transfers": ("UploadController.py", "MoonrakerUploadDialog.qml", "FileDownload.py", "RemoteFileService.py", "DownloadStream.py"),
+            "preview": ("PreviewFollower.py", "PreviewPresentation.py", "MoonrakerPreviewCard.qml"),
+            "printing": ("PrintState.py", "RemoteJobService.py", "PauseScheduleService.py"),
+            "settings": ("PrinterConfig.py", "PluginPersistence.py", "MoonrakerFollowerConfiguration.qml"),
+            "bedmesh": ("BedMeshPresenter.py", "BedMeshSceneNode.py", "BedMeshMap.qml", "BedMeshRangeSlider.qml"),
+            "gcode": ("GCodeIndex.py", "GCodeIndexService.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
         }
         for owner, names in features.items():
             for name in names:

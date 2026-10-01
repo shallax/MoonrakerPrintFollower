@@ -1,5 +1,5 @@
 """Deterministic Preview-pane captures: render the real
-mpf/Preview/MoonrakerPreviewCard.qml in an offscreen engine with the
+mpf/preview/MoonrakerPreviewCard.qml in an offscreen engine with the
 real Cura/UM theme components, the real cura-light theme and fake pane
 data, and write a PNG for release notes and layout regression checks.
 
@@ -148,7 +148,7 @@ def render(output_dir: str) -> None:
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "Preview", "MoonrakerPreviewCard.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "preview", "MoonrakerPreviewCard.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 

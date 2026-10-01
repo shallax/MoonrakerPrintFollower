@@ -48,15 +48,15 @@ import unittest
 from itertools import pairwise
 from unittest.mock import patch
 
-import mpf.GCode.GCodeIndex as gcode_index
-from mpf.GCode.MotionIndex import LayerMotionIndex
-from mpf.GCode.IndexCache import PersistentIndexCache
-from mpf.GCode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION
-from mpf.GCode.IndexLimits import _MAX_TYPE_NAMES, _MAX_TYPE_RUNS_PER_LAYER
-from mpf.GCode.FeatureTracker import _TYPE_NONE, _TYPE_OTHER
-from mpf.GCode.GCodeIndex import build_index_from_bytes, build_index_from_file
-from mpf.GCode.IndexHydrator import hydrate_layer_from_file
-from mpf.Moonraker.MoonrakerProtocol import RemoteFileIdentity
+import mpf.gcode.GCodeIndex as gcode_index
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.IndexCodec import _CACHE_MAGIC, _CACHE_VERSION
+from mpf.gcode.IndexLimits import _MAX_TYPE_NAMES, _MAX_TYPE_RUNS_PER_LAYER
+from mpf.gcode.FeatureTracker import _TYPE_NONE, _TYPE_OTHER
+from mpf.gcode.GCodeIndex import build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
+from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
 from tests.test_plate_progress import make_index
 
@@ -305,7 +305,7 @@ class PlateSplitRefinementTests(unittest.TestCase):
         # The worker's commit: the decoded payloads land in the hot
         # presentation cache — the bundle reads no other store (the
         # UI thread never prepares or decodes).
-        from mpf.GCode.PlateProgress import prepare_layer
+        from mpf.gcode.PlateProgress import prepare_layer
         for layer in range(layers):
             self.service._decoded_lru[layer] = prepare_layer(index, layer)
         return list(index.motion_offsets[0])
@@ -391,7 +391,7 @@ class RepeatedGeometrySplitTests(unittest.TestCase):
         digest, exactly as the worker commits them."""
         index = build_index_from_bytes(_repeated_layer_gcode(passes, drift))
         self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
-        from mpf.GCode.PlateProgress import prepare_layer
+        from mpf.gcode.PlateProgress import prepare_layer
         self.service._decoded_lru[0] = prepare_layer(index, 0)
         self.index = index
         self.offsets = list(index.motion_offsets[0])
@@ -636,7 +636,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
         self.context = runtime()
         self.qt = self.context.__enter__()
         self.addCleanup(self.context.__exit__, None, None, None)
-        from mpf.GCode.PreparedStore import PreparedCache, STATE_CACHED
+        from mpf.gcode.PreparedStore import PreparedCache, STATE_CACHED
         self.store = PreparedCache(self._dir.name)
         self.state_cached = STATE_CACHED
         module = self.qt.load("GCodeIndexService")
@@ -668,7 +668,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
 
     @staticmethod
     def _payload(layer):
-        from mpf.GCode.PlateProgress import encode_layer
+        from mpf.gcode.PlateProgress import encode_layer
         return encode_layer({"classes": {"SKIN": [[[0.0, 0.0, 0.0], [1.0, float(layer), 1.0]]]},
                              "travels": [], "travelStarts": [], "travelEnds": [], "motions": 2})
 

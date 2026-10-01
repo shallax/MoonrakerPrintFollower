@@ -59,9 +59,9 @@ from tests.qt_runtime_support import QT_AVAILABLE, runtime
 if QT_AVAILABLE:
     from PyQt6.QtCore import QObject, pyqtSignal
 
-    from mpf.Monitor.Console.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
-    from mpf.Monitor.MonitorPermissions import Observation
-    from mpf.Settings.PrinterConfig import PrinterConfig
+    from mpf.monitor.console.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT
+    from mpf.monitor.MonitorPermissions import Observation
+    from mpf.settings.PrinterConfig import PrinterConfig
 
     if "UM" not in sys.modules:
         # PrintCoordinator imports UM.Logger; the container has no Cura
@@ -117,7 +117,7 @@ if QT_AVAILABLE:
         """A counter over the plate projection's ring walk — the
         per-vertex work the memo exists to remove. Returns the call
         list and the patch that installs it."""
-        from mpf.Monitor import MonitorFormatting
+        from mpf.monitor import MonitorFormatting
         calls = []
         real_finite_polygon = MonitorFormatting._finite_polygon
 
@@ -135,7 +135,7 @@ if QT_AVAILABLE:
             self.walks = 0
 
         def value(self, exclude_object, job=None):
-            from mpf.Monitor.MonitorFormatting import plate_values
+            from mpf.monitor.MonitorFormatting import plate_values
             self.walks += 1
             return plate_values(exclude_object)
 
@@ -250,7 +250,7 @@ if QT_AVAILABLE:
             self.manual_split = motions
 
         def observe_motion(self, anchor, file_position=None, live_position=None, paused=False, extruding=None):
-            from mpf.Printing.PrintState import MotionProgress
+            from mpf.printing.PrintState import MotionProgress
             return MotionProgress(anchor, self.plate_split if file_position is not None else None, 100)
 
         def plate_progress(self, anchor, file_position=None, live_position=None, paused=False, extruding=None, *, motion=...):
@@ -542,7 +542,7 @@ if QT_AVAILABLE:
         under test. The lazy UM stub above must exist before the
         module's own import runs.
         """
-        from mpf.Application.PrintCoordinator import PrintCoordinator
+        from mpf.application.PrintCoordinator import PrintCoordinator
         return PrintCoordinator
 
 
@@ -652,7 +652,7 @@ class ToolheadCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self._rt.__enter__()
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from mpf.Monitor.Toolhead.ToolheadController import ToolheadController
+        from mpf.monitor.toolhead.ToolheadController import ToolheadController
         self.controller_class = ToolheadController
 
     def _make(self, state="paused", **kwargs):
@@ -675,7 +675,7 @@ class ConsoleCoverageTests(unittest.TestCase):
         self._rt = runtime()
         self.events = self._rt.__enter__().events
         self.addCleanup(self._rt.__exit__, None, None, None)
-        from mpf.Monitor.Console.ConsoleController import ConsoleController
+        from mpf.monitor.console.ConsoleController import ConsoleController
         self.controller_class = ConsoleController
         self.data = _ConsoleData()
         self.commands = _ConsoleCommands()
