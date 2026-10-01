@@ -977,6 +977,17 @@ class SocketWriteTests(SocketCase):
         self.assertTrue(stub.deleted)
         self.assertIsNone(instance._socket)
 
+    def test_stop_deletes_an_upgraded_socket_whose_peer_already_disconnected(self):
+        instance = self.owner()
+        stub = _DeadSocket(unconnected=True)
+        instance._socket = stub
+        instance._upgraded = True
+        instance.stop()
+        self.assertEqual(stub.written, [])
+        self.assertEqual(stub.disconnects, 0)
+        self.assertTrue(stub.deleted, "the disconnected signal has already fired")
+        self.assertIsNone(instance._socket)
+
     def test_stop_after_a_peer_close_does_not_double_the_frame(self):
         # A peer-initiated close receives at most the intended one
         # response frame: the teardown that follows must not add a
