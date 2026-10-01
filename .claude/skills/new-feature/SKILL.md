@@ -116,7 +116,7 @@ items; where findings conflict, pick the pragmatic side and push on.
 Build feature-by-feature with tests as we go (pure domain tests first,
 Qt tests, token pins). Follow the repo recipes in INSTRUCTIONS.md: one
 owner per domain, value_property publishing, atomic state writes,
-surface lists in tests/test_composed_components.py, section pins.
+surface lists in Tests/test_composed_components.py, section pins.
 Update ARCHITECTURE.md and its contract tests in the same commits as
 the code they describe.
 

@@ -45,7 +45,7 @@ class _FeatureTracker:
                  "open_type", "e", "absolute_e", "extruding", "start_type",
                  "start_e", "start_e_absolute", "start_extruding", "plane",
                  "start_plane", "events", "retracted", "start_retracted", "extrusions",
-                 "speed", "tool", "start_speed", "start_tool", "speeds", "tools", "metric_limits", "retractions", "start_retractions", "firmware_events")
+                 "speed", "tool", "start_speed", "start_tool", "speeds", "Tools", "metric_limits", "retractions", "start_retractions", "firmware_events")
 
     def __init__(self) -> None:
         self.runs: List[List[int]] = []

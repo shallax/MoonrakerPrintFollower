@@ -8,7 +8,7 @@ __pycache__/
 *.tmp
 *.bak
 .DS_Store
-/dist/
+/Dist/
 .idea/
 .venv/
 pyproject.toml
@@ -23,4 +23,4 @@ review/
 .claude/*
 !.claude/skills/
 # The JUnit report the CI leg writes and uploads; an artifact, never shipped.
-tests.junit.xml
+Tests.junit.xml

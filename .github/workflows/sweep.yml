@@ -84,7 +84,7 @@ jobs:
           key: mpf-cura-${{ matrix.version }}
 
       - name: Fetch the pinned Cura
-        run: python3 tools/fetch_cura.py "${{ matrix.version }}"
+        run: python3 Tools/fetch_cura.py "${{ matrix.version }}"
 
       - name: Pull the harness image and start the container
         run: |
@@ -92,10 +92,10 @@ jobs:
           if docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} >/dev/null 2>&1; then
             docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
           else
-            ./tools/build_image.sh mpf-cura-harness tools/harness
+            ./Tools/build_image.sh mpf-cura-harness Tools/harness
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
-          container_dir="$(tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
+          container_dir="$(Tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
               -v "$MPF_WORK_DIR:$container_dir" mpf-cura-harness sleep infinity
 
@@ -108,7 +108,7 @@ jobs:
               CURA_VERSION="${{ matrix.version }}" \
               MODE="${{ matrix.unit.mode }}" SCENARIO_GROUP="${{ matrix.unit.group }}" \
               RUN_DIR_NAME="$MPF_WORK_DIR/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}" \
-              ./tools/ui_test.sh
+              ./Tools/ui_test.sh
 
       - name: Upload the failed unit's gallery
         if: failure()

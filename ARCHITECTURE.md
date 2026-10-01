@@ -100,9 +100,9 @@ plugin-root-relative paths; the configuration Machine Action retains the
 relative `_qml_url` required by Cura. QML imports and URLs are relative to each
 calling document, and `qmldir` entries point at the actual feature files.
 
-`tests/test_domain_layout.py` checks qualified import resolution, core package
+`Tests/test_domain_layout.py` checks qualified import resolution, core package
 boundaries, co-location and non-vacuous nested dependency scanning.
-`tests/test_resource_references.py` checks the Python entry points, QML resource
+`Tests/test_resource_references.py` checks the Python entry points, QML resource
 URLs, registration files and both built archive formats. Basename-based
 `SourceRoot` remains useful for content tests; it is not used as evidence of
 correct package ownership.
@@ -626,7 +626,7 @@ aborts an in-flight request whose G-code may or may not have executed.
 Live Z-offset nudges stay enabled during prints by design.
 
 Two standing UI rules bound every Monitor control (both pinned in
-`tests/test_monitor_qml_contracts.py`). **No reflow**: controls never disappear —
+`Tests/test_monitor_qml_contracts.py`). **No reflow**: controls never disappear —
 state gates disable, status lines are permanent single-line slots, and
 reserved space uses opacity; nothing reflows unless the user acts
 (expanding/collapsing, resizing). The reasoning is safety: a control
@@ -712,7 +712,7 @@ singleton document (`mpf/Resources/Theme/MoonrakerTheme.qml`,
 registered by the `qmldir` beside it and imported from a document
 as `import "../resources/theme"`): the axis identity colours, the
 pause orange, the console palette, the strip accents. No
-document repeats a colour literal; `tests/test_theme.py` scans the
+document repeats a colour literal; `Tests/test_theme.py` scans the
 QML tree and fails any magic colour AND any cited token the
 singleton does not declare (the two directions of the gate), and
 the format/lint targets cover the theme directory like the rest of
@@ -858,7 +858,7 @@ previous incarnation must never claim ownership of the current scene.
 
 Canonical screenshot captures pin the amd64 container architecture as well
 as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
-native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
+native CI and emulation on Apple Silicon. `Tools/run_captures.sh` is the shared
 entry point. Native test gates may use the host architecture; `make build`
 regenerates canonical captures afterward rather than copying those test images.
 Byte comparison and independent light/dark determinism checks remain strict.
@@ -1094,7 +1094,7 @@ the new pixel-width control.
 
 ### Renderer measurements and limits
 
-The retired `tools/spikes` prototype demonstrated scene-graph viability and is
+The retired `Tools/spikes` prototype demonstrated scene-graph viability and is
 not part of the maintained renderer. On Windows with Qt 6.6, a dense synthetic
 layer measured median node updates of 0.193 ms (p95 0.275 ms) and frame swaps of
 6.325 ms (p95 7.352 ms). Its four-sample antialiasing variant increased swap
@@ -1267,7 +1267,7 @@ is protected from eviction; the cache may temporarily exceed its budget while
 that writer is alive. Worker preparation failures publish a visible error and
 a diagnostic instead of silently leaving a layer pending.
 
-Native and Linux harnesses use `tests/harness/log_gate.py` to reject plugin
+Native and Linux harnesses use `Tests/Harness/log_gate.py` to reject plugin
 warnings, errors and QML binding/polish loops. Native first-install and migration
 legs include both boots' logs. Missing evidence fails the gate. Deliberate fault-injection scenarios may declare exact expected log messages; only a fully passing scenario records that allowance, and the shared gate consumes its bounded message count. Repeated authentication-refusal warnings are permitted only inside the successful authentication-fault scenario's recorded time window. Other warnings still fail.
 

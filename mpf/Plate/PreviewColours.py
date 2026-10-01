@@ -59,7 +59,7 @@ def motion_colour(payload, name, motion, scheme):
     if is_travel(name) or mode == 1:
         return classes.get(name, "#888888")
     if mode == 0:
-        tools = payload.get("tools") or ()
+        tools = payload.get("Tools") or ()
         tool = int(tools[motion]) if 0 <= motion < len(tools) else 0
         materials = scheme.get("materials") or ["#888888"]
         return materials[tool] if tool < len(materials) else materials[0]

@@ -35,28 +35,28 @@ jobs:
       - name: Build the plugin package
         run: |
           python -m pip install PySide6-Addons==6.10.2
-          python tools/build_shaders.py
-          python tools/build_curapackage.py
+          python Tools/build_shaders.py
+          python Tools/build_curapackage.py
       - name: Stage Cura 5.13 and the existing connection harness
         run: |
           RUN_DIR_NAME="$RUNNER_TEMP/mpf-render-diagnosis/${{ matrix.render_loop }}-${{ matrix.capture }}" \
-            bash tools/native_harness.sh macos 5.13.0 connection
+            bash Tools/native_harness.sh macos 5.13.0 connection
       - name: Sample the initial window
         run: |
           . "$MPF_WORK_DIR/harness_env.sh"
-          python tools/mac_renderer_probe.py before
+          python Tools/mac_renderer_probe.py before
       - name: Drive the same unit with the selected capture mode
         timeout-minutes: 15
         run: |
           . "$MPF_WORK_DIR/harness_env.sh"
           export HARNESS_CAPTURE="${{ matrix.capture }}"
           export HARNESS_CAPTURE_REASON="Explicit renderer diagnostic comparison"
-          python -u tests/harness/runner.py suite connection
+          python -u Tests/Harness/runner.py suite connection
       - name: Sample the final window and keep native Qt diagnostics
         if: always()
         run: |
           . "$MPF_WORK_DIR/harness_env.sh"
-          python tools/mac_renderer_probe.py after || true
+          python Tools/mac_renderer_probe.py after || true
           mkdir -p "$HARNESS_RUN_DIR/renderer-diagnostics"
           cp "$MPF_WORK_DIR/cura_run.log" "$HARNESS_RUN_DIR/renderer-diagnostics/cura-run.log"
           cp "$MPF_WORK_DIR/native_harness.log" "$HARNESS_RUN_DIR/renderer-diagnostics/setup.log" || true

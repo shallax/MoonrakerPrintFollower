@@ -43,7 +43,7 @@ contract. These decisions supersede the corresponding proposals:
 ### Original planning record
 
 - **Codecov test analytics (4.6.0).** The Python legs wrote a separate
-  JUnit report through `tools/unittest_junit.py` for per-test history in
+  JUnit report through `Tools/unittest_junit.py` for per-test history in
   Codecov. The 4.6.1 CI limits that reporting pass to the Python 3.12
   matrix leg, which also uploads measured coverage.
 
@@ -790,7 +790,7 @@ assessing against Cura 5.9.1; the current Cura is 5.13.x. Every
 compatibility claim in the panel rounds is assessed against CURRENT
 Cura (5.13.x) and its bundled
 PyQt6. The 5.9.1 pin in the tree is the capture theme only
-(`tests/theme_assets/`, extracted from the 5.9.1 AppImage) — capture
+(`Tests/ThemeAssets/`, extracted from the 5.9.1 AppImage) — capture
 fidelity, never the runtime baseline. Cura 5.13's bundled PyQt6 is
 stricter than the dev container's newer PyQt6 about re-exports (the
 QHostAddress lesson, pinned by
@@ -918,7 +918,7 @@ docs cleanup folded in (2026-09-14):
   DeprecationWarnings in the plugin's test output, so a failing
   unit's report opens with the signal.
 - **Skip CodeQL for the test harness (2026-09-13)**: the
-  simulator and harness code (tests/harness/**, the driver) is test
+  simulator and harness code (Tests/Harness/**, the driver) is test
   infrastructure, not shipped code — CodeQL findings there are noise.
   Scope the analyze job's path filters to the shipped tree.
 - **The docs cleanup (2026-09-14)**: every verbatim quote and
@@ -1121,7 +1121,7 @@ ordered by dependency:
   round-6 deferral is re-ruled (2026-09-14): 4.1.0 makes the
   document's promise a gate, so the reconciliation moves in.
 - **The parallel local matrix.** `-j N` parallelism in
-  `tools/harness_release.sh` — opt-in, serial by default, the
+  `Tools/harness_release.sh` — opt-in, serial by default, the
   timing budgets documented as unloaded-machine assumptions.
   Rehearsed in the container before it is called fixed (the
   workflow-change rule).

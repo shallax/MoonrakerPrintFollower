@@ -79,7 +79,7 @@ def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets,
         travel_ends.append(block_features[2])
         extrusion_columns.append(block.get("extrusions", array("f")))
         speed_columns.append(block.get("speeds", array("f")))
-        tool_columns.append(block.get("tools", array("H")))
+        tool_columns.append(block.get("Tools", array("H")))
         start_speeds.append(block.get("start_speed", 0.0))
         start_tools.append(block.get("start_tool", 0))
         print_z = block.get("print_z")
