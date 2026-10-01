@@ -621,7 +621,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The note feeds BOTH the console and the popup's own status
         # line (refusals must be visible where the action happened).
         self._console.note(text)
-        self._publish()
+        self._files.set_note(text)
 
     def _on_connection_state(self, state: str) -> None:
         if state != "yes":
