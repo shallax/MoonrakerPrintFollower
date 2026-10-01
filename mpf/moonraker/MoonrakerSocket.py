@@ -212,10 +212,17 @@ class MoonrakerSocket(QObject):
         socket = self._socket
         self._socket = None
         if socket is not None:
+            retiring = False
             try:
                 if not self._upgraded:
                     socket.abort()
                 elif close_frame:
+                    # Keep the transport alive until Qt has sent the
+                    # buffered close frame and disconnected. Deleting it
+                    # in this turn can reset the peer on Windows.
+                    socket.disconnected.connect(socket.deleteLater)
+                    socket.readyRead.connect(socket.readAll)
+                    retiring = True
                     socket.write(encode_close_frame(1000))
                     socket.flush()
                     socket.disconnectFromHost()
@@ -223,6 +230,9 @@ class MoonrakerSocket(QObject):
                     # The peer-close path has already sent its one
                     # response frame: finish the graceful teardown
                     # without a second close on the wire.
+                    socket.disconnected.connect(socket.deleteLater)
+                    socket.readyRead.connect(socket.readAll)
+                    retiring = True
                     socket.flush()
                     socket.disconnectFromHost()
             except Exception:
@@ -233,10 +243,12 @@ class MoonrakerSocket(QObject):
                     socket.abort()
                 except Exception:
                     pass
-            try:
-                socket.deleteLater()
-            except Exception:
-                pass
+                retiring = False
+            if not retiring:
+                try:
+                    socket.deleteLater()
+                except Exception:
+                    pass
         self._pending.clear()
         self._buffer = b""
         self._frame_state = FrameState()
