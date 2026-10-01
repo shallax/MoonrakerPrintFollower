@@ -1,12 +1,14 @@
 # TESTING.md — the real-Cura UI test harness
 
-## Current release: 4.6.2
+## Current candidate: 4.6.2 (aiming for RC1; not released)
 
-Version 4.6.2 decomposes the plugin's internals and changes no interface;
-its one behaviour change is a thumbnail fetch that cannot start publishing
-on the thumbnail channel instead of the file listing's. Its evidence is the
-whole suite, per-file coverage at the 95% bar, and byte-identical captures
-for every QML batch, which `make verify_captures` compares.
+Version 4.6.2 decomposes the plugin's internals and adds shared, switchable
+bed-axis arrows, zoom-stable Print Follower controls and a readable pause
+**Clear** button. It also routes thumbnail start failures to the thumbnail
+channel and file refusals to the popup. The decomposition was checked with
+the whole suite, per-file coverage at the 95% bar and capture comparisons;
+the changed plate captures are intentional. `make verify_captures` compares
+current rendering to the committed captures.
 
 Run the cross-platform test suite with `make run_tests JOBS=2`; use
 `make test_files FILES='tests.test_index_physical_progress tests.test_qml_settings' JOBS=1`
@@ -17,6 +19,9 @@ the parser. The extracted owners carry their own suites —
 `tests.test_monitor_publication`, `tests.test_camera_recovery`,
 `tests.test_pause_at_layer_presentation`, `tests.test_plate_view_policy`,
 `tests.test_plate_painter` and `tests.test_prepared_store`.
+Axis geometry, shared preference and render-path coverage live in
+`tests.test_plate_axis_geometry`, `tests.test_gpu_follower`,
+`tests.test_qml_object_picker` and `tests.test_qml_plate_geometry`.
 Camera transport coverage lives in `tests.test_monitor_camera_runtime`,
 `tests.test_moonraker_mjpg` and `tests.test_qml_camera_controls`.
 `make lint`, `make verify_captures`, and `make package` cover the

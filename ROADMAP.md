@@ -6,14 +6,14 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release branch: **chore/v4.6.2**, the release PR. The release notes
+Current release branch: **chore/v4.6.2**, aiming for RC1 (not released). The release notes
 are maintained in `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## 4.6.2 — internal decomposition
+## 4.6.2 — internal decomposition and plate polish (aiming for RC1)
 
-An internal release: no new interface, and no behaviour change beyond one
-publication fix found while the work was done.
+An internal decomposition with targeted user-visible improvements; the release
+candidate is still in preparation.
 
 - Decompose the remaining monoliths into owners with explicit inputs — the
   Monitor's renderer lifecycle and publication transaction, the file-browser,
@@ -21,9 +21,15 @@ publication fix found while the work was done.
   pass, the prepared store's session, and the desktop test harness.
 - Publish a thumbnail fetch that cannot start on the thumbnail channel, where
   the same logical failure at the reply already published, rather than on the
-  file manager's listing channel.
+  file manager's listing channel. Surface file-manager refusals in the popup.
+- Add border-aligned X/Y direction arrows to both plate views and a saved,
+  default-on **Axis arrows** control in Print Follower for both compact and
+  enlarged beds. Preserve the grid and print geometry when arrows are off.
+- Keep the Print Follower option rows stable while zooming and the pause
+  schedule's **Clear** label legible.
 - Verify by the whole suite, per-file coverage at the 95% bar, and
-  byte-identical captures for the QML batches.
+  capture comparisons for the decomposition; refresh the affected captures
+  for the intentional plate changes.
 
 ## 4.6.1 — vase following and native development
 

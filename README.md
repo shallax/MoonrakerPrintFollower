@@ -9,18 +9,24 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 4.6.2
+- **Status:** Aiming for RC1; not released
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
 
 ## What changed in 4.6.2
 
-Version 4.6.2 is an internal release. The plugin's implementation is
-decomposed into narrower owners with explicit inputs, with no new interface
-and no change to the documented behaviour.
+Version 4.6.2 is aiming for RC1, not yet released. It splits the Monitor,
+file browser, camera, toolhead, Preview, dashboard and test harness into
+smaller owners while retaining existing settings and workflows.
 
-One fix ships with it: a thumbnail that fails to start no longer rebuilds
-the whole file listing. That failure published on the file manager's listing
-channel while the same logical failure at the reply published on the
-thumbnail channel alone; both report on the thumbnail channel now.
+The Print Follower and Exclude Object Picker beds gain red left-pointing X
+and green downward Y arrows on their top and right borders, beneath print
+geometry. The default-on **Axis arrows** checkbox in Print Follower saves
+your choice for both views, on small and enlarged beds, without hiding the
+grid or print. Print Follower's controls stay in place as you zoom, and the
+pause schedule's **Clear** button stays legible at narrow widths.
+
+A thumbnail that fails to start no longer rebuilds the file listing; file
+refusals also appear in the file popup rather than leaving it waiting.
 
 ## What changed in 4.6.1
 
