@@ -1005,13 +1005,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             lookup_ms = getattr(snapshot, "plate_decode_ms", None)  # legacy test/snapshot
         progress = getattr(snapshot, "plate_progress", None)
         values["plateTrackingAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
+        source_resolving = bool(snapshot.index_ready and getattr(snapshot, "source_resolving", False))
+        source_downloading = bool(snapshot.index_ready and getattr(snapshot, "source_downloading", False))
+        source_busy = source_resolving or source_downloading
+        values["plateSourceBusy"] = source_busy
+        values["plateSourceResolving"] = source_resolving
         values["plateSourceStatus"] = (
-            "Downloading G-code for precise tracking"
-            if snapshot.index_ready and getattr(snapshot, "source_downloading", False)
-            else "")
+            "Resolving G-code for precise tracking" if source_resolving
+            else "Downloading G-code for precise tracking" if source_downloading
+            else "G-code download failed; precise tracking unavailable"
+            if snapshot.index_ready and getattr(snapshot, "source_error", False) else "")
         values["plateSourceProgress"] = self._coerce(
             snapshot.download_fraction
-            if values["plateSourceStatus"] and snapshot.download_fraction is not None
+            if source_downloading and snapshot.download_fraction is not None
             else None, -1.0)
         follower = getattr(snapshot, "plate_manual_progress", None)
         # The attached state must read the LIVE payload: the old
@@ -1428,6 +1434,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
     plateTrackingAvailable = value_property(bool, "plateTrackingAvailable", plateProgressChanged, False)
     plateSourceStatus = value_property(str, "plateSourceStatus", plateProgressChanged, "")
+    plateSourceBusy = value_property(bool, "plateSourceBusy", plateProgressChanged, False)
+    plateSourceResolving = value_property(bool, "plateSourceResolving", plateProgressChanged, False)
     plateSourceProgress = value_property(float, "plateSourceProgress", plateProgressChanged, -1.0)
     plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "")
     plateLayerCount = value_property(int, "plateLayerCount", plateProgressChanged, 0)

@@ -67,7 +67,7 @@ class DownloadOperation:
     # Bounded buffering: above the high-water mark the drain loop stops
     # reading and leaves bytes in Qt's reply buffer (whose own cap then
     # throttles the socket); the writer fires on_writer_drained once the
-    # backlog crosses below the low-water mark. A blocking put() on the
+    # backlog falls below the low-water mark. A blocking put() on the
     # GUI thread is forbidden by design — pausing the read is the
     # mechanism.
     HIGH_WATER_BYTES = 8 * 1024 * 1024
@@ -90,12 +90,28 @@ class DownloadOperation:
         self.aborted = False
         self.finished_reading = False
         self.reading_paused = False
-        self.backed_up = False
+        self._flow_lock = threading.Lock()
         self.sentinel_put = False
         self.queue = queue.Queue()
         self.on_writer_done = None
         self.on_writer_drained = None
         self._writer = None
+
+    def can_read(self):
+        with self._flow_lock:
+            if self.reading_paused and not self.finished_reading:
+                if self.received - self.written >= self.LOW_WATER_BYTES:
+                    return False
+                self.reading_paused = False
+            return True
+
+    def enqueue(self, chunk):
+        with self._flow_lock:
+            self.received += len(chunk)
+            self.queue.put(chunk)
+            if (not self.finished_reading
+                    and self.received - self.written >= self.HIGH_WATER_BYTES):
+                self.reading_paused = True
 
     def start(self):
         self._writer = threading.Thread(target=self._writer_main, daemon=True)
@@ -125,12 +141,13 @@ class DownloadOperation:
                 if chunk is None:
                     break
                 self.target.write(chunk)
-                self.written += len(chunk)
-                # One drain-resume per above->below crossing; the
-                # service's handler hops back to the GUI thread.
-                was_backed_up = self.backed_up
-                self.backed_up = (self.received - self.written) > self.LOW_WATER_BYTES
-                if was_backed_up and not self.backed_up and self.on_writer_drained is not None:
+                with self._flow_lock:
+                    self.written += len(chunk)
+                    resume = (self.reading_paused
+                              and self.received - self.written < self.LOW_WATER_BYTES)
+                    if resume:
+                        self.reading_paused = False
+                if resume and self.on_writer_drained is not None:
                     self.on_writer_drained()
         except Exception as error:
             self.writer_error = str(error)

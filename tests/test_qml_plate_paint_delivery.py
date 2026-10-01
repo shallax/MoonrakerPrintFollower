@@ -283,6 +283,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._printer.setSplit(18)
         self._pump_ms(300)
         standing = 18
+        rapid_trace = []
         for split in [15, 8, 12, 6, 16, 10, 14, 9]:
             self._printer.setSplit(split)
             allowed = [standing, split]
@@ -290,9 +291,35 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 self._pump_ms(20)
                 image = window.grabWindow()
                 shown = classify(image, allowed)
+                receipt = face.property("_deliveredComposition").toVariant()
+                receipt_split = receipt.get("split") if isinstance(receipt, dict) else None
+                rapid_trace.append((split, beat, shown, receipt_split))
                 if shown is None:
+                    ink = sum(
+                        self._matches(image.pixel(int(origin.x()) + c,
+                                                  int(origin.y()) + r),
+                                      (0xD3, 0x2F, 0x2F))
+                        for c in range(column_for(20.0), column_for(220.0) + 1)
+                        for r in range(row - 2, row + 3))
+                    signatures = [
+                        (candidate,
+                         [ink_at(image, x) for x in
+                          ([25.0, 105.0, 115.0,
+                            (110.0 + 20.0 + 10.0 * (candidate - 1)) / 2.0]
+                           if candidate > 10 else [25.0])
+                          + [20.0 + 10.0 * (candidate - 1)]],
+                         clean_beyond(image, candidate))
+                        for candidate in allowed]
                     failures.append("rapid %d -> %d: beat %d presented no "
-                                    "complete composition" % (standing, split, beat))
+                                    "complete composition (image=%dx%d null=%s ink=%d "
+                                    "signatures=%s receiptComplete=%s trace=%s owners=%s receipt=%s)"
+                                    % (standing, split, beat, image.width(), image.height(),
+                                       image.isNull(), ink, signatures,
+                                       complete_signature(image, receipt_split)
+                                       if isinstance(receipt_split, int) and 0 < receipt_split <= 21
+                                       else None, rapid_trace[-8:],
+                                       face.property("_presentation").toVariant(),
+                                       receipt))
                     continue
                 if shown not in allowed:
                     failures.append("rapid %d -> %d: beat %d presented split %d "
@@ -544,5 +571,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                          "onPainted synchronously initiated its replacement paint")
         self.assertTrue(state["pending"],
                         "the retry was consumed before the next event turn")
-
-

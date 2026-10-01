@@ -463,15 +463,20 @@ neither steal the next operation's sentinel nor write into its file — and it
 exits via a Qt signal; the GUI thread never joins a writer or closes its file
 (the writer closes its own fd). Buffering is bounded by high/low water marks:
 above the high mark the drain stops reading, leaving bytes in the reply's
-buffer (whose cap then throttles the socket), and the writer's low-water
-signal resumes the drain. The response's Content-Length is the sole
-transfer-length authority for the byte cap, the progress denominator and the
-final size check; a transfer without one renders indeterminate progress and
-skips the size check.
+buffer (whose cap then throttles the socket). The pause flag and byte
+counters share a lock: the writer wakes the drain exactly once when a paused
+backlog falls below (not merely reaches) the low mark, including an exact
+two-chunk threshold crossing. The response's Content-Length determines
+progress and is checked against bytes written when present; the file listing
+also checks the final size when known, and a separate 2 GiB cap limits bytes
+regardless of either declaration. A transfer without Content-Length renders
+indeterminate progress.
 
 Metadata completeness is separate from download identity: a failed metadata
-request installs a fallback identity so downloads proceed, then retries with
-backoff; only a successful response marks the run's metadata complete.
+request installs a fallback identity so downloads proceed. File demand arms
+one nonblocking backoff timer even after a temporary file is ready; verified
+metadata then retires that unverified file and re-downloads before persistent
+publication. Only a successful response marks the run's metadata complete.
 The coordinator's Moonraker-metadata fallback carries the same discipline:
 the payload latches only on a completed fetch keyed by `(filename, job)`
 (request identity commits when the send starts, never before), a failed or
@@ -488,8 +493,9 @@ the newest history row, the give-up latches only the unattestable
 causes, and a mismatched job id refuses without latching (the anchors
 stay empty for that print). A job change clears the in-flight pending
 flag — the lane never wedges across a print boundary.
-Failed downloads retry on their own backoff ladder, driven by consumer
-re-requests; a failed layer hydration is latched until a new file arrives
+Transient transport failures retry at most twice without further consumer
+demand; size, encoding, cap and local write refusals do not automatically
+re-download. A failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
 poll. The latch is never silent: the payload carries the refusal, the
 face names it instead of promising a load that is not coming, and an
@@ -520,9 +526,10 @@ forces a fresh download. A separate temporary working file keeps active leases
 safe through cache eviction or explicit clear: warm restoration runs off the UI
 thread, hardlinking when possible and copying in bounded chunks with progress
 when links are unavailable. A failed restore falls back to one fresh GET rather
-than retrying the corrupt cache. Publication also happens off the UI thread
-under a temporary name and an atomic rename; the unified per-machine LRU counts
-raw bytes with index and prepared bytes. Live source pins prevent index/prepared
+than retrying the corrupt cache. Publication happens off the UI thread under a temporary name and an atomic
+rename. Its worker remains alive through normal shutdown so a cross-volume
+copy can finish before process exit. The unified per-machine LRU counts raw
+bytes with index and prepared bytes. Live source pins prevent index/prepared
 pruning from removing a print folder until its working file and leases retire;
 stale pins are removed after a crash. Every eviction removes the entire print
 folder, never just its raw source, index or prepared representation; a pinned

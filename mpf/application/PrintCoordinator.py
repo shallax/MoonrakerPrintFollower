@@ -534,6 +534,9 @@ class PrintCoordinator(QObject):
             download_fraction=self._files.download_fraction,
             source_downloading=(self._files.phase == "downloading"
                                 and face.view is not None),
+            source_resolving=(self._files.source_resolving and face.view is not None),
+            source_error=(self._files.phase == "error" and not self._files.path
+                          and face.view is not None),
             indexing=self._index.phase == "indexing",
             index_fraction=self._index.progress if self._index.phase == "indexing" else None,
             next_pause_layer=pause.layer,

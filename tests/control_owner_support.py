@@ -181,6 +181,7 @@ if QT_AVAILABLE:
             self.metadata_complete = False
             self.download_fraction = None
             self.phase = ""
+            self.source_resolving = False
             self._lease = None
             self.metadata_only_started = True
             self.bound = "unbound"
