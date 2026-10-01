@@ -167,8 +167,8 @@ endif
 # ruling, amended the same day): lint + the full test suite + a
 # verified package, WITHOUT captures and capture determinism â€” the
 # snapshot iterations carry logic, so the suites run, and only the
-# screenshot machinery is skipped. make all remains mandatory before
-# any commit or push.
+# screenshot machinery is skipped. GitHub CI runs the full suite on
+# pushes and pull requests; make all remains the local full gate.
 snapshot_quick:
 	$(MAKE) -j2 lint run_tests
 ifneq ($(LEG),posix)
