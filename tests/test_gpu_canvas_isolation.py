@@ -23,13 +23,16 @@ class GpuCanvasIsolationTests(harness.PlateFaceRenderTests):
         }, face)
         self._printer.setLayers({"prev": None, "current": prior, "next": None})
         self.pump(10)
+        observed_handoff = []
+        face._handoffOpacityChanged.connect(
+            lambda: observed_handoff.append(face.property("_handoffOpacity")))
         self._printer.setSplit(1)
         self._printer.setLayers({"prev": prior, "current": current, "next": None})
         self._printer.setAnchor(1)
         self._wait_until(
-            window, lambda _image: face.property("_handoffOpacity") > 0,
+            window, lambda _image: any(value > 0 for value in observed_handoff),
             timeout=2.0)
-        self.assertGreater(face.property("_handoffOpacity"), 0,
+        self.assertTrue(any(value > 0 for value in observed_handoff),
                            "a live layer switch should soften the native replacement")
         self.assertAlmostEqual(face.property("_motionFrom"), 0,
                                msg="the first observed motion should animate from the new start")
