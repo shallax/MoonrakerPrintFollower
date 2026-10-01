@@ -792,6 +792,17 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         model.fileUploadDismiss()
         self.assertEqual(model.fileUploadProgress, "")
 
+    def test_file_manager_refusal_note_reaches_the_popup_and_console(self):
+        model = self.monitor()
+        model.openFileManager()
+        refusal = "Upload refused: simulated upload refusal"
+        model._file_manager.note.emit(refusal)
+        self.assertEqual(model.fileManagerNote, refusal)
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any(refusal in line for line in lines))
+        model.openFileManager()
+        self.assertEqual(model.fileManagerNote, "")
+
     def test_watchdog_holds_through_a_same_file_reprint(self):
         # The adversarial round's repro: Klipper never clears the
         # filename, so a re-print arms against the previous job's
@@ -940,5 +951,4 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         device._has_slice = lambda: True
         device.leaveMonitorStage()
         self.assertEqual(self.app.controller.stage, "PreviewStage")
-
 
