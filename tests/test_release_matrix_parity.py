@@ -210,5 +210,18 @@ class ReleaseMatrixParityTests(unittest.TestCase):
         self.assertEqual(versions, EXPECTED_SWEEP_VERSIONS)
 
 
+class ReleaseNotesContractTests(unittest.TestCase):
+    def test_current_changelog_section_matches_tag_release_extraction(self):
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        version = package["package_version"]
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn('marker = f"## {version}\\n"', workflow)
+        marker = f"## {version}\n"
+        self.assertIn(marker, changelog)
+        notes = changelog.split(marker, 1)[1].split("\n## ", 1)[0].strip()
+        self.assertTrue(notes, "tag release would publish empty notes")
+
+
 if __name__ == "__main__":
     unittest.main()
