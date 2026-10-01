@@ -102,6 +102,10 @@ are visible; a Python 3.14 patch release difference is acceptable.
   list. CI runs the full suite once per Python version; the 3.12 matrix leg
   measures coverage during that run. Its optional Codecov JUnit report then
   repeats the tests on 3.12 only, in isolated files (`JOBS`, default 2).
+  Qt raster-drain tests use wall-clock deadlines alongside event-loop-turn
+  floors: workers run on real threads even when the follower clock is
+  simulated, so a fixed turn count can expire before a loaded Windows
+  runner finishes a render.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
