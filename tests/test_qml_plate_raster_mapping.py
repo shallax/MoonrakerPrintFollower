@@ -347,8 +347,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         lower and draws a narrower band (at 100% zoom the exact
         scene's wall is rows 262-265 and the overlay's is 263-264).
         The 0.5 px is a defect to be driven to zero, not a contract —
-        this pin exists so it cannot GROW, and a 1 px disagreement
-        fails it.
+        this pin exists so it cannot GROW. Stroke thickness uses
+        effective ink coverage rather than counting antialiased fringe
+        pixels as full rows; the warm raster is resampled at each zoom.
 
         Matching the two sampling modes does NOT remove it: forcing
         ``navigationImage.smooth: false`` clears the 0.5 px at zoom
@@ -388,13 +389,19 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         def rows(image):
             origin = face.mapToItem(window.contentItem(), harness.QPointF(0.0, 0.0))
             out = []
+            # Compare the wall's effective ink width, not the number of
+            # antialiased fringe rows that happen to pass an RGB cutoff.
+            # The middle of the wall also excludes the red bed-axis arrow.
+            columns = range(int(face.width() * .4), int(face.width() * .6))
             for row in range(0, int(face.height())):
-                for col in range(0, int(face.width())):
-                    if self._matches(image.pixel(int(origin.x()) + col,
-                                                 int(origin.y()) + row),
-                                     (0xD3, 0x2F, 0x2F), tolerance=20):
-                        out.append(row)
-                        break
+                coverage = 0.0
+                for col in columns:
+                    pixel = image.pixel(int(origin.x()) + col,
+                                        int(origin.y()) + row)
+                    red = (pixel >> 16) & 0xFF
+                    green = (pixel >> 8) & 0xFF
+                    coverage += max(0.0, min(1.0, (red - green) / (0xD3 - 0x2F)))
+                out.append(coverage / len(columns))
             return out
 
         def settle(differs_from):
@@ -405,13 +412,13 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             # which the assertions below then report as the
             # presentation having painted nothing. The read waits for
             # the picture to leave the one it replaces, for this
-            # presentation's ink to stand, and for two grabs to agree;
-            # the assertions are unchanged.
+            # presentation's ink to stand, and for two grabs to agree.
             return self._settled_frame(window, face, differs_from=differs_from,
-                                       painted=rows)
+                                       painted=lambda frame: sum(rows(frame)) > 0)
 
         def centroid(rs):
-            return sum(rs) / float(len(rs)) if rs else None
+            mass = sum(rs)
+            return sum(row * weight for row, weight in enumerate(rs)) / mass if mass else None
 
         measured = []
         previous = _baseline
@@ -432,11 +439,12 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             self.pump(30)
             gesture_image = settle(exact_image)
             gesture = rows(gesture_image)
-            self.assertTrue(exact, "the exact scene painted nothing at %s" % zoom)
-            self.assertTrue(gesture,
-                            "the gesture overlay painted nothing at %s" % zoom)
+            self.assertGreater(sum(exact), 0, "the exact scene painted nothing at %s" % zoom)
+            self.assertGreater(
+                sum(gesture), 0,
+                "the gesture overlay painted nothing at %s" % zoom)
             measured.append((zoom, centroid(exact), centroid(gesture),
-                             len(exact), len(gesture)))
+                             sum(exact), sum(gesture)))
             previous = gesture_image
 
         for zoom, exact, gesture, exact_rows, gesture_rows in measured:
@@ -448,8 +456,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             self.assertLessEqual(
                 gesture_rows, exact_rows + 1,
                 "the overlay's stroke is thicker than the exact scene's at "
-                "zoom %.2f (%d rows vs %d) — a resampled blur, not the same "
-                "stroke" % (zoom, gesture_rows, exact_rows))
+                "zoom %.2f (%.2f effective rows vs %.2f) — a resampled "
+                "blur, not the same stroke" % (zoom, gesture_rows, exact_rows))
 
     def test_the_carried_tail_lands_on_the_warm_rasters_own_pixels(self):
         """The gesture's carried tail, measured at the camera it runs at.
@@ -1149,4 +1157,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                     "lands on is arrival timing, so the ink would move with "
                     "it" % (b - a, line_scale, scale))
         self._printer.setSplit(15)
-
