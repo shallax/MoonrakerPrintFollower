@@ -25,7 +25,7 @@ pinned Docker image; macOS and Windows default to native host tools.
 On macOS and Windows, run `make dev_install` once. Linux builds its
 Docker toolchain on demand; its existing `make dev_install` links the
 checkout into a local Cura installation. Then use `make build`, `make lint`,
-`make run_tests`, `make test_files FILES="tests.test_index"`,
+`make run_tests`, `make test_files FILES="Tests.test_index"`,
 `make generate_screenshots`, `make verify_captures`, and `make package`
 with the same names on each system. Set `BACKEND=docker` on macOS or
 Windows to run those targets in the Linux dev image instead. For example,
@@ -36,10 +36,10 @@ a native arm64 Linux image for checks and packages; screenshot refresh
 uses the amd64 image that defines the committed pixel baseline.
 `make help` lists the complete target set.
 
-Native development uses `tools/native/dev.py` on macOS and Windows.
-The Docker option uses `tools/native/docker.py`, which invokes the pinned
+Native development uses `Tools/Native/dev.py` on macOS and Windows.
+The Docker option uses `Tools/Native/docker.py`, which invokes the pinned
 image without requiring a host shell. Linux continues to use its
-existing `tools/*.sh` procedures. The native driver keeps the PyQt6,
+existing `Tools/*.sh` procedures. The native driver keeps the PyQt6,
 PySide6, ruff, DejaVu, shellcheck, gitleaks and actionlint pins aligned
 with the image. `make dev_install` prints actual versions so differences
 are visible; a Python 3.14 patch release difference is acceptable.
@@ -55,9 +55,9 @@ are visible; a Python 3.14 patch release difference is acceptable.
 - Linters: `ruff` (`pip install ruff`, configuration in `ruff.toml` —
   correctness core only, not style) and `qmlformat` from
   `qt6-declarative-dev-tools`. QML files must stay qmlformat-canonical:
-  `tools/check_qml_format.sh` formats to stdout and diffs (qmlformat
-  before Qt 6.5 has no `--check`), `tools/check_qml.py` verifies
-  structure, and the token tests in `tests/test_monitor_qml_contracts.py` must be
+  `Tools/check_qml_format.sh` formats to stdout and diffs (qmlformat
+  before Qt 6.5 has no `--check`), `Tools/check_qml.py` verifies
+  structure, and the token tests in `Tests/test_monitor_qml_contracts.py` must be
   written so the formatter cannot break them (pin semantics, not
   whitespace).
 - The Linux-default pinned, disposable dev container (`Dockerfile`) carries the whole
@@ -65,7 +65,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   PyQt6 6.11.0, ruff 0.16.6 and the other pinned build tools; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
   (docker layer caching makes unchanged rebuilds instant), so deleting
-  the container costs nothing. `tools/docker_dev.sh <command…>` runs
+  the container costs nothing. `Tools/docker_dev.sh <command…>` runs
   any command inside it as the host user (the build-if-needed,
   `--user "$(id -u):$(id -g)"` and bind-mount incantation lives there —
   never run `docker run` by hand for this repo).
@@ -74,7 +74,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   captures; the Docker backend also refreshes committed screenshots),
   `make lint` (structure, qmlformat, ruff and tool checks), `make run_tests`
   (the full suite on the selected backend),
-  `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
+  `make test_files FILES="Tests.test_a Tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
   `make generate_screenshots`, `make package`, `make format`
   (qmlformat on the selected backend), `make coverage` (mpf/ report,
@@ -89,12 +89,12 @@ are visible; a Python 3.14 patch release difference is acceptable.
   package snapshot in that order. Each full suite and package build runs once.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
-  `python3 -m unittest tests.a tests.b tests.c` runs those files
+  `python3 -m unittest Tests.a Tests.b Tests.c` runs those files
   SERIALLY inside one process — that is where the minutes go — and the
   real-Qt files cannot share a process in any case: the QML domain files
   own their `QGuiApplication` and reject a foreign application.
-  `tools/run_some.sh` applies the same per-file fan-out
-  `tools/run_tests.sh` already uses for the whole discovery, scoped to
+  `Tools/run_some.sh` applies the same per-file fan-out
+  `Tools/run_tests.sh` already uses for the whole discovery, scoped to
   the files a change actually touches — one process per file, up to `JOBS`
   workers at a time (native default: core count capped at 16; Linux
   container `test_files` default: 8), one log and one verdict line per
@@ -105,24 +105,24 @@ are visible; a Python 3.14 patch release difference is acceptable.
 - The Makefile is the single entry point for procedures another
   developer would run: recurring work (docker invocations, unittest
   runs, capture refreshes, lint combinations) belongs behind a `make`
-  target — a thin wrapper, with the real logic in `tools/native/dev.py`
-  or `tools/*.sh` according to the backend. Add a
+  target — a thin wrapper, with the real logic in `Tools/Native/dev.py`
+  or `Tools/*.sh` according to the backend. Add a
   target only when it would genuinely benefit other users or
   maintainers of the project; one-off and session-specific commands
   should just be run as-is.
 - Install the pre-commit hook with `make install_hooks`; it runs the
   compile, structure, ruff, qmlformat and unit-test gates locally.
-- Builds: `tools/build_curapackage.py` (Cura package) and
-  `tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
+- Builds: `Tools/build_curapackage.py` (Cura package) and
+  `Tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
   matching verify tools; CI uploads both as artifacts.
-- Seeded capture content: `tools/capture_monitor.py` feeds the dashboard
+- Seeded capture content: `Tools/capture_monitor.py` feeds the dashboard
   with a bed mesh, endstop states, two console lines and ~10 minutes of
   synthetic temperature history (patching the model instance's own time
   module — never the global one), grabs a fourth scene with the chart
   pop-over open, and asserts the mini-chart region contains painted
   pixels (the requestPaint regression test).
   It also captures the Exclude Object Picker and Print Follower popovers,
-  cropped to their real cards. `tools/capture_penguin.py` generates a
+  cropped to their real cards. `Tools/capture_penguin.py` generates a
   deterministic three-material illustration as G-code; the production
   indexer and prepared-layer renderer draw those motions. This fixture
   is for screenshots, not a printer job. Native UI seeds and the shared
@@ -143,19 +143,19 @@ are visible; a Python 3.14 patch release difference is acceptable.
   selected backend and fails on any byte difference — a deterministic
   catch for leaks the committed-compare only catches by chance. Run it
   after changing anything the captures render.
-- The capture scripts: `tools/capture_monitor.py` plus the sibling
+- The capture scripts: `Tools/capture_monitor.py` plus the sibling
   `capture_preview.py` / `capture_settings.py` / `capture_upload.py`
   render the real plugin QML offscreen using the REAL Cura and Uranium
   QML components and the real cura-light theme copied into
-  `tests/theme_assets` (upstream LGPLv3 assets, refreshed deliberately —
-  see its README). `tools/theme_support.py` materialises the capture
+  `Tests/theme_assets` (upstream LGPLv3 assets, refreshed deliberately —
+  see its README). `Tools/theme_support.py` materialises the capture
   tree: it splices the Python-registered types (stub ColorImage /
   I18nCatalog, an inert ToolTip stand-in), regenerates the UM qmldir
   across versions 1.0-1.8, and generates a literal `UM.Theme` singleton
   (Qt 6.11 pragma-Singletons must be self-contained). Lessons baked in:
   module resolution is last-import-path-wins (real tree last, stubs
   first), and PyQt6 collects inline `setContextProperty` temporaries —
-  hold Python references. Outputs land in `dist/screenshots/*.png` (the
+  hold Python references. Outputs land in `Dist/Screenshots/*.png` (the
   CI artifact no longer includes them). `capture_settings.py` writes one PNG per
   settings tab (Connection / Following / Upload / Diagnostics), each fitted to that
   tab's Flickable content height — contentHeight is viewport-independent
@@ -170,12 +170,12 @@ are visible; a Python 3.14 patch release difference is acceptable.
   declare the same property surface as the real types they stand in for
   (a stub NetworkMJPGImage without imageWidth/imageHeight throws
   ReferenceErrors in every capture). The canonical copies for the README
-  live in `screenshots/` and must be regenerated inside the dev
+  live in `Screenshots/` and must be regenerated inside the dev
   container (whose pinned fonts make the output canonical — host font
-  metrics differ): `tools/refresh_screenshots.sh` regenerates them in
+  metrics differ): `Tools/refresh_screenshots.sh` regenerates them in
   the container and refreshes the committed copies in one step — the
-  `screenshots/` tree at the repo root is the canonical copy the README
-  links; `dist/screenshots/` is only the harness's working directory. The CI
+  `Screenshots/` tree at the repo root is the canonical copy the README
+  links; `Dist/Screenshots/` is only the harness's working directory. The CI
   **Screenshot sync**
   job enforces this on every push: it rebuilds the pinned image,
   regenerates the captures inside it and fails byte-for-byte if the
@@ -189,7 +189,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
 
 ## Windows development
 
-Windows defaults to the shared native driver under `tools/native`,
+Windows defaults to the shared native driver under `Tools/native`,
 selected by the OS switch at the top of the `Makefile`. The target names,
 arguments and meaning of the build and verification commands match the
 other platforms. The version table makes toolchain deviations explicit.
@@ -229,13 +229,13 @@ What differs on this leg, and why:
   The desktop harness uses `RUNNER_TEMP` or the Windows temp directory
   under `mpf-native/` (`MPF_WORK_DIR` overrides it).
 - **The committed screenshots stay container-canonical.**
-  `make generate_screenshots` renders `dist/screenshots` for a look;
-  it does not copy into `screenshots/`, because the CI sync job
+  `make generate_screenshots` renders `Dist/screenshots` for a look;
+  it does not copy into `Screenshots/`, because the CI sync job
   compares against renders made with the container's pinned fonts.
   `make verify_captures` (two runs, byte-compared) does work natively.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
-  invoke `tests/harness/runner.py` using the harness environment (see
+  invoke `Tests/Harness/runner.py` using the harness environment (see
   TESTING.md). These targets need an interactive desktop and are not
   reached by `make all`.
 
@@ -245,7 +245,7 @@ What differs on this leg, and why:
 - **`actionlint` runs with `-shellcheck=`,** because the Windows
   shellcheck binary deadlocks the pipe actionlint feeds it (reproduced
   on this leg: the lint hangs with the pinned shellcheck on PATH and
-  returns in a second without it). `tools/*.sh` are still linted —
+  returns in a second without it). `Tools/*.sh` are still linted —
   by shellcheck itself, in the step before.
 - **Every child process gets stdin from /dev/null,** so a tool that
   decides to prompt fails the gate instead of hanging it.
@@ -261,8 +261,8 @@ normalised once:
     git add --renormalize .
     git checkout -- .        # re-materialises the working tree as LF
 
-The implementation is shared with macOS in `tools/native/dev.py`;
-`tools/windows/dev.py` remains a compatibility entry point. Run it directly
+The implementation is shared with macOS in `Tools/Native/dev.py`;
+`Tools/windows/dev.py` remains a compatibility entry point. Run it directly
 (`.venv\Scripts\python.exe tools\windows\dev.py <command>`) when a
 step needs its own options; `make help` lists the procedures and the
 module docstring lists the commands.
@@ -287,7 +287,7 @@ targets on `macos-latest` and `windows-latest` without Docker.
 PyQt runs with the offscreen platform for tests and captures. Packaged
 shaders are compiled by the PySide6 wheel's native `pyside6-qsb`; Cura
 users do not need that compiler. `make generate_screenshots` writes
-`dist/screenshots`. Committed `screenshots/` remain canonical to the
+`Dist/screenshots`. Committed `Screenshots/` remain canonical to the
 pinned Linux image because host rasterisation and fonts can differ;
 `make BACKEND=docker generate_screenshots` refreshes those copies when
 needed. This is the same distinction as the Windows native leg.
@@ -351,7 +351,7 @@ change together:
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
 5. `mpf/WhatsNew/WhatsNew.py` — a new head entry (headline + user-facing items)
-   and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
+   and the frozen-history pin in `Tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
 6. `ROADMAP.md` — name the active `release/v<version>` branch and its scope;
@@ -366,7 +366,7 @@ sync; the release workflow asserts both equal the git tag, so no test edit is
 needed per release.
 
 `sdk_version` in `package.json` is a compatibility floor, not a release number:
-change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.py`).
+change it only when the Cura SDK floor moves (see `Tests/test_sdk_compatibility.py`).
 
 ## Test suite organisation
 
@@ -395,7 +395,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
   with a bounded timeout so a stalled completion fails rather than hanging.
   Keep real elapsed-time measurements isolated from parallel correctness tests.
 - CI coverage and the release workflow also isolate files. The Python 3.12
-  matrix leg uses `tools/run_some.py --coverage-dir <fresh-directory>` and
+  matrix leg uses `Tools/run_some.py --coverage-dir <fresh-directory>` and
   combines its per-worker data; the wall-clock seek benchmark runs without
   instrumentation. The JUnit analytics pass runs only on Python 3.12.
   Never restore a single-process Qt discovery in either workflow: another
@@ -411,7 +411,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
   changes that alter a boundary must update the doc and its tests together —
   never rename source strings just to make tests pass.
 - Component import rules live in the allowlist in
-  `tests/test_architecture.py`; changing a component's dependencies updates
+  `Tests/test_architecture.py`; changing a component's dependencies updates
   that allowlist.
 - New components are constructed in `FollowerRuntime.py` and wired by
   `PrintCoordinator.py`; add them to the ownership map in `ARCHITECTURE.md`.
@@ -421,7 +421,7 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 ### Standing UI rules
 
 Two rules govern every control on the Monitor tab; both are pinned by
-`tests/test_monitor_qml_contracts.py` (`test_no_controls_disappear_controls_disable`
+`Tests/test_monitor_qml_contracts.py` (`test_no_controls_disappear_controls_disable`
 and `test_disconnected_disables_every_monitor_control`) — update the
 pins in the same commit as any change to a control.
 
@@ -500,7 +500,7 @@ file, never inline content:
    capability gates (hide while the data is absent, refuse while the
    permission is absent) ride the SECTION body.
 
-Then update the pins in `tests/test_monitor_qml_contracts.py` in the same commit:
+Then update the pins in `Tests/test_monitor_qml_contracts.py` in the same commit:
 the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
 per QML file plus the totals, and the section-id haystack — a moved
 section decrements one file and increments another, and the totals
@@ -523,7 +523,7 @@ label's extents (`width: label.implicitHeight`,
 `anchors.centerIn` — the rotated text then occupies the wrapper exactly,
 starting under the header. Never anchor to the toggle inside the header:
 QML only allows anchoring to a parent or sibling, so that anchor is
-silently dropped and the title floats. The pins in `tests/test_monitor_qml_contracts.py`
+silently dropped and the title floats. The pins in `Tests/test_monitor_qml_contracts.py`
 enforce the header-row anchors. The pane widths collapse to
 `<toggle>.width + 2 * thin_margin`.
 
@@ -532,14 +532,14 @@ title in its own 24 px band at the top (the title shifts down 12 px
 via `anchors.verticalCenterOffset`), matching the expanded header's
 dot-before-title order with a space-width gap. The dot binds
 `connectionDotColour` from the pane root; the collapsed-strip pin in
-`tests/test_monitor_qml_contracts.py` enforces it.
+`Tests/test_monitor_qml_contracts.py` enforces it.
 The state is a model bool: add it to
 `_read_state`/`_write_state`/`_save_state` in `MoonrakerMonitorModel.py`
 (with a `bool(decoded.get(..., False))` default), a
 `value_property` + signal group + `set…Collapsed` slot, the QML root
 binding (`property bool …Collapsed: root.printer != null ?
 root.printer.…Collapsed : false`), and the surface lists in
-`tests/test_runtime_monitor_composition.py`.
+`Tests/test_runtime_monitor_composition.py`.
 
 Plugin-drawn glyphs (see `mpf/Resources/Svg/PadlockLocked.svg`,
 `PadlockUnlocked.svg` and `Power.svg`) must carry no hardcoded fills:
@@ -593,7 +593,7 @@ cycle, and mangles values through configparser.
   file's second consumer — the model hydrates it but no longer
   writes it.
 - Every new property and slot also goes into the surface lists in
-  `tests/test_runtime_monitor_composition.py` (the properties string and the slot
+  `Tests/test_runtime_monitor_composition.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.
 
 ### Rehydration order
@@ -624,7 +624,7 @@ they cannot recur silently.
   <toggle>.bottom` where the toggle lives inside a sibling header row is
   illegal — the engine logs "Cannot anchor to an item that isn't a
   parent or sibling" and *silently drops the anchor*. Anchor to the
-  header row instead; `tests/test_monitor_qml_contracts.py` pins the header-row
+  header row instead; `Tests/test_monitor_qml_contracts.py` pins the header-row
   anchors. Related: expression reads of anchor lines
   (`y: item.bottom + margin`) evaluate to 0/NaN — only the anchor form
   positions reliably; a probe with the real engine proved both.
@@ -662,7 +662,7 @@ they cannot recur silently.
   icons through the printer definitions (`resources/definitions/
   *.def.json` — e.g. Cooling uses `Fan`), which the QML grep misses.
   Check both before drawing a plugin glyph.
-- `tools/check_qml.py` must pass before commit — it catches unbalanced
+- `Tools/check_qml.py` must pass before commit — it catches unbalanced
   braces and stray bare-type declarations that text scanners miss but the
   real QML engine rejects.
 - **Component-scoped ids are invisible outside their Component.** The
@@ -671,7 +671,7 @@ they cannot recur silently.
   `ReferenceError` — which also killed the auto-close statement that
   followed the throw. Inner components see outer ids, never the
   reverse; put refresh `Connections` inside the component.
-  `tests/test_monitor_qml_contracts.py` pins `meshDetail.refresh()` to exactly one
+  `Tests/test_monitor_qml_contracts.py` pins `meshDetail.refresh()` to exactly one
   in-scope call.
 - **Pop-over anchoring is a single consistent offset.** Both pop-overs
   open at `x: cameraArea.x + margin, y: margin` — clear of the
@@ -690,7 +690,7 @@ they cannot recur silently.
   that froze pane collapses (the 3.5.0 capture runaway). Likewise never
   bind a pop-over shell's height to its content column's implicit height
   while the content uses `Layout.fillHeight` — the same cycle.
-  `tests/test_monitor_qml_contracts.py` pins both.
+  `Tests/test_monitor_qml_contracts.py` pins both.
 
 ### QML change discipline (learned the hard way)
 
@@ -707,7 +707,7 @@ they cannot recur silently.
   and unresolved names only surface there. A binding's unqualified
   name does NOT resolve through the visual parent (ReferenceError);
   qualify through ids.
-- Check the capture log explicitly (`tools/refresh_screenshots.sh`
+- Check the capture log explicitly (`Tools/refresh_screenshots.sh`
   exits 0 AND reports all scenes) before committing; a silent capture
   failure makes CI's screenshot sync fail.
 - For animation/layout behaviour, add an engine-level test that
@@ -718,7 +718,7 @@ they cannot recur silently.
   to the root's own properties (engine-proven: the root's `visible`
   stayed frozen while a child's identical binding flipped). Gate with
   an inner item/row instead; children may reference the root's id.
-- `tools/check_qml_engine.py` loads every plugin QML document on the
+- `Tools/check_qml_engine.py` loads every plugin QML document on the
   real engine and fails on component errors and engine diagnostics
   (ReferenceError, dropped bindings, binding loops, TypeError,
   non-existent-property assignments); it runs in the LOCAL lint gates
@@ -870,12 +870,12 @@ transcription drift):
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,
-no `~` backup files — before announcing; a stale local `dist/` build can
+no `~` backup files — before announcing; a stale local `Dist/` build can
 look identical to the real artifact by eye.
 
 ## Development install loop
 
-On Linux, `make dev_install` (`tools/install_dev.sh`) symlinks this checkout's
+On Linux, `make dev_install` (`Tools/install_dev.sh`) symlinks this checkout's
 `mpf/` into Cura's user plugin directory
 (`~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower`), so
 edits appear on the next Cura restart — no package download, unzip or
@@ -906,7 +906,7 @@ toolchains install PySide6-Addons 6.10.2, which provides qsb.
 On Linux, install `libegl1` before invoking the wheel's qsb executable;
 it links the Qt graphics runtime even for offline shader compilation. CI
 installs the capture runtime before this build step for that reason.
-`tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
+`Tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
 HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
 Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.
 The bundles have been exercised on Cura 5.13's Qt 6.6 OpenGL backend;
@@ -950,7 +950,7 @@ same runner and assertions as the full group, without running its siblings.
 
 ### Shared Cura-log verdict
 
-Native and container UI journeys share `tests/harness/log_gate.py`. Both must
+Native and container UI journeys share `Tests/Harness/log_gate.py`. Both must
 fail on plugin-owned warnings/errors and QML polish or binding loops; missing
 logs are a failure, not a clean verdict. Keep this module beside the staged
 runner. First-install and migration journeys must retain and check both boots.

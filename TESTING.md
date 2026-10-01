@@ -3,11 +3,11 @@
 ## Current release: 4.6.1
 
 Run the cross-platform test suite with `make run_tests JOBS=2`; use
-`make test_files FILES='tests.test_index_physical_progress tests.test_qml_settings' JOBS=1`
+`make test_files FILES='Tests.test_index_physical_progress Tests.test_qml_settings' JOBS=1`
 for the indexed follower and settings slider regressions. The index tests
 exercise both continuous-Z vase G-code and conventional flat layers through
-the parser. Camera transport coverage lives in `tests.test_monitor_camera_runtime`,
-`tests.test_moonraker_mjpg` and `tests.test_qml_camera_controls`.
+the parser. Camera transport coverage lives in `Tests.test_monitor_camera_runtime`,
+`Tests.test_moonraker_mjpg` and `Tests.test_qml_camera_controls`.
 `make lint`, `make verify_captures`, and `make package` cover the
 remaining local gates. The real-Cura UI harness below provides additional
 end-to-end evidence through `make ui_test` and `make ui_release_gate`.
@@ -132,7 +132,7 @@ Hard rules, in order:
 
 ### 2.1 The driver: a test-only Cura plugin
 
-`HarnessDriver` lives in `tests/harness/` and is staged into the Cura
+`HarnessDriver` lives in `Tests/Harness/` and is staged into the Cura
 plugin path at run time only; the package-parity gate and a new
 allowlist pin over `mpf/` contents guarantee it never ships.
 
@@ -236,7 +236,7 @@ REAL protocols over real TCP, in both transports:
   unknown opcodes, control-frame length, non-minimal encodings, close
   handshake, per-message caps. Framing edge cases that Tornado cannot
   emit (fragmented server frames) stay in the pure unit suite
-  (`tests/test_socket_framing.py`).
+  (`Tests/test_socket_framing.py`).
 - **Cadence realism** — **AMENDED (2026-09-15):** pushes ride a
   fixed cadence (250 ms); the jitter/batch/skip distribution is
   *planned* — the fault arms that exist (dropped frames, the held
@@ -268,8 +268,8 @@ REAL protocols over real TCP, in both transports:
 
 The AppImage, container paths and `/tmp/mpf` references in this section
 describe the Linux harness. Native macOS and Windows runs stage their
-desktop Cura installations with `tools/native_harness.sh` and
-`tools/native_harness.ps1`; CI artifacts use the runner's temporary
+desktop Cura installations with `Tools/native_harness.sh` and
+`Tools/native_harness.ps1`; CI artifacts use the runner's temporary
 directory. The Make targets at the top of this file are shared.
 
 `make ui_test` runs the skeleton demo scenario by default; the gates
@@ -283,15 +283,15 @@ truth #5):
   probe;
 - `make ui_test CURA_VERSION=5.12.0 MODE=…` — any selection under any
   pinned Cura. A version is prepared once with
-  `python3 tools/fetch_cura.py <version>`: it downloads the official
+  `python3 Tools/fetch_cura.py <version>`: it downloads the official
   AppImage, extracts it to
   `/tmp/mpf/cura_versions/<version>/root`, unpacks the matching
   PyQt6 + PyQt6-Qt6 wheels (read from the bundle, so they always
   match; the driver's QtTest import needs the full PyPI wheel) into
   `wheels/`, and records sources, sha256s and pins in
   `manifest.json` — the version-swap proof. The harness image is
-  `tools/harness/Dockerfile`, run with `docker run --init`;
-  `tools/harness_release.sh` runs the local matrix (the release
+  `Tools/Harness/Dockerfile`, run with `docker run --init`;
+  `Tools/harness_release.sh` runs the local matrix (the release
   WORKFLOW orchestrates the whole gate — §5).
 - `make ui_test MODE=discover` — dump stage-menu coordinates;
 - `make ui_test MODE=firstinstall` — the first-install leg: one clean
@@ -320,7 +320,7 @@ reads the run's OWN work dir, never the shared tree's copy), its
 display, and its seeded tree.
 
 The Cura profile is seeded, not produced by driving Cura's UI: a
-pinned config directory checked into `tests/harness/config` (welcome
+pinned config directory checked into `Tests/Harness/config` (welcome
 and What's-New dialogs suppressed, machine and printer record
 present, window geometry pinned); a pre-scenario gate asserts the
 expected stage is active and no overlay covers it.
@@ -468,7 +468,7 @@ vocabulary the gates established.
 
 ### The first-install leg (`MODE=firstinstall`)
 
-The committed fixture is pre-migrated: `tests/harness/config` ships
+The committed fixture is pre-migrated: `Tests/Harness/config` ships
 a MoonrakerPrintFollower folder already holding a v2 document, so
 every scenario boots a profile the plugin has migrated before. The
 one path no scenario covered was the true first install — a machine
@@ -590,7 +590,7 @@ right side this time). The reservation is gone (the scrollbar
 overlays), and the pin now measures the panes' true outer edges:
 11px vs 11px, green.
 
-The step vocabulary (`tests/harness/scenarios/`, interpreted in
+The step vocabulary (`Tests/Harness/Scenarios/`, interpreted in
 `runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/
 `sim_drop` drive the harness lane; `sim_ledger` asserts request
 counts with an optional `method` filter; `exec_slot`/`exec_file_slot`
@@ -617,7 +617,7 @@ existed and every later read saw `None`.
 
 ## 3b. The test model and the engine
 
-`tests/harness/models/voron_cube.stl` is the suite's test model (the
+`Tests/Harness/Models/voron_cube.stl` is the suite's test model (the
 2026-09-13 ruling): the Voron Design Cube v7, fetched from
 a public mirror of the official STL and re-headed to a standard
 binary STL header (the official export carries UltiMaker's "ATF"
@@ -646,7 +646,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   — a window larger than the screen used to pass by self-report
   alone. The container runs with `docker run --init` (docker-init as
   PID 1) so killed children are reaped instead of piling up as
-  zombies, and the launcher (`tools/ui_test.sh`) holds an EXIT trap
+  zombies, and the launcher (`Tools/ui_test.sh`) holds an EXIT trap
   that kills Cura, the video ffmpeg and the simulator when the run
   ends — a finished run leaves no processes behind.
 - **Timing budgets — AMENDED (2026-09-15):** the profile claim was
@@ -859,7 +859,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   primary pin) and 5.12.0 (the secondary). The release workflow runs
   its own matrix (smoke + the twelve suite groups on the primary,
   the smoke again on the secondary) — it does NOT call
-  `tools/harness_release.sh`, the envelope and the retry policy this
+  `Tools/harness_release.sh`, the envelope and the retry policy this
   line once promised were struck, and the declared budgets are 15
   minutes per group and 20 for the smoke units with ONE attempt per
   unit (a timeout reports HANG, distinct from a red). Every unit's
@@ -887,7 +887,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   naming passes) — those are the RELEASE's changes, each carrying
   its red-run evidence and its regression pins; the harness itself
   still adds no production behaviour. The driver, simulator, runner,
-  scenarios and manifests live under `tests/` and never ship.
+  scenarios and manifests live under `Tests/` and never ship.
 - Cura's own SimulationView internals are driven through Cura's own
   public APIs (the insert/slice exec chain), verified after the fact
   against Cura's own state — never by poking Cura-private state.
@@ -900,10 +900,10 @@ SimulationView is the ACTIVE view (the Preview stage click).
 
 ## Domain-tree regression gates
 
-`tests/test_domain_layout.py` checks nested Python imports, screen-independent
+`Tests/test_domain_layout.py` checks nested Python imports, screen-independent
 core packages and feature co-location. Its resolver tests include a deliberately
 forbidden nested screen dependency, so adding a directory cannot make the scan
-silently ignore an edge. `tests/test_resource_references.py` checks QML URLs,
+silently ignore an edge. `Tests/test_resource_references.py` checks QML URLs,
 `qmldir` targets and the Python-loaded dialog/Preview/Monitor/shader paths in the
 source tree and in both actual package formats. Moving or deleting a target is
 a failure, including the upload dialog that previously fell outside the scan.

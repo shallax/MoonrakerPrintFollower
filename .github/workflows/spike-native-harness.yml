@@ -1,5 +1,5 @@
 # Native-harness spike: a DISPOSABLE probe that
-# answers two questions the Linux-only UI harness (tools/ui_test.sh -
+# answers two questions the Linux-only UI harness (Tools/ui_test.sh -
 # AppImage + Docker + Xvfb, all by construction) cannot answer on a dev
 # box, BEFORE any port of it to native runners is attempted:
 #
@@ -17,7 +17,7 @@
 #       still AND a video of the session? The claim that the hosted
 #       runners have no usable GUI is being corrected here by evidence,
 #       not by assumption. Video is ffmpeg on every platform, replicating
-#       the harness's own capture (tests/harness/runner.py:247-250) -
+#       the harness's own capture (Tests/Harness/runner.py:247-250) -
 #       same flags, same 15 fps, same scenario.mp4 naming, same
 #       whole-display region at the harness geometry, started before the
 #       launch and stopped with a signal at teardown the way runner.py
@@ -370,7 +370,7 @@ jobs:
             have_os "lsappinfo" "asks LaunchServices whether a GUI instance exists" lsappinfo \
               "the GUI-instance check is unavailable"
             have_os "pgrep" "process liveness" pgrep "liveness falls back to ps"
-            have_os "pkill" "teardown kill, as tools/ui_test.sh:190" pkill "teardown falls back to kill -9"
+            have_os "pkill" "teardown kill, as Tools/ui_test.sh:190" pkill "teardown falls back to kill -9"
             have_os "screencapture" "the platform-native still, kept beside the ffmpeg still" \
               screencapture "no native still; the harness's ffmpeg still remains"
             have_os "open" "the LaunchServices retry launch (open -n)" open \
@@ -413,7 +413,7 @@ jobs:
             echo "=== the capture toolchain (Q2 depends on these) ==="
             FF_WAS_MISSING=no
             if command -v ffmpeg >/dev/null 2>&1; then
-              ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+              ar "ffmpeg" "the video recorder (Tests/Harness/runner.py:247-250) and the ffmpeg still" \
                 "PREINSTALLED" "$(ffmpeg -version 2>&1 | head -1)" "$(command -v ffmpeg)"
             else
               FF_WAS_MISSING=yes
@@ -425,11 +425,11 @@ jobs:
                 echo "brew: ABSENT too - there is no install path on this image"
               fi
               if command -v ffmpeg >/dev/null 2>&1; then
-                ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+                ar "ffmpeg" "the video recorder (Tests/Harness/runner.py:247-250) and the ffmpeg still" \
                   "INSTALLED BY US" "$(ffmpeg -version 2>&1 | head -1)" \
                   "brew install ffmpeg -> $(command -v ffmpeg)"
               else
-                ar "ffmpeg" "the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still" \
+                ar "ffmpeg" "the video recorder (Tests/Harness/runner.py:247-250) and the ffmpeg still" \
                   "ABSENT" "<none>" "no ffmpeg and no install path: the video leg is a reported result"
               fi
             fi
@@ -669,7 +669,7 @@ jobs:
           W ""
           W "=== the capture toolchain (Q2 depends on these) ==="
           $ffWasMissing = -not (Get-Command ffmpeg -ErrorAction SilentlyContinue)
-          $null = Install-WithChoco 'ffmpeg' 'the video recorder (tests/harness/runner.py:247-250) and the ffmpeg still' ffmpeg ffmpeg
+          $null = Install-WithChoco 'ffmpeg' 'the video recorder (Tests/Harness/runner.py:247-250) and the ffmpeg still' ffmpeg ffmpeg
           $fp = Get-Command ffprobe -ErrorAction SilentlyContinue
           if (-not $fp) {
             AR 'ffprobe' 'reads the recorded container and codec back' 'ABSENT' '<none>' 'the container report falls back to size and file type'
@@ -2363,7 +2363,7 @@ jobs:
             echo "the reading above is what the tools say; what decides the verdict is the frame below, because avfoundation ignores the requested size"
 
             # The recorder is ffmpeg on every platform, matching
-            # tests/harness/runner.py:247-250 exactly - same flags, same
+            # Tests/Harness/runner.py:247-250 exactly - same flags, same
             # framerate, same scenario.mp4 naming, started with the app,
             # stopped with a signal at teardown, never a kill: an
             # unindexed mp4 is what a kill leaves, and the native
@@ -3533,7 +3533,7 @@ jobs:
             exit 0
           }
           # The recorder is ffmpeg on every platform, matching
-          # tests/harness/runner.py:247-250 exactly - same flags, same
+          # Tests/Harness/runner.py:247-250 exactly - same flags, same
           # framerate, same scenario.mp4 naming, started with the app and
           # stopped with a signal at teardown, never a kill: an unindexed
           # mp4 is what a kill leaves, and the artifacts stay comparable
@@ -4998,7 +4998,7 @@ jobs:
           # mp4 gets its index. runner.py:278-281 waits a second and calls
           # Popen.terminate() (SIGTERM on Linux) with a 10 s wait, then kills
           # only if that wait expires; the macOS leg sends SIGINT and does the
-          # same. tools/ui_test.sh's pkill -9 is a backstop that runs AFTER
+          # same. Tools/ui_test.sh's pkill -9 is a backstop that runs AFTER
           # that stop, not the stop itself. Windows has the same lever and not
           # a different one: ffmpeg installs a console control handler
           # (fftools/ffmpeg.c, term_init: SetConsoleCtrlHandler(CtrlHandler,

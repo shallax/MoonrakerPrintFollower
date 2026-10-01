@@ -20,7 +20,7 @@ from .PrinterConfig import PrinterConfig
 from .StateStore import StateStore
 
 # The pinned field-ownership table (E3): the union test in
-# tests/test_plugin_persistence.py proves these two tuples cover the
+# Tests/test_plugin_persistence.py proves these two tuples cover the
 # PrinterConfig dataclass's fields exactly once, so a field can never
 # land in neither file or both. The console trio is the state side —
 # written per poll, per machine; everything else is settings.

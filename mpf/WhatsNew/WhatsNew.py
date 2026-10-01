@@ -9,12 +9,12 @@ headline (what the version IS, in one or two sentences) and a short,
 user-facing bullet list. It deliberately reads like release notes
 for a user, not the maintainer-level detail CHANGELOG.md keeps; the
 release checklist updates this list alongside the version bump, and
-the latest-version pin in tests/test_whatsnew.py fails a release
+the latest-version pin in Tests/test_whatsnew.py fails a release
 that bumps the package version without a matching entry.
 
 Shipped release notes are FROZEN: a later release adds its own entry
 and never edits the older ones — the frozen-history pin in
-tests/test_whatsnew.py enforces it mechanically.
+Tests/test_whatsnew.py enforces it mechanically.
 
 Qt-free on purpose: the pure logic is unit-testable outside the
 container.
