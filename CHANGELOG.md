@@ -2,9 +2,9 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 4.6.2 — aiming for RC1 (not released)
+## 4.6.2
 
-Version 4.6.2 is aiming for its first release candidate. The implementation is decomposed into
+Version 4.6.2 is aiming for RC1 (not released). The implementation is decomposed into
 narrower owners with explicit inputs — the Monitor's renderer lifecycle and
 publication transaction, the file browser, the camera, toolhead, Preview and
 dashboard QML, the coordinator's refresh pass, the prepared store's session
