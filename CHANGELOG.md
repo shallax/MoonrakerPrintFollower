@@ -4,11 +4,11 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 4.6.2
 
-Version 4.6.2 is aiming for RC1 (not released). The implementation is decomposed into
-narrower owners with explicit inputs — the Monitor's renderer lifecycle and
-publication transaction, the file browser, the camera, toolhead, Preview and
-dashboard QML, the coordinator's refresh pass, the prepared store's session
-and the desktop test harness among them. It also includes these visible fixes:
+The implementation is decomposed into narrower owners with explicit inputs —
+the Monitor's renderer lifecycle and publication transaction, the file
+browser, the camera, toolhead, Preview and dashboard QML, the coordinator's
+refresh pass, the prepared store's session and the desktop test harness among
+them. It also includes these visible fixes:
 
 - A thumbnail fetch that cannot start no longer rebuilds the file listing.
   It published on `FileManager.changed`, which rebuilds the whole listing,
