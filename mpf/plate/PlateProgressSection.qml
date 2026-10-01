@@ -82,6 +82,7 @@ ColumnLayout {
                 showNext: root.printerModel != null ? root.printerModel.followerShowNext : true
                 showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                 showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
+                showAxisArrows: root.printerModel != null ? root.printerModel.followerShowAxisArrows : true
                 showRetractions: root.printerModel != null ? root.printerModel.followerShowRetractions : false
                 showUnretractions: root.printerModel != null ? root.printerModel.followerShowUnretractions : false
                 motionSmoothing: root.printerModel != null ? root.printerModel.followerMotionSmoothing : false

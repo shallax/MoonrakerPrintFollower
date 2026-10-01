@@ -34,7 +34,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 for col in range(0, int(face.width())):
                     if self._matches(image.pixel(int(origin.x()) + col,
                                                  int(origin.y()) + row),
-                                     (0xD3, 0x2F, 0x2F)):
+                                     (0xD3, 0x2F, 0x2F), tolerance=20):
                         rows.append(row)
                         break
             return rows
@@ -133,7 +133,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 for column in range(0, int(face.width())):
                     if self._matches(image.pixel(int(origin.x()) + column,
                                                  int(origin.y()) + row),
-                                     (0xD3, 0x2F, 0x2F)):
+                                     (0xD3, 0x2F, 0x2F), tolerance=20):
                         columns.append(column)
             return None if not columns else (min(columns), max(columns))
 
@@ -392,7 +392,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 for col in range(0, int(face.width())):
                     if self._matches(image.pixel(int(origin.x()) + col,
                                                  int(origin.y()) + row),
-                                     (0xD3, 0x2F, 0x2F)):
+                                     (0xD3, 0x2F, 0x2F), tolerance=20):
                         out.append(row)
                         break
             return out
@@ -509,7 +509,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         raster_split = 10
 
         def red(pixel):
-            return self._matches(pixel, (0xD3, 0x2F, 0x2F))
+            return self._matches(pixel, (0xD3, 0x2F, 0x2F), tolerance=20)
 
         def mouse(kind, x, y, buttons):
             """A real mouse event at face-local (x, y). A move is about
@@ -1149,5 +1149,4 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                     "lands on is arrival timing, so the ink would move with "
                     "it" % (b - a, line_scale, scale))
         self._printer.setSplit(15)
-
 

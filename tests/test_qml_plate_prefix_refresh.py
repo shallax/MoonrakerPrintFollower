@@ -263,13 +263,25 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.pump(20)
         baseline = window.grabWindow()
         origin = face.mapToItem(window.contentItem(), harness.QPointF(0.0, 0.0))
-        samples = []
-        for y in range(5, 100, 2):
-            for x in range(5, 100, 2):
-                px, py = int(origin.x()) + x, int(origin.y()) + y
-                colour = baseline.pixelColor(px, py)
-                if 50 < colour.red() < 200 and abs(colour.red() - colour.green()) < 3:
-                    samples.append((px, py, baseline.pixel(px, py)))
+        plot = self._bed_point(face, 0.0, 0.0)
+        grid_top = int(origin.y() + plot["offsetY"])
+        def grid_samples(image):
+            samples = []
+            for bed_x in (10, 20, 30):
+                grid_x = int(origin.x() + plot["offsetX"] + (bed_x - plot["bedXMin"]) * plot["sx"])
+                for py in range(grid_top + 10, min(grid_top + 110, image.height()), 2):
+                    for px in range(grid_x - 2, grid_x + 3):
+                        colour = image.pixelColor(px, py)
+                        if 50 < colour.red() < 200 and abs(colour.red() - colour.green()) < 3:
+                            samples.append((px, py, image.pixel(px, py)))
+            return samples
+
+        samples = grid_samples(baseline)
+        deadline = harness.time.monotonic() + 3
+        while len(samples) <= 5 and harness.time.monotonic() < deadline:
+            self._pump_ms(20)
+            baseline = window.grabWindow()
+            samples = grid_samples(baseline)
         self.assertGreater(len(samples), 5, "the baseline never drew a grid")
         for split in (0, 1, 3, 0, 5):
             self._printer.setSplit(split)
@@ -303,5 +315,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0,
                            "the 0% state never recovered its history")
-
-

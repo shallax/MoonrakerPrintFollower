@@ -142,6 +142,7 @@ Item {
     property bool showRetractions: false
     property bool showUnretractions: false
     property bool showTravels: false  // the travel lines
+    property bool showAxisArrows: true
     // The stroke thickness multiplier (the live request). The 0.7
     // default keeps a dense hatch (the skin's ~0.4 mm pitch)
     // legible as individual lines instead of fusing into a blob
@@ -1697,6 +1698,7 @@ Item {
         enabled: false // The face's gesture surface owns pointer input.
         printerModel: root.printerModel
         plate: null
+        showAxisArrows: root.showAxisArrows
         viewScale: root.viewScale
         viewPanX: root.viewPanX
         viewPanY: root.viewPanY
@@ -1728,6 +1730,7 @@ Item {
             var settings = root.translucentSettings("");
             settings.gridOnly = true;
             settings.showGrid = true;
+            settings.showAxisArrows = root.showAxisArrows;
             return settings;
         }
     }
@@ -1768,6 +1771,8 @@ Item {
                 compact: root.compact,
                 gridThin: UM.Theme.getColor("lining"),
                 gridMajor: UM.Theme.getColor("border"),
+                axisX: MoonrakerTheme.axisX,
+                axisY: MoonrakerTheme.axisY,
                 lineWidth: root.toolpathWidthPx(),
                 trueThickness: root.trueThickness,
                 colourScheme: root.colourScheme,
@@ -1781,6 +1786,7 @@ Item {
                 showBase: root.showBase,
                 isolateTranslucent: true,
                 showGrid: false,
+                showAxisArrows: root.showAxisArrows,
                 showPrevious: root.showPrevious,
                 showNext: root.showNext,
                 showTravels: root.showTravels,

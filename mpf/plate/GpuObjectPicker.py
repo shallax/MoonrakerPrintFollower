@@ -93,7 +93,10 @@ class GpuObjectPicker(QQuickItem):
         if scene.get('showGrid'):
             key = (tuple(bed.get(k, 0) for k in ('bedXMin', 'bedXMax', 'bedYMin', 'bedYMax')),
                    bool(scene.get('compact')), QColor(scene.get('gridThin')).rgba(),
-                   QColor(scene.get('gridMajor')).rgba(), sx, sy)
+                   QColor(scene.get('gridMajor')).rgba(), sx, sy,
+                   QColor(scene.get('axisX', '#ef5350')).rgba(),
+                   QColor(scene.get('axisY', '#66bb6a')).rgba(),
+                   bool(scene.get('showAxisArrows', True)))
         if key != node._grid_key:
             while node._grid_node.firstChild() is not None:
                 sip.delete(node._grid_node.firstChild())

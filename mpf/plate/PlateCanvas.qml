@@ -26,6 +26,7 @@ Item {
     // lands between grabs, so a measurement that subtracts one frame
     // from another measures the grid and whatever else moved with it.
     property bool showGrid: true
+    property bool showAxisArrows: true
     // The zoom/pan view, owned by the follower face and applied by
     // THIS canvas's grid (the bottom raster must move with the
     // layers): identity elsewhere — the picker never zooms.
@@ -288,6 +289,7 @@ Item {
     // IMAGE: without the repaint the buffer keeps the last picture it
     // was given, so turning the grid off left it on screen.
     onShowGridChanged: _requestPaint()
+    onShowAxisArrowsChanged: _requestPaint()
     // A CAMERA step repaints the mapping only while the canvas is on
     // screen: the progress face switches it out at opacity 0 for the
     // whole gesture (the warm raster presents the grid), and an
@@ -353,11 +355,14 @@ Item {
                 objects: root.plate.objects,
                 compact: root.compact,
                 showGrid: root.showGrid,
+                showAxisArrows: root.showAxisArrows,
                 screenScale: screenScaleFactor,
                 hoveredName: root.hoveredName,
                 halo: root.halo,
                 gridThin: UM.Theme.getColor("lining"),
                 gridMajor: UM.Theme.getColor("border"),
+                axisX: MoonrakerTheme.axisX,
+                axisY: MoonrakerTheme.axisY,
                 includedInk: UM.Theme.getColor("text"),
                 currentInk: UM.Theme.getColor("primary"),
                 passedInk: MoonrakerTheme.plateCurrent,
@@ -502,6 +507,28 @@ Item {
         // pixel thin (the live report).
         var inset = root.compact ? 0.5 : 1;
         ctx.strokeRect(left + inset, top + inset, right - left - 2 * inset, bottom - top - 2 * inset);
+        if (root.showAxisArrows) {
+            var stroke = root.compact ? 1 : 2;
+            var xRight = right - stroke / 2;
+            var yTop = top + stroke / 2;
+            var xTip = xRight - 0.15 * (right - left);
+            var yTip = yTop + 0.15 * (bottom - top);
+            var xHead = Math.min(9, 0.3 * (xRight - xTip));
+            var yHead = Math.min(9, 0.3 * (yTip - yTop));
+            ctx.lineWidth = stroke;
+            ctx.strokeStyle = MoonrakerTheme.axisX;
+            ctx.beginPath();
+            ctx.moveTo(xRight, yTop);
+            ctx.lineTo(xTip, yTop);
+            ctx.lineTo(xTip + xHead, yTop + xHead);
+            ctx.stroke();
+            ctx.strokeStyle = MoonrakerTheme.axisY;
+            ctx.beginPath();
+            ctx.moveTo(xRight, yTop);
+            ctx.lineTo(xRight, yTip);
+            ctx.lineTo(xRight - yHead, yTip - yHead);
+            ctx.stroke();
+        }
     }
 
     function _stroke(ctx, row, plot) {

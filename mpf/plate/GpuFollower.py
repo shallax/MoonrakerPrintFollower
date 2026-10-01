@@ -28,6 +28,7 @@ from PyQt6.QtQuick import (
 from ..gcode.TravelStates import is_travel
 from .PreviewColours import DEFAULT_CLASSES
 from .GpuStrokeMaterial import FollowerStrokeMaterial, ATTR, pack_shader
+from .PlateAxisGeometry import axis_arrows
 
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MPF-GPU")
 _CACHE = OrderedDict()
@@ -533,7 +534,10 @@ class GpuFollower(QQuickItem):
             QColor(settings.get("gridMajor", "#ffffff")).rgba(),
             sx,
             sy,
+            QColor(settings.get("axisX", "#ef5350")).rgba(),
+            QColor(settings.get("axisY", "#66bb6a")).rgba(),
             bool(settings.get("showGrid", True)) and not bool(isolated),
+            bool(settings.get("showAxisArrows", True)),
         )
         if getattr(node, "_data", None) is not self._data:
             while node.firstChild():
@@ -685,6 +689,26 @@ class GpuFollower(QQuickItem):
             child = self._node(parent, QColor.fromRgba(colour), True)
             parent.removeChildNode(child)
             parent.prependChildNode(child)
+            self._vertices(child, expanded, len(expanded) // 8, 1)
+            children.append(child)
+        stroke = 1 if compact else 2
+        pixel_x, pixel_y = max(0.001, abs(sx)), max(0.001, abs(sy))
+        arrows = axis_arrows(0, 0, (xmax - xmin) * pixel_x,
+                             (ymax - ymin) * pixel_y, stroke) if len(key) <= 8 or key[-1] else ()
+        last_grid = children[0]
+        for segments, colour in zip(arrows, key[6:8], strict=bool(arrows)):
+            packed = array("f")
+            for ax, ay, bx, by in segments:
+                packed.extend((xmin + ax / pixel_x, ymax - ay / pixel_y,
+                               xmin + bx / pixel_x, ymax - by / pixel_y))
+            expanded = stroke_geometry(
+                (("", "", (), packed.tobytes()),), stroke,
+                max(0.001, abs(sx)), max(0.001, abs(sy)), rounded=False
+            )[0][3]
+            child = self._node(parent, QColor.fromRgba(colour), True)
+            parent.removeChildNode(child)
+            parent.insertChildNodeAfter(child, last_grid)
+            last_grid = child
             self._vertices(child, expanded, len(expanded) // 8, 1)
             children.append(child)
         return children

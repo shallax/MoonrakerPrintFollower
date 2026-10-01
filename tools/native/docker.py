@@ -65,7 +65,7 @@ def inside(command, docker_platform):
             argv += ["-v", "%s:%s" % (path, path)]
     if hasattr(os, "getuid"):
         argv += ["--user", "%s:%s" % (os.getuid(), os.getgid())]
-    for key in ("JOBS", "MPF_SH", "COVERAGE"):
+    for key in ("JOBS", "MPF_SH", "COVERAGE", "SOURCE_DATE_EPOCH"):
         if key in os.environ:
             argv += ["-e", "%s=%s" % (key, os.environ[key])]
     argv += [image_for(docker_platform), *command]

@@ -12,6 +12,33 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to test retained geometry")
 class RetainedGeometryTests(unittest.TestCase):
+    def test_follower_grid_arrows_toggle_without_hiding_graduations(self):
+        from PyQt6 import sip
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtQuick import QSGTransformNode
+        from mpf.plate.GpuFollower import GpuFollower
+
+        parent = QSGTransformNode()
+        item = GpuFollower()
+        try:
+            for compact in (False, True):
+                key = ((0, 250, 0, 250), compact, QColor("#333333").rgba(),
+                       QColor("#444444").rgba(), 2.0, 2.0,
+                       QColor("#ef5350").rgba(), QColor("#66bb6a").rgba(), True)
+                hidden = item._grid(parent, key + (False,))
+                self.assertEqual([node.material().color().name() for node in hidden],
+                                 ["#333333", "#444444"])
+                for node in hidden:
+                    sip.delete(node)
+                shown = item._grid(parent, key + (True,))
+                self.assertEqual([node.material().color().name() for node in shown],
+                                 ["#333333", "#444444", "#ef5350", "#66bb6a"])
+                for node in shown:
+                    sip.delete(node)
+        finally:
+            sip.delete(parent)
+            sip.delete(item)
+
     def test_data_source_rejects_cycles_and_detaches_cleanly(self):
         from PyQt6 import sip
         from mpf.plate.GpuFollower import GpuFollower
@@ -453,6 +480,17 @@ Item {
                 node = item.updatePaintNode(None, None)
                 self.assertEqual(build.call_count, 3)
                 grid = node._grid_node.firstChild()
+                grid_nodes = []
+                child = grid
+                while child is not None:
+                    grid_nodes.append(child)
+                    child = child.nextSibling()
+                self.assertEqual(len(grid_nodes), 4)
+                self.assertEqual(
+                    [child.material().color().name() for child in grid_nodes[-2:]],
+                    ['#ef5350', '#66bb6a'])
+                self.assertIs(node._grid_node.nextSibling(), node._objects[0],
+                              'the arrows must paint below object outlines')
                 unchanged = node._objects[2].firstChild()
                 item.scene = dict(scene, hoveredName='0')
                 node = item.updatePaintNode(node, None)
@@ -468,6 +506,18 @@ Item {
                 self.assertIs(node._objects[2].firstChild(), unchanged)
                 outline = unchanged.nextSibling()
                 self.assertEqual(outline.material().color().name(), '#00ff00')
+                item.scene = dict(item.scene, showAxisArrows=False)
+                node = item.updatePaintNode(node, None)
+                self.assertEqual(build.call_count, 6, 'axis toggle rebuilt object geometry')
+                self.assertIs(node._objects[2].firstChild(), unchanged)
+                self.assertEqual(node._grid_key[-1], False)
+                self.assertEqual(node._grid_node.firstChild().nextSibling().nextSibling(), None,
+                                 'grid lost its separate arrow gate')
+                item.scene = dict(item.scene, showAxisArrows=True)
+                node = item.updatePaintNode(node, None)
+                self.assertEqual(build.call_count, 6)
+                self.assertEqual(node._grid_key[-1], True)
+                self.assertIsNotNone(node._grid_node.firstChild().nextSibling().nextSibling())
                 # Removing objects releases their native groups; an empty bed
                 # cannot retain an excluded object's old outline.
                 removed = node._objects[-1]

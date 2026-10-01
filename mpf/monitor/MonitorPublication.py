@@ -48,7 +48,7 @@ SIGNAL_GROUPS = (
     # paints the new current layer as a pending base while it
     # still reads the previous attached state and then clears it
     # .
-    ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerShowRetractions", "followerShowUnretractions", "followerTrueThickness", "followerAntialiasing", "followerKeepCentred", "followerSoftwareRendering", "followerMotionSmoothing", "followerLineScale",
+    ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerShowAxisArrows", "followerShowRetractions", "followerShowUnretractions", "followerTrueThickness", "followerAntialiasing", "followerKeepCentred", "followerSoftwareRendering", "followerMotionSmoothing", "followerLineScale",
                              "followerTravelVisualRatio", "followerAttached", "followerLayerAnchor")),
     # The popover's pause block: the schedule's rows and the
     # candidate-derived gates. Its own group — a pause landing

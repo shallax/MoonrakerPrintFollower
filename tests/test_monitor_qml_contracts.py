@@ -1585,7 +1585,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # width would leave the button beside a gap (the live request).
         clear_block = harness.PAUSE_SCHEDULE_QML[harness.PAUSE_SCHEDULE_QML.index("id: clearPausesButton"):harness.PAUSE_SCHEDULE_QML.index("root.printerModel.clearPauseAtLayer();")]
         self.assertIn('text: "Clear"', clear_block)
-        self.assertIn("Layout.preferredWidth: root.clearAvailable ? 60 * screenScaleFactor : 0", clear_block)
+        self.assertIn("Layout.minimumWidth: root.clearAvailable ? root.clearButtonWidth : 0", clear_block)
+        self.assertIn("Layout.preferredWidth: root.clearAvailable ? root.clearButtonWidth : 0", clear_block)
+        self.assertIn('font: UM.Theme.getFont("medium")', harness.PAUSE_SCHEDULE_QML)
         self.assertIn("Layout.preferredHeight: root.clearAvailable ? UM.Theme.getSize(\"action_button\").height : 0", clear_block)
         self.assertIn("enabled: root.clearAvailable", clear_block)
         # Both foot buttons centre their labels: the theme's content row

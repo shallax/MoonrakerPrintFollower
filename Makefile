@@ -153,6 +153,9 @@ endif
 # verified curapackage at a fixed path, rebuilt from the current
 # checkout (make package above builds and verifies both artifacts
 # first).
+ifeq ($(origin SOURCE_DATE_EPOCH),undefined)
+snapshot_package snapshot_quick: export SOURCE_DATE_EPOCH = $(shell $(PYTHON) -c "import time; print(int(time.time()))")
+endif
 snapshot_package: package
 ifneq ($(LEG),posix)
 	$(PYTHON) tools/native/dev.py copy_snapshot
