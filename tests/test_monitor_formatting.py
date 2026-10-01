@@ -267,7 +267,7 @@ class MonitorFormattingTests(harness.MonitorFormattingTests):
         # The within-layer fraction comes from the index's byte ranges
         # (the nozzle's Z never moves within a layer, so Z cannot
         # express it); without an index the UI hides the bar.
-        from mpf.Printing.PrintState import PhysicalLayer
+        from mpf.printing.PrintState import PhysicalLayer
         snapshot = harness.SimpleNamespace(core={
             "print_stats": {"state": "printing", "print_duration": 30},
             "virtual_sdcard": {"progress": 0.5},

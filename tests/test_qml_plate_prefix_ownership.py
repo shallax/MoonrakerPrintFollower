@@ -127,7 +127,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from mpf.Plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateQt import render_layer_prefix, png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -249,7 +249,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from mpf.Plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateQt import render_layer_prefix, png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):

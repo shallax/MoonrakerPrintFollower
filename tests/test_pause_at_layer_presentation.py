@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from mpf.Monitor.PauseAtLayerPresentation import PauseAtLayerPresentation
+from mpf.monitor.PauseAtLayerPresentation import PauseAtLayerPresentation
 
 MANUAL_LAYER = 4   # the rows are 1-based; the projection reads 0-based
 BAKED_LAYER = 6

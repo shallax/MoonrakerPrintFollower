@@ -1,6 +1,6 @@
 """File labels reject invalid numerical inputs without a Monitor dependency."""
 import unittest
-from mpf.Files.Browser.FileFormatting import file_size, file_duration_short, file_filament
+from mpf.files.browser.FileFormatting import file_size, file_duration_short, file_filament
 
 
 class FileFormattingTests(unittest.TestCase):

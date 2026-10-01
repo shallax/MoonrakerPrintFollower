@@ -1,6 +1,6 @@
 import unittest
 
-from mpf.Moonraker.MoonrakerProtocol import (
+from mpf.moonraker.MoonrakerProtocol import (
     CORE_OBJECTS,
     RemoteFileIdentity,
     download_endpoint,
@@ -125,7 +125,7 @@ class PrintStartPathTests(unittest.TestCase):
     def test_print_start_path_is_root_exclusive(self):
         # Round-2 D4: print/start wants the SD-card form — never the
         # "gcodes/" root the file endpoints carry.
-        from mpf.Moonraker.MoonrakerProtocol import print_start_path, print_start_endpoint
+        from mpf.moonraker.MoonrakerProtocol import print_start_path, print_start_endpoint
         self.assertEqual(print_start_path("prints/benchy.gcode"), "prints/benchy.gcode")
         self.assertEqual(print_start_path("/prints/benchy.gcode"), "prints/benchy.gcode")
         self.assertEqual(print_start_path("  benchy.gcode  "), "benchy.gcode")

@@ -2,8 +2,8 @@
 import math
 import unittest
 
-from mpf.GCode.MotionRanges import valid_ranges
-from mpf.Geometry.Polygons import point_in_polygon, polygon_bounds, segment_in_polygon
+from mpf.gcode.MotionRanges import valid_ranges
+from mpf.geometry.Polygons import point_in_polygon, polygon_bounds, segment_in_polygon
 
 
 class DomainPrimitiveTests(unittest.TestCase):

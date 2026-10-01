@@ -9,7 +9,7 @@ endpoint, and the ownership that keeps a whole arc inside one printed
 motion.
 """
 from __future__ import annotations
-from mpf.GCode import IndexCodec as index_codec_module
+from mpf.gcode import IndexCodec as index_codec_module
 
 from array import array
 from math import cos, hypot, radians, sin
@@ -22,14 +22,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mpf.GCode import ArcGeometry
+from mpf.gcode import ArcGeometry
 
-from mpf.GCode.MotionIndex import LayerMotionIndex
-from mpf.GCode.IndexCache import PersistentIndexCache
-from mpf.GCode.GCodeIndex import build_index_from_bytes, build_index_from_file
-from mpf.GCode.IndexHydrator import hydrate_layer_from_file
-from mpf.Moonraker.MoonrakerProtocol import RemoteFileIdentity
-from mpf.GCode.PlateProgress import _budgeted, layer_polylines, motion_edges, split_index
+from mpf.gcode.MotionIndex import LayerMotionIndex
+from mpf.gcode.IndexCache import PersistentIndexCache
+from mpf.gcode.GCodeIndex import build_index_from_bytes, build_index_from_file
+from mpf.gcode.IndexHydrator import hydrate_layer_from_file
+from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+from mpf.gcode.PlateProgress import _budgeted, layer_polylines, motion_edges, split_index
 
 try:  # the host stdlib suite has no PyQt6: the service cases skip there
     from PyQt6.QtCore import QObject, pyqtSignal

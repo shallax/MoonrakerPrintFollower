@@ -3,7 +3,7 @@ from tests import monitor_test_support as harness
 
 class EndstopAndEtaBasisTests(harness.EndstopAndEtaBasisTests):
     def test_endstop_values_projects_axes_and_the_not_homed_state(self):
-        from mpf.Monitor.MonitorFormatting import endstop_values
+        from mpf.monitor.MonitorFormatting import endstop_values
         snapshot = harness.SimpleNamespace(endstops={"x": "TRIGGERED", "y": "open", "z": "open"})
         items, summary = endstop_values(snapshot)["endstopItems"], endstop_values(snapshot)["endstopSummary"]
         self.assertEqual([(item["name"], item["state"], item["triggered"]) for item in items],
@@ -14,7 +14,7 @@ class EndstopAndEtaBasisTests(harness.EndstopAndEtaBasisTests):
         self.assertIn("No endstop states reported", endstop_values(empty)["endstopSummary"])
 
     def test_core_values_prefers_the_layer_anchored_eta_and_names_the_basis(self):
-        from mpf.Monitor.MonitorFormatting import core_values
+        from mpf.monitor.MonitorFormatting import core_values
         snapshot = harness.SimpleNamespace(core={"print_stats": {"state": "printing", "print_duration": 30},
                                         "virtual_sdcard": {"progress": 0.1}},
                                    auxiliary={}, server={})
@@ -29,7 +29,7 @@ class EndstopAndEtaBasisTests(harness.EndstopAndEtaBasisTests):
         self.assertEqual(values["monitorEtaBasis"], "blend")
 
     def test_core_values_reports_filament_used_and_remaining(self):
-        from mpf.Monitor.MonitorFormatting import core_values
+        from mpf.monitor.MonitorFormatting import core_values
         # Real Klipper shape (Status_Reference + klippy/print_stats.py):
         # filament_used is a TOP-LEVEL print_stats field, always present
         # while printing; the info dict only ever carries the layer

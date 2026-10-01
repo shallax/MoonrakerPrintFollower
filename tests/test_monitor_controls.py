@@ -22,12 +22,12 @@ from tests.qt_runtime_support import QT_AVAILABLE
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 
-    from mpf.Monitor.Controls import MonitorControls as controls_module
-    from mpf.Monitor.Controls.MonitorControls import MonitorControls
-    from mpf.Monitor.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN,
+    from mpf.monitor.controls import MonitorControls as controls_module
+    from mpf.monitor.controls.MonitorControls import MonitorControls
+    from mpf.monitor.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN,
                                             can_apply_temperature_preset, can_macro,
                                             can_restart, can_z_offset)
-    from mpf.Monitor.Controls.MonitorTuning import MonitorTuning
+    from mpf.monitor.controls.MonitorTuning import MonitorTuning
 
 
 def record(**overrides):

@@ -15,22 +15,22 @@ import os
 from UM.Logger import Logger
 from UM.Resources import Resources
 
-from .BedMesh.BedMeshPresenter import BedMeshPresenter
-from .GCode.CacheNamespaces import CACHE_DIRECTORY_NAME
-from .CuraHost.CuraIntegration import CuraIntegration
-from .GCode.GCodeIndexService import GCodeIndexService
-from .Settings.MigrationNotice import MigrationNotice
-from .Moonraker.MoonrakerClient import MoonrakerClient
-from .Printing.PauseController import PauseController
-from .Settings.PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
-from .Preview.PreviewFollower import PreviewFollower
-from .Preview.PreviewMotion import PreviewMotion
-from .Preview.PreviewPresentation import PreviewPresentation
-from .Application.PrintCoordinator import PrintCoordinator
-from .CuraHost.PrinterBinding import PrinterBinding
-from .Files.Transfers.RemoteFileService import RemoteFileService
-from .Files.Transfers.FileDownload import FileDownload
-from .WhatsNew.WhatsNew import should_show as whats_new_should_show
+from .bedmesh.BedMeshPresenter import BedMeshPresenter
+from .gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+from .cura.CuraIntegration import CuraIntegration
+from .gcode.GCodeIndexService import GCodeIndexService
+from .settings.MigrationNotice import MigrationNotice
+from .moonraker.MoonrakerClient import MoonrakerClient
+from .printing.PauseController import PauseController
+from .settings.PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
+from .preview.PreviewFollower import PreviewFollower
+from .preview.PreviewMotion import PreviewMotion
+from .preview.PreviewPresentation import PreviewPresentation
+from .application.PrintCoordinator import PrintCoordinator
+from .cura.PrinterBinding import PrinterBinding
+from .files.transfers.RemoteFileService import RemoteFileService
+from .files.transfers.FileDownload import FileDownload
+from .whatsnew.WhatsNew import should_show as whats_new_should_show
 
 
 def _savefile_write(path, text):
@@ -160,7 +160,7 @@ class FollowerRuntime:
         # changed signal (fired after every identity re-apply, the
         # machine switch included) rebinds them, and a worker from
         # the old machine never commits into the new one's cache.
-        from .GCode.CacheNamespaces import CacheNamespaces
+        from .gcode.CacheNamespaces import CacheNamespaces
         self.index = GCodeIndexService(self.files, None, parent, None)
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,

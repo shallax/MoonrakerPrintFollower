@@ -5,9 +5,9 @@ def getMetaData():
 def register(app):
     # Keep imports lazy so the package's pure modules can be imported in tools
     # and tests without eagerly importing Cura/UM Qt integration modules.
-    from .CuraHost.MoonrakerPrintFollower import MoonrakerPrintFollower
-    from .CuraHost.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
-    from .CuraHost.MoonrakerOutputDevicePlugin import MoonrakerOutputDevicePlugin
+    from .cura.MoonrakerPrintFollower import MoonrakerPrintFollower
+    from .cura.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
+    from .cura.MoonrakerOutputDevicePlugin import MoonrakerOutputDevicePlugin
     # The plugin-owned MJPEG renderer (CameraPane's stream view): the
     # QML type registration so the pane can drop Cura's
     # NetworkMJPGImage. The capture and engine harnesses resolve the
@@ -16,9 +16,9 @@ def register(app):
     # Cura always ships it.
     try:
         from PyQt6.QtQml import qmlRegisterType
-        from .Monitor.Camera.MoonrakerMJPGImage import MoonrakerMJPGImage
-        from .Plate.GpuFollower import GpuFollower
-        from .Plate.GpuObjectPicker import GpuObjectPicker
+        from .monitor.camera.MoonrakerMJPGImage import MoonrakerMJPGImage
+        from .plate.GpuFollower import GpuFollower
+        from .plate.GpuObjectPicker import GpuObjectPicker
         qmlRegisterType(GpuFollower, "MoonrakerPrintFollower", 1, 0, "GpuFollower")
         qmlRegisterType(GpuObjectPicker, "MoonrakerPrintFollower", 1, 0, "GpuObjectPicker")
         qmlRegisterType(MoonrakerMJPGImage, "MoonrakerPrintFollower", 1, 0, "MoonrakerMJPGImage")
@@ -29,7 +29,7 @@ def register(app):
     # The leak-hunt instrument ships OFF: the settings' diagnostics
     # toggle ("Log memory diagnostics") gates every tick, so an idle
     # timer is the whole cost until it is enabled.
-    from .Diagnostics.LeakProbe import start_leak_probe
+    from .diagnostics.LeakProbe import start_leak_probe
     start_leak_probe(follower._runtime, app)
 
     output_plugin = MoonrakerOutputDevicePlugin(app, follower)

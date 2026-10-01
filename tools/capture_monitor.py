@@ -123,8 +123,8 @@ def main():
                 return cls(2026, 9, 9, 12, 0, 0)
 
         _frozen_clock_sources = (
-            os.path.join(ROOT, "mpf", "Monitor", "MonitorFormatting.py"),
-            os.path.join(ROOT, "mpf", "Preview", "PreviewFollower.py"),
+            os.path.join(ROOT, "mpf", "monitor", "MonitorFormatting.py"),
+            os.path.join(ROOT, "mpf", "preview", "PreviewFollower.py"),
         )
 
         def _freeze_plugin_clocks():
@@ -180,7 +180,7 @@ def main():
         from types import SimpleNamespace
         # Patch the module the MODEL INSTANCE actually uses — the Qt
         # runtime registers it under a synthetic name, so importing
-        # "mpf.Monitor.MoonrakerMonitorModel" again would patch the wrong
+        # "mpf.monitor.MoonrakerMonitorModel" again would patch the wrong
         # object and leave all samples at elapsed 0 (filling forever).
         model_module = sys.modules[type(model).__module__]
         tick = [1000.0]
@@ -260,7 +260,7 @@ def main():
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "Monitor", "MoonrakerMonitorBedMesh.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "monitor", "MoonrakerMonitorBedMesh.qml")))
         if component.isError():
             raise RuntimeError("\n".join(str(e) for e in component.errors()))
 
