@@ -326,12 +326,19 @@ class AttachCadenceTests(NativeRenderSchedulerTests):
         return False
 
     @staticmethod
-    def _drain_job(model, surface, qt, timeout=400):
+    def _drain_job(model, surface, qt, timeout=400, deadline_s=30.0):
+        started = time.monotonic()
         for _ in range(timeout):
             qt.events(6)
             if surface.job is None and surface.nav["job"] is None:
                 return
-        raise AssertionError("the render queue never drained")
+        while time.monotonic() - started < deadline_s:
+            qt.events(6)
+            if surface.job is None and surface.nav["job"] is None:
+                return
+        raise AssertionError(
+            "the render queue never drained (layer job=%s, navigation job=%s)" %
+            (surface.job is not None, surface.nav["job"] is not None))
 
     def _poll(self, model, surface, payload, anchor, split, clock, armed, qt):
         model.plate_renderer.window_for(surface, {"prev": None, "current": payload,

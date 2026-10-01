@@ -2,6 +2,34 @@
 from tests import composed_runtime_support as harness
 
 class AttachCadenceTests(harness.AttachCadenceTests):
+    def test_the_render_drain_waits_for_a_worker_beyond_400_event_turns(self):
+        surface = harness.SimpleNamespace(job={"state": "submitted"},
+                                          nav={"job": None})
+        turns = 0
+
+        def events(_milliseconds):
+            nonlocal turns
+            turns += 1
+            if turns == 401:
+                surface.job = None
+
+        self._drain_job(None, surface, harness.SimpleNamespace(events=events))
+        self.assertEqual(turns, 401)
+
+    def test_the_render_drain_still_fails_when_a_job_never_finishes(self):
+        surface = harness.SimpleNamespace(job={"state": "submitted"},
+                                          nav={"job": None})
+        clock = harness.SimpleNamespace(now=0.0)
+
+        def events(_milliseconds):
+            clock.now += 0.1
+
+        with harness.patch.object(harness, "time",
+                                  harness.SimpleNamespace(monotonic=lambda: clock.now)):
+            with self.assertRaisesRegex(AssertionError, "render queue never drained"):
+                self._drain_job(None, surface, harness.SimpleNamespace(events=events),
+                                timeout=2, deadline_s=0.3)
+
     def test_attached_nav_bakes_once_per_window_and_lands_the_latest_split(self):
         # 30 s of attached polls: the nav raster starts once per
         # window (never per poll), every completed bake commits as a
@@ -616,5 +644,4 @@ class AttachCadenceTests(harness.AttachCadenceTests):
                          "a sub-threshold advance re-rendered the prefix")
         self.assertTrue(model.plate_renderer._prefix_wanted(surface, 5, 250),
                         "a past-threshold advance left the prefix stale")
-
 
