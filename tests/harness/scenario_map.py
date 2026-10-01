@@ -436,6 +436,42 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    "moonrakerFollowerSourceProgress": {
+        "reason": "read-only source-download indicator; no native scenario downloads an uncached print",
+        "evidence": "test_qml_plate_navigation: follower progress, unknown length and animation",
+        "date": "2026-10-01",
+        "recheck": "a native follower scenario observes a partial source download",
+    },
+    "moonrakerFollowerSourceStatus": {
+        "reason": "read-only source-download caption beside the follower indicator",
+        "evidence": "test_qml_plate_navigation: status appears and clears with download phase",
+        "date": "2026-10-01",
+        "recheck": "a native follower scenario observes a partial source download",
+    },
+    "moonrakerJobSourceProgress": {
+        "reason": "read-only job download indicator; native scenarios do not stream a partial file",
+        "evidence": "test_qml_dashboard_layout: 0%, 42%, 100% and unknown-length progress",
+        "date": "2026-10-01",
+        "recheck": "a native job scenario observes a partial source download",
+    },
+    "moonrakerJobSourceStatus": {
+        "reason": "read-only job download caption beside the progress indicator",
+        "evidence": "test_qml_dashboard_layout: visible during transfer and hidden when ready",
+        "date": "2026-10-01",
+        "recheck": "a native job scenario observes a partial source download",
+    },
+    "plateSourceProgress": {
+        "reason": "read-only model fraction for both source-download indicators",
+        "evidence": "test_monitor_model_runtime: unknown and partial fractions; test_coordinator_coverage: file-event refresh",
+        "date": "2026-10-01",
+        "recheck": "a native scenario streams and asserts source progress",
+    },
+    "plateSourceStatus": {
+        "reason": "read-only model status for both source-download captions",
+        "evidence": "test_monitor_model_runtime: download and ready transitions",
+        "date": "2026-10-01",
+        "recheck": "a native scenario streams and asserts source status",
+    },
     "plateDownloadProgressRow": {
         "reason": "noninteractive progress readout; the enclosing download action is mapped",
         "evidence": "test_qml_object_picker: instruction and progress rows are centred on the real engine",
