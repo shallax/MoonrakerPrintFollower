@@ -2,29 +2,39 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 4.6.2
+## 4.6.2 — aiming for RC1 (not released)
 
-Version 4.6.2 is an internal release. The implementation is decomposed into
+Version 4.6.2 is aiming for its first release candidate. The implementation is decomposed into
 narrower owners with explicit inputs — the Monitor's renderer lifecycle and
 publication transaction, the file browser, the camera, toolhead, Preview and
 dashboard QML, the coordinator's refresh pass, the prepared store's session
-and the desktop test harness among them — with no new interface and no change
-to the documented behaviour.
+and the desktop test harness among them. It also includes these visible fixes:
 
 - A thumbnail fetch that cannot start no longer rebuilds the file listing.
   It published on `FileManager.changed`, which rebuilds the whole listing,
   while the same logical failure at the reply published on the thumbnail
   channel alone. Both paths publish on the thumbnail channel now, so a
   thumbnail that fails to start no longer churns the list.
+- File-manager refusals now appear in the file popup's status line as well as
+  the console, instead of leaving the popup waiting without an explanation.
+- Print Follower and Exclude Object Picker show a red X arrow pointing left
+  along the bed's top border and a green Y arrow pointing down its right
+  border. The arrowheads stay inside the bed and print geometry stays above
+  them. Print Follower's saved, default-on **Axis arrows** checkbox controls
+  both views, including their compact and enlarged plates, without hiding
+  the grid or toolpaths.
+- Print Follower's options no longer jump between rows when the plate is
+  zoomed. The pause schedule's **Clear** button remains readable at narrow
+  widths.
 
 Implementation and compatibility notes:
 
-- `MoonrakerMonitorModel.py` is 2798 lines, down from 4486, and its
+- `MoonrakerMonitorModel.py` is about 2800 lines, down from 4486, and its
   `_publish()` is a five-line transaction over the phases it always ran in.
-  No public property, signal or slot changed its name, type or default; no
-  QML document changed for the Python batches, and no file format changed.
-- The QML batches were verified against the committed captures: all fourteen
-  scenes byte-identical after every commit.
+  The decomposition kept existing public properties, signals, slots and file
+  formats intact; the axis control adds a persisted view preference.
+- The decomposition's QML batches were verified against the committed
+  captures. The new bed indicators intentionally change affected captures.
 - The plate renderer's test suite built a cache URL as `"file://"` plus a
   path, which round trips through `QUrl(...).toLocalFile()` on POSIX only.
   On Windows it resolved to nothing, so a discarded raster file outlived its

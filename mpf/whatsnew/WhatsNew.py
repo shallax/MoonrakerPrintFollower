@@ -27,15 +27,21 @@ from typing import List, Tuple
 WHATS_NEW: Tuple[dict, ...] = (
     {
         "version": "4.6.2",
-        "headline": "Version 4.6.2 is an internal release: the plugin's "
-            "internals are split into smaller, independent parts, with one "
-            "small fix to the file list.",
+        "headline": "Version 4.6.2 is aiming for RC1: the build plate gains "
+            "optional axis arrows, alongside smaller internals and "
+            "interface fixes.",
         "items": (
-            "No new features and no interface changes: this release "
-            "reorganises the plugin's internals into smaller, independent "
-            "parts. Everything is expected to work as it did in 4.6.1.",
+            "The Print Follower and object picker beds show red X and green "
+            "Y direction arrows on their borders. The saved Axis arrows "
+            "checkbox in Print Follower switches them off in both views "
+            "without hiding the grid or print.",
+            "Print Follower controls stay in place while you zoom, and "
+            "the pause schedule's Clear button stays readable.",
             "A thumbnail that fails to start no longer rebuilds the whole "
-            "file listing.",
+            "file listing. File refusals appear in the file popup.",
+            "The Monitor, camera, file browser and other internals have "
+            "been split into smaller parts. This is a candidate, not "
+            "a final release.",
         ),
     },
 
