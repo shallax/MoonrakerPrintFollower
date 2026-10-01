@@ -11,7 +11,7 @@
 # real Qt runtime). Override CMD to run a subset, e.g.:
 #
 #   docker run --rm -v "$PWD":/work moonraker-print-follower-dev \
-#       sh -c "python3 -m unittest discover -s Tests -p 'test_*.py'"
+#       sh -c "python3 -m unittest discover -s tests -p 'test_*.py'"
 FROM ubuntu:26.04
 
 # Exact versions from the ubuntu:26.04 archive (bump together when the
@@ -55,18 +55,18 @@ WORKDIR /work
 # across Qt versions). The binary installs outside PATH
 # (/usr/lib/qt6/bin); the symlink keeps plain `qmlformat` invocations
 # working for editors and quick iteration (by request).
-COPY Tools/check_qml_format.sh /usr/local/bin/check_qml_format
+COPY tools/check_qml_format.sh /usr/local/bin/check_qml_format
 RUN chmod +x /usr/local/bin/check_qml_format \
     && ln -s /usr/lib/qt6/bin/qmlformat /usr/local/bin/qmlformat
 
 CMD ["sh", "-c", "python3 -m compileall -q mpf tools tests \
-    && python3 Tools/build_shaders.py \
-    && python3 Tools/check_qml.py mpf \
+    && python3 tools/build_shaders.py \
+    && python3 tools/check_qml.py mpf \
     && check_qml_format mpf \
     && ruff check mpf tools tests \
-    && shellcheck Tools/*.sh \
+    && shellcheck tools/*.sh \
     && hadolint Dockerfile \
     && gitleaks detect --no-git --no-banner --redact \
-    && coverage run -m unittest discover -s Tests -p 'test_*.py' \
+    && coverage run -m unittest discover -s tests -p 'test_*.py' \
     && coverage report --include='mpf/*' --fail-under=80 \
-    && sh Tools/run_captures.sh Dist/Screenshots"]
+    && sh tools/run_captures.sh dist/screenshots"]

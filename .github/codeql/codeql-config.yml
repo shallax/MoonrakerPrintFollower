@@ -2,4 +2,4 @@
 # infrastructure, not shipped code — CodeQL findings there are noise
 # on every PR.
 paths-ignore:
-  - Tests/harness
+  - tests/harness
