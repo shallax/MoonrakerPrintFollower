@@ -770,7 +770,7 @@ def _prepare(index: LayerMotionIndex, layer: int,
     result["colourRanges"] = index.colour_ranges
     if layer < len(index.motion_speeds):
         result["speeds"] = tuple(index.motion_speeds[layer])
-        result["Tools"] = tuple(index.motion_tools[layer])
+        result["tools"] = tuple(index.motion_tools[layer])
     widths = extrusion_widths(index, layer, should_yield)
     if widths:
         result["widths"] = widths
@@ -832,10 +832,10 @@ def encode_layer(payload: dict) -> bytes:
     if "speeds" in payload:
         import json
         metadata = json.dumps({"layerHeight": payload.get("layerHeight", .2), "colourRanges": payload.get("colourRanges", {})}, separators=(",", ":")).encode("utf-8")
-        speeds, tools = array("f", payload["speeds"]), array("H", payload.get("Tools") or ())
+        speeds, tools = array("f", payload["speeds"]), array("H", payload.get("tools") or ())
         if len(speeds) != len(tools) or len(speeds) != payload["motions"]:
             raise ValueError("invalid motion colour profile")
-        parts.extend((b"COLR", pack("<i", len(metadata)), metadata, speeds.tobytes(), Tools.tobytes()))
+        parts.extend((b"COLR", pack("<i", len(metadata)), metadata, speeds.tobytes(), tools.tobytes()))
     if "travelClasses" in payload:
         from .TravelStates import TRAVEL_NAMES
         parts.append(b"TRCL")
@@ -948,7 +948,7 @@ def decode_layer(raw: bytes, checkpoint=None, *, immutable=False) -> dict:
             raise ValueError("invalid colour ranges")
         speeds, tools = array("f"), array("H")
         speeds.frombytes(raw[offset:offset + motions * 4])
-        Tools.frombytes(raw[offset + motions * 4:offset + motions * 6])
+        tools.frombytes(raw[offset + motions * 4:offset + motions * 6])
         if any(not isfinite(v) or not 0 <= v <= 1e6 for v in speeds) or any(v >= 16 for v in tools):
             raise ValueError("invalid speed/tool profile")
         result.update(metadata, speeds=tuple(speeds) if immutable else list(speeds), tools=tuple(tools) if immutable else list(tools))

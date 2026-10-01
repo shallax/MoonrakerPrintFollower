@@ -119,7 +119,7 @@ jobs:
         with:
           name: native-captures-${{ matrix.os }}
           path: |
-            Dist/Screenshots/
+            dist/screenshots/
             .determinism-check/
           if-no-files-found: ignore
       - name: Upload native test logs on failure
@@ -147,14 +147,14 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: package-artifacts
-          path: Dist/
+          path: dist/
       - name: Log in to the container registry
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the smoke set
         env:
           HARNESS_DIR: ${{ runner.temp }}/mpf
           MPF_WORK_DIR: ${{ runner.temp }}/mpf
-        run: ./Tools/harness_smoke.sh
+        run: ./tools/harness_smoke.sh
       - name: Collect the smoke galleries
         if: always()
         uses: actions/upload-artifact@v7
@@ -197,19 +197,19 @@ jobs:
         run: python -m pip install ruff
 
       - name: Compile Python sources
-        run: python -m compileall -q mpf Tools Tests
+        run: python -m compileall -q mpf tools tests
 
       - name: QML structural sanity
-        run: python Tools/check_qml.py mpf
+        run: python tools/check_qml.py mpf
 
       - name: QML formatting
-        run: sh Tools/check_qml_format.sh mpf
+        run: sh tools/check_qml_format.sh mpf
 
       - name: Ruff
-        run: ruff check mpf Tools Tests
+        run: ruff check mpf tools tests
 
       - name: Shell scripts
-        run: shellcheck Tools/*.sh
+        run: shellcheck tools/*.sh
 
       - name: Workflow files
         run: |
@@ -258,7 +258,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Compile Python sources
-        run: python -m compileall -q mpf Tools Tests
+        run: python -m compileall -q mpf tools tests
 
       # Shared step: the drop_unused_apt_sources anchor defined in the
       # lint job's steps above.
@@ -277,7 +277,7 @@ jobs:
         if: matrix.python-version != '3.12'
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          env JOBS=2 LEGS=host Tools/run_tests.sh
+          env JOBS=2 LEGS=host tools/run_tests.sh
 
       - name: Install coverage
         if: matrix.python-version == '3.12'
@@ -288,7 +288,7 @@ jobs:
         env:
           # The four harness modules are part of this run. Their runner.py
           # lives beside the tests, and dotted imports otherwise hide it.
-          PYTHONPATH: Tests/harness
+          PYTHONPATH: tests/harness
           # coverage's ctrace core is the default below 3.14 and cannot see
           # Python that Qt's worker threads call into — the renderer's raster
           # jobs. Those lines then report as missing on every run. sysmon
@@ -303,15 +303,15 @@ jobs:
           import sys
 
           modules = [".".join(path.with_suffix("").parts)
-                     for path in sorted(Path("Tests").rglob("test_*.py"))]
+                     for path in sorted(Path("tests").rglob("test_*.py"))]
           destination = str(Path(os.environ["RUNNER_TEMP"]) / "coverage")
-          subprocess.run([sys.executable, "Tools/run_some.py", "--jobs", "2",
+          subprocess.run([sys.executable, "tools/run_some.py", "--jobs", "2",
                           "--coverage-dir", destination, *modules], check=True)
           PY
           coverage combine "$RUNNER_TEMP/coverage"
           coverage report --include="mpf/*" --fail-under=95
           coverage json -o coverage.json
-          python Tools/check_per_file_coverage.py coverage.json
+          python tools/check_per_file_coverage.py coverage.json
           coverage xml --include="mpf/*"
 
       - name: Upload Python 3.12 coverage to Codecov
@@ -324,14 +324,14 @@ jobs:
 
       - name: Write Python 3.12 JUnit report
         if: matrix.python-version == '3.12'
-        run: python Tools/unittest_junit.py
+        run: python tools/unittest_junit.py
 
       - name: Upload Python 3.12 test results to Codecov
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: Tests.junit.xml
+          files: tests.junit.xml
           report_type: test_results
 
   ci-package:
@@ -353,7 +353,7 @@ jobs:
 
       - name: QML structural sanity
         if: inputs.tag_release
-        run: python Tools/check_qml.py mpf
+        run: python tools/check_qml.py mpf
 
       # Use the real Qt runtime for the tag's full-suite gate too. Branch
       # and PR runs additionally exercise it in the Python-version matrix.
@@ -365,19 +365,19 @@ jobs:
         if: inputs.tag_release
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host Tools/run_tests.sh
+          QT_QPA_PLATFORM=offscreen JOBS=2 PYTHON=python LEGS=host tools/run_tests.sh
 
       - name: Install package toolchain
         run: python -m pip install PySide6-Addons==6.10.2
 
       - name: Build and verify packages
-        run: python Tools/Native/dev.py package
+        run: python tools/native/dev.py package
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
         with:
           name: package-artifacts
-          path: Dist/
+          path: dist/
           if-no-files-found: error
           retention-days: 30
 
@@ -394,28 +394,28 @@ jobs:
         # Through the retrying helper: this step's apt install is the
         # one that fails on a bad mirror, and a red image build here
         # reads as a stale-screenshot failure it has nothing to do with.
-        run: ./Tools/build_image.sh moonraker-print-follower-dev .
+        run: ./tools/build_image.sh moonraker-print-follower-dev .
 
       - name: Regenerate screenshots in the canonical container
         # The dev container pins the toolchain (Qt, fonts) that makes the
         # captures byte-stable, so the committed copies can be compared
         # against a fresh render on every push. The host-user/bind-mount
-        # incantation lives in Tools/docker_dev.sh.
+        # incantation lives in tools/docker_dev.sh.
         run: |
-          DOCKER_DEFAULT_PLATFORM=linux/amd64 Tools/docker_dev.sh sh Tools/run_captures.sh Dist/Screenshots
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh sh tools/run_captures.sh dist/screenshots
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
         # committed-compare above only has a CHANCE of catching a
         # phase-dependent leak (a blinking caret, a ticking clock);
         # this catches it deterministically. The harness freezes every
         # live input, so any difference means a new one leaked in.
-        run: ./Tools/verify_capture_determinism.sh
+        run: ./tools/verify_capture_determinism.sh
 
       - name: Reject stale committed screenshots
         # Native and emulated CPUs round a few SVG antialias pixels
         # differently. Same-host determinism above remains byte-exact.
         run: |
-          DOCKER_DEFAULT_PLATFORM=linux/amd64 Tools/docker_dev.sh python3 Tools/compare_screenshots.py Screenshots Dist/Screenshots
+          DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh python3 tools/compare_screenshots.py screenshots dist/screenshots
 
       - name: Preserve failed screenshot comparisons
         if: failure()
@@ -423,7 +423,7 @@ jobs:
         with:
           name: screenshot-comparison
           path: |
-            Dist/Screenshots/*.png
+            dist/screenshots/*.png
             .determinism-check/run*/*.png
             .determinism-check/*.log
           include-hidden-files: true
@@ -464,7 +464,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: package-artifacts
-          path: Dist/
+          path: dist/
 
       - *install_gitleaks
 
@@ -550,7 +550,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: package-artifacts
-          path: Dist/
+          path: dist/
 
       # Everything below is the container leg's alone: the native legs
       # install Cura themselves, so a Cura tree fetch and a harness image
@@ -565,7 +565,7 @@ jobs:
 
       - name: Fetch the pinned Cura
         if: runner.os == 'Linux'
-        run: python3 Tools/fetch_cura.py "${{ fromJSON(env.UNITS)[matrix.unit].cura }}"
+        run: python3 tools/fetch_cura.py "${{ fromJSON(env.UNITS)[matrix.unit].cura }}"
 
       - name: Pull the harness image and start the container
         if: runner.os == 'Linux'
@@ -582,7 +582,7 @@ jobs:
           # hiccup killed a leg before it ran anything.
           #
           # But pulling always would mean a Dockerfile change is never
-          # exercised, so a PR that touches Tools/harness builds regardless.
+          # exercised, so a PR that touches tools/harness builds regardless.
           # If the base commit cannot be read, build too - that is the safe
           # direction, because it keeps the image covered.
           HARNESS_CHANGED=yes
@@ -594,10 +594,10 @@ jobs:
             # the unsafe direction.
             if [ -n "$BASE" ] && git fetch -q --depth=1 origin "$BASE" 2>/dev/null \
                && git rev-parse -q --verify "$BASE^{commit}" >/dev/null 2>&1; then
-              if git diff --name-only "$BASE" HEAD -- Tools/harness | grep -q .; then
-                echo "Tools/harness changed in this PR - the image must be built"
+              if git diff --name-only "$BASE" HEAD -- tools/harness | grep -q .; then
+                echo "tools/harness changed in this PR - the image must be built"
               else
-                echo "Tools/harness unchanged in this PR - the published image is used"
+                echo "tools/harness unchanged in this PR - the published image is used"
                 HARNESS_CHANGED=no
               fi
             else
@@ -615,7 +615,7 @@ jobs:
           build_image() {
             attempt=1
             while [ "$attempt" -le 3 ]; do
-              if docker build -q -t mpf-cura-harness Tools/harness; then
+              if docker build -q -t mpf-cura-harness tools/harness; then
                 return 0
               fi
               echo "the harness image build failed (attempt $attempt of 3) - retrying"
@@ -632,11 +632,11 @@ jobs:
             echo "pulled the published :latest harness image (no image for this sha)"
             docker tag "ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest" mpf-cura-harness
           else
-            echo "no published harness image was reachable - building from Tools/harness, which needs the apt archive"
+            echo "no published harness image was reachable - building from tools/harness, which needs the apt archive"
             build_image
           fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
-          container_dir="$(Tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
+          container_dir="$(tools/ui_test_paths.sh container "$MPF_WORK_DIR" "$MPF_WORK_DIR")"
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
               -v "$MPF_WORK_DIR:$container_dir" mpf-cura-harness sleep infinity
 
@@ -654,7 +654,7 @@ jobs:
               CURA_VERSION="${{ fromJSON(env.UNITS)[matrix.unit].cura }}" \
               MODE="${{ fromJSON(env.UNITS)[matrix.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
               RUN_DIR_NAME="$GALLERY" \
-              ./Tools/ui_test.sh
+              ./tools/ui_test.sh
 
       # The native legs do their own setup: install Cura, seed it, stage the
       # plugin and the driver, launch, clamp the window. That is why they get
@@ -670,7 +670,7 @@ jobs:
           SCENARIO: ${{ fromJSON(env.UNITS)[matrix.unit].group || fromJSON(env.UNITS)[matrix.unit].mode }}
         run: |
           RUN_DIR_NAME="$GALLERY" \
-            bash Tools/native_harness.sh macos "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" "$SCENARIO"
+            bash tools/native_harness.sh macos "${{ fromJSON(env.UNITS)[matrix.unit].cura }}" "$SCENARIO"
 
       - name: Run the unit (macOS)
         if: runner.os == 'macOS'
@@ -688,7 +688,7 @@ jobs:
           # nothing on stdout but ffmpeg's retries, so what the runner was
           # waiting for could not be read off the log.
           rc=0
-          python3 -u Tests/Harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
+          python3 -u tests/harness/runner.py ${{ fromJSON(env.UNITS)[matrix.unit].mode }} ${{ fromJSON(env.UNITS)[matrix.unit].group }} || rc=$?
           test -s "$HARNESS_RUN_DIR/index.html" || { echo "EVIDENCE MISSING - no gallery at $HARNESS_RUN_DIR"; exit 1; }
           exit "$rc"
 
@@ -760,7 +760,7 @@ jobs:
       - name: Summarise the unit
         if: always()
         shell: bash
-        run: python Tools/gate_summary.py "$GALLERY" "${{ matrix.os }} ${{ matrix.unit }}" >> "$GITHUB_STEP_SUMMARY"
+        run: python tools/gate_summary.py "$GALLERY" "${{ matrix.os }} ${{ matrix.unit }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the unit's gallery
         if: always()

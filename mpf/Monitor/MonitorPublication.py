@@ -9,7 +9,7 @@ map and the cache change on exactly one call per poll.
 The groups below are the notification contract: their order is the order
 the facade emits them in, and a published key absent from its signal's
 group can never notify. Group membership and the declarations it guards
-therefore live in two files, and `Tests/test_monitor_qml_contracts.py`
+therefore live in two files, and `tests/test_monitor_qml_contracts.py`
 reads both.
 """
 from __future__ import annotations

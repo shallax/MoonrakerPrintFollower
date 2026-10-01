@@ -451,7 +451,7 @@ Version 4.1.0 is the deep-harness-coverage release: the real-Cura
 gate's coverage and proof machinery, the parallel local matrix, and
 the review-driven product repairs, each shipped with its evidence.
 
-- **The parallel local matrix.** `Tools/harness_release.sh -j N` runs
+- **The parallel local matrix.** `tools/harness_release.sh -j N` runs
   the gate's units in per-slot containers, each with its own working
   directory (the isolation ruling) — the local full matrix takes 532
   s against the 945 s serial baseline (a measured 1.8x). The serial

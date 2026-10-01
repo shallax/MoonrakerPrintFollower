@@ -1,0 +1,506 @@
+"""Preview domain: follower behaviour, formatting, presentation and QML UX."""
+from contextlib import contextmanager
+from dataclasses import FrozenInstanceError
+import pathlib
+from types import SimpleNamespace
+from unittest.mock import Mock
+import unittest
+
+from mpf.Preview.PreviewFollower import PreviewFollower, preview_override_kind
+from mpf.Preview.PreviewSmoothing import advance_display, interpolate_target
+from mpf.Preview.PreviewFormatting import (
+    pause_can_toggle,
+    pause_eta,
+    pause_summary,
+    pause_unavailable,
+    status_icon,
+    status_text,
+)
+from mpf.Settings.PrinterConfig import PrinterConfig
+from mpf.Printing.PrintState import MotionProgress, PhysicalLayer, PrintSnapshot
+from mpf.Printing.RemoteJobService import PrintObservation
+from tests.source_root import SourceRoot
+
+PLUGINS = SourceRoot(pathlib.Path(__file__).resolve().parents[1] / "mpf")
+BUTTON = (PLUGINS / "PreviewSecondaryButton.qml").read_text(encoding="utf-8")
+PANEL = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+EMPTY = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+# The card's own leaves (4.6.2): the strip, the pause section, the
+# legend and the prompt. The card hosts them, so a surface pin that
+# reads the card reads these too.
+STATUS_STRIP = (PLUGINS / "PreviewStatusStrip.qml").read_text(encoding="utf-8")
+PAUSE_SECTION = (PLUGINS / "PauseAtLayerSection.qml").read_text(encoding="utf-8")
+BED_MESH_LEGEND = (PLUGINS / "BedMeshLegend.qml").read_text(encoding="utf-8")
+REPLACE_PROMPT = (PLUGINS / "ReplacePromptDialog.qml").read_text(encoding="utf-8")
+PREVIEW_SURFACE = PANEL + STATUS_STRIP + PAUSE_SECTION + BED_MESH_LEGEND + REPLACE_PROMPT
+
+
+class View:
+    def __init__(self): self.layer, self.minimum, self.path = 0, 0, 0.0
+    def getCurrentLayer(self): return self.layer
+    def getMinimumLayer(self): return self.minimum
+    def getCurrentPath(self): return self.path
+    def getMinimumPath(self): return 0
+    def getMaxPaths(self): return 100
+    def setLayer(self, value): self.layer = value
+    def setMinimumLayer(self, value): self.minimum = value
+    def setPath(self, value): self.path = value
+
+
+class CuraPort:
+    suspended = False
+    has_toolpath = True
+    max_layer = 20
+    def __init__(self): self.view = View()
+    @property
+    def selected_layer(self): return self.view.layer
+    @contextmanager
+    def writing_preview(self): yield self.view
+    def show_nozzle(self): pass
+    def switch_to_preview(self): return True
+
+
+class PreviewFollowerServiceTests(unittest.TestCase):
+    def test_shared_motion_is_usable_without_renderer_hydration_and_rejects_other_layers(self):
+        self.index.hydrated = lambda layer: False
+        snapshot = PrintSnapshot(observation=PrintObservation("printing", "part", 100, 20, 12.5),
+                                 layer=PhysicalLayer(4, 21),
+                                 motion_progress=MotionProgress(4, 25, 100))
+        _, hydration = self.service.observe(snapshot, {}, self.config, self.index)
+        self.assertEqual(self.cura.view.path, 25.0)
+        self.assertEqual(hydration, (4, 5))
+        # A replacement view with fewer layers must not apply the live
+        # boundary to a different, locally clamped layer.
+        self.cura.max_layer = 3
+        self.service.observe(snapshot, {}, self.config, self.index)
+        self.assertEqual(self.cura.view.path, 0.0)
+
+    def setUp(self):
+        self.cura = CuraPort()
+        self.service = PreviewFollower(self.cura)
+        self.fraction = 0.6
+        self.index = SimpleNamespace(ranges=tuple((i, i + 1) for i in range(21)),
+            elapsed_times=tuple((i + 1) * 10 for i in range(21)), hydrated=lambda layer: True,
+            fraction=Mock(side_effect=AssertionError("Preview must not match motion")))
+        self.config = PrinterConfig(enabled=True, path_follow=True)
+
+    def observe(self, layer=4, duration=12.5):
+        motion = MotionProgress(layer, round(self.fraction * 1000), 1000, "test") \
+            if self.index.hydrated(layer) else None
+        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, duration),
+                                 PhysicalLayer(layer, 21), motion_progress=motion)
+        self.service.observe(snapshot, {"print_stats": {"print_duration": duration}, "virtual_sdcard": {"file_position": 20}}, self.config, self.index)
+        return snapshot
+
+    def test_path_progress_honours_shared_corrections_and_resets_on_layer_change(self):
+        self.observe()
+        self.assertEqual(self.service.state.path_fraction, 0.6)
+        self.fraction = 0.4
+        self.observe()
+        self.assertEqual(self.service.state.path_fraction, 0.4)
+        self.observe(5)
+        self.assertEqual(self.service.state.path_fraction, 0.4)
+        self.fraction = 1.2
+        self.observe(5)
+        self.assertEqual(self.service.state.path_fraction, 1.0)
+
+    def test_smooth_delegation_uses_motion_and_resets_while_hydrating(self):
+        motion = Mock()
+        self.service.bind_motion(motion)
+        self.index.hydrated = lambda layer: False
+        self.observe()
+        motion.reset.assert_called_once()
+        motion.write.assert_not_called()
+        self.assertEqual(self.cura.view.path, 0.0)
+        self.index.hydrated = lambda layer: True
+        self.observe()
+        motion.write.assert_called_once_with(4, 0.6, "test")
+
+    def test_unsmoothed_following_resets_motion_and_writes_directly(self):
+        motion = Mock()
+        self.service.bind_motion(motion)
+        self.config = PrinterConfig(enabled=True, path_follow=True, path_smoothing=False)
+        self.observe()
+        motion.reset.assert_called_once()
+        motion.write.assert_not_called()
+        self.assertEqual(self.cura.view.path, 60.0)
+
+    def test_eta_anchor_captures_layer_entry_duration_once(self):
+        self.observe(3, 12.5)
+        self.observe(3, 18)
+        self.assertEqual(self.service.state.anchor_duration, 12.5)
+        self.observe(4, 18)
+        self.assertEqual(self.service.state.anchor_duration, 18)
+
+    def test_remaining_end_anchors_to_the_end_of_the_last_layer(self):
+        self.observe()  # layer 4 of 21, fraction 0.6
+        # Layer 4 spans boundaries 40-50 s; now = 46. The final layer
+        # has no next boundary, so the end anchor is the last boundary
+        # plus the mean layer duration (10 s): (210 + 10 - 46) / 1.0.
+        self.assertEqual(self.service.remaining_end(self.index, None), 174.0)
+        # A slicer estimate beyond the last boundary wins as the anchor.
+        self.assertEqual(self.service.remaining_end(self.index, 400.0), 354.0)
+
+    def test_remaining_end_needs_an_observed_layer(self):
+        self.observe()
+        from dataclasses import replace
+        self.service._state = replace(self.service._state, observed_layer=None)
+        self.assertIsNone(self.service.remaining_end(self.index, None))
+
+    def test_reset_tracking_preserves_print_observation_and_attachment(self):
+        self.observe(7, 100)
+        self.service.attach(False)
+        self.service.reset_tracking()
+        self.assertFalse(self.service.state.attached)
+        self.assertIsNone(self.service.state.path_fraction)
+        self.assertEqual(self.service.state.observed_layer, 7)
+        self.assertEqual(self.service.state.duration, 100)
+        self.assertFalse(self.service.state.nozzle_valid)
+
+    def test_reset_print_clears_print_state_without_reattaching(self):
+        self.observe(9)
+        self.service.attach(False)
+        self.service.reset_print()
+        self.assertFalse(self.service.state.attached)
+        self.assertIsNone(self.service.state.observed_layer)
+        self.assertIsNone(self.service.state.path_fraction)
+
+    def test_reset_print_keeps_the_armed_view_baseline(self):
+        # The print stopping does not move Cura's view: the armed
+        # baseline survives, so a drag in the observation gap between
+        # resets still detaches instead of being ignored.
+        self.observe(4)
+        self.service.reset_print()
+        self.assertEqual(self.service.state.expected_layer, 4)
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_state_cannot_be_mutated_by_consumers(self):
+        with self.assertRaises(FrozenInstanceError): self.service.state.attached = False
+
+    def test_manual_layer_change_detaches_without_changing_physical_layer(self):
+        self.observe(4)
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+        self.assertEqual(self.service.state.observed_layer, 4)
+
+    def test_any_deviation_detaches_even_right_after_attach(self):
+        # The ruling: ANY user intervention to the layer
+        # selection detaches the follower — no absorption window, no
+        # auto re-attach. A deviation immediately after an attach
+        # detaches like any other.
+        self.observe(4)
+        self.service.attach(True)
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_unarmed_change_adopts_a_baseline_and_the_next_deviation_detaches(self):
+        # A drag landing while the follower is unarmed (a view swap or
+        # a dropped connection) must not be ignored: the first change
+        # becomes the baseline, the continuing drag detaches.
+        self.observe(4)
+        self.service.invalidate_view()
+        self.assertIsNone(self.service.state.expected_layer)
+        self.cura.view.layer = 10
+        self.assertIsNone(self.service.detect_override())
+        self.assertEqual(self.service.state.expected_layer, 10)
+        self.cura.view.layer = 11
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_attached_label_shows_the_current_print_layer(self):
+        self.observe(4)
+        self.service.update_eta(self.observe(4), self.index)
+        self.assertIn("current print layer", self.service.state.eta_text)
+
+    def test_eta_learn_rescales_the_end_estimate_by_observed_drift(self):
+        # The opt-in: the slicer estimated 100 s per layer but the
+        # printer is taking 150 — the remaining end-of-print estimate
+        # scales by the learned 1.5x drift, clamped to [0.5, 2.0].
+        index = SimpleNamespace(
+            ranges=tuple((i, i + 1) for i in range(21)),
+            elapsed_times=tuple((i + 1) * 100 for i in range(21)),
+            hydrated=lambda layer: True,
+            fraction=lambda *args: (0.0, "test"),
+        )
+        service = PreviewFollower(self.cura)
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=True)
+        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, 300),
+                                 PhysicalLayer(2, 21))
+        service.observe(snapshot, {"print_stats": {"print_duration": 300},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertEqual(service.state.drift, 1.5)
+        plain = service.remaining_end(index, 2100)
+        self.assertGreater(plain, 0)
+        # Without the opt-in the same observation leaves the estimate
+        # unscaled.
+        service.reset_print()
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=False)
+        service.observe(snapshot, {"print_stats": {"print_duration": 150},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertIsNone(service.state.drift)
+
+    def test_eta_uses_path_progress_and_live_duration_anchor(self):
+        self.observe(4, 100)
+        self.assertEqual(self.service.remaining(6, self.index), 14)
+        self.observe(4, 108)
+        self.assertEqual(self.service.remaining(6, self.index), 12)
+
+
+class PreviewOverrideTests(unittest.TestCase):
+    """preview_override_kind: classifying user movement of Cura's handles."""
+
+    def test_detects_upper_layer_change(self):
+        self.assertEqual(
+            preview_override_kind(expected_layer=10, current_layer=11),
+            "layer",
+        )
+
+    def test_detects_lower_layer_handle_change(self):
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_minimum_layer=0,
+                current_minimum_layer=4,
+            ),
+            "layer",
+        )
+
+    def test_detects_current_and_minimum_path_changes(self):
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_path=20.0,
+                current_path=21.0,
+            ),
+            "path",
+        )
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_path=20.0,
+                current_path=20.0,
+                expected_minimum_path=0,
+                current_minimum_path=3,
+            ),
+            "path",
+        )
+
+    def test_does_not_adopt_or_guess_unarmed_position(self):
+        self.assertIsNone(
+            preview_override_kind(
+                expected_layer=None,
+                current_layer=99,
+                expected_minimum_layer=None,
+                current_minimum_layer=50,
+                expected_path=None,
+                current_path=100.0,
+            )
+        )
+
+    def test_ignores_small_fractional_path_noise(self):
+        self.assertIsNone(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_minimum_layer=0,
+                current_minimum_layer=0,
+                expected_path=20.0,
+                current_path=20.5,
+                expected_minimum_path=0,
+                current_minimum_path=0,
+            )
+        )
+
+
+class PreviewFormattingTests(unittest.TestCase):
+    def test_status_priority_covers_every_phase(self):
+        base = dict(detail="Following", load_requested=False, loading=False,
+                    files_phase="idle", index_phase="ready", attached=True,
+                    enabled=True, connected=True, configured=True)
+        self.assertEqual(status_text(**base), "Following")
+        self.assertEqual(status_text(**{**base, "load_requested": True}), "Resolving…")
+        self.assertEqual(status_text(**{**base, "loading": True}), "Loading print…")
+        self.assertEqual(status_text(**{**base, "files_phase": "downloading"}), "Downloading…")
+        self.assertEqual(status_text(**{**base, "index_phase": "indexing"}), "Indexing…")
+        self.assertEqual(status_text(**{**base, "files_phase": "error"}), "Error")
+        self.assertEqual(status_text(**{**base, "index_phase": "error"}), "Error")
+        self.assertEqual(status_text(**{**base, "attached": False}), "Detached")
+        self.assertEqual(status_text(**{**base, "connected": False}), "Disconnected")
+        self.assertEqual(status_text(**{**base, "connected": False, "configured": False}), "Not configured")
+
+    def test_status_icon_highlights_only_following_or_connected(self):
+        self.assertEqual(status_icon("Following"), "CheckCircle")
+        self.assertEqual(status_icon("Connected"), "CheckCircle")
+        self.assertEqual(status_icon("Detached"), "Information")
+        self.assertEqual(status_icon("Not configured"), "Information")
+
+    def test_pause_toggle_rules(self):
+        self.assertFalse(pause_can_toggle(False, 5, 2, 10))     # no active print
+        self.assertFalse(pause_can_toggle(True, None, 2, 10))   # nothing selected
+        self.assertFalse(pause_can_toggle(True, 1, None, 10))   # no current layer
+        self.assertFalse(pause_can_toggle(True, 1, 2, 10))      # already printed
+        self.assertTrue(pause_can_toggle(True, 5, 2, 10))
+        self.assertFalse(pause_can_toggle(True, 9, 2, 10))      # final layer
+        self.assertTrue(pause_can_toggle(True, 9, 2, None))     # unknown total
+
+    def test_pause_unavailable_explains_each_disabled_state(self):
+        self.assertEqual(pause_unavailable(False, False, False, 5, 5), "")
+        self.assertEqual(pause_unavailable(True, True, False, 5, 5), "")
+        self.assertEqual(pause_unavailable(True, False, True, 5, 5), "")
+        self.assertEqual(pause_unavailable(True, False, False, None, 5), "Waiting for current print layer")
+        self.assertEqual(pause_unavailable(True, False, False, 5, 3), "Layer 4 already printed")
+        self.assertEqual(pause_unavailable(True, False, False, 5, 5), "Final layer ends the print")
+
+    def test_pause_eta_and_summary_formatting(self):
+        self.assertEqual(pause_eta(90, lambda s: "x"), "in x")
+        self.assertEqual(pause_eta(None, lambda s: "x"), "ETA unavailable")
+        self.assertEqual(pause_summary([]), "")
+        self.assertEqual(pause_summary([{"layer": 4}, {"layer": 7}]), "End-of-layer PAUSE: 4, 7")
+
+
+class PreviewSmoothingTests(unittest.TestCase):
+    """The displayed head cruises at the physical rate without exceeding it or snapping back."""
+
+    def test_tracks_moving_target_with_bounded_lag(self):
+        # A target advancing at the estimated velocity is tracked with a
+        # constant small lag; the gap term only corrects drift.
+        displayed = 0.0
+        velocity = 0.1
+        lags = []
+        for tick in range(300):
+            target = min(1.0, 0.02 + tick * velocity * 0.033)
+            displayed = advance_display(displayed=displayed, target=target, velocity=velocity, dt=0.033)
+            lags.append(target - displayed)
+        self.assertLessEqual(max(lags), 0.15)
+        self.assertGreaterEqual(displayed, 0.9)
+
+    def test_never_exceeds_target_and_never_decreases(self):
+        displayed = 0.0
+        for _ in range(200):
+            before = displayed
+            displayed = advance_display(displayed=displayed, target=0.5, velocity=2.0, dt=0.033)
+            self.assertGreaterEqual(displayed, before)
+            self.assertLessEqual(displayed, 0.5)
+        self.assertAlmostEqual(displayed, 0.5, places=4)
+
+    def test_target_behind_display_is_ignored(self):
+        displayed = 0.6
+        self.assertEqual(advance_display(displayed=displayed, target=0.3, velocity=0.1, dt=0.033), 0.6)
+
+    def test_zero_velocity_gap_feedback_keeps_head_from_stranding(self):
+        # With no rate estimate the gap feedback (0.8/s) closes a large gap
+        # promptly: after 0.25 s the head covers about 1 - e^-0.2 of it.
+        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25)
+        self.assertGreaterEqual(displayed, 0.15)
+        self.assertLessEqual(displayed, 0.25)
+
+    def test_clamps_target_to_unit_range(self):
+        value = advance_display(displayed=0.5, target=2.0, velocity=1.0, dt=0.033)
+        self.assertTrue(0.5 < value <= 1.0)
+        # A negative displayed value is pathological but must not decrease.
+        self.assertLessEqual(advance_display(displayed=-0.1, target=0.0, velocity=0.0, dt=0.033), 0.0)
+
+
+class InterpolateTargetTests(unittest.TestCase):
+    """Between-poll reconstruction: linear, saturated at both ends."""
+
+    def test_midpoint_is_linear(self):
+        self.assertAlmostEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=0.5, interval=1.0), 0.4)
+
+    def test_saturates_at_interval_end(self):
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=1.0, interval=1.0), 0.6)
+        # A late poll holds the target at the newest observation.
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=9.0, interval=1.0), 0.6)
+
+    def test_never_before_start(self):
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=-1.0, interval=1.0), 0.2)
+
+    def test_zero_interval_is_guarded(self):
+        # A degenerate interval clamps to a tiny floor instead of exploding.
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=0.0, interval=0.0), 0.2)
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=1.0, interval=0.0), 0.6)
+
+    def test_equal_endpoints_hold(self):
+        # A dwell observation produces a flat ramp, not motion.
+        self.assertEqual(
+            interpolate_target(start=0.4, end=0.4, elapsed=0.5, interval=1.0), 0.4)
+
+class PreviewPresentationContractTests(unittest.TestCase):
+    """Source-level contracts for what Preview exposes to the user."""
+
+    def test_selected_layer_eta_uses_live_observation_and_anchor(self):
+        preview = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
+        self.assertIn("state.observed_layer", preview)
+        self.assertIn("state.duration - state.anchor_duration", preview)
+        self.assertIn("@dataclass(frozen=True)", preview)
+        self.assertIn("def remaining", preview)
+        self.assertIn("datetime.now().astimezone()", preview)
+
+    def test_each_scheduled_pause_has_end_of_layer_eta(self):
+        coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
+        follower = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
+        # The delegate that renders the ETA lives in the pause section.
+        qml = PAUSE_SECTION
+        # The end-of-layer ETA moved into PreviewFollower.remaining_end
+        # (the coordinator's composition calls it) — the pin follows
+        # the semantic, not the old inline call.
+        self.assertIn("self._preview.remaining_end(", coordinator)
+        self.assertIn("def remaining_end", follower)
+        self.assertIn("property string pauseEta", qml)
+        self.assertIn("parent.pauseEta.length > 0", qml)
+
+    def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
+        index = (PLUGINS / "MotionIndex.py").read_text(encoding="utf-8")
+        preview = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
+        status = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
+        self.assertIn("layer_elapsed_times", index)
+        self.assertIn("def update_eta", preview)
+        self.assertIn("datetime.now().astimezone()", preview)
+        self.assertIn("Selected layer", preview)
+        self.assertIn('"selectedLayerEtaText": state.eta_text', status)
+
+
+class PreviewButtonUxTests(unittest.TestCase):
+    def test_preview_button_centres_text_both_axes(self):
+        self.assertIn("horizontalAlignment: Text.AlignHCenter", BUTTON)
+        self.assertIn("verticalAlignment: Text.AlignVCenter", BUTTON)
+        self.assertIn("elide: Text.ElideRight", BUTTON)
+        self.assertIn('textColor: "transparent"', BUTTON)
+
+    def test_preview_controls_use_centred_wrapper(self):
+        self.assertGreaterEqual(PREVIEW_SURFACE.count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("Cura.SecondaryButton", PREVIEW_SURFACE)
+        self.assertGreaterEqual(EMPTY.count("PreviewSecondaryButton"), 2)
+        self.assertNotIn("Cura.SecondaryButton", EMPTY)
+
+    def test_following_control_is_detach_attach_not_printer_pause(self):
+        self.assertIn('text: base.followingPaused ? "Attach" : "Detach"', PANEL)
+        self.assertIn("This does not pause the printer.", PANEL)
+        self.assertIn("Attach Cura Preview to the live Moonraker print", PANEL)
+
+    def test_load_button_gets_majority_of_top_row(self):
+        self.assertIn("* 0.32", PANEL)
+        self.assertIn("buttons.width - base.buttonSpacing - followButton.width", PANEL)
+        self.assertIn('text: "Load current print"', PANEL)
+        self.assertIn("contentWidth: 300 * screenScaleFactor", PANEL)
+
+    def test_pause_action_keeps_pause_symbol(self):
+        self.assertIn('"⏸  Pause at end of selected layer"', PAUSE_SECTION)
+        self.assertIn('"⏸  Enable pause at end of layer "', PAUSE_SECTION)
+
+
+if __name__ == "__main__":
+    unittest.main()

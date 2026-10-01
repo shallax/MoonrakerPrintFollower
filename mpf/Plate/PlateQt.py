@@ -170,14 +170,14 @@ def qml_geometry(payload):
     if not any(isinstance(segment, tuple) or
                (segment and isinstance(segment[0], tuple)) for segment in rows) \
             and not any(isinstance(point, tuple) for point in marks) \
-            and not any(isinstance(payload.get(key), tuple) for key in ("widths", "speeds", "Tools")) \
+            and not any(isinstance(payload.get(key), tuple) for key in ("widths", "speeds", "tools")) \
             and not any(isinstance(bounds, tuple) for bounds in (payload.get("colourRanges") or {}).values()):
         return payload
     def segments(rows):
         return [[list(point) for point in segment] for segment in rows]
     return dict(payload,
                 **({"widths": list(payload["widths"])} if "widths" in payload else {}),
-                **({key: list(payload[key]) for key in ("speeds", "Tools") if key in payload}),
+                **({key: list(payload[key]) for key in ("speeds", "tools") if key in payload}),
                 colourRanges={key:list(bounds) for key,bounds in (payload.get("colourRanges") or {}).items()},
                 classes={name: segments(rows) for name, rows in
                          (payload.get("classes") or {}).items()},

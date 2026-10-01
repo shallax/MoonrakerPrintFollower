@@ -62,7 +62,7 @@ jobs:
       - name: Build and publish the harness image
         uses: docker/build-push-action@v7
         with:
-          context: Tools/harness
+          context: tools/harness
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest
@@ -89,7 +89,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: package-artifacts
-          path: Dist/
+          path: dist/
 
       - name: Extract release notes from changelog
         run: |
@@ -112,8 +112,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          CURA="Dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
-          SOURCE="Dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
+          CURA="dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
+          SOURCE="dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" --clobber
           else

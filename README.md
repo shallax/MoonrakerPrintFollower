@@ -702,48 +702,48 @@ The screenshots are captured deterministically from the plugin's real
 QML with the real cura-light theme (see `INSTRUCTIONS.md`), so they
 always match the checked-out code.
 
-![Monitor dashboard](Screenshots/01-dashboard-default.png)
+![Monitor dashboard](screenshots/01-dashboard-default.png)
 
 The Monitor dashboard: printer status, information panes and printer controls.
 
-![Monitor panes collapsed](Screenshots/02-panes-collapsed.png)
-![Monitor sections collapsed](Screenshots/03-sections-collapsed.png)
-![Temperature chart pop-over](Screenshots/07-chart-popover.png)
+![Monitor panes collapsed](screenshots/02-panes-collapsed.png)
+![Monitor sections collapsed](screenshots/03-sections-collapsed.png)
+![Temperature chart pop-over](screenshots/07-chart-popover.png)
 
 Panes collapse to the window edge with a rotated title; each pane's
 sections collapse into an accordion like Cura's own settings.
 
-![Exclude Object Picker](Screenshots/10-exclude-object-picker.png)
+![Exclude Object Picker](screenshots/10-exclude-object-picker.png)
 
 The Exclude Object Picker shows each object's position and exclusion state.
 
-![Print follower](Screenshots/11-print-follower.png)
+![Print follower](screenshots/11-print-follower.png)
 
 The print follower renders indexed toolpaths, with layer and progress controls.
 This three-material penguin is generated as deterministic G-code for the capture.
 
-![Preview panel](Screenshots/04-preview-panel.png)
+![Preview panel](screenshots/04-preview-panel.png)
 
 The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
 
-![Connection settings](Screenshots/05-settings-connection.png)
-![Following settings](Screenshots/05-settings-following.png)
-![Upload settings](Screenshots/05-settings-upload.png)
-![Diagnostics settings](Screenshots/05-settings-diagnostics.png)
+![Connection settings](screenshots/05-settings-connection.png)
+![Following settings](screenshots/05-settings-following.png)
+![Upload settings](screenshots/05-settings-upload.png)
+![Diagnostics settings](screenshots/05-settings-diagnostics.png)
 
 The settings tabs: Connection, Following, Upload and Diagnostics.
 
-![Upload dialog](Screenshots/06-upload-dialog.png)
+![Upload dialog](screenshots/06-upload-dialog.png)
 
 The Cura-to-Moonraker upload dialog.
 
-![What's new popup](Screenshots/08-whats-new.png)
+![What's new popup](screenshots/08-whats-new.png)
 
 The once-per-version what's-new popup: the new release's items open
 at the top, previous versions in collapsed sections, the project link
 at the bottom.
 
-![File manager](Screenshots/09-file-manager.png)
+![File manager](screenshots/09-file-manager.png)
 
 The file manager: recent prints, breadcrumb navigation, filters and a
 sortable table of every file on the printer with its slicer metadata,
@@ -825,13 +825,13 @@ High-risk logic is separated into focused modules. The authoritative ownership m
 
 The same Makefile targets drive development on Linux, macOS and Windows:
 `make dev_install`, `make build`, `make lint`, `make run_tests`,
-`make test_files FILES="Tests.test_index"`, and `make package`.
+`make test_files FILES="tests.test_index"`, and `make package`.
 Linux defaults to the pinned Docker toolchain. macOS and Windows default
 to native host toolchains, with no Docker requirement; either can opt
 into the Linux image with `BACKEND=docker` (for example,
 `make BACKEND=docker build`). See [INSTRUCTIONS.md](INSTRUCTIONS.md)
 for setup, capture parity and the complete command list.
 
-The standard-library `unittest` suite under `Tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.
+The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.
 
 Release auditing also checks that shipped plugin sources do not contain release nicknames in runtime comments/UI, and that the source contains no hard-coded real printer names, local-network addresses or literal sample API keys. Example network values must use reserved non-routable domains.

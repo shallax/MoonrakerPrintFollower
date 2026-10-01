@@ -1,6 +1,6 @@
 # Unified entry points for the repository's development procedures.
 #
-# The real logic lives in Tools/Native/*.py or Tools/*.sh (see INSTRUCTIONS.md);
+# The real logic lives in tools/native/*.py or tools/*.sh (see INSTRUCTIONS.md);
 # these targets are thin wrappers so every procedure has one memorable
 # command: `make build`, `make run_tests`, `make generate_screenshots`.
 
@@ -21,12 +21,12 @@ ifeq ($(BACKEND),native)
 ifeq ($(HOST),linux)
 $(error BACKEND=native is currently supported on Windows and macOS)
 endif
-DEV := $(PYTHON) Tools/Native/dev.py
+DEV := $(PYTHON) tools/native/dev.py
 else ifeq ($(BACKEND),docker)
 ifeq ($(HOST),linux)
 LEG := posix
 else
-DEV := $(PYTHON) Tools/Native/docker.py
+DEV := $(PYTHON) tools/native/docker.py
 endif
 else
 $(error BACKEND must be native or docker)
@@ -48,7 +48,7 @@ help:
 	@echo "gates                  lint, full suite and capture smoke tests"
 	@echo "lint                   compile, QML and source/tool checks"
 	@echo "run_tests              full test suite, one process per file"
-	@echo "test_files             selected files (FILES=\"Tests.test_index Tests.test_upload\")"
+	@echo "test_files             selected files (FILES=\"tests.test_index tests.test_upload\")"
 	@echo "generate_screenshots   render captures; Docker refreshes committed copies"
 	@echo "verify_captures        verify light/dark capture determinism"
 	@echo "generate_shaders       compile packaged Qt shaders"
@@ -79,21 +79,21 @@ gates: generate_shaders
 ifneq ($(LEG),posix)
 	$(DEV) gates
 else
-	./Tools/docker_gates.sh
+	./tools/docker_gates.sh
 endif
 
 lint:
 ifneq ($(LEG),posix)
 	$(DEV) lint
 else
-	./Tools/docker_dev.sh sh -c "python3 -m compileall -q mpf Tools Tests \
-	    && python3 Tools/check_qml.py mpf \
-	    && python3 Tools/check_qml_engine.py \
+	./tools/docker_dev.sh sh -c "python3 -m compileall -q mpf tools tests \
+	    && python3 tools/check_qml.py mpf \
+	    && python3 tools/check_qml_engine.py \
 	    && check_qml_format mpf \
-	    && ruff check mpf Tools Tests \
-	    && shellcheck Tools/*.sh \
+	    && ruff check mpf tools tests \
+	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
-	    && sh Tools/check_workflows.sh \
+	    && sh tools/check_workflows.sh \
 	    && gitleaks detect --no-git --no-banner --redact"
 endif
 
@@ -101,40 +101,40 @@ run_tests:
 ifneq ($(LEG),posix)
 	$(DEV) test
 else
-	./Tools/run_tests.sh
+	./tools/run_tests.sh
 endif
 
 ifneq ($(LEG),posix)
 test_files:
-	$(if $(strip $(FILES)),,$(error usage: make test_files FILES="Tests.test_monitor_qml_contracts Tests.test_index"))
+	$(if $(strip $(FILES)),,$(error usage: make test_files FILES="tests.test_monitor_qml_contracts tests.test_index"))
 	$(DEV) test $(foreach file,$(FILES),--file $(file))
 else
 test_files:
 	@test -n "$(FILES)" || { \
-	    echo 'usage: make test_files FILES="Tests.test_monitor_qml_contracts Tests.test_index"'; \
+	    echo 'usage: make test_files FILES="tests.test_monitor_qml_contracts tests.test_index"'; \
 	    exit 2; }
-	./Tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) Tools/run_some.sh $(FILES)"
+	./tools/docker_dev.sh sh -c "cd /work && JOBS=$(or $(JOBS),8) SHARDS=$(or $(SHARDS),1) tools/run_some.sh $(FILES)"
 endif
 
 dev_install:
 ifneq ($(LEG),posix)
 	$(DEV) bootstrap
 else
-	./Tools/install_dev.sh
+	./tools/install_dev.sh
 endif
 
 generate_screenshots:
 ifneq ($(LEG),posix)
 	$(DEV) refresh
 else
-	./Tools/refresh_screenshots.sh
+	./tools/refresh_screenshots.sh
 endif
 
 verify_captures:
 ifneq ($(LEG),posix)
 	$(DEV) determinism
 else
-	./Tools/verify_capture_determinism.sh
+	./tools/verify_capture_determinism.sh
 endif
 
 package:
@@ -144,9 +144,9 @@ else
 	$(MAKE) generate_shaders
 	# The two artifacts are independent: build them side by side
 	# (the 2026-09-18 parallelism ruling), then verify both.
-	python3 Tools/build_curapackage.py & python3 Tools/build_marketplace_source.py & wait
-	python3 Tools/verify_curapackage.py "Dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
-	python3 Tools/verify_marketplace_source.py "Dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
+	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
+	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
+	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 endif
 
 # The built package is SCP'd to the Cura machine after every push: a
@@ -155,9 +155,9 @@ endif
 # first).
 snapshot_package: package
 ifneq ($(LEG),posix)
-	$(PYTHON) Tools/Native/dev.py copy_snapshot
+	$(PYTHON) tools/native/dev.py copy_snapshot
 else
-	cp Dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
+	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 endif
 
 # The FAST iteration path for the snapshot loop (the 2026-09-10
@@ -172,7 +172,7 @@ ifneq ($(LEG),posix)
 	$(DEV) snapshot
 else
 	$(MAKE) package
-	cp Dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
+	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 	@echo "wrote /tmp/mpf.curapackage"
 endif
 
@@ -180,21 +180,21 @@ format:
 ifneq ($(LEG),posix)
 	$(DEV) format
 else
-	./Tools/docker_dev.sh sh -c "find mpf -name '*.qml' -type f -print0 | xargs -0 /usr/lib/qt6/bin/qmlformat -i"
+	./tools/docker_dev.sh sh -c "find mpf -name '*.qml' -type f -print0 | xargs -0 /usr/lib/qt6/bin/qmlformat -i"
 endif
 
 coverage:
 ifneq ($(LEG),posix)
 	$(DEV) coverage
 else
-	COVERAGE=1 JOBS=$(JOBS) ./Tools/run_tests.sh
+	COVERAGE=1 JOBS=$(JOBS) ./tools/run_tests.sh
 endif
 
 install_hooks:
 ifneq ($(LEG),posix)
 	$(DEV) hooks
 else
-	./Tools/install_hooks.sh
+	./tools/install_hooks.sh
 endif
 
 ifneq ($(LEG),posix)
@@ -211,7 +211,7 @@ dev_down:
 	docker rm -f mpf-dev || true
 
 docker_exec:
-	./Tools/docker_dev.sh $(ARGS)
+	./tools/docker_dev.sh $(ARGS)
 endif
 
 clean:
@@ -220,7 +220,7 @@ ifneq ($(LEG),posix)
 else
 	find . -name "__pycache__" -type d -not -path "./.git/*" -prune -exec rm -rf {} +
 	find . -name "*~" -not -path "./.git/*" -delete
-	rm -rf Dist
+	rm -rf dist
 endif
 
 ifneq ($(LEG),posix)
@@ -232,14 +232,14 @@ ui_release_gate: package
 	$(DEV) ui_release_gate
 else
 ui_test: package  # the harness stages dist â€” it must be the current tree, never a stale build
-	./Tools/ui_test.sh
+	./tools/ui_test.sh
 
 # The release gate's real-Cura scenario runs: the gates + suite on the
 # primary pinned Cura, the gates again on the secondary version. Run
 # on a box with docker; the budgets and retry policy live in
-# Tools/harness_release.sh (TESTING.md Â§5).
+# tools/harness_release.sh (TESTING.md Â§5).
 ui_release_gate:
-	./Tools/harness_release.sh
+	./tools/harness_release.sh
 endif
 
 # Build-time compilation; packaged shader bundles require no user compiler.
@@ -247,5 +247,5 @@ generate_shaders:
 ifneq ($(LEG),posix)
 	$(DEV) shaders $(if $(QSB),--qsb "$(QSB)",)
 else
-	./Tools/docker_dev.sh python3 Tools/build_shaders.py $(if $(QSB),--qsb "$(QSB)",)
+	./tools/docker_dev.sh python3 tools/build_shaders.py $(if $(QSB),--qsb "$(QSB)",)
 endif

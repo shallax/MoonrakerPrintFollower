@@ -145,7 +145,7 @@ def prepare(payloads, cancel=None):
                         deadline = time.perf_counter() + 0.008
                 profile = payload.get("widths") or ()
                 widths = array("f", (max(0.001, profile[int(edge[0])]) if 0 <= int(edge[0]) < len(profile) and profile[int(edge[0])] > 0 else 0.4 for edge in edges))
-                speeds, tools = payload.get("speeds") or (), payload.get("Tools") or ()
+                speeds, tools = payload.get("speeds") or (), payload.get("tools") or ()
                 metrics = array("f")
                 for edge in edges:
                     motion = int(edge[0])
@@ -163,7 +163,7 @@ def prepare(payloads, cancel=None):
                         for segment in segments)
     source_points += sum(len(payload.get(key) or ()) for _role, payload in payloads if payload
                          for key in ("retractions", "unretractions"))
-    profile_bytes = sum(sum(len(payload.get(key) or ()) * cost for key,cost in (("widths",32),("speeds",32),("Tools",28))) for _role, payload in payloads if payload)
+    profile_bytes = sum(sum(len(payload.get(key) or ()) * cost for key,cost in (("widths",32),("speeds",32),("tools",28))) for _role, payload in payloads if payload)
     charge = profile_bytes + sum(len(row[3]) + (sum(len(column) for column in row[4:])) + len(row[2]) * 36 for row in result) + source_points * 192
     if (cancel is None or not cancel.is_set()) and charge <= _CACHE_BYTES:
         with _CACHE_LOCK:
