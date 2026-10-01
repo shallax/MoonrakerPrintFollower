@@ -84,9 +84,10 @@ are visible; a Python 3.14 patch release difference is acceptable.
   `make install_hooks`, `make clean`. `make docker_exec ARGS="…"`
   is available with the Docker backend. The targets call the native
   driver or the Linux scripts according to the selected backend.
-- Before pushing, `make all` runs shader compilation, lint, the full suite,
-  fresh captures, capture determinism, package verification and the local
-  package snapshot in that order. Each full suite and package build runs once.
+- For local full validation, `make all` runs shader compilation, lint, the
+  full suite, fresh captures, capture determinism, package verification and
+  the local package snapshot in that order. GitHub CI enforces the full suite
+  on pushes and pull requests; the pre-commit hook runs fast checks only.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
   `python3 -m unittest tests.a tests.b tests.c` runs those files
@@ -115,7 +116,8 @@ are visible; a Python 3.14 patch release difference is acceptable.
   maintainers of the project; one-off and session-specific commands
   should just be run as-is.
 - Install the pre-commit hook with `make install_hooks`; it runs the
-  compile, structure, ruff, qmlformat and unit-test gates locally.
+  compile, structure, ruff, qmlformat and other available static checks
+  locally, without the full test suite.
 - Builds: `tools/build_curapackage.py` (Cura package) and
   `tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
   matching verify tools; CI uploads both as artifacts.
@@ -849,11 +851,11 @@ not needed in ordinary operation.
 
 ## Release gates
 
-Local (also run by the pre-commit hook):
+Local checks (the hook runs lint/static checks, not the full suite):
 
     make lint        # compileall, check_qml(.py + engine), qmlformat, ruff,
                      # shellcheck, hadolint, gitleaks on the selected backend
-    make run_tests   # every suite once, verdict + failures extracted from that single pass
+    make run_tests   # intentional full local suite, once per file
 
 CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally

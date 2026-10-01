@@ -13,6 +13,7 @@ import socket
 import socketserver
 import struct
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from mpf.moonraker.SocketFraming import accept_value
@@ -21,10 +22,19 @@ from mpf.moonraker.SocketFraming import accept_value
 class WSHandler(socketserver.BaseRequestHandler):
     server: "WSServer"
 
-    def _recv_exact(self, count: int) -> bytes:
+    def _recv_exact(self, count: int, *, deadline: Optional[float] = None) -> bytes:
         data = b""
         while len(data) < count:
-            chunk = self.request.recv(count - len(data))
+            try:
+                chunk = self.request.recv(count - len(data))
+            except socket.timeout:
+                if not data and deadline is None:
+                    raise  # no frame yet: let the handler drain queued pushes
+                if deadline is None:
+                    deadline = time.monotonic() + 5.0
+                if time.monotonic() >= deadline:
+                    return data
+                continue
             if not chunk:
                 break
             data += chunk
@@ -35,15 +45,24 @@ class WSHandler(socketserver.BaseRequestHandler):
         header = self._recv_exact(2)
         if len(header) < 2:
             return None
+        deadline = time.monotonic() + 5.0
         first, second = header
         opcode = first & 0x0F
         length = second & 0x7F
         if length == 126:
-            length = struct.unpack(">H", self._recv_exact(2))[0]
+            size = self._recv_exact(2, deadline=deadline)
+            if len(size) < 2:
+                return None
+            length = struct.unpack(">H", size)[0]
         elif length == 127:
-            length = struct.unpack(">Q", self._recv_exact(8))[0]
-        mask = self._recv_exact(4)
-        payload = self._recv_exact(length)
+            size = self._recv_exact(8, deadline=deadline)
+            if len(size) < 8:
+                return None
+            length = struct.unpack(">Q", size)[0]
+        mask = self._recv_exact(4, deadline=deadline)
+        payload = self._recv_exact(length, deadline=deadline)
+        if len(mask) < 4 or len(payload) < length:
+            return None
         return opcode, bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
 
     def _send_frame(self, opcode: int, payload: bytes) -> None:

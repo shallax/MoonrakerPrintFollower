@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import unittest
 
+from mpf.moonraker.SocketFraming import encode_close_frame
 from tests.qt_runtime_support import QT_AVAILABLE
-from tests.ws_loopback import WSServer
+from tests.ws_loopback import WSHandler, WSServer
 
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer
@@ -23,6 +24,42 @@ SNAPSHOT = {"status": {
     "motion_report": {"live_position": [1, 2, 3, 4]},
     "bed_mesh": {"profile_name": "default"},
 }}
+
+
+class LoopbackFrameTests(unittest.TestCase):
+    def test_masked_close_survives_timeouts_between_every_frame_part(self):
+        import socket
+
+        frame = encode_close_frame(1000)
+        parts = iter((frame[:1], socket.timeout(), frame[1:2],
+                      socket.timeout(), frame[2:4], socket.timeout(),
+                      frame[4:6], socket.timeout(), frame[6:7],
+                      socket.timeout(), frame[7:]))
+
+        class FragmentedSocket:
+            def recv(self, count):
+                part = next(parts)
+                if isinstance(part, socket.timeout):
+                    raise part
+                if len(part) > count:
+                    raise AssertionError("the fixture delivered more than requested")
+                return part
+
+        handler = WSHandler.__new__(WSHandler)
+        handler.request = FragmentedSocket()
+        self.assertEqual(handler._read_frame(), (0x8, (1000).to_bytes(2, "big")))
+
+    def test_idle_timeout_still_yields_to_queued_pushes(self):
+        import socket
+
+        class IdleSocket:
+            def recv(self, _count):
+                raise socket.timeout()
+
+        handler = WSHandler.__new__(WSHandler)
+        handler.request = IdleSocket()
+        with self.assertRaises(socket.timeout):
+            handler._read_frame()
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")

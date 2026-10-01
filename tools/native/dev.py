@@ -1163,10 +1163,8 @@ def cmd_hooks(args) -> int:
 
 
 def cmd_hook_check(args) -> int:
-    """The pre-commit slice: the cheap checks, then the suite."""
-    status = cmd_lint(args)
-    names = selected_tests(checkout_root(), [])
-    return run_suite("hook tests", names, args.jobs) or status
+    """The pre-commit slice: static checks; CI owns the full suite."""
+    return cmd_lint(args)
 
 
 def cmd_clean(args) -> int:
