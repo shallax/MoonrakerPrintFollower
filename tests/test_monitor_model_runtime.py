@@ -841,7 +841,7 @@ class MonitorQtTests(harness.MonitorQtTests):
                 # The follower view settings are global (the live
                 # ruling) — the defaults ride the fresh document.
                 "followerView": {"showPrevious": True, "showNext": True,
-                                 "showBase": True, "showTravels": False, "showRetractions": False, "showUnretractions": False, "trueThickness": False,
+                                 "showBase": True, "showTravels": False, "showAxisArrows": True, "showRetractions": False, "showUnretractions": False, "trueThickness": False,
                                  "antialiasing": False, "keepCentred": False, "lineScale": 1.0},
             })
             # The chart config is per-printer now: the global file must

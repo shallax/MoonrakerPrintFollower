@@ -162,6 +162,7 @@ MonitorPopOver {
                     // detached (the live request).
                     showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                     showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
+                    showAxisArrows: root.printerModel != null ? root.printerModel.followerShowAxisArrows : true
                     showRetractions: root.printerModel != null ? root.printerModel.followerShowRetractions : false
                     showUnretractions: root.printerModel != null ? root.printerModel.followerShowUnretractions : false
                     motionSmoothing: root.printerModel != null ? root.printerModel.followerMotionSmoothing : false
@@ -258,6 +259,16 @@ MonitorPopOver {
                                     root.printerModel.setFollowerShowUnretractions(checked)
                             }
                             UM.CheckBox {
+                                objectName: "followerShowAxisArrows"
+                                text: "Axis arrows"
+                                checked: root.printerModel != null ? root.printerModel.followerShowAxisArrows : true
+                                onToggled: {
+                                    if (root.printerModel != null) {
+                                        root.printerModel.setFollowerShowAxisArrows(checked);
+                                    }
+                                }
+                            }
+                            UM.CheckBox {
                                 visible: progressFace.gpuRendering
                                 text: "Antialiasing"
                                 checked: root.printerModel != null ? root.printerModel.followerAntialiasing : false
@@ -273,7 +284,9 @@ MonitorPopOver {
                     // space, outside the canvas entirely — its
                     // appearance never reflows the plate.
                     UM.Label {
-                        visible: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0
+                        readonly property bool canReset: progressFace.available() && !progressFace.compact && progressFace.viewScale > 1.0
+                        opacity: canReset ? 1 : 0
+                        enabled: canReset
                         text: "Reset view"
                         font: UM.Theme.getFont("small")
                         color: UM.Theme.getColor("primary")

@@ -2,6 +2,126 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_clear_pause_action_fits_and_stays_beside_pause_during_zoom(self):
+        for panel_width in (800, 900, 1100):
+            with self.subTest(panel_width=panel_width):
+                monitor, window, face = self._follower_popover(width=panel_width)
+                pause = monitor.findChild(harness.QQuickItem, "moonrakerFollowerPauseButton")
+                self.assertIsNotNone(pause)
+                clear = next(item for item in pause.parentItem().childItems()
+                             if item.property("text") == "Clear")
+                column = pause.parentItem().parentItem()
+                self._printer.setPauseClearAvailable(True)
+                self._pump_ms(80)
+
+                def positions(pause=pause, clear=clear, window=window):
+                    return (pause.mapToItem(window.contentItem(), harness.QPointF()).x(),
+                            clear.mapToItem(window.contentItem(), harness.QPointF()).x(),
+                            clear.mapToItem(window.contentItem(), harness.QPointF()).y())
+
+                initial_y = positions()[2]
+                for zoom in (1.0, 1.5, 2.0, 1.0):
+                    face.setProperty("viewScale", zoom)
+                    self._pump_ms(80)
+                    pause_x, clear_x, clear_y = positions()
+                    self.assertGreaterEqual(clear.width(), column.property("clearButtonWidth"))
+                    self.assertGreater(pause.width(), 0)
+                    self.assertLessEqual(pause_x + pause.width(), clear_x)
+                    self.assertLessEqual(clear_x + clear.width(),
+                                         column.mapToItem(window.contentItem(), harness.QPointF()).x()
+                                         + column.width() + 1)
+                    self.assertEqual(clear_y, initial_y)
+                self._printer.setPauseClearAvailable(False)
+                self._pump_ms(80)
+                self.assertEqual(clear.width(), 0)
+                del self._printer
+
+    def test_zoom_and_axis_toggle_do_not_reflow_follower_options(self):
+        monitor, window, face = self._follower_popover()
+        names = ("Travels", "Retractions", "Unretractions", "Axis arrows",
+                 "Antialiasing")
+        def controls():
+            return {name: next(item for item in monitor.findChildren(harness.QQuickItem)
+                               if item.property("text") == name) for name in names}
+        def rows():
+            return {name: round(item.mapToItem(window.contentItem(),
+                                                harness.QPointF()).y(), 1)
+                    for name, item in controls().items()}
+        def flow_width():
+            return round(controls()["Travels"].parentItem().width(), 1)
+
+        self._pump_ms(250)
+        initial = rows()
+        initial_width = flow_width()
+        ordered = [item.property("text") for item in
+                   controls()["Travels"].parentItem().childItems()
+                   if item.property("text") in names]
+        self.assertEqual(ordered, list(names))
+        self.assertTrue(controls()["Axis arrows"].property("checked"))
+        reset = next(item for item in monitor.findChildren(harness.QQuickItem)
+                     if item.property("text") == "Reset view")
+        self.assertEqual(reset.property("opacity"), 0.0)
+        self.assertFalse(reset.property("enabled"))
+        face.setProperty("viewScale", 1.5)
+        self._pump_ms(250)
+        self.assertEqual(reset.property("opacity"), 1.0)
+        self.assertTrue(reset.property("enabled"))
+        self.assertEqual(flow_width(), initial_width, "zoom stole width from the checkbox Flow")
+        self.assertEqual(rows(), initial, "zoom moved checkbox rows")
+        self._printer.setFollowerShowAxisArrows(False)
+        self._pump_ms(100)
+        self.assertFalse(controls()["Axis arrows"].property("checked"))
+        self.assertEqual(rows(), initial, "disabling arrows moved checkbox rows")
+        face.setProperty("viewScale", 1.0)
+        self._pump_ms(250)
+        self.assertEqual(rows(), initial, "resetting zoom moved checkbox rows")
+        self._printer.setFollowerShowAxisArrows(True)
+        self._pump_ms(100)
+        self.assertTrue(controls()["Axis arrows"].property("checked"))
+        self.assertEqual(rows(), initial, "restoring arrows moved checkbox rows")
+
+    def test_axis_arrows_track_the_follower_bed_and_clear_the_zoom_scope(self):
+        face, window, _mapping, _baseline = self._painted(
+            self._layer_payload(self.HORIZONTAL_RUNS))
+        grid = face.findChild(harness.QQuickItem, "moonrakerPlateCanvas")
+        self.assertIsNone(face.findChild(harness.QQuickItem, "moonrakerPlateAxisArrows"))
+        bed = grid.property("_plot").property("bed")
+        origin = face.mapToItem(window.contentItem(), harness.QPointF())
+        right = origin.x() + bed.property("offsetX").toNumber() + bed.property("plotWidth").toNumber()
+        top = origin.y() + bed.property("offsetY").toNumber()
+        width = bed.property("plotWidth").toNumber()
+        height = bed.property("plotHeight").toNumber()
+        image = window.grabWindow()
+        def ink(colour, bounds):
+            x0, y0, x1, y1 = (int(value) for value in bounds)
+            result = set()
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    pixel = image.pixelColor(x, y)
+                    if max(abs(pixel.red() - colour.red()),
+                           abs(pixel.green() - colour.green()),
+                           abs(pixel.blue() - colour.blue())) < 20:
+                        result.add((x, y))
+            return result
+        red = ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12))
+        green = ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height))
+        self.assertTrue(red and green, "the follower lost a painted border arrow")
+        self.assertAlmostEqual(right - min(x for x, _ in red), .15 * width, delta=4)
+        self.assertAlmostEqual(max(y for _, y in green) - top, .15 * height, delta=4)
+        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top - 3, right, top)))
+        self.assertFalse(ink(harness.QColor("#66bb6a"), (right, top, right + 3, top + .18 * height)))
+        grid.setProperty("showAxisArrows", False)
+        self._pump_ms(120)
+        image = window.grabWindow()
+        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
+        self.assertFalse(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+        self.assertTrue(grid.property("showGrid"))
+        grid.setProperty("showAxisArrows", True)
+        self._pump_ms(120)
+        image = window.grabWindow()
+        self.assertTrue(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
+        self.assertTrue(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+
     def test_the_painted_horizontal_runs_stay_horizontal_and_unbridged(self):
         face, window, mapping, baseline = self._painted(
             self._layer_payload(self.HORIZONTAL_RUNS))
@@ -258,5 +378,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # edges: any truncated or offset mapping leaves a band empty.
         self.assertLessEqual(min(rows), top + 12, "no ink at the plot's top edge")
         self.assertGreaterEqual(max(rows), bottom - 12, "no ink at the plot's bottom edge")
-
-

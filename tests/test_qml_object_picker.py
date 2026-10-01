@@ -54,6 +54,46 @@ if harness.QT_AVAILABLE:
 
 
 class PlateCanvasHitTests(harness.PlateCanvasHitTests):
+    def test_axis_arrows_follow_the_pickers_bed_corner(self):
+        window, face, canvas = self._picker(self._polygon_bed())
+        self.assertIsNone(canvas.findChild(harness.QQuickItem, "moonrakerPlateAxisArrows"))
+        bed = canvas.property("_plot").property("bed")
+        origin = canvas.mapToItem(window.contentItem(), harness.QPointF())
+        right = origin.x() + bed.property("offsetX").toNumber() + bed.property("plotWidth").toNumber()
+        top = origin.y() + bed.property("offsetY").toNumber()
+        width = bed.property("plotWidth").toNumber()
+        height = bed.property("plotHeight").toNumber()
+        image = window.grabWindow()
+        def ink(colour, bounds):
+            x0, y0, x1, y1 = (int(value) for value in bounds)
+            result = set()
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    pixel = image.pixelColor(x, y)
+                    if max(abs(pixel.red() - colour.red()),
+                           abs(pixel.green() - colour.green()),
+                           abs(pixel.blue() - colour.blue())) < 20:
+                        result.add((x, y))
+            return result
+        red = ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12))
+        green = ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height))
+        self.assertTrue(red and green, "the picker lost a painted border arrow")
+        self.assertAlmostEqual(right - min(x for x, _ in red), .15 * width, delta=4)
+        self.assertAlmostEqual(max(y for _, y in green) - top, .15 * height, delta=4)
+        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top - 3, right, top)))
+        self.assertFalse(ink(harness.QColor("#66bb6a"), (right, top, right + 3, top + .18 * height)))
+        canvas.setProperty("showAxisArrows", False)
+        self._pump_ms(120)
+        image = window.grabWindow()
+        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
+        self.assertFalse(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+        self.assertTrue(canvas.property("showGrid"))
+        canvas.setProperty("showAxisArrows", True)
+        self._pump_ms(120)
+        image = window.grabWindow()
+        self.assertTrue(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
+        self.assertTrue(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+
     def test_the_picker_discloses_omitted_objects_without_an_extra_row(self):
         window, face, canvas = self._picker(self._polygon_bed())
         before = (face.width(), face.height())
@@ -506,4 +546,3 @@ class PlateDownloadActionTests(harness.PlateDownloadActionTests):
         self._click_centre(label, window)
         self.assertEqual(printer.improve_eta_calls, 1,
                          "clicking the label no longer downloads the index")
-

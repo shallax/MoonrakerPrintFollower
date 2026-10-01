@@ -46,6 +46,7 @@ ColumnLayout {
                 compact: true
                 printerModel: root.printerModel
                 plate: root.printerModel != null ? root.printerModel.plateObjects : null
+                showAxisArrows: root.printerModel != null ? root.printerModel.followerShowAxisArrows : true
                 // No toolhead dot — the mini map is the picker's
                 // control surface, not a follower (the live ruling).
                 opacity: root.printerModel != null && root.printerModel.plateObjects.objects.length > 0 ? 1 : 0

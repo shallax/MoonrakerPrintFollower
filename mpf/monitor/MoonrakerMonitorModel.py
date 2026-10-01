@@ -210,6 +210,7 @@ def _follower_view_state(stored) -> dict:
         "showNext": flag("showNext", True),
         "showBase": flag("showBase", True),
         "showTravels": flag("showTravels", False),
+        "showAxisArrows": flag("showAxisArrows", True),
         "trueThickness": flag("trueThickness", False),
         "showRetractions": flag("showRetractions", False),
         "showUnretractions": flag("showUnretractions", False),
@@ -414,6 +415,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_show_next = follower_view["showNext"]
         self._follower_show_base = follower_view["showBase"]
         self._follower_show_travels = follower_view["showTravels"]
+        self._follower_show_axis_arrows = follower_view["showAxisArrows"]
         self._follower_true_thickness = follower_view["trueThickness"]
         self._follower_show_retractions = follower_view["showRetractions"]
         self._follower_show_unretractions = follower_view["showUnretractions"]
@@ -1252,6 +1254,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowNext=self._follower_show_next,
             followerShowBase=self._follower_show_base,
             followerShowTravels=self._follower_show_travels,
+            followerShowAxisArrows=self._follower_show_axis_arrows,
             followerShowRetractions=self._follower_show_retractions,
             followerShowUnretractions=self._follower_show_unretractions,
             followerAntialiasing=self._follower_antialiasing,
@@ -1429,6 +1432,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
     followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
+    followerShowAxisArrows = value_property(bool, "followerShowAxisArrows", followerViewChanged, True)
     followerShowRetractions = value_property(bool, "followerShowRetractions", followerViewChanged, False)
     followerShowUnretractions = value_property(bool, "followerShowUnretractions", followerViewChanged, False)
     followerAntialiasing = value_property(bool, "followerAntialiasing", followerViewChanged, False)
@@ -1897,6 +1901,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             show_next=bool(self.followerShowNext),
             show_base=bool(self.followerShowBase),
             show_travels=bool(self.followerShowTravels),
+            show_axis_arrows=self._follower_show_axis_arrows,
             bed_width=float(self.bedMeshMachineWidth or 0.0),
             bed_depth=float(self.bedMeshMachineDepth or 0.0))
 
@@ -2018,6 +2023,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "showNext": self._follower_show_next,
                 "showBase": self._follower_show_base,
                 "showTravels": self._follower_show_travels,
+                "showAxisArrows": self._follower_show_axis_arrows,
                 "trueThickness": self._follower_true_thickness,
                 "showRetractions": self._follower_show_retractions,
                 "showUnretractions": self._follower_show_unretractions,
@@ -2351,6 +2357,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._follower_show_travels is bool(show):
             return
         self._follower_show_travels = bool(show)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerShowAxisArrows(self, show):
+        if self._follower_show_axis_arrows is bool(show):
+            return
+        self._follower_show_axis_arrows = bool(show)
         self._save_state()
         self._publish()
 

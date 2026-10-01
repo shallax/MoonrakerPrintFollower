@@ -79,6 +79,7 @@ class SceneInputs(NamedTuple):
     show_travels: bool
     bed_width: float
     bed_depth: float
+    show_axis_arrows: bool = True
 
 
 class PlateRenderController(QObject):
@@ -800,6 +801,7 @@ class PlateRenderController(QObject):
             show_next=bool(self._scene().show_next),
             show_base=bool(self._scene().show_base),
             show_travels=bool(self._scene().show_travels),
+            show_axis_arrows=bool(self._scene().show_axis_arrows),
             line_scale=round(float(surface.view.get("lineScale") or 0.7), 6),
             width=int(surface.view.get("width") or 0),
             height=int(surface.view.get("height") or 0),
@@ -954,6 +956,7 @@ class PlateRenderController(QObject):
                 "showNext": bool(self._scene().show_next),
                 "showBase": bool(self._scene().show_base),
                 "showTravels": bool(self._scene().show_travels),
+                "showAxisArrows": bool(self._scene().show_axis_arrows),
                 # The bed's machine bounds: the grid rides the same
                 # composite — the COMPLETE scene (the grid AND the
                 # geometry) switches to the warm raster as one.

@@ -1276,6 +1276,7 @@ if QT_AVAILABLE:
         # state and the option ride the view group.
         plateProgressChanged = pyqtSignal()
         followerViewChanged = pyqtSignal()
+        pauseAtLayerChanged = pyqtSignal()
         improvingEtaChanged = pyqtSignal()
 
         # The picker's own payload: a test installs one before it mounts
@@ -1305,6 +1306,8 @@ if QT_AVAILABLE:
             self._layer_anchor = -1
             self._improving_eta = False
             self._show_base = True
+            self._show_axis_arrows = True
+            self._pause_clear_available = False
             self.calls = []
             self.asset_owners = {}
             self.asset_serial = 0
@@ -1486,6 +1489,23 @@ if QT_AVAILABLE:
         @pyqtProperty(bool, notify=followerViewChanged)
         def followerShowBase(self):
             return self._show_base
+
+        @pyqtProperty(bool, notify=followerViewChanged)
+        def followerShowAxisArrows(self):
+            return self._show_axis_arrows
+
+        @pyqtSlot(bool)
+        def setFollowerShowAxisArrows(self, show):
+            self._show_axis_arrows = show
+            self.followerViewChanged.emit()
+
+        @pyqtProperty(bool, notify=pauseAtLayerChanged)
+        def pauseAtLayerHasClearable(self):
+            return self._pause_clear_available
+
+        def setPauseClearAvailable(self, available):
+            self._pause_clear_available = available
+            self.pauseAtLayerChanged.emit()
 
         @pyqtProperty(float, notify=followerViewChanged)
         def followerTravelVisualRatio(self):
@@ -2042,7 +2062,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         for row in range(0, int(face.height())):
             for col in range(0, int(face.width())):
                 if self._matches(image.pixel(int(origin.x()) + col, int(origin.y()) + row),
-                                 (0xD3, 0x2F, 0x2F)):
+                                 (0xD3, 0x2F, 0x2F), tolerance=20):
                     count += 1
         return count
 
@@ -2052,7 +2072,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         row = int(origin.y() + plot["offsetY"] + (plot["bedYMax"] - bed_y) * plot["sy"])
         for dy in range(-radius, radius + 1, 2):
             for dx in range(-radius, radius + 1, 2):
-                if self._matches(image.pixel(col + dx, row + dy), (0xD3, 0x2F, 0x2F)):
+                if self._matches(image.pixel(col + dx, row + dy),
+                                 (0xD3, 0x2F, 0x2F), tolerance=20):
                     return True
         return False
 

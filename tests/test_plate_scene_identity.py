@@ -20,7 +20,7 @@ def scene(**changes):
 class NavigationSceneKeyTests(unittest.TestCase):
     def test_named_identity_retains_the_existing_tuple_contract(self):
         key = scene()
-        self.assertEqual(len(key), 18)
+        self.assertEqual(len(key), 19)
         self.assertEqual(key[3], key.split)
         self.assertEqual(key[-1], key.zoom)
         self.assertEqual(navigation_zoom(key), 1.0)
@@ -49,7 +49,8 @@ class NavigationSceneKeyTests(unittest.TestCase):
     def test_context_changes_invalidate_the_scene(self):
         original = navigation_hard_key(scene())
         for variant in (dict(job_epoch=3), dict(payload_ids=(11, 14, 13)),
-                        dict(show_travels=True), dict(width=420),
+                        dict(show_travels=True), dict(show_axis_arrows=False),
+                        dict(width=420),
                         dict(zoom=1.5), dict(dpr=1.0),
                         dict(plot=(("sx", 3.0),))):
             self.assertNotEqual(original, navigation_hard_key(scene(**variant)))

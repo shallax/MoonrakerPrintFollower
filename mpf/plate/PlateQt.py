@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from itertools import count
 
 from .PreviewColours import motion_colour
+from .PlateAxisGeometry import axis_arrows
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QUrl, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
@@ -55,6 +56,8 @@ _PLATE_TRAVEL_COLOUR = "#b085e8"
 # and the 50 mm / border strokes.
 _PLATE_GRID_THIN = "#cccccc"
 _PLATE_GRID_BORDER = "#999999"
+_PLATE_AXIS_X = "#ef5350"
+_PLATE_AXIS_Y = "#66bb6a"
 # One render-contract value for both the native travel raster and the
 # QML Canvas path (the model publishes this value to the face).
 _PLATE_TRAVEL_VISUAL_RATIO = 0.7
@@ -515,7 +518,8 @@ _CONTEXT_VIEW = ("width", "height", "scale", "panX", "panY", "backing",
                  "dpr", "zoom", "lineScale", "lineWidthPx", "trueThickness", "compact", "nominalWidthMm",
                  "travelVisualRatio", "bedWidth", "bedDepth")
 _CONTEXT_FLAGS = (("showPrevious", True), ("showNext", True),
-                  ("showBase", True), ("showTravels", False))
+                  ("showBase", True), ("showTravels", False),
+                  ("showAxisArrows", True))
 _CONTEXT_PLOT = ("offsetX", "offsetY", "sx", "sy", "bedXMin", "bedYMax")
 
 
@@ -959,6 +963,17 @@ def _paint_grid(painter: QPainter, plot: dict, view: dict) -> None:
         hy += 50.0
     painter.drawRect(QRectF(left + 4.0, top + 4.0,
                             right - left - 8.0, bottom - top - 8.0))
+    if view.get("showAxisArrows", True):
+        for segments, colour in zip(
+            axis_arrows(left, top, right, bottom, thick.widthF(),
+                        9.0 * backing / zoom),
+            (_PLATE_AXIS_X, _PLATE_AXIS_Y), strict=True
+        ):
+            pen = QPen(QColor(colour))
+            pen.setWidthF(thick.widthF())
+            painter.setPen(pen)
+            for ax, ay, bx, by in segments:
+                painter.drawLine(QPointF(ax, ay), QPointF(bx, by))
 
 
 def render_navigation_layer(window: dict, plot: dict, view: dict, split=None,

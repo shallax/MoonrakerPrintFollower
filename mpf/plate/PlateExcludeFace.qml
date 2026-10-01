@@ -164,6 +164,7 @@ Item {
         anchors.fill: parent
         printerModel: root.printerModel
         plate: root.plate
+        showAxisArrows: root.printerModel != null ? root.printerModel.followerShowAxisArrows : true
         compact: root.compact
         hoveredName: root.hoveredName
         onObjectHovered: function (name) {

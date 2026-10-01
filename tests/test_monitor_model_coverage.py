@@ -1317,6 +1317,8 @@ class ModuleCoercionSlotTests(MonitorModelCase):
         view = module._follower_view_state({"lineScale": "junk", "showNext": "yes"})
         self.assertEqual(view["lineScale"], 1.0, "an unparseable stroke fell through")
         self.assertTrue(view["showNext"], "a non-bool flag must keep its default")
+        self.assertTrue(view["showAxisArrows"])
+        self.assertTrue(module._follower_view_state({"showAxisArrows": "no"})["showAxisArrows"])
 
     def test_a_snapshot_without_layer_info_reads_no_layer(self):
         # The read is optional all the way down: a state frame that
@@ -1359,6 +1361,7 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.model.setFollowerShowNext(True)
         self.model.setFollowerShowBase(True)
         self.model.setFollowerShowTravels(False)
+        self.model.setFollowerShowAxisArrows(True)
         self.model.setFollowerAntialiasing(False)
         self.model.setFollowerLineScale(0.7)
         self.assertEqual((self.saves, self.publishes), ([], []),
@@ -1373,6 +1376,21 @@ class FollowerViewSlotTests(MonitorModelCase):
         self.assertFalse(self.model.followerShowNext)
         self.assertFalse(self.model.followerShowBase)
         self.assertTrue(self.model.followerShowTravels)
+
+    def test_axis_arrows_default_on_and_persist_globally(self):
+        store = self.persistence()
+        self.model = self.build(state_store=store)
+        self.assertTrue(self.model.followerShowAxisArrows)
+        self.counters()
+        self.model.setFollowerShowAxisArrows(False)
+        self.model.setFollowerShowAxisArrows(False)
+        self.assertEqual((len(self.saves), len(self.publishes)), (1, 1))
+        self.assertFalse(self.model.followerShowAxisArrows)
+        self.assertFalse(self.model._renderer_scene_inputs().show_axis_arrows)
+        restored = self.build(state_store=store)
+        self.assertFalse(restored.followerShowAxisArrows)
+        restored.setFollowerShowAxisArrows(True)
+        self.assertTrue(self.build(state_store=store).followerShowAxisArrows)
 
     def test_antialiasing_persists_and_defaults_to_crisp_lines(self):
         store = self.persistence()

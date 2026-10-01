@@ -41,6 +41,45 @@ class RendererParityTests(_parent.RealEngineTestCase):
     _matches = staticmethod(_parent.PlateFaceRenderTests._matches)
     _native_layer = _parent.PlateFaceRenderTests._native_layer
 
+    def test_warm_raster_bakes_border_arrows_without_text_overlay(self):
+        from mpf.plate.PlateQt import render_navigation_layer
+        from PyQt6.QtGui import QColor
+        view = {"width": 563, "height": 563, "scale": 1.0,
+                "lineScale": 0.7, "backing": 4.0,
+                "bedWidth": 250.0, "bedDepth": 250.0}
+        image = render_navigation_layer(
+            {"prev": None, "current": PAYLOAD, "next": None},
+            PROBE_PLOT, view)
+        without = render_navigation_layer(
+            {"prev": None, "current": PAYLOAD, "next": None},
+            PROBE_PLOT, dict(view, showAxisArrows=False))
+        from mpf.plate.PlateQt import scene_context
+        self.assertNotEqual(scene_context(PROBE_PLOT, view),
+                            scene_context(PROBE_PLOT, dict(view, showAxisArrows=False)))
+        edge = 250 * PROBE_PLOT["sx"] * view["backing"]
+        def pixels(colour, bounds):
+            x0, y0, x1, y1 = (int(n) for n in bounds)
+            return [(x, y) for y in range(y0, y1) for x in range(x0, x1)
+                    if (lambda pixel: max(abs(pixel.red() - colour.red()),
+                                          abs(pixel.green() - colour.green()),
+                                          abs(pixel.blue() - colour.blue())) < 20)(
+                                              image.pixelColor(x, y))]
+        red = pixels(QColor("#ef5350"), (edge * .81, 0, edge, 32))
+        green = pixels(QColor("#66bb6a"), (edge - 32, 0, edge, edge * .19))
+        self.assertTrue(red and green, "the warm raster lost its border arrows")
+        self.assertEqual(without.pixelColor(810, 1125),
+                         image.pixelColor(810, 1125),
+                         "the toggle altered the print geometry")
+        for colour, bounds in ((QColor("#ef5350"), (edge * .81, 0, edge, 32)),
+                               (QColor("#66bb6a"), (edge - 32, 0, edge, edge * .19))):
+            self.assertFalse(any(max(abs(without.pixelColor(x, y).red() - colour.red()),
+                                     abs(without.pixelColor(x, y).green() - colour.green()),
+                                     abs(without.pixelColor(x, y).blue() - colour.blue())) < 20
+                                 for y in range(int(bounds[1]), int(bounds[3]))
+                                 for x in range(int(bounds[0]), int(bounds[2]))))
+        self.assertAlmostEqual(edge - min(x for x, _ in red), .15 * edge, delta=9)
+        self.assertAlmostEqual(max(y for _, y in green), .15 * edge, delta=9)
+
     def _hold_navigation_fixture(self, face):
         # These fixtures measure a held image, not the handover back to
         # the live scene. A manually started interaction has no mouse

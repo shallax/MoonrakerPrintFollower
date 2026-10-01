@@ -344,6 +344,14 @@ temporary-directory `mpf.curapackage`, normally `/tmp/mpf.curapackage`
 on macOS and Linux; commits and pushes hold until it is
 confirmed good) → ship via PR.
 
+Development snapshots (`make snapshot_package` and `make snapshot_quick`)
+stamp their archives with a fresh time unless `SOURCE_DATE_EPOCH` is explicitly
+set. Ordinary `make package` and release artifacts still use the HEAD commit
+time for reproducibility. Repeated uncommitted QML builds otherwise retain
+identical timestamps, allowing Cura's QML cache to reuse a compiled reference
+to a component that the new package removed. Keep the previous working plugin
+until the replacement has rendered in Cura.
+
 ## Version bump checklist
 
 When bumping the version (for example 3.1.0 → 3.2.0), every one of these must

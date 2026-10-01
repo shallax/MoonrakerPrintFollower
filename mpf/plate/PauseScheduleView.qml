@@ -25,6 +25,12 @@ ColumnLayout {
     // Whether the column's clear action has anything to
     // clear: the foot row collapses its slot on this.
     readonly property bool clearAvailable: root.printerModel != null && root.printerModel.pauseAtLayerHasClearable === true
+    readonly property real clearButtonWidth: Math.ceil(clearTextMetrics.width + 2 * UM.Theme.getSize("default_margin").width + 2 * screenScaleFactor)
+    TextMetrics {
+        id: clearTextMetrics
+        text: "Clear"
+        font: UM.Theme.getFont("medium")
+    }
     // The rows are read once at open: the block carries
     // values before the popover exists, so a signal-only
     // sync would leave the list blank until the next
@@ -261,6 +267,7 @@ ColumnLayout {
             id: pauseAtLayerButton
             objectName: "moonrakerFollowerPauseButton"
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             // The label centres in the slack this button
             // takes (the live request); the theme's own
             // content row packs from the left, so the
@@ -294,11 +301,11 @@ ColumnLayout {
             // the width goes with it, so the schedule button
             // beside it takes the whole row.
             // Its own screen's word (the live request): the
-            // card keeps the longer line. The width is the
-            // short word plus the theme's own side padding,
-            // with a hair of slack so the label never elides.
+            // card keeps the longer line. Measure the theme font
+            // and side padding: fixed 60 px elides Clear in Cura.
             fixedWidthMode: true
-            Layout.preferredWidth: root.clearAvailable ? 60 * screenScaleFactor : 0
+            Layout.minimumWidth: root.clearAvailable ? root.clearButtonWidth : 0
+            Layout.preferredWidth: root.clearAvailable ? root.clearButtonWidth : 0
             Layout.preferredHeight: root.clearAvailable ? UM.Theme.getSize("action_button").height : 0
             enabled: root.clearAvailable
             text: "Clear"

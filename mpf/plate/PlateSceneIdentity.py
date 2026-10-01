@@ -27,6 +27,7 @@ class NavigationSceneKey(NamedTuple):
     dpr: float
     true_thickness: bool = False
     colour_scheme: str = ""
+    show_axis_arrows: bool = True
     zoom: float = 1.0
 
     def without_progress(self):

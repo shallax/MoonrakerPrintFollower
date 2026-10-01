@@ -193,6 +193,7 @@ correct package ownership.
 | `FollowerColourScheme.py` | Guarded Cura colour-mode, material and theme integration | Geometry or tracking |
 | `FollowerRuntime.py` | Dependency construction and signal wiring at the composition root | Domain policy |
 | `GpuFollower.py` | Retained follower geometry, bounded asynchronous preparation and scene-graph presentation | Motion matching or printer commands |
+| `PlateAxisGeometry.py` | Border-aligned open axis-arrow segments for GPU and warm raster rendering | QML and printer commands |
 | `GpuObjectPicker.py` | Retained object outlines using the shared GPU stroke engine | Exclusion commands |
 | `GpuStrokeMaterial.py` | Shader materials, stroke vertex layout and GPU uniform updates | Print state or networking |
 | `LeakProbe.py` | Opt-in memory-growth diagnostics | Production lifecycle policy |
@@ -996,7 +997,15 @@ replacement delivers, including backward scrubs. Intermediate prefix anchors
 never present alone below the requested split. Static scene changes still
 invalidate incompatible geometry. The standing grid rises above the preparation
 cover while that geometry retires, keeping the grid visible through zero and
-partial transitions. Implicit Canvas paints coalesce while an actual upload is
+partial transitions. Both picker and follower draw red X-left and green Y-down
+arrows along the top and right bed borders (15% of each edge). Their half-heads
+remain inside the bed; the persisted, default-on "Axis arrows" checkbox
+in Print Follower controls both surfaces without hiding the grid or print.
+The Reset view label reserves its width while hidden so zoom never changes
+the neighbouring checkbox Flow's available width or wraps its controls.
+The grid paints them before object outlines or toolpaths
+on Canvas, GPU and warm-raster paths, including the compact maps. Implicit Canvas
+paints coalesce while an actual upload is
 outstanding; a rejected delivery forces a fresh bitmap rather than a no-op retry.
 While a native prefix worker or its Image decode is pending, QML keeps the
 standing composition and coalesces progress instead of walking full history as
