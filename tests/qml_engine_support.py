@@ -1743,7 +1743,7 @@ class PlateFaceRenderTests(RealEngineTestCase):
         # The reference is RETAINED: a Python-created QObject dies
         # with its last Python ref (the QML var takes no ownership),
         # and the monitor's printer dangles null — no plot, no dot.
-        self._printer = self._printer()
+        self._printer = type(self)._printer()
         # A parity test mounts several windows. Keep each window's
         # Python-owned model alive until that window has drained; QML
         # QVariant references do not own these Python QObjects.
