@@ -306,6 +306,7 @@ ColumnLayout {
             fixedWidthMode: true
             Layout.minimumWidth: root.clearAvailable ? root.clearButtonWidth : 0
             Layout.preferredWidth: root.clearAvailable ? root.clearButtonWidth : 0
+            Layout.maximumWidth: root.clearAvailable ? root.clearButtonWidth : 0
             Layout.preferredHeight: root.clearAvailable ? UM.Theme.getSize("action_button").height : 0
             enabled: root.clearAvailable
             text: "Clear"

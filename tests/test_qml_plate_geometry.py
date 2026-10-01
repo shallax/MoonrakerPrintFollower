@@ -32,7 +32,13 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                                          + column.width() + 1)
                     self.assertEqual(clear_y, initial_y)
                 self._printer.setPauseClearAvailable(False)
-                self._pump_ms(80)
+                self._wait_until(
+                    window,
+                    lambda _image, column=column, clear=clear:
+                    column.property("clearAvailable") is False
+                    and clear.width() == 0,
+                    timeout=2.0)
+                self.assertFalse(column.property("clearAvailable"))
                 self.assertEqual(clear.width(), 0)
                 del self._printer
 
