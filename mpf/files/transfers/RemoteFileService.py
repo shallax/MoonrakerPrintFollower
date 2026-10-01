@@ -9,7 +9,7 @@ import threading
 import time
 from types import MappingProxyType
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
 from ...moonraker.MoonrakerProtocol import RemoteFileIdentity
@@ -371,6 +371,7 @@ class RemoteFileService(QObject):
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
+    AUTO_DOWNLOAD_RETRIES = 2
     # Download byte cap (panel security P2-3): the equality check against
     # the server-declared size is the only other guard, and a hostile or
     # stale endpoint simply lies about it. Real prints are well under a
@@ -400,6 +401,9 @@ class RemoteFileService(QObject):
         self._source_metadata_verified = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
+        self._metadata_retry_timer = QTimer(self)
+        self._metadata_retry_timer.setSingleShot(True)
+        self._metadata_retry_timer.timeout.connect(self._advance)
         self._path = None
         self._path_identity = None
         self._cache = None
@@ -417,6 +421,9 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_retry_timer = QTimer(self)
+        self._download_retry_timer.setSingleShot(True)
+        self._download_retry_timer.timeout.connect(self._retry_download)
         self._lifetime_received = 0
         self.writerDone.connect(self._on_writer_done)
         self.writerDrained.connect(self._on_writer_drained)
@@ -460,6 +467,9 @@ class RemoteFileService(QObject):
     @property
     def path(self): return self._path
     @property
+    def source_resolving(self):
+        return self._want_file and self._path is None and self.phase == "resolving"
+    @property
     def error(self): return self._error
     @property
     def phase(self):
@@ -500,10 +510,8 @@ class RemoteFileService(QObject):
     def _drain_one_shot(self, download, op, reply):
         if download._done or op.aborted:
             return
-        if op.reading_paused and not op.finished_reading:
-            if (op.received - op.written) >= op.LOW_WATER_BYTES:
-                return
-            op.reading_paused = False
+        if not op.can_read():
+            return
         try:
             if op.size <= 0:
                 op.size = _declared_length(reply)
@@ -516,14 +524,11 @@ class RemoteFileService(QObject):
                 raise OSError("The download was served compressed; refusing")
             chunk = bytes(reply.readAll())
             if chunk:
-                op.received += len(chunk)
                 self._lifetime_received += len(chunk)
-                if op.received > self.MAX_DOWNLOAD_BYTES:
+                if op.received + len(chunk) > self.MAX_DOWNLOAD_BYTES:
                     download._finish_immediately("Download exceeds the size cap")
                     return
-                op.queue.put(chunk)
-                if not op.finished_reading and (op.received - op.written) >= op.HIGH_WATER_BYTES:
-                    op.reading_paused = True
+                op.enqueue(chunk)
         except Exception as error:
             download._finish_immediately(str(error))
 
@@ -558,9 +563,11 @@ class RemoteFileService(QObject):
         self._source_metadata_verified = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
+        self._metadata_retry_timer.stop()
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_retry_timer.stop()
         self.changed.emit()
 
     def request_metadata(self):
@@ -639,20 +646,34 @@ class RemoteFileService(QObject):
             self._error = ""
             self._download_attempts = 0
             self._download_retry_at = 0.0
+            self._download_retry_timer.stop()
         self._advance()
+
+    def _retry_download(self):
+        self._advance()
+        if (self._error and self._want_file and not self._closed
+                and self._download_attempts <= self.AUTO_DOWNLOAD_RETRIES
+                and not self._download_retry_timer.isActive()):
+            remaining = math.ceil((self._download_retry_at - time.monotonic()) * 1000)
+            self._download_retry_timer.start(max(1, remaining))
 
     def _advance(self):
         if self._closed or not self._job: return
         if self._error and self._want_file and time.monotonic() >= self._download_retry_at:
-            # Inside the download backoff window the error stays latched so
-            # every consumer re-request does not hammer the network; once the
-            # window passes, the next request restarts the download.
+            # The error stays latched until the backoff expires; one timer
+            # supplies bounded recovery even without another consumer demand.
             self._error = ""
+            self._download_retry_timer.stop()
             self.changed.emit()
         if self._error: return
-        if self._identity is None:
+        if (not self._metadata_fetched and not self._metadata_pending
+                and (self._identity is None or self._metadata_attempts > 0)):
             self.request_metadata()
-        elif self._want_file and not self._path and self._download is None \
+            if (self._metadata_attempts > 0 and self._want_file
+                    and not self._metadata_pending and not self._metadata_retry_timer.isActive()):
+                remaining = math.ceil((self._metadata_retry_at - time.monotonic()) * 1000)
+                self._metadata_retry_timer.start(max(1, remaining))
+        if self._identity is not None and self._want_file and not self._path and self._download is None \
                 and self._restore_op is None:
             if self._restore_cached():
                 return
@@ -754,7 +775,7 @@ class RemoteFileService(QObject):
             self.cacheWritten.emit(path, (cache, marker, error))
 
         try:
-            threading.Thread(target=write, name="mpf-raw-cache", daemon=True).start()
+            threading.Thread(target=write, name="mpf-raw-cache").start()
         except RuntimeError as error:
             self._release(path)
             _log_cache_warning("Moonraker raw G-code cache worker could not start: %s", error)
@@ -827,10 +848,8 @@ class RemoteFileService(QObject):
     def _drain(self, op, reply):
         if op is not self._download or op.aborted:
             return
-        if op.reading_paused and not op.finished_reading:
-            if (op.received - op.written) >= op.LOW_WATER_BYTES:
-                return  # still backed up: bytes stay in the reply's buffer
-            op.reading_paused = False
+        if not op.can_read():
+            return  # still backed up: bytes stay in the reply's buffer
         try:
             if op.size <= 0:
                 op.size = _declared_length(reply)
@@ -843,20 +862,17 @@ class RemoteFileService(QObject):
                 raise OSError("The download was served compressed; refusing")
             chunk = bytes(reply.readAll())
             if chunk:
-                op.received += len(chunk)
                 self._lifetime_received += len(chunk)
-                if op.received > self.MAX_DOWNLOAD_BYTES:
+                if op.received + len(chunk) > self.MAX_DOWNLOAD_BYTES:
                     # Byte cap (panel security P2-3): the only guard was
                     # equality against the SERVER-DECLARED size, which a
                     # hostile or stale endpoint simply lies about. Past
-                    # the cap the download aborts and the retry ladder
-                    # takes over — unbounded disk fill under /tmp is off.
+                    # the cap the download aborts without an unassisted
+                    # retry — unbounded disk fill under /tmp is off.
                     self._abort_download()
                     self._fail("Downloaded G-code exceeds the size cap")
                     return
-                op.queue.put(chunk)
-                if not op.finished_reading and (op.received - op.written) >= op.HIGH_WATER_BYTES:
-                    op.reading_paused = True
+                op.enqueue(chunk)
             if op.size > 0:
                 percent = min(100, op.received * 100 // op.size)
                 now = time.monotonic()
@@ -886,20 +902,20 @@ class RemoteFileService(QObject):
     def _on_writer_drained(self, op):
         if op is not self._download or op.aborted or op.finished_reading:
             return
-        op.reading_paused = False
         self._drain(op, op.reply)
 
     def _on_writer_done(self, op):
         if op is not self._download:
             return  # a retired operation's writer; everything was cleaned at abort
         self._download = None
+        reply_error = op.reply.error()
         try:
             if op.writer_error is not None:
                 raise OSError(op.writer_error)
             if op.generation != self._generation or op.job != self._job:
                 self._retire(op.target.path)
                 return
-            if op.reply.error() != QNetworkReply.NetworkError.NoError:
+            if reply_error != QNetworkReply.NetworkError.NoError:
                 raise OSError(op.reply.errorString())
             if op.size > 0 and op.target.bytes_written != op.size:
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
@@ -916,12 +932,18 @@ class RemoteFileService(QObject):
             self._path_identity = op.cache_identity
             self._download_attempts = 0
             self._download_retry_at = 0.0
+            self._download_retry_timer.stop()
             if op.cache_identity is not None:
                 self._publish_current()
             self.changed.emit()
         except Exception as error:
             self._retire(op.target.path)
-            self._fail(str(error))
+            transient = reply_error in (
+                QNetworkReply.NetworkError.TimeoutError,
+                QNetworkReply.NetworkError.TemporaryNetworkFailureError,
+                QNetworkReply.NetworkError.RemoteHostClosedError,
+                QNetworkReply.NetworkError.ConnectionRefusedError)
+            self._fail(str(error), auto_retry=transient and op.writer_error is None)
         finally:
             op.reply.deleteLater()
 
@@ -939,13 +961,16 @@ class RemoteFileService(QObject):
             op.reply.deleteLater()
         self._retire(op.target.path)
 
-    def _fail(self, message):
+    def _fail(self, message, *, auto_retry=False):
         self._error = str(message)
         self._download_attempts += 1
         delay = self.DOWNLOAD_RETRY_DELAYS_MS[min(self._download_attempts - 1, len(self.DOWNLOAD_RETRY_DELAYS_MS) - 1)]
         self._download_retry_at = time.monotonic() + delay / 1000.0
         self.failed.emit(self._error)
         self.changed.emit()
+        if (auto_retry and self._want_file and not self._closed
+                and self._download_attempts <= self.AUTO_DOWNLOAD_RETRIES):
+            self._download_retry_timer.start(delay)
 
     def lease(self):
         if self._path is None: return None

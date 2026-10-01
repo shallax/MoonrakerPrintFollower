@@ -1683,6 +1683,15 @@ class MonitorQtTests(harness.MonitorQtTests):
             next_pause_fraction=None, next_pause_baked=False,
             filament_total=None)
         model._print_state = lambda: snapshot
+        snapshot.source_resolving = True
+        snapshot.source_downloading = False
+        model._publish()
+        self.assertEqual(model.plateSourceStatus, "Resolving G-code for precise tracking")
+        self.assertTrue(model.plateSourceBusy)
+        self.assertTrue(model.plateSourceResolving)
+        self.assertEqual(model.plateSourceProgress, -1.0)
+        snapshot.source_resolving = False
+        snapshot.source_downloading = True
         for fraction in (0.0, 0.42, 1.0):
             snapshot.download_fraction = fraction
             model._publish()
@@ -1690,14 +1699,23 @@ class MonitorQtTests(harness.MonitorQtTests):
             self.assertFalse(model.improvingEta)
             self.assertEqual(model.plateSourceStatus,
                              "Downloading G-code for precise tracking")
+            self.assertTrue(model.plateSourceBusy)
+            self.assertFalse(model.plateSourceResolving)
             self.assertEqual(model.plateSourceProgress, fraction)
         snapshot.download_fraction = None
         model._publish()
         self.assertEqual(model.plateSourceProgress, -1.0)
         snapshot.source_downloading = False
+        snapshot.source_error = True
+        model._publish()
+        self.assertEqual(model.plateSourceStatus,
+                         "G-code download failed; precise tracking unavailable")
+        self.assertFalse(model.plateSourceBusy)
+        self.assertFalse(model.plateSourceResolving)
+        self.assertEqual(model.plateSourceProgress, -1.0)
+        snapshot.source_error = False
         model._publish()
         self.assertEqual(model.plateSourceStatus, "")
-        self.assertEqual(model.plateSourceProgress, -1.0)
         model._print_state = original
 
     def test_publish_coerces_every_optional_snapshot_field(self):

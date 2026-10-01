@@ -1448,6 +1448,15 @@ if QT_AVAILABLE:
         def plateSourceStatus(self):
             return self._source_status
 
+        @pyqtProperty(bool, notify=plateProgressChanged)
+        def plateSourceBusy(self):
+            return self._source_status in (
+                "Resolving G-code for precise tracking",
+                "Downloading G-code for precise tracking")
+
+        @pyqtProperty(bool, notify=plateProgressChanged)
+        def plateSourceResolving(self):
+            return self._source_status == "Resolving G-code for precise tracking"
         @pyqtProperty(float, notify=plateProgressChanged)
         def plateSourceProgress(self):
             return self._source_progress

@@ -57,6 +57,189 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
             restarted.identity, "part.gcode",
             harness.os.path.join(harness.os.path.dirname(restarted.path), "missing.gcode")))
 
+    def test_file_demand_retries_failed_metadata_before_persisting_source(self):
+        root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
+        self.addCleanup(harness.shutil.rmtree, root, True)
+        cache = self.qt.load("RawSourceCache").RawSourceCache(root, 1024 * 1024)
+        self.files.bind_cache(cache)
+        payload = b"G1 X10\n"
+        self.files.bind(("part.gcode", len(payload), 1))
+        replies = [self._reply_double(payload=payload, size=len(payload))
+                   for _ in range(2)]
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), replies[len(gets) - 1])[1])
+        self.files.request_file()
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        self.assertEqual(len(requests), 1)
+        self.assertTrue(self.files.source_resolving)
+        requests[-1].callback(None, "metadata timeout")
+        self.assertFalse(self.files.source_resolving)
+        self.assertFalse(self.files.metadata_complete)
+        self.assertEqual(len(gets), 1, "fallback must not block the first transfer")
+        replies[0].readyRead.emit()
+        replies[0].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        self.assertFalse(harness.os.path.exists(cache._path(self._identity("part.gcode", len(payload)))))
+
+        self.files.request_file()
+        self.assertEqual(len([r for r in self.transport.requests
+                              if r.channel == "metadata"]), 1, "backoff was ignored")
+        self.files._metadata_retry_at = harness.time.monotonic() - 1
+        self.files.request_file()
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        self.assertEqual(len(requests), 2)
+        self.files.request_file()
+        self.assertEqual(len([r for r in self.transport.requests
+                              if r.channel == "metadata"]), 2, "pending retry was duplicated")
+        requests[-1].callback({"result": {"size": len(payload), "modified": 1}}, None)
+        self.assertTrue(self.files._source_metadata_verified)
+        self.assertEqual(len(gets), 2, "unverified working file must not become durable")
+        replies[1].readyRead.emit()
+        replies[1].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        self.assertTrue(self._wait(lambda: harness.os.path.isfile(cache._path(self.files.identity))))
+        with open(cache._path(self.files.identity), "rb") as handle:
+            self.assertEqual(handle.read(), payload)
+
+    def test_failed_metadata_retries_after_backoff_even_when_download_is_ready(self):
+        root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
+        self.addCleanup(harness.shutil.rmtree, root, True)
+        cache = self.qt.load("RawSourceCache").RawSourceCache(root, 1024 * 1024)
+        self.files.bind_cache(cache)
+        self.files.METADATA_RETRY_DELAYS_MS = (100,)
+        payload = b"G1 X10\n"
+        self.files.bind(("part.gcode", len(payload), 1))
+        replies = [self._reply_double(payload=payload, size=len(payload))
+                   for _ in range(2)]
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), replies[len(gets) - 1])[1])
+        self.files.request_file()
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback(None, "metadata timeout")
+        replies[0].readyRead.emit()
+        replies[0].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        self.assertFalse(harness.os.path.isfile(cache._path(self._identity("part.gcode", len(payload)))))
+
+        self.assertTrue(self._wait(lambda: len([r for r in self.transport.requests
+                                               if r.channel == "metadata"]) == 2))
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback({"result": {"size": len(payload), "modified": 1}}, None)
+        self.assertEqual(len(gets), 2)
+        replies[1].readyRead.emit()
+        replies[1].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        self.assertTrue(self._wait(lambda: harness.os.path.isfile(cache._path(self.files.identity))))
+        self.files.request_file()
+        self.assertEqual(len([r for r in self.transport.requests
+                              if r.channel == "metadata"]), 2)
+
+    def test_cross_volume_publication_survives_service_close_without_blocking_ui(self):
+        import errno
+        cache_module = self.qt.load("RawSourceCache")
+        root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
+        self.addCleanup(harness.shutil.rmtree, root, True)
+        cache = cache_module.RawSourceCache(root, 1024 * 1024)
+        self.files.bind_cache(cache)
+        payload = b"G1 X10\n"
+        self.files.bind(("part.gcode", len(payload), 1))
+        reply = self._reply_double(payload=payload, size=len(payload))
+        self.transport.network = harness.SimpleNamespace(get=lambda request: reply)
+        entered = harness.threading.Event()
+        release = harness.threading.Event()
+        self.addCleanup(release.set)
+        original_copy = cache_module.shutil.copyfile
+        workers = []
+
+        def gated_copy(source, destination):
+            workers.append(harness.threading.current_thread())
+            entered.set()
+            release.wait(5)
+            return original_copy(source, destination)
+
+        with harness.patch.object(cache_module.os, "link",
+                                  side_effect=OSError(errno.EXDEV, "cross-volume link")), \
+                harness.patch.object(cache_module.shutil, "copyfile", side_effect=gated_copy):
+            self.files.request_file()
+            request = [r for r in self.transport.requests if r.channel == "metadata"][-1]
+            request.callback({"result": {"size": len(payload), "modified": 1}}, None)
+            reply.readyRead.emit()
+            reply.finished.emit()
+            self.assertTrue(self._wait(entered.is_set))
+            self.assertFalse(workers[0].daemon, "normal application exit would lose the copy")
+            self.assertTrue(self.files.phase == "ready")
+            identity = self.files.identity
+            self.assertFalse(harness.os.path.exists(cache._path(identity)))
+            self.files.close()
+            release.set()
+            self.assertTrue(self._wait(lambda: harness.os.path.isfile(
+                cache._path(identity))))
+        with open(cache._path(identity), "rb") as handle:
+            self.assertEqual(handle.read(), payload)
+
+    def test_raw_cache_publication_failure_logs_and_releases_the_working_file(self):
+        module = self.qt.load("RemoteFileService")
+        root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
+        self.addCleanup(harness.shutil.rmtree, root, True)
+        cache = self.qt.load("RawSourceCache").RawSourceCache(root, 1024 * 1024)
+        self.files.bind_cache(cache)
+        identity = self._identity("part.gcode", 7)
+        self.files.bind(("part.gcode", 7, 1))
+        self.files._identity = identity
+        self.files._source_metadata_verified = True
+        source = harness.os.path.join(root, "working.gcode")
+        with open(source, "wb") as handle:
+            handle.write(b"G1 X10\n")
+        self.files._path = source
+        with harness.patch.object(module, "_log_cache_warning") as warning, \
+                harness.patch.object(cache, "publish", side_effect=OSError("disk full")):
+            self.files._publish_current()
+            self.assertTrue(self._wait(lambda: warning.call_count == 1))
+            self.assertNotIn(source, self.files._leases)
+            self.assertFalse(harness.os.path.exists(cache._path(identity)))
+
+        self.files._cache_published_path = None
+        with harness.patch.object(module, "_log_cache_warning") as warning, \
+                harness.patch.object(module.threading.Thread, "start",
+                                     side_effect=RuntimeError("worker unavailable")):
+            self.files._publish_current()
+            self.assertEqual(warning.call_count, 1)
+            self.assertNotIn(source, self.files._leases)
+
+    def test_raw_cache_restore_error_logs_and_falls_back_to_network(self):
+        module = self.qt.load("RemoteFileService")
+        root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
+        self.addCleanup(harness.shutil.rmtree, root, True)
+        cache = self.qt.load("RawSourceCache").RawSourceCache(root, 1024 * 1024)
+        identity = self._identity("part.gcode", 7)
+        source = harness.os.path.join(root, "seed.gcode")
+        with open(source, "wb") as handle:
+            handle.write(b"G1 X10\n")
+        cache.unpin(cache.publish(identity, identity.filename, source))
+        self.files.bind_cache(cache)
+        self.files.bind(("part.gcode", 7, 1))
+        reply = self._reply_double(payload=b"G1 X10\n", size=7)
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), reply)[1])
+
+        def failed_restore(*args, **kwargs):
+            kwargs["on_error"](OSError("unreadable cache"))
+            return False
+
+        with harness.patch.object(cache, "restore", side_effect=failed_restore), \
+                harness.patch.object(module, "_log_cache_warning") as warning:
+            self.files.request_file()
+            request = [r for r in self.transport.requests if r.channel == "metadata"][-1]
+            request.callback({"result": {"size": 7, "modified": 1}}, None)
+            self.assertTrue(self._wait(lambda: warning.call_count == 1))
+            self.assertTrue(self._wait(lambda: len(gets) == 1))
+            self.assertTrue(self.files._cache_restore_failed)
+            reply.finished.emit()
+            self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+
     def test_metadata_change_during_download_refuses_stale_source(self):
         root = harness.tempfile.mkdtemp(prefix="raw-cache-test-")
         self.addCleanup(harness.shutil.rmtree, root, True)
@@ -328,6 +511,41 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
         self.assertTrue(self._wait(lambda: self.files.phase == "error"))
         self.assertEqual(self.files._download_attempts, 1)
         self.assertGreater(self.files._download_retry_at, harness.time.monotonic())
+
+    def test_download_failure_retries_without_another_demand_but_stops_after_two(self):
+        from PyQt6.QtNetwork import QNetworkReply
+        self.files.DOWNLOAD_RETRY_DELAYS_MS = (30, 30, 30)
+        replies = [self._reply_double(error=True) for _ in range(3)]
+        for reply in replies:
+            reply._error = QNetworkReply.NetworkError.TimeoutError
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), replies[len(gets) - 1])[1])
+        self.files.request_file()
+        replies[0].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.assertTrue(self._wait(lambda: len(gets) == 2),
+                        "a ready compact index must not strand a timed-out source")
+        replies[1].finished.emit()
+        self.assertTrue(self._wait(lambda: len(gets) == 3))
+        replies[2].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.assertFalse(self.files._download_retry_timer.isActive())
+        self.qt.events(100)
+        self.assertEqual(len(gets), 3, "a failed link must not retry forever")
+
+    def test_deterministic_download_failure_does_not_schedule_a_full_reget(self):
+        self.files.DOWNLOAD_RETRY_DELAYS_MS = (30,)
+        reply = self._reply_double(error=True)
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), reply)[1])
+        self.files.request_file()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.assertFalse(self.files._download_retry_timer.isActive())
+        self.qt.events(100)
+        self.assertEqual(len(gets), 1, "a deterministic server refusal was retried")
 
     def test_abort_retires_the_writer_without_a_gui_thread_join(self):
         gate = harness.threading.Event()  # unset: the writer parks on its first write

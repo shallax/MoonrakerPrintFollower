@@ -1,8 +1,10 @@
+import errno
 import os
 import tempfile
 import unittest
 from dataclasses import asdict
 from functools import partial
+from unittest.mock import patch
 
 from mpf.gcode.IndexCache import PersistentIndexCache
 from mpf.gcode.GCodeIndex import build_index_from_bytes
@@ -69,6 +71,72 @@ class RawSourceCacheTests(unittest.TestCase):
             handle.write(b"G1")
         self.assertFalse(self.cache.restore(self.identity, "part.gcode",
                                             os.path.join(self.temp.name, "restored.gcode")))
+
+    def test_cross_volume_publication_is_atomic_and_rejects_short_copies(self):
+        with patch("mpf.gcode.RawSourceCache.os.link",
+                   side_effect=OSError(errno.EXDEV, "cross-volume link")):
+            pin = self.cache.publish(self.identity, self.identity.filename, self.source)
+        destination = self.cache._path(self.identity)
+        with open(destination, "rb") as handle:
+            self.assertEqual(handle.read(), b"G1 X10\n")
+        self.cache.unpin(pin)
+        os.unlink(destination)
+
+        def short_copy(_source, target):
+            with open(target, "wb") as handle:
+                handle.write(b"G1")
+
+        with patch("mpf.gcode.RawSourceCache.os.link",
+                   side_effect=OSError(errno.EXDEV, "cross-volume link")), \
+                patch("mpf.gcode.RawSourceCache.shutil.copyfile", side_effect=short_copy):
+            with self.assertRaisesRegex(OSError, "incomplete"):
+                self.cache.publish(self.identity, self.identity.filename, self.source)
+        self.assertFalse(os.path.exists(destination))
+        self.assertEqual(os.listdir(os.path.dirname(destination)), [])
+
+    def test_restore_copy_reports_failures_and_rechecks_source_size(self):
+        pin = self.cache.publish(self.identity, self.identity.filename, self.source)
+        destination = os.path.join(self.temp.name, "restored.gcode")
+        errors = []
+
+        def fail_progress(_copied):
+            raise OSError("disk failed")
+
+        with patch("mpf.gcode.RawSourceCache.os.link",
+                   side_effect=OSError(errno.EXDEV, "cross-volume link")):
+            self.assertFalse(self.cache.restore(
+                self.identity, self.identity.filename, destination,
+                progress=fail_progress,
+                on_error=errors.append))
+            self.assertEqual(str(errors[0]), "disk failed")
+            self.assertFalse(os.path.exists(destination))
+
+            def shorten_source(_copied):
+                with open(self.cache._path(self.identity), "wb") as handle:
+                    handle.write(b"G1")
+
+            self.assertFalse(self.cache.restore(
+                self.identity, self.identity.filename, destination,
+                progress=shorten_source))
+        self.assertFalse(os.path.exists(destination))
+        self.cache.unpin(pin)
+
+    def test_retired_namespace_and_stale_temporary_file_are_not_published(self):
+        weak = RemoteFileIdentity("part.gcode", 7)
+        self.assertIsNone(self.cache.publish(weak, weak.filename, self.source))
+        folder = os.path.dirname(self.cache._path(self.identity))
+        os.makedirs(folder)
+        stale = os.path.join(folder, "source.gcode.tmp-0-dead")
+        with open(stale, "wb"):
+            pass
+        with patch("mpf.gcode.RawSourceCache.temporary_owner_alive", return_value=False):
+            self.cache.sweep()
+        self.assertFalse(os.path.exists(stale))
+        os.rmdir(folder)
+        os.rmdir(self.root)
+        self.assertIsNone(self.cache.publish(self.identity, self.identity.filename, self.source))
+        self.cache.sweep()
+        self.cache.prune()
 
     def test_large_source_and_derived_files_share_budget(self):
         size = 467_500_381

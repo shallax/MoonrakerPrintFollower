@@ -36,7 +36,13 @@ them. It also includes these visible fixes:
 - Source-download percentage updates during partial responses without waiting
   for a status poll, even with a cached index. Prepared geometry can refine
   the follower's physical split before raw arrays hydrate, without a file
-  lease; live extrusion distinguishes travel crossings.
+  lease; live extrusion distinguishes travel crossings. Missing-source
+  metadata lookup has an indeterminate indicator, while a failed download
+  leaves an explicit unavailable caption rather than an endless progress
+  indicator. Backoff retries are bounded; timed-out metadata is retried
+  before a raw source can be persisted. Under a slow link, the bounded
+  stream resumes when its writer drains below the low-water mark, including
+  an exact-threshold pause that previously could strand buffered bytes.
 
 Implementation and compatibility notes:
 

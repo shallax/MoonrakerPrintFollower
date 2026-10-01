@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -1539,6 +1540,27 @@ class _FileServiceCase(_QtCase):
         reply.finished.emit()
         self.events(60)
 
+    def park_writer(self, op):
+        entered = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        original = op.target.write
+
+        def gated_write(chunk):
+            entered.set()
+            if not release.wait(2):
+                raise OSError("writer gate timed out")
+            return original(chunk)
+
+        op.target.write = gated_write
+        return entered, release
+
+    def wait_for_received(self, op, size):
+        deadline = time.monotonic() + 2
+        while op.received < size and time.monotonic() < deadline:
+            self.events(5)
+        self.assertEqual(op.received, size, "paused reply was not drained after the writer caught up")
+
 
 class RemoteFileServiceRootSweepTests(_QtCase):
     def test_a_boot_sweeps_stale_session_roots_but_spares_fresh_ones(self):
@@ -1754,6 +1776,24 @@ class RemoteFileServiceMetadataTests(_FileServiceCase):
 
 
 class RemoteFileServiceDownloadTests(_FileServiceCase):
+    def test_exact_low_water_crossing_resumes_buffered_job_reply(self):
+        reply = self.start_job(size=10)
+        op = self.service._download
+        op.HIGH_WATER_BYTES = 8
+        op.LOW_WATER_BYTES = 4
+        entered, release = self.park_writer(op)
+        reply.push(b"1234")
+        reply.readyRead.emit()
+        self.assertTrue(entered.wait(2))
+        reply.push(b"5678")
+        reply.readyRead.emit()
+        self.assertTrue(op.reading_paused)
+        reply.push(b"90")
+        release.set()
+        self.wait_for_received(op, 10)
+        self.finish_download(reply)
+        self.assertEqual(self.service.phase, "ready")
+
     def test_a_job_download_lands_the_file_and_clears_the_error(self):
         reply = self.start_job()
         self.assertEqual(self.service.phase, "downloading")
@@ -2087,6 +2127,25 @@ class RemoteFileServiceLeaseTests(_FileServiceCase):
 
 
 class RemoteFileServiceOneShotTests(_FileServiceCase):
+    def test_exact_low_water_crossing_resumes_buffered_one_shot_reply(self):
+        download, reply, delivered = self.start_one_shot(declared=10)
+        op = download._op
+        op.HIGH_WATER_BYTES = 8
+        op.LOW_WATER_BYTES = 4
+        entered, release = self.park_writer(op)
+        reply.push(b"1234")
+        reply.readyRead.emit()
+        self.assertTrue(entered.wait(2))
+        reply.push(b"5678")
+        reply.readyRead.emit()
+        self.assertTrue(op.reading_paused)
+        reply.push(b"90")
+        release.set()
+        self.wait_for_received(op, 10)
+        self.finish_one_shot(reply)
+        self.assertEqual(len(delivered), 1)
+        self.assertIsNone(delivered[0][1])
+
     def start_one_shot(self, relpath="sub/part.gcode", declared=8):
         reply = FakeReply(pairs=[(b"Content-Length", str(declared).encode())])
         self.transport.network.replies.append(reply)

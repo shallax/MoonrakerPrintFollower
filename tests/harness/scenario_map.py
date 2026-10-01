@@ -468,9 +468,21 @@ EXCLUSIONS = {
     },
     "plateSourceStatus": {
         "reason": "read-only model status for both source-download captions",
-        "evidence": "test_monitor_model_runtime: download and ready transitions",
+        "evidence": "test_monitor_model_runtime: downloading, failed and ready transitions",
         "date": "2026-10-01",
-        "recheck": "a native scenario streams and asserts source status",
+        "recheck": "a native scenario asserts source download failure and status",
+    },
+    "plateSourceBusy": {
+        "reason": "read-only indicator gate; a failure caption must not animate",
+        "evidence": "test_monitor_model_runtime: busy resolving/transferring, idle on failure",
+        "date": "2026-10-01",
+        "recheck": "a native scenario asserts source resolution, transfer and failure",
+    },
+    "plateSourceResolving": {
+        "reason": "read-only metadata phase for the missing-source indicator",
+        "evidence": "test_monitor_model_runtime: resolving is indeterminate, not a download",
+        "date": "2026-10-01",
+        "recheck": "a native scenario asserts source metadata lookup before a download",
     },
     "plateDownloadProgressRow": {
         "reason": "noninteractive progress readout; the enclosing download action is mapped",

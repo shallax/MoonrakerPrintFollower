@@ -58,6 +58,8 @@ class PrintSnapshot:
     # A restored index can be ready while its session-only source is
     # downloading again; compact layers lack exact arrays until it lands.
     source_downloading: bool = False
+    source_resolving: bool = False
+    source_error: bool = False
     indexing: bool = False
     # The index build's byte-offset fraction (the scanner's own
     # progress), None while not indexing.

@@ -325,22 +325,30 @@ class DownloadOperationTests(unittest.TestCase):
         self.assertIsNone(operation.queue.get())
 
     def test_the_drain_callback_fires_once_per_above_to_below_crossing(self):
-        operation = self.operation(RecordingTarget())
+        entered = threading.Event()
+        release = threading.Event()
+
+        class GatedTarget(RecordingTarget):
+            def write(self, data):
+                entered.set()
+                if not release.wait(2):
+                    raise OSError("writer gate timed out")
+                return super().write(data)
+
+        operation = self.operation(GatedTarget())
         operation.LOW_WATER_BYTES = 4
+        operation.HIGH_WATER_BYTES = 8
         drained = []
         drained_event = threading.Event()
         operation.on_writer_drained = lambda: (drained.append(1), drained_event.set())
-        # Backlog 100 bytes over the mark: no crossing yet.
-        operation.received = 100
-        operation.queue.put(b"a")
-        self.assertTrue(wait_for(lambda: operation.written == 1))
-        self.assertEqual(drained, [])
-        # Below the mark: one crossing, one callback.
-        operation.received = 6
-        operation.queue.put(b"b")
+        operation.enqueue(b"aaaa")
+        self.assertTrue(entered.wait(2))
+        operation.enqueue(b"bbbb")
+        self.assertTrue(operation.reading_paused)
+        release.set()
         self.assertTrue(drained_event.wait(2.0))
-        operation.queue.put(b"c")  # already drained: no second callback
-        self.assertTrue(wait_for(lambda: operation.written == 3))
+        operation.enqueue(b"c")  # already drained: no second callback
+        self.assertTrue(wait_for(lambda: operation.written == 9))
         self.assertEqual(drained, [1])
 
     def test_a_write_failure_is_latched_and_the_target_still_closes(self):

@@ -460,15 +460,19 @@ class SectionContentSizingTests(harness.RealEngineTestCase):
                                                      "progress must elide, never wrap into another row")
                             if section_id == "job" and model.get("plateSourceStatus"):
                                 source = self.find(section, "moonrakerJobSourceProgress")
-                                self.assertTrue(source.property("busy"))
-                                self.assertTrue(source.isVisible())
-                                self.assertAlmostEqual(source.property("progress"),
-                                                       model["plateSourceProgress"])
-                                percent = (round(model["plateSourceProgress"] * 100)
-                                           if model["plateSourceProgress"] >= 0 else None)
-                                phase = "G-code download" + (f" {percent}%" if percent is not None else "")
-                                self.assertTrue([item for item in source.findChildren(harness.QObject)
-                                                 if item.property("text") == phase])
+                                busy = bool(model.get("plateSourceBusy"))
+                                self.assertEqual(bool(source.property("busy")), busy)
+                                self.assertEqual(source.isVisible(), busy)
+                                if busy:
+                                    self.assertAlmostEqual(source.property("progress"),
+                                                           model["plateSourceProgress"])
+                                    percent = (round(model["plateSourceProgress"] * 100)
+                                               if model["plateSourceProgress"] >= 0 else None)
+                                    phase = ("G-code metadata" if model.get("plateSourceResolving")
+                                             else "G-code download")
+                                    phase += f" {percent}%" if percent is not None else ""
+                                    self.assertTrue([item for item in source.findChildren(harness.QObject)
+                                                     if item.property("text") == phase])
         self.assertFalse([line for line in harness._APPLICATION["messages"][start:]
                           if "polish loop" in line.lower() or "binding loop" in line.lower()])
 
@@ -499,14 +503,24 @@ class SectionContentSizingTests(harness.RealEngineTestCase):
                                                ("Downloading", 1), ("Indexing", -1))]
         cached_source = [dict(base, printIndexReady=True,
                               plateSourceStatus="Downloading G-code for precise tracking",
+                              plateSourceBusy=True,
                               plateSourceProgress=progress)
                          for progress in (-1, 0, .42, 1)]
+        resolving_source = dict(base, printIndexReady=True,
+                                plateSourceStatus="Resolving G-code for precise tracking",
+                                plateSourceBusy=True, plateSourceResolving=True,
+                                plateSourceProgress=-1)
+        failed_source = dict(base, printIndexReady=True,
+                             plateSourceStatus="G-code download failed; precise tracking unavailable",
+                             plateSourceBusy=False, plateSourceProgress=-1)
         paused = dict(base, monitorState="Paused", monitorEta="Paused", monitorElapsed="123:45:56",
                       monitorFinish="Wednesday 23:59 + 12 days", monitorLayer="12345 / 50000",
                       monitorSpeed="50000%", monitorFlow="50000%", filamentUsed="123456.78 m",
                       filamentRemaining="999999.99 m", monitorAccelLimit="100000 mm/s²",
                       monitorVelocity="12345.6 mm/s", monitorFlowRate="-12345.6 mm³/s")
-        self.check_section("JobSection.qml", "job", [base, *downloading, *cached_source, paused, base,
+        self.check_section("JobSection.qml", "job", [base, *downloading, resolving_source,
+                           *cached_source,
+                           failed_source, paused, base,
                            dict(base, printIndexReady=True, monitorLayer="2 / 100",
                            monitorLayerProgress=.3, monitorEta="00:10:00", monitorPositionX="10.0",
                            monitorPositionY="20.0", monitorPositionZ=".4")])

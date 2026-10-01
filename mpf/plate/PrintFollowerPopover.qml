@@ -521,9 +521,9 @@ MonitorPopOver {
                     objectName: "moonrakerFollowerSourceProgress"
                     Layout.fillWidth: true
                     visible: busy
-                    busy: root.printerModel != null && root.printerModel.plateSourceStatus !== ""
+                    busy: root.printerModel != null && root.printerModel.plateSourceBusy
                     progress: root.printerModel != null ? root.printerModel.plateSourceProgress : -1
-                    phase: "G-code download"
+                    phase: root.printerModel != null && root.printerModel.plateSourceResolving ? "G-code metadata" : "G-code download"
                 }
 
                 Timer {

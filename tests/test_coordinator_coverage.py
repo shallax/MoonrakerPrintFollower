@@ -899,20 +899,30 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
 
     def test_cached_index_source_progress_refreshes_without_another_status_poll(self):
         parts = self._plate_parts()
+        parts.files.path = ""
         for compact in (True, False):
             parts.index.view.compact = compact
+            parts.files.phase = "resolving"
+            parts.files.source_resolving = True
+            parts.files.changed.emit()
+            self.assertTrue(parts.coordinator.snapshot.source_resolving)
+            self.assertFalse(parts.coordinator.snapshot.source_downloading)
+            parts.files.source_resolving = False
             parts.files.phase = "downloading"
             for fraction in (None, 0.0, 0.42, 1.0):
                 parts.files.download_fraction = fraction
                 parts.files.changed.emit()
                 self.assertTrue(parts.coordinator.snapshot.index_ready)
                 self.assertTrue(parts.coordinator.snapshot.source_downloading)
+                self.assertFalse(parts.coordinator.snapshot.source_resolving)
+                self.assertFalse(parts.coordinator.snapshot.source_error)
                 self.assertEqual(parts.coordinator.snapshot.download_fraction, fraction)
             for phase in ("ready", "error"):
                 parts.files.phase = phase
                 parts.files.download_fraction = None
                 parts.files.changed.emit()
                 self.assertFalse(parts.coordinator.snapshot.source_downloading)
+                self.assertEqual(parts.coordinator.snapshot.source_error, phase == "error")
                 self.assertIsNone(parts.coordinator.snapshot.download_fraction)
 
     def test_a_baked_pause_blocks_the_manual_toggle_for_that_layer(self):
