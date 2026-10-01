@@ -9,7 +9,6 @@ import threading
 import time
 from types import MappingProxyType
 
-from UM.Logger import Logger
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
@@ -23,6 +22,12 @@ from ...moonraker.MoonrakerProtocol import download_endpoint, metadata_endpoint,
 # and an invalidated session must still say why the file went away.
 CANCELLED_BY_USER = "The download was cancelled"
 CANCELLED_BY_SESSION = "The printer connection changed; the download was cancelled"
+
+
+def _log_cache_warning(message, error):
+    from UM.Logger import Logger
+    Logger.log("w", message, error)
+
 
 # A day, for the pid-less legacy names only: the pre-4.6
 # accumulation. A root that carries its creating pid is swept the
@@ -689,7 +694,7 @@ class RemoteFileService(QObject):
         except RuntimeError as error:
             self._restore_op = None
             shutil.rmtree(directory, ignore_errors=True)
-            Logger.log("w", "Moonraker raw G-code cache restore worker could not start: %s", error)
+            _log_cache_warning("Moonraker raw G-code cache restore worker could not start: %s", error)
             return False
         self.changed.emit()
         return True
@@ -725,7 +730,7 @@ class RemoteFileService(QObject):
             shutil.rmtree(op["directory"], ignore_errors=True)
             self._cache_restore_failed = True
             if error is not None:
-                Logger.log("w", "Moonraker raw G-code cache restoration failed: %s", error)
+                _log_cache_warning("Moonraker raw G-code cache restoration failed: %s", error)
             self._advance()
         self.changed.emit()
 
@@ -752,12 +757,12 @@ class RemoteFileService(QObject):
             threading.Thread(target=write, name="mpf-raw-cache", daemon=True).start()
         except RuntimeError as error:
             self._release(path)
-            Logger.log("w", "Moonraker raw G-code cache worker could not start: %s", error)
+            _log_cache_warning("Moonraker raw G-code cache worker could not start: %s", error)
 
     def _on_cache_written(self, path, outcome):
         cache, marker, error = outcome
         if error is not None:
-            Logger.log("w", "Moonraker raw G-code cache publication failed: %s", error)
+            _log_cache_warning("Moonraker raw G-code cache publication failed: %s", error)
         if marker is not None:
             if path == self._path or self._leases.get(path, 0) > 1:
                 self._cache_pins[path] = (cache, marker)
