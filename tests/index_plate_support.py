@@ -664,7 +664,8 @@ class PreparedReopenPolicyTests(unittest.TestCase):
                 return
             QCoreApplication.processEvents()
             time.sleep(0.01)
-        self.fail("the prepared pass did not settle")
+        self.fail("the prepared pass did not settle (busy=%s, saved=%s)" %
+                  (bool(self.service._busy), self.service._prepared.saved))
 
     @staticmethod
     def _payload(layer):

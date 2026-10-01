@@ -32,10 +32,14 @@ class GpuCanvasIsolationTests(harness.PlateFaceRenderTests):
         self.assertAlmostEqual(face.property("_motionFrom"), 0,
                                msg="the first observed motion should animate from the new start")
         self.assertAlmostEqual(face.property("_motionTo"), 1)
-        self._pump_ms(80)
+        self._wait_until(
+            window, lambda _image: face.property("displayedMotion") > 0,
+            timeout=2.0)
         self.assertGreater(face.property("displayedMotion"), 0,
                            "the head should start moving during the handoff")
-        self._pump_ms(400)
+        self._wait_until(
+            window, lambda _image: face.property("displayedMotion") >= 0.99
+            and face.property("_handoffOpacity") <= 0.01, timeout=2.0)
         self.assertAlmostEqual(face.property("displayedMotion"), 1, places=2)
         self.assertAlmostEqual(face.property("_handoffOpacity"), 0, places=2)
         face.setProperty("attached", False)
