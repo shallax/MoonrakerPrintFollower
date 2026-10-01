@@ -636,7 +636,8 @@ which is the fixture-patching landmine, silently passing.
   now waits for motion to advance and the handoff to retire, rather than
   requiring them after fixed 80 ms and 400 ms pumps. The initial handoff,
   first motion and final state remain asserted; a stalled animation still fails
-  at the bounded deadline.
+  at the bounded deadline. The earlier-head macOS CI run `36844173204` failed
+  exactly at `displayedMotion == 0` after the fixed 80 ms pump.
 - `tests/test_index_prepared_reopen.py::test_the_pass_hands_the_interpreter_back_throughout_its_walk`
   retains its deterministic gate-ask and hand-back assertions. Its asynchronous
   pass gets a 60-second hang guard instead of a 30-second one; a shared Windows
@@ -646,7 +647,8 @@ which is the fixture-patching landmine, silently passing.
 
 ## Outstanding
 
-- One unit-leg run aborted on a segmentation fault instead of a test failure:
+- One unit leg of the local six-leg pre-commit hook (not CI) aborted on a
+  segmentation fault instead of a test failure:
   `PlateQt._derive_grey` and `PlateQt.png_file` crashed on the raster worker
   threads through `sip_api_convert_to_enum`. This ledger first wrote it up as
   load sensitivity; the artifact is a crash, so that reading is not established
@@ -654,7 +656,7 @@ which is the fixture-patching landmine, silently passing.
   the four unit-leg runs since have not reproduced it. On macOS, 256 renders
   and PNG publications each through a 16-thread Python pool and a 16-thread
   Qt pool also completed without a crash. That does not establish a cause or
-  close the Linux crash; the raster path already carries teardown-segfault
+  close the original pre-commit crash; the raster path already carries teardown-segfault
   guards.
 - The runner's legs and its step dispatch, and the capture gate, stay with the
   runner by decision rather than by omission — the reasoning is in Batch I's
