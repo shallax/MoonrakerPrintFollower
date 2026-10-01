@@ -8,8 +8,19 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.6.1
+- **Release:** 4.6.2
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 4.6.2
+
+Version 4.6.2 is an internal release. The plugin's implementation is
+decomposed into narrower owners with explicit inputs, with no new interface
+and no change to the documented behaviour.
+
+One fix ships with it: a thumbnail that fails to start no longer rebuilds
+the whole file listing. That failure published on the file manager's listing
+channel while the same logical failure at the reply published on the
+thumbnail channel alone; both report on the thumbnail channel now.
 
 ## What changed in 4.6.1
 

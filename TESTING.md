@@ -1,12 +1,23 @@
 # TESTING.md — the real-Cura UI test harness
 
-## Current release: 4.6.1
+## Current release: 4.6.2
+
+Version 4.6.2 decomposes the plugin's internals and changes no interface;
+its one behaviour change is a thumbnail fetch that cannot start publishing
+on the thumbnail channel instead of the file listing's. Its evidence is the
+whole suite, per-file coverage at the 95% bar, and byte-identical captures
+for every QML batch, which `make verify_captures` compares.
 
 Run the cross-platform test suite with `make run_tests JOBS=2`; use
 `make test_files FILES='tests.test_index_physical_progress tests.test_qml_settings' JOBS=1`
 for the indexed follower and settings slider regressions. The index tests
 exercise both continuous-Z vase G-code and conventional flat layers through
-the parser. Camera transport coverage lives in `tests.test_monitor_camera_runtime`,
+the parser. The extracted owners carry their own suites —
+`tests.test_plate_render_controller`, `tests.test_monitor_publish_transaction`,
+`tests.test_monitor_publication`, `tests.test_camera_recovery`,
+`tests.test_pause_at_layer_presentation`, `tests.test_plate_view_policy`,
+`tests.test_plate_painter` and `tests.test_prepared_store`.
+Camera transport coverage lives in `tests.test_monitor_camera_runtime`,
 `tests.test_moonraker_mjpg` and `tests.test_qml_camera_controls`.
 `make lint`, `make verify_captures`, and `make package` cover the
 remaining local gates. The real-Cura UI harness below provides additional
