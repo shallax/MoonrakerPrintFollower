@@ -26,7 +26,9 @@ class GpuCanvasIsolationTests(harness.PlateFaceRenderTests):
         self._printer.setSplit(1)
         self._printer.setLayers({"prev": prior, "current": current, "next": None})
         self._printer.setAnchor(1)
-        self.pump(2)
+        self._wait_until(
+            window, lambda _image: face.property("_handoffOpacity") > 0,
+            timeout=2.0)
         self.assertGreater(face.property("_handoffOpacity"), 0,
                            "a live layer switch should soften the native replacement")
         self.assertAlmostEqual(face.property("_motionFrom"), 0,

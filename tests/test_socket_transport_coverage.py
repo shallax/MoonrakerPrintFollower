@@ -184,6 +184,18 @@ class _UpgradeResponder:
             pass
 
 
+class _Signal:
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+    def emit(self):
+        for callback in self.callbacks:
+            callback()
+
+
 class _DeadSocket:
     """A socket surface for the states Qt will not stage on demand."""
 
@@ -196,6 +208,10 @@ class _DeadSocket:
         self.written = []
         self.aborted = 0
         self.disconnects = 0
+        self.deleted = False
+        self.drained = 0
+        self.disconnected = _Signal()
+        self.readyRead = _Signal()
 
     def state(self):
         if self._unconnected:
@@ -213,6 +229,10 @@ class _DeadSocket:
     def flush(self) -> None:
         pass
 
+    def readAll(self):
+        self.drained += 1
+        return b""
+
     def disconnectFromHost(self) -> None:
         self.disconnects += 1
 
@@ -222,6 +242,7 @@ class _DeadSocket:
     def deleteLater(self) -> None:
         if self._delete_raises:
             raise RuntimeError("wrapped C/C++ object has been deleted")
+        self.deleted = True
 
 
 class _TransportHandler(PipeSafeHandler):
@@ -949,6 +970,11 @@ class SocketWriteTests(SocketCase):
         self.assertEqual(stub.written[0][0] & 0x0F, 0x8)  # a close frame
         self.assertEqual(stub.aborted, 0)
         self.assertEqual(stub.disconnects, 1)
+        self.assertFalse(stub.deleted, "the transport was deleted before the close drained")
+        stub.readyRead.emit()
+        self.assertEqual(stub.drained, 1, "late peer bytes were left unread on the retiring socket")
+        stub.disconnected.emit()
+        self.assertTrue(stub.deleted)
         self.assertIsNone(instance._socket)
 
     def test_stop_after_a_peer_close_does_not_double_the_frame(self):

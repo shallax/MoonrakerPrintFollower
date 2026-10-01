@@ -217,6 +217,21 @@ class SocketOwnerTests(unittest.TestCase):
         )
         self.assertEqual(owner.subscribed_names, [])
 
+    def test_restart_preserves_the_old_connections_close_frame(self):
+        owner = self.socket()
+        owner.start(self.url(), "", set(FIVE), set())
+        self.assertTrue(self.wait_signal(owner.upgraded))
+        owner.stop()
+        owner.start(self.url(), "", set(FIVE), set())
+        self.assertTrue(self.wait_signal(owner.upgraded),
+                        "the replacement connection did not upgrade")
+        self.assertEqual(len(self.server.handshakes), 2)
+        self.assertTrue(
+            self.wait_until(lambda: any(entry[0] == "close"
+                                        for entry in self.server.inbound)),
+            "the old socket lost its close frame during restart")
+        self.assertTrue(owner.is_upgraded)
+
 
 if __name__ == "__main__":
     unittest.main()
