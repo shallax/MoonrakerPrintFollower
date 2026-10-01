@@ -214,7 +214,10 @@ class MoonrakerSocket(QObject):
         if socket is not None:
             retiring = False
             try:
-                if not self._upgraded:
+                if not self._upgraded or socket.state() == QAbstractSocket.SocketState.UnconnectedState:
+                    # The peer may already have disconnected while the
+                    # upgrade flag still reflects the previous session.
+                    # Its disconnected signal cannot retire this socket again.
                     socket.abort()
                 elif close_frame:
                     # Keep the transport alive until Qt has sent the
