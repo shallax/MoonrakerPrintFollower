@@ -403,7 +403,7 @@ class RemoteFileService(QObject):
         self._metadata_retry_at = 0.0
         self._metadata_retry_timer = QTimer(self)
         self._metadata_retry_timer.setSingleShot(True)
-        self._metadata_retry_timer.timeout.connect(self._advance)
+        self._metadata_retry_timer.timeout.connect(self._retry_metadata)
         self._path = None
         self._path_identity = None
         self._cache = None
@@ -421,6 +421,7 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_auto_retry = False
         self._download_retry_timer = QTimer(self)
         self._download_retry_timer.setSingleShot(True)
         self._download_retry_timer.timeout.connect(self._retry_download)
@@ -567,6 +568,7 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_auto_retry = False
         self._download_retry_timer.stop()
         self.changed.emit()
 
@@ -646,12 +648,27 @@ class RemoteFileService(QObject):
             self._error = ""
             self._download_attempts = 0
             self._download_retry_at = 0.0
+            self._download_auto_retry = False
             self._download_retry_timer.stop()
         self._advance()
 
+    def _retry_metadata(self):
+        if self._closed or not self._job or not self._want_file:
+            return
+        self.request_metadata()
+        self._arm_metadata_retry()
+
+    def _arm_metadata_retry(self):
+        if (self._metadata_attempts > 0 and self._want_file
+                and not self._metadata_fetched and not self._metadata_pending
+                and not self._metadata_retry_timer.isActive()):
+            remaining = math.ceil((self._metadata_retry_at - time.monotonic()) * 1000)
+            if remaining > 0:
+                self._metadata_retry_timer.start(remaining)
+
     def _retry_download(self):
         self._advance()
-        if (self._error and self._want_file and not self._closed
+        if (self._error and self._download_auto_retry and self._want_file and not self._closed
                 and self._download_attempts <= self.AUTO_DOWNLOAD_RETRIES
                 and not self._download_retry_timer.isActive()):
             remaining = math.ceil((self._download_retry_at - time.monotonic()) * 1000)
@@ -659,20 +676,19 @@ class RemoteFileService(QObject):
 
     def _advance(self):
         if self._closed or not self._job: return
-        if self._error and self._want_file and time.monotonic() >= self._download_retry_at:
+        if (self._error and self._download_auto_retry and self._want_file
+                and time.monotonic() >= self._download_retry_at):
             # The error stays latched until the backoff expires; one timer
             # supplies bounded recovery even without another consumer demand.
             self._error = ""
+            self._download_auto_retry = False
             self._download_retry_timer.stop()
             self.changed.emit()
-        if self._error: return
         if (not self._metadata_fetched and not self._metadata_pending
                 and (self._identity is None or self._metadata_attempts > 0)):
             self.request_metadata()
-            if (self._metadata_attempts > 0 and self._want_file
-                    and not self._metadata_pending and not self._metadata_retry_timer.isActive()):
-                remaining = math.ceil((self._metadata_retry_at - time.monotonic()) * 1000)
-                self._metadata_retry_timer.start(max(1, remaining))
+            self._arm_metadata_retry()
+        if self._error: return
         if self._identity is not None and self._want_file and not self._path and self._download is None \
                 and self._restore_op is None:
             if self._restore_cached():
@@ -932,6 +948,7 @@ class RemoteFileService(QObject):
             self._path_identity = op.cache_identity
             self._download_attempts = 0
             self._download_retry_at = 0.0
+            self._download_auto_retry = False
             self._download_retry_timer.stop()
             if op.cache_identity is not None:
                 self._publish_current()
@@ -966,10 +983,11 @@ class RemoteFileService(QObject):
         self._download_attempts += 1
         delay = self.DOWNLOAD_RETRY_DELAYS_MS[min(self._download_attempts - 1, len(self.DOWNLOAD_RETRY_DELAYS_MS) - 1)]
         self._download_retry_at = time.monotonic() + delay / 1000.0
+        self._download_auto_retry = bool(
+            auto_retry and self._download_attempts <= self.AUTO_DOWNLOAD_RETRIES)
         self.failed.emit(self._error)
         self.changed.emit()
-        if (auto_retry and self._want_file and not self._closed
-                and self._download_attempts <= self.AUTO_DOWNLOAD_RETRIES):
+        if self._download_auto_retry and self._want_file and not self._closed:
             self._download_retry_timer.start(delay)
 
     def lease(self):

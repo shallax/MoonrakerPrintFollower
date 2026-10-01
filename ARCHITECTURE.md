@@ -474,9 +474,12 @@ indeterminate progress.
 
 Metadata completeness is separate from download identity: a failed metadata
 request installs a fallback identity so downloads proceed. File demand arms
-one nonblocking backoff timer even after a temporary file is ready; verified
-metadata then retires that unverified file and re-downloads before persistent
-publication. Only a successful response marks the run's metadata complete.
+one nonblocking backoff timer even after a temporary file is ready, independent
+of the download's error latch. Verified metadata then retires that unverified
+file and re-downloads before persistent publication; a deterministic download
+refusal stays latched until `request_file(retry=True)` from the explicit Load
+action; ordinary hydration demand (`request_file()`) cannot clear it. Only a successful
+response marks the run's metadata complete.
 The coordinator's Moonraker-metadata fallback carries the same discipline:
 the payload latches only on a completed fetch keyed by `(filename, job)`
 (request identity commits when the send starts, never before), a failed or
@@ -536,9 +539,9 @@ folder, never just its raw source, index or prepared representation; a pinned
 folder can temporarily exceed the budget even when the raw source alone exceeds
 the limit. After its last active lease retires, pruning removes the entire
 over-budget folder rather than stripping one representation.
-The default 2048 MiB budget accommodates
-a 467,500,381-byte source alongside its measured ~344 MiB prepared data and
-~1 MiB index. Older unmarked records containing 512 MiB upgrade to 2048 MiB:
+The default 2048 MiB budget accommodates the verified 467,498,252-byte source
+alongside its measured ~344 MiB prepared data and ~1 MiB index. Older unmarked
+records containing 512 MiB upgrade to 2048 MiB:
 the old serializer recorded the same 512 for inherited defaults and explicit
 choices, so it cannot safely distinguish them. New explicit 512 MiB choices
 carry a persisted marker and remain 512; all other saved bounds are preserved.

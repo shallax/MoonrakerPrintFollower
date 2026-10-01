@@ -484,7 +484,7 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
     def test_failure_latches_until_the_backoff_window_passes(self):
         failures = []
         self.files.failed.connect(failures.append)
-        self.files._fail("Connection refused")
+        self.files._fail("Connection refused", auto_retry=True)
         self.assertEqual(failures, ["Connection refused"])
         self.assertEqual(self.files.phase, "error")
         # Inside the window a consumer re-request must not hit the network.
@@ -546,6 +546,62 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
         self.assertFalse(self.files._download_retry_timer.isActive())
         self.qt.events(100)
         self.assertEqual(len(gets), 1, "a deterministic server refusal was retried")
+
+    def test_metadata_retry_survives_a_deterministic_download_error(self):
+        self.files.METADATA_RETRY_DELAYS_MS = (500,)
+        self.files.bind(("part.gcode", 7, 1))
+        reply = self._reply_double(error=True, payload=b"", size=7)
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), reply)[1])
+        self.files.request_file()
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback(None, "metadata timeout")
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.files._metadata_retry_at = harness.time.monotonic() - 1
+        self.files._metadata_retry_timer.start(1)
+        self.assertTrue(self._wait(lambda: len([r for r in self.transport.requests
+                                               if r.channel == "metadata"]) == 2))
+        self.assertEqual(len(gets), 1)
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback({"result": {"size": 7, "modified": 1}}, None)
+        self.assertTrue(self.files._source_metadata_verified)
+        self.assertEqual(self.files.phase, "error")
+        self.assertEqual(len(gets), 1)
+
+    def test_expired_deterministic_download_error_is_not_cleared_by_metadata_timer(self):
+        self.files.METADATA_RETRY_DELAYS_MS = (500,)
+        self.files.DOWNLOAD_RETRY_DELAYS_MS = (20,)
+        self.files.bind(("part.gcode", 7, 1))
+        reply = self._reply_double(error=True, payload=b"", size=7)
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), reply)[1])
+        self.files.request_file()
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback(None, "metadata timeout")
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.files._metadata_retry_at = harness.time.monotonic() - 1
+        self.files._download_retry_at = harness.time.monotonic() - 1
+        self.files._metadata_retry_timer.start(1)
+        self.assertTrue(self._wait(lambda: len([r for r in self.transport.requests
+                                               if r.channel == "metadata"]) == 2))
+        self.assertEqual(len(gets), 1, "metadata lookup restarted a refused full-file GET")
+        self.assertEqual(self.files.phase, "error")
+        requests = [r for r in self.transport.requests if r.channel == "metadata"]
+        requests[-1].callback({"result": {"size": 7, "modified": 1}}, None)
+        self.assertTrue(self.files._source_metadata_verified)
+        self.files.request_file()
+        self.assertEqual(len(gets), 1, "ordinary hydration demand retried a refused GET")
+        retried = self._reply_double(payload=b"G1 X10\n", size=7)
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), retried)[1])
+        self.files.request_file(retry=True)
+        self.assertEqual(len(gets), 2, "explicit Load did not retry the refused source")
+        retried.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
 
     def test_abort_retires_the_writer_without_a_gui_thread_join(self):
         gate = harness.threading.Event()  # unset: the writer parks on its first write

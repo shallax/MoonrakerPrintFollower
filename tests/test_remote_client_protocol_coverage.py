@@ -2037,7 +2037,7 @@ class RemoteFileServiceDownloadTests(_FileServiceCase):
 
     def test_the_download_restarts_once_the_backoff_window_passes(self):
         reply = self.start_job()
-        reply.fail("gone")
+        reply.fail("gone", error=QNetworkReply.NetworkError.TimeoutError)
         reply.push(b"12345678")
         reply.readyRead.emit()
         self.finish_download(reply)
