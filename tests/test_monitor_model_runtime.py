@@ -1670,6 +1670,36 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertFalse(model.improvingEta)
         model._print_state = original
 
+    def test_cached_index_keeps_the_source_download_visible(self):
+        model = self.monitor()
+        original = model._print_state
+        snapshot = harness.SimpleNamespace(
+            layer=harness.SimpleNamespace(index=0, total=10, source="", thickness=None),
+            estimated_time=None, metadata_complete=True, layer_eta=None,
+            layer_progress=0.0, index_ready=True,
+            download_fraction=0.0, source_downloading=True,
+            indexing=False, load_active=False, index_fraction=None,
+            next_pause_layer=None, next_pause_eta="",
+            next_pause_fraction=None, next_pause_baked=False,
+            filament_total=None)
+        model._print_state = lambda: snapshot
+        for fraction in (0.0, 0.42, 1.0):
+            snapshot.download_fraction = fraction
+            model._publish()
+            self.assertTrue(model.printIndexReady)
+            self.assertFalse(model.improvingEta)
+            self.assertEqual(model.plateSourceStatus,
+                             "Downloading G-code for precise tracking")
+            self.assertEqual(model.plateSourceProgress, fraction)
+        snapshot.download_fraction = None
+        model._publish()
+        self.assertEqual(model.plateSourceProgress, -1.0)
+        snapshot.source_downloading = False
+        model._publish()
+        self.assertEqual(model.plateSourceStatus, "")
+        self.assertEqual(model.plateSourceProgress, -1.0)
+        model._print_state = original
+
     def test_publish_coerces_every_optional_snapshot_field(self):
         # The live crash: an Optional snapshot field fed None into a
         # typed value_property raised "unable to convert a Python
@@ -2907,6 +2937,8 @@ Item {
             "visible: gridVertical.height > 0 && gridVertical.contentY > 2",
             "visible: gridVertical.height > 0 && gridVertical.contentY < gridVertical.contentHeight - gridVertical.height - 2",
             "visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== \"\"",
+            "visible: root.printerModel != null && root.printerModel.plateSourceStatus !== \"\"",
+            "visible: busy",
             "visible: root.printerModel != null && root.activeRows.length === 0",
             "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",
             "visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0",

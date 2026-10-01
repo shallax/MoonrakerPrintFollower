@@ -458,6 +458,17 @@ class SectionContentSizingTests(harness.RealEngineTestCase):
                                                                 label, "Number(wrapMode)")
                                     self.assertEqual(expression.evaluate()[0], 0,
                                                      "progress must elide, never wrap into another row")
+                            if section_id == "job" and model.get("plateSourceStatus"):
+                                source = self.find(section, "moonrakerJobSourceProgress")
+                                self.assertTrue(source.property("busy"))
+                                self.assertTrue(source.isVisible())
+                                self.assertAlmostEqual(source.property("progress"),
+                                                       model["plateSourceProgress"])
+                                percent = (round(model["plateSourceProgress"] * 100)
+                                           if model["plateSourceProgress"] >= 0 else None)
+                                phase = "G-code download" + (f" {percent}%" if percent is not None else "")
+                                self.assertTrue([item for item in source.findChildren(harness.QObject)
+                                                 if item.property("text") == phase])
         self.assertFalse([line for line in harness._APPLICATION["messages"][start:]
                           if "polish loop" in line.lower() or "binding loop" in line.lower()])
 
@@ -486,12 +497,16 @@ class SectionContentSizingTests(harness.RealEngineTestCase):
                        for phase, progress in (("Resolving", -1), ("Downloading", 0),
                                                ("Downloading", .09), ("Downloading", .99),
                                                ("Downloading", 1), ("Indexing", -1))]
+        cached_source = [dict(base, printIndexReady=True,
+                              plateSourceStatus="Downloading G-code for precise tracking",
+                              plateSourceProgress=progress)
+                         for progress in (-1, 0, .42, 1)]
         paused = dict(base, monitorState="Paused", monitorEta="Paused", monitorElapsed="123:45:56",
                       monitorFinish="Wednesday 23:59 + 12 days", monitorLayer="12345 / 50000",
                       monitorSpeed="50000%", monitorFlow="50000%", filamentUsed="123456.78 m",
                       filamentRemaining="999999.99 m", monitorAccelLimit="100000 mm/s²",
                       monitorVelocity="12345.6 mm/s", monitorFlowRate="-12345.6 mm³/s")
-        self.check_section("JobSection.qml", "job", [base, *downloading, paused, base,
+        self.check_section("JobSection.qml", "job", [base, *downloading, *cached_source, paused, base,
                            dict(base, printIndexReady=True, monitorLayer="2 / 100",
                            monitorLayerProgress=.3, monitorEta="00:10:00", monitorPositionX="10.0",
                            monitorPositionY="20.0", monitorPositionZ=".4")])

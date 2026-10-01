@@ -2,6 +2,24 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_cached_follower_shows_the_source_download_until_ready(self):
+        monitor, _window, _face = self._follower_popover()
+        status = monitor.findChild(harness.QQuickItem, "moonrakerFollowerSourceStatus")
+        indicator = monitor.findChild(harness.QQuickItem, "moonrakerFollowerSourceProgress")
+        self.assertIsNotNone(status)
+        self.assertIsNotNone(indicator)
+        self.assertFalse(status.isVisible())
+        self._printer.setSourceDownload("Downloading G-code for precise tracking", 0.42)
+        self.pump(10)
+        self.assertTrue(status.isVisible())
+        self.assertTrue(indicator.isVisible())
+        self.assertEqual(status.property("text"), "Downloading G-code for precise tracking")
+        self.assertAlmostEqual(indicator.property("progress"), 0.42)
+        self._printer.setSourceDownload("", -1)
+        self.pump(10)
+        self.assertFalse(status.isVisible())
+        self.assertFalse(indicator.isVisible())
+
     def test_touchpad_zoom_uses_pixel_distance_and_wheel_keeps_its_notch(self):
         from PyQt6.QtCore import QPoint, QPointF, Qt
         from PyQt6.QtGui import QGuiApplication, QWheelEvent

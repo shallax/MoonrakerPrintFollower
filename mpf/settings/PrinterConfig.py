@@ -147,8 +147,11 @@ class PrinterConfig:
     aux_interval_ms: int = 2500
     console_interval_ms: int = 1000
     # The per-machine persistent cache bound (MiB): THIS machine's
-    # own cache-v2 directory, never the other machines'.
-    cache_max_mb: int = 512
+    # own cache-v2 directory, never the other machines'. Old saves
+    # serialized the inherited 512 just like an explicit 512, so an
+    # unmarked 512 migrates to 2048. New 512 choices carry a marker.
+    cache_max_mb: int = 2048
+    cache_max_mb_explicit: bool = False
     path_follow: bool = True
     # Auto-improve-ETA opt-in: the follower learns the print's drift
     # from observed layer progress and rescales the remaining ETA.
@@ -262,8 +265,11 @@ class PrinterConfig:
             except (TypeError, ValueError):
                 data[key] = getattr(defaults, key)
 
+        data["cache_max_mb_explicit"] = raw.get("cache_max_mb_explicit") is True
         try:
             cache_max = int(data["cache_max_mb"])
+            if cache_max == 512 and not data["cache_max_mb_explicit"]:
+                cache_max = defaults.cache_max_mb
             data["cache_max_mb"] = max(16, min(4096, cache_max))
         except (TypeError, ValueError):
             data["cache_max_mb"] = defaults.cache_max_mb
@@ -635,6 +641,8 @@ class PrinterConfigStore:
         if not isinstance(raw, dict):
             raw = {}
         raw.update(asdict(config))
+        if config.cache_max_mb == 512:
+            raw["cache_max_mb_explicit"] = True
         data[key] = raw
         self._save_all(data)
 
@@ -642,6 +650,8 @@ class PrinterConfigStore:
         config = self.get()
         data = asdict(config)
         data.update(changes)
+        if "cache_max_mb" in changes:
+            data["cache_max_mb_explicit"] = True
         updated = PrinterConfig.from_dict(data)
         self.set(updated)
         return updated

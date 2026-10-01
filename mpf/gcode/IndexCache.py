@@ -451,8 +451,8 @@ class PersistentIndexCache:
 
     def prune(self, keep: Optional[str] = None) -> None:
         """The print-level policy (the review's unified-lifecycle
-        finding): one print folder's total cost is the index AND the
-        prepared representation together, and an evicted print loses
+        finding): one print folder's total cost includes its raw source,
+        index and prepared representation, and an evicted print loses
         the WHOLE folder — never an orphaned half. The walk is the
         SHARED eviction policy (CachePolicy.evict_to_budget): true
         LRU — the least recently used unprotected folders go first,
@@ -473,7 +473,7 @@ class PersistentIndexCache:
                 try:
                     stats = [os.stat(os.path.join(root, name))
                              for name in names
-                             if name.endswith((".mpfi.gz", ".mpfp"))]
+                             if name.endswith((".mpfi.gz", ".mpfp", "source.gcode"))]
                     if not stats:
                         continue  # an empty leftover folder counts nothing
                     size = sum(stat.st_size for stat in stats)

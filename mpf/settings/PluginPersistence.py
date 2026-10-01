@@ -90,6 +90,8 @@ class PluginPersistence:
         serialised for JSON (the enum as its persisted value)."""
         patch = {key: getattr(config, key) for key in SETTINGS_FIELDS}
         patch["feed_mode"] = config.feed_mode.value
+        if config.cache_max_mb == 512:
+            patch["cache_max_mb_explicit"] = True
         return self.set_machine(machine_id, patch)
 
     def settings_document(self) -> Dict[str, Any]:

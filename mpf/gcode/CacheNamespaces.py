@@ -15,6 +15,7 @@ from UM.Logger import Logger
 
 from .IndexCache import PersistentIndexCache
 from .PreparedStore import PreparedCache
+from .RawSourceCache import RawSourceCache
 
 # The persistent cache's directory name (the 2026-09-22 ruling): it
 # must NEVER match the plugin's package ID — Uranium's package
@@ -28,10 +29,11 @@ CACHE_DIRECTORY_NAME = "MoonrakerPrintFollowerPersistentCache"
 
 class CacheNamespaces:
     def __init__(self, cache_root: str, identity_source, service, parent=None,
-                 cache_bytes_source=None):
+                 cache_bytes_source=None, files=None):
         self._cache_root = cache_root
         self._identity_source = identity_source
         self._service = service
+        self._files = files
         # The per-machine cache bound (the author's setting): the
         # ACTIVE machine's configured MiB limit — one half of the
         # binding KEY, read fresh at every bind so a machine switch
@@ -55,9 +57,9 @@ class CacheNamespaces:
 
     def _bind(self, initial=False) -> None:
         """The unified per-print lifecycle (the review's finding):
-        BOTH stores root at the machine's prints folder — one print's
-        index and prepared table are siblings under one directory —
-        and BOTH obey the SAME machine byte budget (the author's
+        ALL stores root at the machine's prints folder — one print's
+        raw source, index and prepared table are siblings — and all
+        obey the SAME machine byte budget (the author's
         per-printer setting): one configured limit governs the whole
         unified cache, never a smaller index-side default that could
         evict whole folders early. The index's entry-count bound is
@@ -70,6 +72,10 @@ class CacheNamespaces:
         index = PersistentIndexCache(print_root) if cache_bytes is None \
             else PersistentIndexCache(print_root, max_bytes=cache_bytes,
                                       max_entries=None)
+        if self._files is not None:
+            raw = RawSourceCache(print_root, index.max_bytes)
+            raw.sweep()
+            self._files.bind_cache(raw if self._identity_source() not in ("", "unknown") else None)
         self._service.rebind_stores(index, prepared, initial=initial)
 
     def follow(self) -> None:

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import math
+from .ArcGeometry import MAX_SAGITTA_MM
 from .MotionIndex import better_candidate, candidate_distance_limit_sq
 
 
 def refine_payload(payload, coarse, live_position, floor=None,
-                         ahead=4096, stall=0, max_distance_mm=3.0):
+                         ahead=4096, stall=0, max_distance_mm=3.0,
+                         extruding=None):
     """The live-position refinement over a PAYLOAD's geometry (the
     unhydrated compact layer): the index's own bounded search, run
     against the decoded polylines the plate already draws. Each
@@ -156,6 +158,11 @@ def refine_payload(payload, coarse, live_position, floor=None,
             break
     if best_motion is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
         return None
+    # Prepared chords may sit a sagitta away from physical extrusion
+    # while a travel intersects its XY exactly. Flow identifies the
+    # deposited path, but cannot justify a distant future pass.
+    if extruding is True and best_distance_sq <= (MAX_SAGITTA_MM + 0.001) ** 2:
+        return int(best_motion)
     # The travel gate: the nozzle on a travel is off the
     # extrusion geometry — the nearest extrusion line can be a
     # FUTURE pass close enough to win the match, jumping the

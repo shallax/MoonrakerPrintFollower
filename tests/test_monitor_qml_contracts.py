@@ -361,6 +361,17 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         for name in dialogs:
             self.assertIn(name + " {", harness.FILE_MANAGER_QML)
             self.assertIn("property var printerModel: null", dialogs[name])
+        modal = dialogs["DownloadProgressDialog"]
+        mini = (harness.PLUGINS / "LoadProgressIndicator.qml").read_text(encoding="utf-8")
+        cadence = r"duration: 350\s+easing.type: Easing.InOutCubic\s+}\s+PauseAnimation {\s+duration: 700"
+        for qml in (modal, mini):
+            self.assertEqual(len(harness.re.findall(cadence, qml)), 2,
+                             "the hourglass must flip, rest, flip and rest")
+        follower = (harness.PLUGINS / "PrintFollowerPopover.qml").read_text(encoding="utf-8")
+        for surface in (follower, harness.JOB_SECTION_QML):
+            self.assertIn("LoadProgressIndicator {", surface)
+            self.assertIn("root.printerModel.plateSourceStatus", surface)
+            self.assertIn("root.printerModel.plateSourceProgress", surface)
         # The browser's extracted leaves: each owns one visual region of
         # the popup, so the pins below follow the code into the document
         # that now holds it. Mounting stays pinned in the shell, except

@@ -39,6 +39,13 @@ WHATS_NEW: Tuple[dict, ...] = (
             "the pause schedule's Clear button stays readable.",
             "A thumbnail that fails to start no longer rebuilds the whole "
             "file listing. File refusals appear in the file popup.",
+            "Full G-code, its index and prepared layers now survive Cura "
+            "restarts in a per-printer cache. The source is saved atomically, "
+            "and each print is evicted as a whole in least-recently-used "
+            "order; the default limit is 2048 MiB.",
+            "Source-download progress stays visible with a cached index "
+            "and advances while the file arrives, without waiting for "
+            "another printer status update.",
             "The Monitor, camera, file browser and other internals have "
             "been split into smaller parts. This is a candidate, not "
             "a final release.",

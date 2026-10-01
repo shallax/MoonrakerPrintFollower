@@ -89,7 +89,7 @@ Popup {
         spacing: UM.Theme.getSize("narrow_margin").height
         width: 320 * screenScaleFactor
         // The popup is only about the download: one large
-        // spinning hourglass over the title (the live request).
+        // flipping hourglass over the title (the live request).
         UM.ColorImage {
             id: downloadHourglass
             anchors.horizontalCenter: parent.horizontalCenter
@@ -104,11 +104,19 @@ Popup {
                     from: 0
                     to: 180
                     duration: 350
+                    easing.type: Easing.InOutCubic
+                }
+                PauseAnimation {
+                    duration: 700
                 }
                 NumberAnimation {
                     from: 180
                     to: 360
                     duration: 350
+                    easing.type: Easing.InOutCubic
+                }
+                PauseAnimation {
+                    duration: 700
                 }
             }
         }

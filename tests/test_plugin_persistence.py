@@ -57,6 +57,23 @@ class PluginPersistenceTests(unittest.TestCase):
             "machines": machines,
         })
 
+    def test_old_512_migrates_on_load_and_new_512_is_marked_on_save(self):
+        self._seed({"A": {"cache_max_mb": 512}, "B": {"cache_max_mb": 256}})
+        legacy = PrinterConfig.from_dict(self.facade.get_machine("A"))
+        self.assertEqual(legacy.cache_max_mb, 2048)
+        self.assertFalse(legacy.cache_max_mb_explicit)
+        self.assertEqual(PrinterConfig.from_dict(self.facade.get_machine("B")).cache_max_mb, 256)
+        self.assertTrue(self.facade.set_machine_config("A", legacy))
+        self.assertEqual(self.facade.get_machine("A")["cache_max_mb"], 2048)
+
+        chosen = PrinterConfig(cache_max_mb=512)
+        self.assertTrue(self.facade.set_machine_config("A", chosen))
+        record = self.facade.get_machine("A")
+        self.assertEqual(record["cache_max_mb"], 512)
+        self.assertIs(record["cache_max_mb_explicit"], True)
+        self.assertEqual(PrinterConfig.from_dict(record).cache_max_mb, 512)
+        self.assertEqual(self.facade.get_machine("B")["cache_max_mb"], 256)
+
     def test_set_machine_merges_only_that_record(self):
         self._seed({
             "A": {"url": "http://a:7125", "api_key": "key-a"},

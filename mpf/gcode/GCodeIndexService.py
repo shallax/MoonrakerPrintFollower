@@ -647,7 +647,7 @@ class GCodeIndexService(QObject):
                     raw, _method = index.refined_split(
                         anchor, file_position, live_position,
                         minimum_split=None, floor_split=floor,
-                        stall=tracker.stall_polls)
+                        stall=tracker.stall_polls, extruding=extruding)
                 refined = raw if floor is None or raw is None \
                     else max(raw, floor)
                 if refined is None:
@@ -659,7 +659,8 @@ class GCodeIndexService(QObject):
                         refined = refine_payload(
                             memo[1].get("current"), coarse, live_position,
                             floor, ahead=tracker.payload_ahead_window,
-                            stall=tracker.stall_polls) if memo is not None else None
+                            stall=tracker.stall_polls,
+                            extruding=extruding) if memo is not None else None
                         raw = refined
                         tracker.observe_payload_advance(refined)
             spiral = self._view.continuous_z_at(anchor)

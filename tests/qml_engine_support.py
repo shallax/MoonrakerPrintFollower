@@ -1300,6 +1300,8 @@ if QT_AVAILABLE:
             self._index_ready = True
             self._progress_available = True
             self._progress_reason = ""
+            self._source_status = ""
+            self._source_progress = -1.0
             self._motion_count = 21
             self._dot = {"x": 125.0, "y": 125.0, "valid": True}
             self._attached = True
@@ -1441,6 +1443,19 @@ if QT_AVAILABLE:
         @pyqtProperty(str, notify=plateProgressChanged)
         def plateProgressReason(self):
             return self._progress_reason
+
+        @pyqtProperty(str, notify=plateProgressChanged)
+        def plateSourceStatus(self):
+            return self._source_status
+
+        @pyqtProperty(float, notify=plateProgressChanged)
+        def plateSourceProgress(self):
+            return self._source_progress
+
+        def setSourceDownload(self, status, progress):
+            self._source_status = status
+            self._source_progress = progress
+            self.plateProgressChanged.emit()
 
         @pyqtProperty(bool, notify=improvingEtaChanged)
         def improvingEta(self):

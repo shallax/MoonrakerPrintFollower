@@ -27,6 +27,13 @@ candidate is still in preparation.
   enlarged beds. Preserve the grid and print geometry when arrows are off.
 - Keep the Print Follower option rows stable while zooming and the pause
   schedule's **Clear** label legible.
+- Persist full raw G-code beside the index and prepared geometry per printer
+  and print across Cura restarts. Publish it atomically, evict the whole print
+  by shared LRU, and raise the default budget to 2048 MiB; migrate unmarked
+  legacy 512 MiB settings while retaining newly chosen explicit 512 MiB limits.
+- Keep the source-download percentage visible and updating during partial
+  responses even when the index is cached; prepared geometry supports
+  no-lease physical following before raw hydration.
 - Verify by the whole suite, per-file coverage at the 95% bar, and
   capture comparisons for the decomposition; refresh the affected captures
   for the intentional plate changes.

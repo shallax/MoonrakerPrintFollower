@@ -435,7 +435,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
                 raw_cache = str(raw.get("cache_max_mb") or "").strip()
                 cache_max = int(raw_cache) if raw_cache \
-                    else getattr(self._config(), "cache_max_mb", 512)
+                    else getattr(self._config(), "cache_max_mb", 2048)
             except ValueError as exc:
                 Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
                 return False
@@ -485,6 +485,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "aux_interval_ms": aux_interval,
                 "console_interval_ms": console_interval,
                 "cache_max_mb": cache_max,
+                "cache_max_mb_explicit": bool(raw_cache) or current.cache_max_mb_explicit,
                 "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),

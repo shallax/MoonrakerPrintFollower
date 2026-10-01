@@ -897,6 +897,24 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         coordinator._loads.reset()
         self.assertEqual(published()["loadProgress"], -1.0)
 
+    def test_cached_index_source_progress_refreshes_without_another_status_poll(self):
+        parts = self._plate_parts()
+        for compact in (True, False):
+            parts.index.view.compact = compact
+            parts.files.phase = "downloading"
+            for fraction in (None, 0.0, 0.42, 1.0):
+                parts.files.download_fraction = fraction
+                parts.files.changed.emit()
+                self.assertTrue(parts.coordinator.snapshot.index_ready)
+                self.assertTrue(parts.coordinator.snapshot.source_downloading)
+                self.assertEqual(parts.coordinator.snapshot.download_fraction, fraction)
+            for phase in ("ready", "error"):
+                parts.files.phase = phase
+                parts.files.download_fraction = None
+                parts.files.changed.emit()
+                self.assertFalse(parts.coordinator.snapshot.source_downloading)
+                self.assertIsNone(parts.coordinator.snapshot.download_fraction)
+
     def test_a_baked_pause_blocks_the_manual_toggle_for_that_layer(self):
         parts = self._make()
         parts.index.view = harness._view(pause_layers=(5,))
