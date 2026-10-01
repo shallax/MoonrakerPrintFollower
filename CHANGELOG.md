@@ -4,6 +4,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 4.6.2
 
+Candidate for RC1; not released.
+
 The implementation is decomposed into narrower owners with explicit inputs —
 the Monitor's renderer lifecycle and publication transaction, the file
 browser, the camera, toolhead, Preview and dashboard QML, the coordinator's
@@ -26,6 +28,15 @@ them. It also includes these visible fixes:
 - Print Follower's options no longer jump between rows when the plate is
   zoomed. The pause schedule's **Clear** button remains readable at narrow
   widths.
+- The per-printer print cache retains the full raw G-code source beside its
+  index and prepared geometry across Cura restarts. A print's three files
+  share one whole-folder LRU and a 2048 MiB default budget; older
+  unmarked 512 MiB settings adopt that default, while a newly chosen 512 MiB
+  limit remains explicit.
+- Source-download percentage updates during partial responses without waiting
+  for a status poll, even with a cached index. Prepared geometry can refine
+  the follower's physical split before raw arrays hydrate, without a file
+  lease; live extrusion distinguishes travel crossings.
 
 Implementation and compatibility notes:
 
@@ -35,6 +46,11 @@ Implementation and compatibility notes:
   formats intact; the axis control adds a persisted view preference.
 - The decomposition's QML batches were verified against the committed
   captures. The new bed indicators intentionally change affected captures.
+- The raw source publishes atomically after a size check, and eviction removes
+  all three representations as one print folder. Restoration checks
+  successful remote size and modification metadata, preserves active leases,
+  and copies off the UI thread when hardlinking is unavailable. The index
+  remains compact until hydration.
 - The plate renderer's test suite built a cache URL as `"file://"` plus a
   path, which round trips through `QUrl(...).toLocalFile()` on POSIX only.
   On Windows it resolved to nothing, so a discarded raster file outlived its

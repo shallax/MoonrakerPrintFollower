@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -554,6 +555,27 @@ class MachineActionCase(unittest.TestCase):
         self.assertEqual(saved.filename_translate_input, "ab")
         self.assertEqual(saved.filename_translate_output, "cd")
         self.assertEqual(saved.filename_translate_remove, "e")
+
+    def test_newly_selected_512_is_marked_before_legacy_migration(self):
+        migrated = self.printer_config.PrinterConfig.from_dict({"cache_max_mb": 512})
+        self.assertEqual(migrated.cache_max_mb, 2048)
+        self.assertIs(migrated.cache_max_mb_explicit, False)
+        follower = self._follower(migrated)
+        action = self._action(follower)
+        self.assertTrue(action.saveConfig(self._params(cache_max_mb="512")))
+        saved = follower.applied[-1]
+        self.assertEqual(saved.cache_max_mb, 512)
+        self.assertIs(saved.cache_max_mb_explicit, True)
+        with tempfile.TemporaryDirectory() as directory:
+            facade = self.qt.load("PluginPersistence").PluginPersistence(
+                os.path.join(directory, "settings.json"),
+                os.path.join(directory, "state.json"),
+                os.path.join(directory, "machines"))
+            self.assertTrue(facade.set_machine_config("printer-a", saved))
+            reloaded = self.printer_config.PrinterConfig.from_dict(
+                facade.get_machine("printer-a"))
+            self.assertEqual(reloaded.cache_max_mb, 512)
+            self.assertIs(reloaded.cache_max_mb_explicit, True)
 
     def test_a_save_payload_that_is_not_a_mapping_is_refused(self):
         follower = self._follower()

@@ -212,6 +212,84 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
                 self.assertEqual(self.service.plate_progress(
                     1, offsets[19], (5.0, 0.0, 0.2), extruding=False)["split"], 5 if compact else 6)
 
+    def test_included_objects_rematch_after_long_skipped_object_spans(self):
+        from mpf.gcode.GCodeIndex import build_index_from_bytes
+
+        rows = ["M82", "G90", "G92 E0"]
+        extrusion = 0.0
+        for layer in range(2):
+            rows.extend((f";LAYER:{layer}", f"G0 Z{0.2 * (layer + 1):.2f}"))
+            for name, x, count in (("FIRST", 10, 24), ("SKIP_A", 100, 9200),
+                                   ("MIDDLE", 50, 24), ("SKIP_B", 150, 9200),
+                                   ("LAST", 90, 24)):
+                rows.extend((f";MESH:{name}", f"G0 X{x} Y0"))
+                for motion in range(count):
+                    extrusion += 0.01
+                    rows.append(f"G1 X{x + motion * .0001:.4f} Y0 E{extrusion:.3f}")
+        index = build_index_from_bytes(("\n".join(rows) + "\n").encode())
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
+        self.assertEqual(len(index.motion_extrusion[1]), index.motion_count(1))
+        first_offset, second_offset = (offsets[-1] for offsets in index.motion_offsets)
+        off_extrusion, _ = index.refined_split(
+            1, second_offset, (75, 0, 0.4), extruding=True)
+        self.assertIsNone(off_extrusion, "an excluded-object travel cannot prove deposited ink")
+        self.service.observe_motion(0, first_offset, (90.001, 0, 0.2), extruding=True)
+        entry = self.service.observe_motion(1, second_offset, (10.001, 0, 0.4), extruding=True)
+        self.assertEqual(entry.split, 0, "the new layer must not inherit parser lookahead")
+        first = self.service.observe_motion(1, second_offset, (10.001, 0, 0.4), extruding=True)
+        middle = self.service.observe_motion(1, second_offset, (50.001, 0, 0.4), extruding=True)
+        last = self.service.observe_motion(1, second_offset, (90.001, 0, 0.4), extruding=True)
+        self.assertGreater(first.split, 0)
+        self.assertGreater(middle.split, 9000, "the old travel crossing kept the first-object match")
+        self.assertGreater(last.split, 18000, "the second skipped span hid the last included object")
+
+        rows = [
+            {"name": name, "polygon": [[x - 1, -1], [x + 1, -1],
+                                       [x + 1, 1], [x - 1, 1]]}
+            for name, x in (("FIRST", 10), ("MIDDLE", 50), ("LAST", 90))
+        ]
+        def visited_through(split, expected):
+            for _ in range(20):
+                visited = self.service.plate_visited(1, split, rows)
+                if expected <= visited:
+                    return visited
+            self.fail(f"printed-object walk did not reach {expected}")
+
+        at_middle = visited_through(middle.split, {"FIRST", "MIDDLE"})
+        self.assertNotIn("LAST", at_middle, "future object marked printed before its extrusion")
+        self.assertEqual(visited_through(last.split, {"FIRST", "MIDDLE", "LAST"}),
+                         {"FIRST", "MIDDLE", "LAST"})
+
+        # A restored large-file index can still refine the physical split
+        # from prepared geometry while its source is downloading.
+        from mpf.gcode.PlateProgress import prepare_layer
+
+        payload = prepare_layer(index, 1)
+        counts = [index.motion_count(layer) for layer in range(2)]
+        index.compact = True
+        index.layer_motion_counts = counts
+        for column, typecode in ((index.motion_offsets, "Q"),
+                                 (index.motion_x, "f"), (index.motion_y, "f"),
+                                 (index.motion_z, "f")):
+            column[:] = [harness.array(typecode) for _ in column]
+        self.service._decoded_lru[1] = payload
+        self.service._split_tracker.reset()
+        self.service.plate_layers(1)
+        self.service.observe_motion(1, second_offset, (10.001, 0, 0.4), extruding=True)
+        first = self.service.observe_motion(1, second_offset, (10.001, 0, 0.4),
+                                            extruding=True)
+        # The prepared search expands after consecutive held polls; it
+        # cannot treat a skipped 9,200-motion span as one normal advance.
+        for _ in range(4):
+            middle = self.service.observe_motion(1, second_offset, (50.001, 0, 0.4),
+                                                 extruding=True)
+        for _ in range(4):
+            last = self.service.observe_motion(1, second_offset, (90.001, 0, 0.4),
+                                               extruding=True)
+        self.assertGreater(first.split, 0)
+        self.assertGreater(middle.split, 9000)
+        self.assertGreater(last.split, 18000)
+
     def test_a_machine_without_live_telemetry_keeps_the_coarse_boundary(self):
         offsets = self._bind()
         self.assertEqual(self.service.plate_progress(0, offsets[9])["split"], 9)
@@ -763,6 +841,17 @@ class PayloadRefinementTests(harness.PayloadRefinementTests):
         self.assertIsNone(self._refine(payload, 100, (0.0, 0.0, 0.5), floor=40))
         # Once physically on the skin, progress must be accepted again.
         self.assertIsNotNone(self._refine(payload, 100, (0.0, 0.024, 0.5), floor=40))
+
+    def test_live_flow_finds_prepared_extrusion_when_a_travel_crosses_it(self):
+        payload = self._payload({"W": [self._row(0.024, 101, 10, x0=-5.0)]},
+                                [self._row(0.0, 40, 10, x0=-5.0)], motions=200)
+        live = (0.0, 0.0, 0.2)
+        self.assertIsNone(self._refine(payload, 100, live, floor=40, extruding=False))
+        self.assertEqual(self._refine(payload, 100, live, floor=40, extruding=True), 106)
+        far = self._payload({"W": [self._row(2.0, 101, 10, x0=-5.0)]},
+                            [self._row(0.0, 40, 10, x0=-5.0)], motions=200)
+        self.assertIsNone(self._refine(far, 100, live, floor=40, extruding=True),
+                          "flow alone cannot paint a distant future extrusion")
 
     def test_a_travel_further_than_the_match_leaves_the_edge_winning(self):
         # The travel's tell is its proximity: a travel a clear margin away

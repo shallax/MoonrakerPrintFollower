@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import math
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from types import MappingProxyType
 
+from UM.Logger import Logger
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
@@ -169,6 +172,24 @@ def _declared_length(reply) -> int:
         return int(bytes(declared)) if declared else 0
     except Exception:
         return 0
+
+
+def _verified_source_metadata(result, identity, job) -> bool:
+    """Only the remote response's own size and timestamp authorize raw reuse."""
+    try:
+        raw_size = result["size"]
+        if isinstance(raw_size, bool):
+            return False
+        size = int(raw_size)
+        if isinstance(raw_size, float) and raw_size != size:
+            return False
+        modified = float(result["modified"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return (size > 0 and math.isfinite(modified) and modified > 0
+            and identity.filename == job[0] and identity.size == size
+            and identity.modified == modified
+            and (job[1] <= 0 or job[1] == size))
 
 
 class FileLease:
@@ -339,6 +360,9 @@ class RemoteFileService(QObject):
     writerDrained = pyqtSignal(object)
     oneShotDone = pyqtSignal(object)
     oneShotDrained = pyqtSignal(object)
+    cacheWritten = pyqtSignal(object, object)
+    restoreDone = pyqtSignal(object, object, object)
+    restoreProgress = pyqtSignal(object, int)
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
@@ -368,9 +392,17 @@ class RemoteFileService(QObject):
         self._metadata_pending = False
         self._metadata_only_pending = False
         self._metadata_fetched = False
+        self._source_metadata_verified = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
         self._path = None
+        self._path_identity = None
+        self._cache = None
+        self._cache_published_path = None
+        self._cache_pins = {}
+        self._restore_op = None
+        self._restore_received = 0
+        self._cache_restore_failed = False
         self._download = None
         self._one_shots = set()
         self._want_file = False
@@ -385,6 +417,18 @@ class RemoteFileService(QObject):
         self.writerDrained.connect(self._on_writer_drained)
         self.oneShotDone.connect(self._on_one_shot_done)
         self.oneShotDrained.connect(self._on_one_shot_drained)
+        self.cacheWritten.connect(self._on_cache_written)
+        self.restoreDone.connect(self._on_restore_done)
+        self.restoreProgress.connect(self._on_restore_progress)
+
+    def bind_cache(self, cache):
+        """Bind the active machine's raw store, never the one-shot lane."""
+        previous = self._cache
+        if ((previous.directory if previous else None)
+                != (cache.directory if cache else None) and self._job is not None):
+            self.bind(None)
+        self._cache = cache
+        self._cache_published_path = None
 
     @property
     def download_fraction(self):
@@ -393,9 +437,12 @@ class RemoteFileService(QObject):
         Content-Length — the transfer authority; a transfer without
         one renders indeterminate."""
         op = self._download
-        if op is None or op.size <= 0:
-            return None
-        return max(0.0, min(1.0, op.received / op.size))
+        if op is not None:
+            return max(0.0, min(1.0, op.received / op.size)) if op.size > 0 else None
+        restoring = self._restore_op
+        if restoring is not None:
+            return max(0.0, min(1.0, self._restore_received / restoring["identity"].size))
+        return None
 
     @property
     def job_key(self): return self._job
@@ -412,7 +459,7 @@ class RemoteFileService(QObject):
     @property
     def phase(self):
         if self._error: return "error"
-        if self._download is not None: return "downloading"
+        if self._download is not None or self._restore_op is not None: return "downloading"
         if self._metadata_pending: return "resolving"
         return "ready" if self._path else "idle"
 
@@ -492,13 +539,18 @@ class RemoteFileService(QObject):
             return
         self._generation += 1
         self._transport.cancel_owner("files")
+        self._abort_restore()
         self._abort_download()
         if self._path: self._retire(self._path)
         self._job = job_key
         self._identity = self._path = None
+        self._path_identity = None
+        self._cache_published_path = None
+        self._cache_restore_failed = False
         self._metadata = {}
         self._metadata_pending = self._metadata_only_pending = self._want_file = False
         self._metadata_fetched = False
+        self._source_metadata_verified = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
         self._error = ""
@@ -535,6 +587,15 @@ class RemoteFileService(QObject):
                 self._identity = parse_file_identity(job[0], payload or {}, job[1])
             except (TypeError, ValueError):
                 self._identity = RemoteFileIdentity(job[0], job[1])
+            self._source_metadata_verified = _verified_source_metadata(
+                self._metadata, self._identity, job)
+            if self._path is not None:
+                if (self._path_identity != self._identity
+                        or (self._identity.size > 0
+                            and os.path.getsize(self._path) != self._identity.size)):
+                    self._retire(self._path)
+                    self._path = None
+                    self._path_identity = None
             self.changed.emit()
             self._advance()
         started = self._transport.send_json("files", "metadata", "GET",
@@ -586,8 +647,123 @@ class RemoteFileService(QObject):
         if self._error: return
         if self._identity is None:
             self.request_metadata()
-        elif self._want_file and not self._path and self._download is None:
+        elif self._want_file and not self._path and self._download is None \
+                and self._restore_op is None:
+            if self._restore_cached():
+                return
             self._start_download()
+
+    def _restore_cached(self):
+        cache = self._cache
+        if (not self._source_metadata_verified or cache is None
+                or self._cache_restore_failed
+                or not cache.eligible(self._identity, self._job[0])
+                or not os.path.isfile(cache._path(self._identity))):
+            return False
+        directory = tempfile.mkdtemp(prefix="job-", dir=self._root)
+        name = os.path.basename(self._job[0].replace("\\", "/")) or "moonraker.gcode"
+        if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}:
+            name += ".gcode"
+        path = os.path.join(directory, name)
+        op = {"generation": self._generation, "job": self._job,
+              "identity": self._identity, "cache": cache, "path": path,
+              "directory": directory, "cancel": threading.Event()}
+        self._restore_op = op
+        self._restore_received = 0
+
+        def restore():
+            errors = []
+            marker = cache.restore(
+                op["identity"], op["job"][0], path, cancelled=op["cancel"].is_set,
+                progress=lambda copied: self.restoreProgress.emit(op, copied),
+                on_error=errors.append)
+            if op["cancel"].is_set():
+                if marker:
+                    cache.unpin(marker)
+                shutil.rmtree(directory, ignore_errors=True)
+                return
+            self.restoreDone.emit(op, marker, errors[0] if errors else None)
+
+        try:
+            threading.Thread(target=restore, name="mpf-raw-restore", daemon=True).start()
+        except RuntimeError as error:
+            self._restore_op = None
+            shutil.rmtree(directory, ignore_errors=True)
+            Logger.log("w", "Moonraker raw G-code cache restore worker could not start: %s", error)
+            return False
+        self.changed.emit()
+        return True
+
+    def _abort_restore(self):
+        op, self._restore_op = self._restore_op, None
+        self._restore_received = 0
+        if op is not None:
+            op["cancel"].set()
+
+    def _on_restore_progress(self, op, copied):
+        if op is self._restore_op:
+            self._restore_received = copied
+            self.changed.emit()
+
+    def _on_restore_done(self, op, marker, error):
+        cache, path = op["cache"], op["path"]
+        if (op is not self._restore_op or op["generation"] != self._generation
+                or op["job"] != self._job or not self._source_metadata_verified
+                or op["identity"] != self._identity or self._closed):
+            if marker:
+                cache.unpin(marker)
+            shutil.rmtree(op["directory"], ignore_errors=True)
+            return
+        self._restore_op = None
+        self._restore_received = 0
+        if marker:
+            self._path = path
+            self._path_identity = self._identity
+            self._cache_published_path = path
+            self._cache_pins[path] = (cache, marker)
+        else:
+            shutil.rmtree(op["directory"], ignore_errors=True)
+            self._cache_restore_failed = True
+            if error is not None:
+                Logger.log("w", "Moonraker raw G-code cache restoration failed: %s", error)
+            self._advance()
+        self.changed.emit()
+
+    def _publish_current(self):
+        cache, path = self._cache, self._path
+        if (cache is None or path is None or not self._source_metadata_verified
+                or path == self._cache_published_path
+                or not cache.eligible(self._identity, self._job[0])):
+            return
+        identity, filename = self._identity, self._job[0]
+        self._cache_published_path = path
+        self._leases[path] = self._leases.get(path, 0) + 1
+
+        def write():
+            error = None
+            marker = None
+            try:
+                marker = cache.publish(identity, filename, path)
+            except OSError as exc:
+                error = exc
+            self.cacheWritten.emit(path, (cache, marker, error))
+
+        try:
+            threading.Thread(target=write, name="mpf-raw-cache", daemon=True).start()
+        except RuntimeError as error:
+            self._release(path)
+            Logger.log("w", "Moonraker raw G-code cache worker could not start: %s", error)
+
+    def _on_cache_written(self, path, outcome):
+        cache, marker, error = outcome
+        if error is not None:
+            Logger.log("w", "Moonraker raw G-code cache publication failed: %s", error)
+        if marker is not None:
+            if path == self._path or self._leases.get(path, 0) > 1:
+                self._cache_pins[path] = (cache, marker)
+            else:
+                cache.unpin(marker)
+        self._release(path)
 
     def _start_download(self):
         generation, job = self._generation, self._job
@@ -627,6 +803,9 @@ class RemoteFileService(QObject):
             self._fail(str(error))
             return
         op = DownloadOperation(target, reply, size, generation, job)
+        op.cache_identity = self._identity if self._metadata_fetched else None
+        op.reported_percent = -1
+        op.reported_at = 0.0
         # The file listing's size is the honest referee (the
         # critic's catch) — a proxy that ignores identity-encoding
         # delivers bytes whose length matches its own declaration.
@@ -673,6 +852,14 @@ class RemoteFileService(QObject):
                 op.queue.put(chunk)
                 if not op.finished_reading and (op.received - op.written) >= op.HIGH_WATER_BYTES:
                     op.reading_paused = True
+            if op.size > 0:
+                percent = min(100, op.received * 100 // op.size)
+                now = time.monotonic()
+                if (percent != op.reported_percent
+                        and (op.reported_percent < 0 or now - op.reported_at >= 0.2)):
+                    op.reported_percent = percent
+                    op.reported_at = now
+                    self.changed.emit()
         except Exception as error:
             self._abort_download()
             self._fail(str(error))
@@ -713,9 +900,19 @@ class RemoteFileService(QObject):
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
             if op.expected > 0 and op.target.bytes_written != op.expected:
                 raise OSError("Downloaded G-code does not match the file listing's size; refusing")
+            if self._metadata_fetched and op.cache_identity is None:
+                raise OSError("G-code metadata arrived during download; retrying against its identity")
+            if (self._metadata_fetched and op.cache_identity != self._identity):
+                raise OSError("G-code metadata changed during download; refusing stale file")
+            if (self._metadata_fetched and self._identity.size > 0
+                    and op.target.bytes_written != self._identity.size):
+                raise OSError("Downloaded G-code does not match current metadata; refusing")
             self._path = op.target.path
+            self._path_identity = op.cache_identity
             self._download_attempts = 0
             self._download_retry_at = 0.0
+            if op.cache_identity is not None:
+                self._publish_current()
             self.changed.emit()
         except Exception as error:
             self._retire(op.target.path)
@@ -755,6 +952,12 @@ class RemoteFileService(QObject):
         count = self._leases.get(path, 0) - 1
         if count > 0: self._leases[path] = count
         else: self._leases.pop(path, None)
+        if (path in self._retired or path != self._path) and path not in self._leases:
+            pin = self._cache_pins.pop(path, None)
+            if pin is not None:
+                cache, marker = pin
+                cache.unpin(marker)
+                cache.prune()
         if path in self._retired and path not in self._leases:
             self._retired.remove(path)
             shutil.rmtree(os.path.dirname(path), ignore_errors=True)

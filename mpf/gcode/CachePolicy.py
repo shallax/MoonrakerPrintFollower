@@ -1,13 +1,16 @@
-"""The shared print-folder eviction policy (the review's unified-
-eviction finding): the index cache and the prepared store evict
-whole print folders by the SAME rule — true LRU, never a
-recency-biased size packing."""
+"""Shared print-folder LRU for raw sources, indexes and prepared layers."""
 from __future__ import annotations
 
 import os
 import shutil
 import sys
 from typing import Dict, Optional, Tuple
+
+
+def active_cache_writer(directory: str) -> bool:
+    return any((".mpfi.gz.tmp-" in name or ".mpfp.tmp-" in name
+                or ".gcode.tmp-" in name)
+               and temporary_owner_alive(name) for name in os.listdir(directory))
 
 
 def evict_to_budget(totals: Dict[str, Tuple[float, int]],
@@ -32,8 +35,7 @@ def evict_to_budget(totals: Dict[str, Tuple[float, int]],
                                       or entries <= max_entries):
             break  # the retained set fits — stop evicting
         try:
-            if any((".mpfi.gz.tmp-" in name or ".mpfp.tmp-" in name)
-                   and temporary_owner_alive(name) for name in os.listdir(root)):
+            if active_cache_writer(root):
                 continue
             shutil.rmtree(root, ignore_errors=True)
         except OSError:

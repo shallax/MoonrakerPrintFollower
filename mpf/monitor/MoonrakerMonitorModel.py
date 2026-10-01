@@ -1005,6 +1005,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             lookup_ms = getattr(snapshot, "plate_decode_ms", None)  # legacy test/snapshot
         progress = getattr(snapshot, "plate_progress", None)
         values["plateTrackingAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
+        values["plateSourceStatus"] = (
+            "Downloading G-code for precise tracking"
+            if snapshot.index_ready and getattr(snapshot, "source_downloading", False)
+            else "")
+        values["plateSourceProgress"] = self._coerce(
+            snapshot.download_fraction
+            if values["plateSourceStatus"] and snapshot.download_fraction is not None
+            else None, -1.0)
         follower = getattr(snapshot, "plate_manual_progress", None)
         # The attached state must read the LIVE payload: the old
         # order let a stale manual payload (a detach's residue)
@@ -1419,6 +1427,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
     plateTrackingAvailable = value_property(bool, "plateTrackingAvailable", plateProgressChanged, False)
+    plateSourceStatus = value_property(str, "plateSourceStatus", plateProgressChanged, "")
+    plateSourceProgress = value_property(float, "plateSourceProgress", plateProgressChanged, -1.0)
     plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "")
     plateLayerCount = value_property(int, "plateLayerCount", plateProgressChanged, 0)
     plateLayerMotionCount = value_property(int, "plateLayerMotionCount", plateProgressChanged, 0)

@@ -171,8 +171,9 @@ class FollowerRuntime:
             # every bind — each machine's own cache-v2 directory
             # obeys its own saved value.
             cache_bytes_source=lambda: int(
-                getattr(self.binding.config, "cache_max_mb", 512) or 512
-            ) * 1024 * 1024)
+                getattr(self.binding.config, "cache_max_mb", 2048) or 2048
+            ) * 1024 * 1024,
+            files=self.files)
         # The namespace follows BOTH its inputs: the machine switch's
         # own signal and the binding's applied-config signal. follow()
         # compares the effective key (machine hash + byte budget), so

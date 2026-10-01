@@ -237,6 +237,7 @@ class LayerMotionIndex:
         minimum_fraction: Optional[float] = None,
         floor_motion: Optional[int] = None,
         stall: int = 0,
+        extruding: Optional[bool] = None,
     ) -> Tuple[float, str]:
         """Estimate physical progress using Moonraker's live tool position.
 
@@ -295,6 +296,8 @@ class LayerMotionIndex:
         n = len(offsets)
         if n == 0 or len(xs) != n or len(ys) != n or len(zs) != n:
             return with_floor(base_fraction, base_method)
+        extrusion = self.motion_extrusion[layer] if layer < len(self.motion_extrusion) else ()
+        match_extrusion = extruding is True and len(extrusion) == n
         if accepted is None and floor_fraction is not None:
             # A caller naming only the clamp is naming its accepted
             # boundary too — the two were one argument until the
@@ -345,6 +348,8 @@ class LayerMotionIndex:
         best_distance_sq = float("inf")
         best_completed = None
         for i in range(lo, hi + 1):
+            if match_extrusion and extrusion[i] <= 1e-9:
+                continue
             if i == 0:
                 ax, ay, az = layer_start
             else:

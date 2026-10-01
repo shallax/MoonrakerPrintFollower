@@ -668,12 +668,44 @@ class UploadControllerCoverageTests(unittest.TestCase):
 
         controller.cancel()
         controller.cancel()  # a second click is not a second verdict
-        self.qt.events(10)
+        deadline = time.monotonic() + 2.0
+        while not results and time.monotonic() < deadline:
+            self.qt.events(10)
 
         self.assertEqual(results, [(False, "")])
         self.assertTrue(controller.busy)  # the adapter owns the terminal
+        controller.cancel()
+        self.qt.events(10)
+        self.assertEqual(results, [(False, "")])
         controller.terminal_delivered()
         self.assertFalse(controller.busy)
+
+    def test_cancel_callbacks_are_owned_by_their_original_operation(self):
+        controller = self._controller()
+        results = []
+        controller.finished.connect(lambda ok, detail: results.append((ok, detail)))
+        scheduled = []
+        timer = SimpleNamespace(singleShot=lambda delay, callback: scheduled.append((delay, callback)))
+
+        with patch.object(self.module, "QTimer", timer):
+            controller.cancel()
+            controller.cancel()
+            self.assertEqual(len(scheduled), 1)
+            self.assertEqual(results, [])
+
+            _, retire = scheduled.pop(0)
+            retire()
+            self.assertEqual(len(scheduled), 1)  # terminal is another event-loop turn
+            self.assertTrue(controller.busy)
+            _, terminal = scheduled.pop(0)
+            terminal()
+            self.assertEqual(results, [(False, "")])
+
+            controller.terminal_delivered()
+            controller.begin(self.config_type(url="http://printer-a"), "next.gcode")
+            retire()  # a late callback cannot retire the new operation
+            self.assertTrue(controller.busy)
+            self.assertEqual(results, [(False, "")])
 
     def test_start_uploads_when_the_print_was_not_requested(self):
         client = self._client()

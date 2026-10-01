@@ -4,6 +4,7 @@ import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "../widgets"
+import "../preview"
 
 // The print-follower card: the plate as the control, its view options
 // and scrubbers, and the pause schedule beside it. The host owns the
@@ -506,6 +507,23 @@ MonitorPopOver {
                             return isNaN(pct) ? "—" : pct.toFixed(2) + "%";
                         }
                     }
+                }
+
+                UM.Label {
+                    objectName: "moonrakerFollowerSourceStatus"
+                    Layout.fillWidth: true
+                    visible: root.printerModel != null && root.printerModel.plateSourceStatus !== ""
+                    text: root.printerModel != null ? root.printerModel.plateSourceStatus : ""
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("small")
+                }
+                LoadProgressIndicator {
+                    objectName: "moonrakerFollowerSourceProgress"
+                    Layout.fillWidth: true
+                    visible: busy
+                    busy: root.printerModel != null && root.printerModel.plateSourceStatus !== ""
+                    progress: root.printerModel != null ? root.printerModel.plateSourceProgress : -1
+                    phase: "G-code download"
                 }
 
                 Timer {

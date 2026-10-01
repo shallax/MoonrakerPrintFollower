@@ -921,7 +921,7 @@ class MachineNamespaceTests(unittest.TestCase):
         # stores' byte bounds ride the ACTIVE machine's configured
         # value, read fresh at every bind — each machine's own
         # cache-v2 directory obeys its own saved size, and the
-        # default is 512 MiB. The index's entry-count bound is
+        # default is 2048 MiB. The index's entry-count bound is
         # disabled (the byte budget is the user-facing limit).
         app = self._app(started=True)
         app.stack = self.qt.Machine("A")
@@ -931,9 +931,9 @@ class MachineNamespaceTests(unittest.TestCase):
         self.addCleanup(owner.close)
         store_a = owner.index._prepared.store
         index_a = owner.index._cache
-        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
-                         "the prepared default bound is not 512 MiB")
-        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024,
+        self.assertEqual(store_a.max_bytes, 2048 * 1024 * 1024,
+                         "the prepared default bound is not 2048 MiB")
+        self.assertEqual(index_a.max_bytes, 2048 * 1024 * 1024,
                          "the index default bound is not the machine's")
         self.assertIsNone(index_a.max_entries,
                           "the hidden entry-count cap survived")
@@ -948,13 +948,29 @@ class MachineNamespaceTests(unittest.TestCase):
                          "B's index store never bound its size")
         self.assertIsNone(index_b.max_entries,
                           "B kept the hidden entry-count cap")
-        self.assertEqual(store_a.max_bytes, 512 * 1024 * 1024,
+        self.assertEqual(store_a.max_bytes, 2048 * 1024 * 1024,
                          "the switch rewrote A's store object")
         self._switch(app, "A")
         self.assertEqual(owner.index._prepared.store.max_bytes, 256 * 1024 * 1024,
                          "the return to A never bound A's prepared size")
         self.assertEqual(owner.index._cache.max_bytes, 256 * 1024 * 1024,
                          "the return to A never bound A's index size")
+
+    def test_current_machine_inherited_512_binds_2048_without_rewriting_settings(self):
+        app = self._app(started=True)
+        app.stack = self.qt.Machine("A")
+        from mpf.settings.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce"):
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        owner.persistence.set_machine("A", {"cache_max_mb": 512})
+        self._switch(app, "B")
+        self._switch(app, "A")
+        self.assertEqual(owner.binding.config.cache_max_mb, 2048)
+        self.assertEqual(owner.index._cache.max_bytes, 2048 * 1024 * 1024)
+        self.assertEqual(owner.index._prepared.store.max_bytes, 2048 * 1024 * 1024)
+        self.assertEqual(owner.persistence.get_machine("A")["cache_max_mb"], 512,
+                         "reading legacy settings should not rewrite live Cura's document")
 
     def test_a_budget_change_rebinds_the_active_machine_stores(self):
         # Test A (the reviewer's same-machine case): changing the
@@ -971,8 +987,8 @@ class MachineNamespaceTests(unittest.TestCase):
         self.addCleanup(owner.close)
         index_a = owner.index._cache
         prepared_a = owner.index._prepared.store
-        self.assertEqual(index_a.max_bytes, 512 * 1024 * 1024)
-        self.assertEqual(prepared_a.max_bytes, 512 * 1024 * 1024)
+        self.assertEqual(index_a.max_bytes, 2048 * 1024 * 1024)
+        self.assertEqual(prepared_a.max_bytes, 2048 * 1024 * 1024)
         machine_hash = owner.cache_namespaces.machine_hash
 
         config = owner.binding.config

@@ -27,6 +27,10 @@ pause schedule's **Clear** button stays legible at narrow widths.
 
 A thumbnail that fails to start no longer rebuilds the file listing; file
 refusals also appear in the file popup rather than leaving it waiting.
+The per-printer cache retains full G-code with its index and prepared layers
+across Cura restarts, evicting whole prints by LRU under a 2048 MiB default
+budget. Source-download progress updates as bytes arrive, even with a cached
+index.
 
 ## What changed in 4.6.1
 

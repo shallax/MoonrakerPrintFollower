@@ -97,8 +97,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         top = origin.y() + bed.property("offsetY").toNumber()
         width = bed.property("plotWidth").toNumber()
         height = bed.property("plotHeight").toNumber()
-        image = window.grabWindow()
-        def ink(colour, bounds):
+        def ink(image, colour, bounds):
             x0, y0, x1, y1 = (int(value) for value in bounds)
             result = set()
             for y in range(y0, y1):
@@ -109,24 +108,29 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                            abs(pixel.blue() - colour.blue())) < 20:
                         result.add((x, y))
             return result
-        red = ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12))
-        green = ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height))
+        red_box = (right - .18 * width, top, right, top + 12)
+        green_box = (right - 12, top, right, top + .18 * height)
+        red_colour = harness.QColor("#ef5350")
+        green_colour = harness.QColor("#66bb6a")
+        def arrow_ink(image):
+            return ink(image, red_colour, red_box), ink(image, green_colour, green_box)
+
+        image = self._wait_until(window, lambda frame: all(arrow_ink(frame)))
+        red, green = arrow_ink(image)
         self.assertTrue(red and green, "the follower lost a painted border arrow")
         self.assertAlmostEqual(right - min(x for x, _ in red), .15 * width, delta=4)
         self.assertAlmostEqual(max(y for _, y in green) - top, .15 * height, delta=4)
-        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top - 3, right, top)))
-        self.assertFalse(ink(harness.QColor("#66bb6a"), (right, top, right + 3, top + .18 * height)))
-        grid.setProperty("showAxisArrows", False)
-        self._pump_ms(120)
-        image = window.grabWindow()
-        self.assertFalse(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
-        self.assertFalse(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+        self.assertFalse(ink(image, red_colour, (right - .18 * width, top - 3, right, top)))
+        self.assertFalse(ink(image, green_colour, (right, top, right + 3, top + .18 * height)))
+        face.setProperty("showAxisArrows", False)
+        image = self._wait_until(window, lambda frame: not any(arrow_ink(frame)))
+        red, green = arrow_ink(image)
+        self.assertFalse(red or green, "the painted arrows remained after disabling them")
         self.assertTrue(grid.property("showGrid"))
-        grid.setProperty("showAxisArrows", True)
-        self._pump_ms(120)
-        image = window.grabWindow()
-        self.assertTrue(ink(harness.QColor("#ef5350"), (right - .18 * width, top, right, top + 12)))
-        self.assertTrue(ink(harness.QColor("#66bb6a"), (right - 12, top, right, top + .18 * height)))
+        face.setProperty("showAxisArrows", True)
+        image = self._wait_until(window, lambda frame: all(arrow_ink(frame)))
+        red, green = arrow_ink(image)
+        self.assertTrue(red and green, "the painted arrows did not return")
 
     def test_the_painted_horizontal_runs_stay_horizontal_and_unbridged(self):
         face, window, mapping, baseline = self._painted(

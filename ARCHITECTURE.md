@@ -188,6 +188,7 @@ correct package ownership.
 | `ArcGeometry.py` | Geometry and interpolation of one logical straight or arc motion | Qt or tracking policy |
 | `CacheNamespaces.py` | Per-machine cache rebinding and namespace lifetime | Index algorithms |
 | `CachePolicy.py` | Shared print-folder eviction, explicit recency and conservative temporary-writer liveness | Qt or file decoding |
+| `RawSourceCache.py` | Durable, atomic size-checked raw G-code beside index/prepared entries, with metadata-gated restoration | Qt or remote fetching |
 | `CameraTiming.py` | Opt-in cold-camera timing diagnostics | Camera lifecycle |
 | `FilesViewModel.py` | Stable-identity Qt file-list projection | Networking or file operations |
 | `FollowerColourScheme.py` | Guarded Cura colour-mode, material and theme integration | Geometry or tracking |
@@ -509,6 +510,31 @@ A `FileLease` explicitly keeps that file alive for an index worker or Cura parse
 job. Rebinding retires old files; deletion waits for all leases to close. An unrelated
 Cura file completion cannot release the current remote file. The matching application
 completion callback retains the lease even if the extension is deinitialized first.
+The raw source is also persisted under the same per-machine, per-print folder as
+its index and prepared layers. Restoration requires successful metadata with a
+matching path, positive size and modified timestamp supplied by the remote
+response itself (not a listing-size fallback), and a matching job size when
+known. Filename, size and timestamp select the stable-key print folder; the
+stored byte count is checked before use. Failed or incomplete metadata always
+forces a fresh download. A separate temporary working file keeps active leases
+safe through cache eviction or explicit clear: warm restoration runs off the UI
+thread, hardlinking when possible and copying in bounded chunks with progress
+when links are unavailable. A failed restore falls back to one fresh GET rather
+than retrying the corrupt cache. Publication also happens off the UI thread
+under a temporary name and an atomic rename; the unified per-machine LRU counts
+raw bytes with index and prepared bytes. Live source pins prevent index/prepared
+pruning from removing a print folder until its working file and leases retire;
+stale pins are removed after a crash. Every eviction removes the entire print
+folder, never just its raw source, index or prepared representation; a pinned
+folder can temporarily exceed the budget even when the raw source alone exceeds
+the limit. After its last active lease retires, pruning removes the entire
+over-budget folder rather than stripping one representation.
+The default 2048 MiB budget accommodates
+a 467,500,381-byte source alongside its measured ~344 MiB prepared data and
+~1 MiB index. Older unmarked records containing 512 MiB upgrade to 2048 MiB:
+the old serializer recorded the same 512 for inherited defaults and explicit
+choices, so it cannot safely distinguish them. New explicit 512 MiB choices
+carry a persisted marker and remain 512; all other saved bounds are preserved.
 
 `GCodeIndexService` submits at most one worker job at a time. Requests coalesce into
 desired state rather than an unbounded executor queue. Rebinding cancels the old
@@ -517,9 +543,13 @@ Persistent cache restoration, parsing, hydration and cache persistence all run o
 the UI thread. Only generation-valid results are published on the Qt thread.
 
 `IndexView` exposes immutable ranges/maps/timing and read-only query operations.
-It does not expose mutable motion arrays or worker handles. Compact layers are used
-only after hydration has published complete arrays. Index algorithms and cache
+It does not expose mutable motion arrays or worker handles. Compact motion arrays
+are used only after hydration has published them complete. Index algorithms and cache
 format remain in `GCodeIndex.py`; they are not duplicated in runtime components.
+Before raw arrays hydrate, prepared geometry can refine the follower's physical
+split without a file lease. Live extrusion disambiguates travel crossings; a
+cached index does not hide source-download percentage while the raw file is
+still arriving.
 
 One indexed motion is one G-code motion, and its physical geometry is one path:
 a straight edge for G0/G1, and for G2/G3 the circular or helical path its centre

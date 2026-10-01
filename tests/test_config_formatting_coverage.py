@@ -727,7 +727,7 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(config.camera_fps, CAMERA_FPS_DEFAULT)
         self.assertEqual(config.aux_interval_ms, 2500)
         self.assertEqual(config.console_interval_ms, 1000)
-        self.assertEqual(config.cache_max_mb, 512)
+        self.assertEqual(config.cache_max_mb, 2048)
 
         clamped = PrinterConfig.from_dict({
             "poll_interval_ms": 10 ** 9, "z_tolerance": 0.5, "ready_retry_interval_s": 120.0,

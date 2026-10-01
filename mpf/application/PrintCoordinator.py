@@ -532,6 +532,8 @@ class PrintCoordinator(QObject):
             face.estimate if face.estimate > 0 else None, self._files.metadata_complete,
             layer_progress=motion.fraction, motion_progress=motion.progress, index_ready=face.view is not None,
             download_fraction=self._files.download_fraction,
+            source_downloading=(self._files.phase == "downloading"
+                                and face.view is not None),
             indexing=self._index.phase == "indexing",
             index_fraction=self._index.progress if self._index.phase == "indexing" else None,
             next_pause_layer=pause.layer,

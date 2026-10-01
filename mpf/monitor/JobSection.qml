@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import "../widgets"
+import "../preview"
 import "../resources/theme"
 
 // The Print-job section (4.3.0 extraction): the status, progress,
@@ -306,6 +307,27 @@ Item {
                         }
                     }
                 }
+            }
+
+            UM.Label {
+                objectName: "moonrakerJobSourceStatus"
+                visible: root.printerModel != null && root.printerModel.plateSourceStatus !== ""
+                text: root.printerModel != null ? root.printerModel.plateSourceStatus : ""
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("small")
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                Layout.columnSpan: 2
+            }
+            LoadProgressIndicator {
+                objectName: "moonrakerJobSourceProgress"
+                Layout.fillWidth: true
+                Layout.columnSpan: 2
+                visible: busy
+                busy: root.printerModel != null && root.printerModel.plateSourceStatus !== ""
+                progress: root.printerModel != null ? root.printerModel.plateSourceProgress : -1
+                phase: "G-code download"
             }
 
             UM.Label {

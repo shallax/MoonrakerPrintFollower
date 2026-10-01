@@ -531,8 +531,8 @@ class PreparedCache:
 
     def _evict(self, keep: str) -> None:
         """The print-level size policy (the review's unified-lifecycle
-        finding): one print folder's total cost is the index AND the
-        prepared representation together, and an evicted print loses
+        finding): one print folder's total cost includes its raw source,
+        index and prepared representation, and an evicted print loses
         the WHOLE folder — never an orphaned half. The walk is the
         SHARED eviction policy (CachePolicy.evict_to_budget): true
         LRU — the least recently read unprotected folders go first,
@@ -548,7 +548,7 @@ class PreparedCache:
                     continue
                 try:
                     stats = [os.stat(os.path.join(root, name)) for name in names
-                             if name.endswith((".mpfp", ".mpfi.gz"))]
+                             if name.endswith((".mpfp", ".mpfi.gz", "source.gcode"))]
                     if not stats:
                         continue
                     # mtime is explicitly refreshed only after validation;
