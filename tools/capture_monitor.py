@@ -87,6 +87,16 @@ def fake_status(state="printing"):
     }
 
 
+def _preload_dashboard(engine):
+    dashboard = QQmlComponent(engine)
+    dashboard.loadUrl(QUrl.fromLocalFile(os.path.join(
+        ROOT, "mpf", "monitor", "MoonrakerMonitorDashboard.qml")))
+    if not dashboard.isReady():
+        raise RuntimeError("dashboard compilation failed: " +
+                           "\n".join(str(e) for e in dashboard.errors()))
+    return dashboard
+
+
 def main():
     output_dir = sys.argv[1] if len(sys.argv) > 1 else "dist/screenshots"
     os.makedirs(output_dir, exist_ok=True)
@@ -259,6 +269,9 @@ def main():
         engine_context.setContextProperty("OutputDevice", {"activePrinter": model})
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
+        # Capture has no startup latency requirement: warm the component
+        # before the shell's asynchronous Loader begins its readiness wait.
+        dashboard = _preload_dashboard(engine)
         component = QQmlComponent(engine)
         component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "mpf", "monitor", "MoonrakerMonitorBedMesh.qml")))
         if component.isError():
@@ -302,7 +315,9 @@ def main():
                 break
             time.sleep(0.05)
         else:
-            raise RuntimeError("the dashboard never rendered inside the capture shell")
+            raise RuntimeError(
+                "the dashboard never rendered inside the capture shell "
+                f"(preloaded component status: {dashboard.status()})")
 
         # The e-stop label's contrast gate (the 4.5.0 dark-mode
         # ruling): the idle copy must contrast with the button's

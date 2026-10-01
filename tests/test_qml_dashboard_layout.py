@@ -1,6 +1,21 @@
 """Executable qml dashboard layout contracts."""
 from tests import qml_engine_support as harness
 
+
+class CaptureShellStartupTests(harness.RealEngineTestCase):
+    def test_preloaded_dashboard_is_ready_when_the_capture_shell_opens(self):
+        from tools.capture_monitor import _preload_dashboard
+
+        dashboard = _preload_dashboard(self.engine)
+        self.assertTrue(dashboard.isReady())
+        shell, window = self.mount_window("MoonrakerMonitorBedMesh.qml", 900, 760)
+        self._wait_until(
+            window,
+            lambda _image: shell.findChild(harness.QQuickItem, "moonrakerControlsPane") is not None,
+            timeout=2.0)
+        self.assertIsNotNone(shell.findChild(harness.QQuickItem, "moonrakerControlsPane"))
+
+
 class StatusColumnGeometryTests(harness.StatusColumnGeometryTests):
     def test_the_status_column_tracks_the_pane_viewport(self):
         # The regression: without an explicit viewport-relative width
