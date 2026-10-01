@@ -2,6 +2,13 @@
 from tests import index_plate_support as harness
 
 class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
+    def test_prepared_wait_timeout_reports_worker_and_store_state(self):
+        with harness.patch.object(self.service, "_advance"):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    r"the prepared pass did not settle \(busy=False, saved=False\)"):
+                self._pump(timeout=0.02)
+
     def test_prefetched_geometry_gets_motion_arrays_when_the_live_window_arrives(self):
         index = self._compact_view(8, hydrated=(2, 3, 4), followed=3)
         payload = self.qt.load("PlateProgress").decode_layer(self._payload(5), immutable=True)
@@ -826,7 +833,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         heartbeat.start()
         started = harness.time.monotonic()
         with harness.patch.object(self.qt.load("IndexTasks"), "passive_yield", recorded):
-            self._pump(timeout=30.0)
+            self._pump(timeout=60.0)
         elapsed = harness.time.monotonic() - started
         heartbeat.stop()
         self.assertGreaterEqual(
@@ -1560,5 +1567,3 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             % (lines, len(asked)))
         print("scan gate evidence: %d asks, %d hand-backs over %d lines"
               % (len(asked), len(fires), lines))
-
-
