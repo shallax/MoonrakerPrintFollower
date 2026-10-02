@@ -362,6 +362,10 @@ upload dies) with the log tail and the last captures, and a wedged
 boot gets the kernel's verdict — the process chain, each thread's
 blocked syscall, then a live `strace` and `gdb` backtrace of the
 loader (SYS_PTRACE is granted at container start for exactly this).
+The 1800-second timeout runs with the harness's own libraries; only
+its Cura child receives the extracted AppImage's `LD_LIBRARY_PATH`,
+so an older bundled `libsystemd` cannot prevent the supervisor from
+starting.
 A failing run is evidence, not a mystery.
 
 ### 2.4 Cura version swap
