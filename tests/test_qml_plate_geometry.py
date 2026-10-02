@@ -12,7 +12,21 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                              if item.property("text") == "Clear")
                 column = pause.parentItem().parentItem()
                 self._printer.setPauseClearAvailable(True)
-                self._pump_ms(80)
+                # The model binding turns true before QtQuick.Layouts sizes the
+                # button. While still height 0 it is vertically centred 15 px
+                # below its eventual position, so it is not a zoom baseline.
+                self._wait_until(
+                    window,
+                    lambda _image, column=column, pause=pause, clear=clear:
+                    column.property("clearAvailable") is True
+                    and pause.height() > 0
+                    and clear.height() == pause.height()
+                    and clear.width() >= column.property("clearButtonWidth"),
+                    timeout=2.0)
+                self.assertTrue(column.property("clearAvailable"))
+                self.assertEqual(clear.height(), pause.height(),
+                                 "Clear never entered the foot row at full height")
+                self.assertGreaterEqual(clear.width(), column.property("clearButtonWidth"))
 
                 def positions(pause=pause, clear=clear, window=window):
                     return (pause.mapToItem(window.contentItem(), harness.QPointF()).x(),
