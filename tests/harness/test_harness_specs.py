@@ -5,7 +5,11 @@ into a gate (the engineering panel's finding)."""
 
 import ast
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 # The harness modules live beside this file; the host discovery
@@ -71,6 +75,64 @@ class HarnessSpecTests(unittest.TestCase):
                         source.index('if ! mkdir "$LOCK_DIR"'))
         self.assertIn("one run per container at a time", source)
         self.assertIn("trap 'rm -rf \"$LOCK_DIR\"' EXIT", source)
+
+    def test_cura_library_path_is_applied_after_the_timeout_wrapper(self):
+        script = (os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))) + "/tools/ui_test.sh")
+        with open(script, encoding="utf-8") as handle:
+            source = handle.read()
+        launch = source.split("launch_cura() {", 1)[1].split("\n}", 1)[0]
+        self.assertEqual(launch.count("timeout 1800 env"), 1)
+        before, child = launch.split("timeout 1800 env", 1)
+        self.assertNotIn("LD_LIBRARY_PATH=", before)
+        self.assertIn(
+            r"LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:"
+            r"\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:"
+            r"\$CURA_WHEELS/PyQt6/Qt6/lib", child)
+        self.assertLess(child.index("LD_LIBRARY_PATH="), child.index(r"\$MPF_LAUNCH"))
+
+    @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash"),
+                         "the Linux Cura launcher needs bash")
+    def test_timeout_keeps_container_libraries_and_child_gets_cura_libraries(self):
+        script = (os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))) + "/tools/ui_test.sh")
+        with open(script, encoding="utf-8") as handle:
+            source = handle.read()
+        launch = source.split("launch_cura() {", 1)[1].split("\n}", 1)[0]
+        match = re.search(
+            r"""bash -lc 'su ubuntu -s /bin/bash -c "(.*?)" >/tmp/mpf/cura_run.log""",
+            launch, re.DOTALL)
+        self.assertIsNotNone(match)
+        command = match.group(1).replace("\\\n", "").replace(r"\$", "$")
+        os.makedirs("/tmp/mpf", exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="mpf-launch-", dir="/tmp/mpf") as tmp:
+            timeout = os.path.join(tmp, "timeout")
+            child = os.path.join(tmp, "launch_probe")
+            wrapper_result = os.path.join(tmp, "wrapper")
+            child_result = os.path.join(tmp, "child")
+            with open(timeout, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\n"
+                             'test "$1" = 1800 || exit 2\n'
+                             'printf "%s" "$LD_LIBRARY_PATH" > "$MPF_WRAPPER_RESULT"\n'
+                             'shift\nexec "$@"\n')
+            with open(child, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\n"
+                             'printf "%s" "$LD_LIBRARY_PATH" > "$MPF_CHILD_RESULT"\n')
+            os.chmod(timeout, 0o755)
+            os.chmod(child, 0o755)
+            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"],
+                       LD_LIBRARY_PATH="container-libraries", CURA_ROOT=tmp,
+                       CURA_WHEELS=tmp, MPF_LAUNCH="./launch_probe",
+                       MPF_WRAPPER_RESULT=wrapper_result, MPF_CHILD_RESULT=child_result)
+            subprocess.run(["bash", "-c", command], env=env, check=True)
+            with open(wrapper_result, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "container-libraries")
+            with open(child_result, encoding="utf-8") as handle:
+                self.assertEqual(
+                    handle.read(),
+                    ":".join((tmp, tmp + "/usr/lib/x86_64-linux-gnu",
+                              tmp + "/lib/x86_64-linux-gnu", tmp + "/usr/lib",
+                              tmp + "/PyQt6/Qt6/lib")))
 
     def test_every_run_scans_the_cura_log_for_plugin_noise(self):
         # The 2026-09-16 log-scan ruling: every run reads the Cura log

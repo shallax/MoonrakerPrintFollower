@@ -634,13 +634,13 @@ launch_cura() {
         -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
         "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
         DISPLAY=:99 APPDIR=\$CURA_ROOT \
-        LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
         PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
         XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
         LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
         QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
         QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
-        timeout 1800 \
+        timeout 1800 env \
+        LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
         \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
 }
 
