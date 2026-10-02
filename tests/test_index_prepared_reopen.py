@@ -711,66 +711,80 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
                         "the pass finished before the demand cut in")
 
     def test_the_batch_loop_yields_the_interpreter_with_no_demand_pending(self):
-        # The passive-yield pin. A batch's loop is tight and its layers
-        # are cheap, so nothing but a wall-clock gate stops the worker
-        # holding the GIL for the walk's whole duration — which is what
-        # the UI thread reads as a frozen window for the pass. The
-        # cadence is counted from the production yield's own calls (the
-        # real yield still runs), and the count it is held to is the
-        # ASKED count, never a fire count against the wall clock: a
-        # descheduled worker cannot hand back a GIL it is not holding,
-        # so a floor on fires per unit of time pins the machine's load
-        # rather than the gate.
+        # Drive the real batch and passive-yield gate with a held clock.
+        # Wall time on a shared runner may elapse entirely while the
+        # worker is off-CPU, between its last ask and the budget check.
         self.qt.load("GCodeIndexService")
-        self.assertTrue(hasattr(self.qt.load("IndexTasks"), "passive_yield"),
-                        "the background workers have no passive yield at all")
-        # 20,000 layers: the deadline is what ends the walk, never an
-        # exhausted frontier — a batch that ran out of layers would stop
-        # asking the gate before the window closed.
-        index = harness.make_index(layers=20000, motions=20)
+        tasks = self.qt.load("IndexTasks")
+        work = self.qt.load("IndexWork")
+        index = harness.make_index(layers=512, motions=20)
         self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
         self.service._prepared.open(self.files.identity)
-        captured = []
-        original = self.service._submit
-        self.service._submit = lambda kind, work, lease=None: captured.append((kind, work))
+        captured = self._capture_submit()
         self.service._advance()
-        self.service._submit = original
         self.assertEqual(captured[0][0], "fullprep",
                          "the first submission was not the pass")
+        clock = harness._HeldClock()
         asked = []
-        yields = []
-        real = self.qt.load("IndexTasks").passive_yield
+        sleeps = []
+        real = tasks.passive_yield
 
         def recorded(now, last):
-            # The gate is asked far more often than it fires — the
-            # demand check runs at the preparation's own granularity —
-            # so only the calls that MOVED the watermark are hand-backs.
             asked.append(now)
-            updated = real(now, last)
-            if updated != last:
-                yields.append(harness.time.monotonic())
-            return updated
+            return real(now, last)
 
-        started = harness.time.monotonic()
-        with harness.patch.object(self.qt.load("IndexTasks"), "passive_yield", recorded):
+        def spend_slice(index_arg, layer, should_yield=None):
+            clock.spend(work._PASSIVE_YIELD_S / 8)
+            return None
+
+        with harness.patch.object(tasks, "time", clock), \
+                harness.patch.object(work, "time", harness.SimpleNamespace(
+                    monotonic=clock.monotonic, sleep=sleeps.append)), \
+                harness.patch.object(tasks, "passive_yield", recorded), \
+                harness.patch.object(tasks, "_prepare_layer", spend_slice):
             frontier, _encoded, _uncacheable = captured[0][1]()
-        elapsed = harness.time.monotonic() - started
+        self.assertGreaterEqual(len(asked), 64, "the batch stopped asking its gate")
+        self.assertLess(frontier, len(index.ranges), "the batch exhausted its frontier")
         self.assertGreaterEqual(
-            len(asked), 64,
-            "the batch walked %d layers in %.0f ms and asked the gate %d times"
-            % (frontier, elapsed * 1000.0, len(asked)))
-        # The gate FIRING is what a descheduled worker cannot promise:
-        # it hands back a GIL only while it holds one, and a run that
-        # was off-CPU for the walk fires the gate once. The floor is
-        # therefore that it fired at all, and the cadence claim below
-        # is made only where there are two fires to measure between —
-        # read as a fire count per unit of time it would pin the
-        # machine's load, which is the mistake this pin exists to
-        # avoid.
-        self.assertGreaterEqual(
-            len(yields), 1,
-            "the batch walked %d layers in %.0f ms and never handed back"
-            % (frontier, elapsed * 1000.0))
+            len(sleeps), 1, "the due batch gate never handed back the interpreter")
+
+    def test_a_descheduled_batch_does_not_claim_an_unasked_yield(self):
+        # The Windows failure's signature: 32 cheap layers were visited,
+        # then the worker lost its remaining slice off-CPU before its
+        # next ask. No hand-back is due when it was not holding the GIL.
+        self.qt.load("GCodeIndexService")
+        tasks = self.qt.load("IndexTasks")
+        work = self.qt.load("IndexWork")
+        index = harness.make_index(layers=128, motions=20)
+        self.service._view = self.qt.load("IndexView").IndexView(self.files.job_key, index)
+        self.service._prepared.open(self.files.identity)
+        captured = self._capture_submit()
+        self.service._advance()
+        self.assertEqual(captured[0][0], "fullprep")
+        clock = harness._HeldClock()
+        asks = []
+        sleeps = []
+        real = tasks.passive_yield
+
+        def recorded(now, last):
+            asks.append(now)
+            return real(now, last)
+
+        def descheduled(index_arg, layer, should_yield=None):
+            if layer == 31:
+                clock.spend(tasks._FULL_PREP_BATCH_S + 0.05)
+            return None
+
+        with harness.patch.object(tasks, "time", clock), \
+                harness.patch.object(work, "time", harness.SimpleNamespace(
+                    monotonic=clock.monotonic, sleep=sleeps.append)), \
+                harness.patch.object(tasks, "passive_yield", recorded), \
+                harness.patch.object(tasks, "_prepare_layer", descheduled):
+            frontier, _encoded, _uncacheable = captured[0][1]()
+        self.assertEqual(frontier, 32)
+        self.assertGreaterEqual(len(asks), 32)
+        self.assertGreaterEqual(clock.now - 1000.0, tasks._FULL_PREP_BATCH_S)
+        self.assertEqual(sleeps, [], "a yield was claimed without a due gate ask")
 
     def test_the_passive_yield_sleeps_when_due_and_only_then(self):
         # The helper's own contract, with a controlled clock and a
