@@ -801,7 +801,14 @@ GPL-3.0, and the licences combine under GPL-3.0 section 13.
 
 Each printer keeps its own opt-ins on the Monitor: configurable warning
 and failure thresholds, a safe period at the start of a print, and
-notification and automatic-pause switches that stay off by default.
+notification and automatic-pause switches that stay off by default. An
+alert names the printer, carries an **Acknowledge** button, and repeats
+a bounded number of times while it stands unacknowledged. When Cura is
+not the window in front the alert is also sent to the desktop
+notification area where the platform supports it — the in-Cura message
+is always shown either way. The frame that raised an alert and each
+print's score timeline are kept in a bounded evidence folder, opened
+from Diagnostics.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 

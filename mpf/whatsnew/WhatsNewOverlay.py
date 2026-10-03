@@ -65,9 +65,12 @@ class WhatsNewOverlay:
     def offer_state(self) -> dict:
         """The offer's wiring, for the harness's first-install leg: a
         step that sees no popup must be able to tell a never-wired
-        offer from one whose retries timed out."""
-        return {"wired": self._model is not None, "attempts": self._attempts,
-                "gave_up": self._gave_up}
+        offer from one whose retries timed out. Wired means the
+        DISMISS path is attached — that is what reveals the offer, so
+        a model attached without it is not wired for this purpose."""
+        return {"wired": any(slot == self._show_detection
+                             for _signal, slot in self._wired_signals),
+                "attempts": self._attempts, "gave_up": self._gave_up}
 
     def _drop_model(self):
         for signal, slot in self._wired_signals:

@@ -315,6 +315,21 @@ Batch F — the captures and the last gates:
   detection-ready 598, diagnostics 813); the determinism gate still
   reports 17 scenes byte-identical across two runs.
 
+The programme's closing gate run, before the push:
+
+- `make coverage`: the project total at 99%, every file over the 95%
+  per-file bar (`EvidenceStore` needed two best-effort-branch pins; the
+  alert-evidence test needed its context and camera seams pinned, or a
+  mid-drive policy rebuild emptied its timeline under the coverage
+  leg's slower clock).
+- Harness legs: first-install 9/9 then 5/5 (verified twice, before and
+  after the ownership move), suite webcams 41/41, suite settings
+  22/22 — all on an idle machine, each gallery's steps read from its
+  own evidence file rather than the summary line.
+- `make lint` green; `tools/compare_screenshots.py` reports only the
+  six settings captures as changed (their fit is the change) and every
+  other capture within the antialias tolerance.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker

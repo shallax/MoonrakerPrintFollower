@@ -389,6 +389,22 @@ class WhatsNewDetectionOfferTests(harness.RealEngineTestCase):
         offer.attach_model(second)
         self.assertEqual(second.receivers(second.whatsNewDismissed), 1)
 
+    def test_a_model_without_the_dismiss_surface_reads_as_unwired(self):
+        # The leg's diagnostic distinction: a model that cannot reveal
+        # the offer must not report as wired, or a missing popup would
+        # read as a timeout.
+        self.window()
+        from PyQt6.QtCore import QObject
+
+        class BareModel(QObject):
+            def __init__(self):
+                super().__init__()
+                self._whats_new_seen = ""
+
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(BareModel())
+        self.assertFalse(offer.offer_state()["wired"])
+
     def test_an_offer_model_whose_notes_were_seen_queues_only_the_offer(self):
         self.window()
         monitor = MonitorDouble(seen=latest_version())
