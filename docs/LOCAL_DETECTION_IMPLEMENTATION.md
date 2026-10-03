@@ -329,9 +329,10 @@ The programme's closing gate run, before the push:
   mid-drive policy rebuild emptied its timeline under the coverage
   leg's slower clock).
 - Harness legs: first-install 9/9 then 5/5 (verified twice, before and
-  after the ownership move), suite webcams 41/41, suite settings
-  22/22 — all on an idle machine, each gallery's steps read from its
-  own evidence file rather than the summary line.
+  after the ownership move — run-2026-10-03-172446), suite webcams
+  41/41 (run-2026-10-03-182116), suite settings 22/22
+  (run-2026-10-03-182202) — all on an idle machine, each gallery's
+  steps read from its own evidence file rather than the summary line.
 - `make lint` green; `tools/compare_screenshots.py` reports only the
   six settings captures as changed (their fit is the change) and every
   other capture within the antialias tolerance.
