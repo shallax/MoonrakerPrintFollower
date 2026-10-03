@@ -109,9 +109,13 @@ External or live-test items, not code:
   now discloses the licence relationship where a reader sees it.
 - The live active-print trial: still required before the colour claim
   in the README is proven; no permission-cleared recording exists.
-- Per-OS verification of the desktop notification: Linux is verified
-  in-container; Windows and macOS need a live run before the channel
-  is promised (the fallback keeps the alert path correct regardless).
+- Per-OS verification of the desktop notification: the code path is
+  pinned by tests on every OS (`DesktopAlert`'s four gates and the
+  frame it carries), but no real desktop has SEEN one — this
+  environment has no notification daemon — so Linux, Windows and
+  macOS all need a live run before the channel is promised. The
+  in-Cura message is shown regardless, and the README's wording
+  ("where the platform supports it") promises nothing per OS.
 
 Left as found, deliberately:
 
