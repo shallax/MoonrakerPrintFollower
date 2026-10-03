@@ -30,8 +30,9 @@ nothing in the repo tree is modified by this script:
     lifts the module version ceiling of the throwaway copy.
 
 One PNG is written per tab (05-settings-connection.png through
-05-settings-diagnostics.png), each fitted to its
-tab's content height.  The output is deterministic for a given toolchain
+05-settings-diagnostics.png), plus the post-setup detection render
+(05-settings-detection-ready.png); each is fitted to its page's content
+height.  The output is deterministic for a given toolchain
 (the dev container pins the fonts), so captures can be diffed across
 releases.
 

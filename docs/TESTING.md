@@ -349,10 +349,10 @@ reads the run's OWN work dir, never the shared tree's copy), its
 display, and its seeded tree.
 
 The Cura profile is seeded, not produced by driving Cura's UI: a
-pinned config directory checked into `tests/harness/config` (welcome
-and What's-New dialogs suppressed, machine and printer record
-present, window geometry pinned); a pre-scenario gate asserts the
-expected stage is active and no overlay covers it.
+pinned config directory checked into `tests/harness/config` (welcome,
+What's-New and local-detection offer prompts suppressed, machine and
+printer record present, window geometry pinned); a pre-scenario gate
+asserts the expected stage is active and no overlay covers it.
 
 Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (the
 step gallery), `evidence.json` (the machine-readable per-step

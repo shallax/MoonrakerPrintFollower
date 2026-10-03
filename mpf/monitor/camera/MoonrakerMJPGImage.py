@@ -47,6 +47,24 @@ SNAPSHOT_REQUEST_TIMEOUT_MS = 10000
 # exactly that.
 SUMMARY_INTERVAL_S = 5.0
 
+def _horizontal_mirror(image: QImage) -> QImage:
+    """A horizontal flip that survives every Qt the plugin meets.
+
+    Qt 6.9+ renamed this to flipped(); the classic mirrored() called
+    with no arguments is a silent no-op on at least Qt 6.11 — an
+    unflipped copy comes back — so the explicit forms are used:
+    flipped() where it exists, mirrored(True, False) on Cura 5.13's
+    pinned Qt 6.6.
+    """
+    flipped = getattr(image, "flipped", None)
+    if flipped is not None:
+        try:
+            return flipped(Qt.Orientation.Horizontal)
+        except TypeError:
+            pass
+    return image.mirrored(True, False)
+
+
 class MoonrakerMJPGImage(QQuickPaintedItem):
     """A plugin-owned MJPEG renderer forked from Cura's
     NetworkMJPGImage: drains the stream, keeps only the newest
@@ -134,7 +152,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     def paint(self, painter: QPainter) -> None:
         if self._mirror:
-            painter.drawImage(self.contentsBoundingRect(), self._image.mirrored())
+            painter.drawImage(self.contentsBoundingRect(), _horizontal_mirror(self._image))
             return
         painter.drawImage(self.contentsBoundingRect(), self._image)
 

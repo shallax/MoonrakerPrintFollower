@@ -3726,7 +3726,9 @@ class SettingsPageCase(RealEngineTestCase):
         swallowed before the handler — the driver emits ``clicked`` when
         the control carries that signal (the exact path a real click
         drives, TESTING.md). Controls without one still get the real
-        press-and-release."""
+        press-and-release. This proves the handler wiring, not
+        coordinate hit-testing — a control occluded by an overlapping
+        item stays green here; the harness scenario suite owns that."""
         emit = getattr(getattr(item, "clicked", None), "emit", None)
         if emit is None:
             self.click_item(window, item)

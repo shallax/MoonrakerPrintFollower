@@ -19,6 +19,134 @@ Obico's model, acknowledging that three supplied *timelapse* failure
 examples are not detected. The earlier proposal to evaluate another model
 was explicitly withdrawn.
 
+## Review and fix programme (2026-10-03)
+
+`release/v5.0.0` reached a fully green CI run on the remediation range
+`206919a..cab099b` (all nine jobs: lint, screenshots, package, CodeQL,
+three Pythons, both native builds, the repeat-boot smoke). A full
+seven-persona panel — architecture, UX, engineering, product,
+security/hardening, Klipper/Moonraker/Cura domain, and the pro-user —
+then reviewed that range read-only. Every substantive finding is
+recorded here with its disposition; the fixes land in the batches
+below, each with its own tests and a full-gate run before the push.
+
+### Decisions on the panel's findings
+
+Fixed in this programme:
+
+- Coverage gate mask (security, engineering): `statements <= 0` skipped
+  a file whose statements were all excluded (`# pragma: no cover`), and
+  `has_code()` aborted on binary or NUL-byte input instead of judging
+  it. Both closed, with pins. Batch A.
+- Mirror pin could not fail (engineering): the paint test filled one
+  colour, invariant under mirroring. Asymmetric fill, flip asserted.
+  Rewriting the pin then exposed a latent product bug it had been
+  hiding: Qt 6.9+ renamed `QImage.mirrored()` to `flipped()`, and the
+  no-argument classic call is a **silent no-op on Qt 6.11** (the
+  renderer came back unflipped), so the camera mirror setting would
+  die on any Cura bundling that Qt. `MoonrakerMJPGImage` now flips via
+  `flipped(Qt.Orientation.Horizontal)` where it exists and
+  `mirrored(True, False)` on Cura 5.13's pinned Qt 6.6. Batch A.
+- Capture settle asymmetry (engineering): the section-position loop now
+  raises when it never settles, like its scroll sibling. Batch A.
+- README honesty (UX, product): the tab caption lists Detection, the
+  ~193 MiB size and the AGPL/GPL licence relationship are stated,
+  thresholds are "configurable" (not "adaptive"), switches are "off by
+  default", and the clipped Detection/Diagnostics captures are
+  regenerated against a fitted canvas. Batches A and F.
+- Doc drift (architecture, domain): the harness-seed list, the capture
+  output set and this document's model row (the decode divergence, not
+  only the resize) and policy row (the 90-second cooldown is MPF's, in
+  the Monitor model's alert path) corrected in Batch A; the pixel
+  settle gets one owner beside the shared capture module, and the
+  coverage gate becomes the single owner of both "what must be judged"
+  and "what may be excused" in Batch E.
+- Runtime probe before download (domain): a foreign `onnxruntime`
+  already imported is now refused before the ~193 MiB fetch, with an
+  actionable health reason. Batch B.
+- Index-fetch redirect handler (security): the PyPI index fetch uses
+  the same HTTPS-every-hop handler as the model download. Batch B.
+- Unpinned extraction guards (security): symlink members, backslash
+  names, the per-member cap, the foreign top-level package, directory
+  modes, `load(runtime_directory=None)` and `existing.__file__ is
+  None` are pinned or made fail-closed. Batch B.
+- Temp-dir hygiene (security, engineering): detection tests stop
+  creating scratch trees inside the checkout. Batch B.
+- Safe-period banding (domain): the displayed score is clamped into
+  the normal band while the safe period suppresses warnings, so a
+  green "Normal" can no longer carry a 0.97 score. Batch C.
+- Camera seam guard (domain): the per-frame receiver call is guarded
+  against a raising or deleted receiver, which otherwise aborts Cura
+  from inside a Qt slot; tested both ways. Batch C.
+- Offer wiring (pro-user, domain): the one-time offer re-attaches its
+  model connections on every monitor (re)install — the pattern the
+  migration notice already uses — and the give-up path is observable,
+  so the first-install leg can distinguish never-wired from
+  timed-out. Batch C.
+- Stale visibility (pro-user): a stale signal renders as a present,
+  neutral state with its reason, never as nothing at all — staying
+  within the neutral-not-green contract. Batch C.
+- Notification reach (pro-user): the alert names the printer, re-arms
+  in a bounded way while unacknowledged (escalation or a five-minute
+  interval, at most three per print, persisted with the per-print
+  record), carries an Acknowledge action, and shows a pending-alert
+  indicator on the section header and the camera pill. Batch C.
+- OS notification with the triggering frame (approved): a best-effort
+  desktop notification (tray `showMessage` with the retained frame as
+  its icon) fires when Cura is not the foreground window, falling back
+  to the in-Cura message; it rides the existing per-printer notify
+  opt-in. The image renders as the notification icon on Linux and
+  Windows; macOS support is attempted and falls back. Batches C and D.
+- Failure evidence and tuning record (pro-user, domain): the alert
+  retains its triggering frame and a per-print score timeline in a
+  bounded store, the measured benchmark milliseconds are surfaced, and
+  Diagnostics reveals the evidence folder. Batch D.
+
+External or live-test items, not code:
+
+- AGPL obligations and the written Ultimaker Marketplace policy for
+  post-install native downloads: still the release gate; the README
+  now discloses the licence relationship where a reader sees it.
+- The live active-print trial: still required before the colour claim
+  in the README is proven; no permission-cleared recording exists.
+- Per-OS verification of the desktop notification: Linux is verified
+  in-container; Windows and macOS need a live run before the channel
+  is promised (the fallback keeps the alert path correct regardless).
+
+Left as found, deliberately:
+
+- The Monitor QML comment naming `INSTRUCTIONS.md` stays: it is inside
+  the locked collapse/lock machinery and its text is pinned by a
+  contract test; the name still resolves from `docs/`.
+- Name-only document mentions in code comments and operator echoes are
+  not updated: only path-resolving and linking references were in the
+  move's contract, and the names still resolve.
+
+### Implementation details
+
+Batch A — this round's defects and text honesty:
+
+- `tools/check_per_file_coverage.py`: `has_code()` catches `ValueError`
+  (binary and NUL-byte input is judged, as its docstring promised); a
+  file with code but zero measured statements now fails the gate
+  (closing the blanket-`# pragma: no cover` mask); only
+  `mpf/__main__.py` is skipped, so a subpackage entry point is judged;
+  the docstring and the `EXCLUSIONS` comment now describe this gate's
+  own audited table rather than the scenario map's schema.
+- `tests/test_coverage_gate.py`: four new pins — the pragma mask, a
+  Windows-separator json key finding its file, binary input judged
+  rather than crashed, and the entry-point anchoring (the package's
+  own skipped, a subpackage's judged).
+- `tests/test_moonraker_mjpg.py`: the paint pin uses two colour halves
+  and asserts the flipped pixel, so a dropped or inverted mirror fails.
+- `tools/capture_monitor.py`: the section-position settle raises when
+  it never settles (symmetry with the scroll loop).
+- `.coveragerc`: the comment names `coverage json` as the aborting
+  step, not `combine`.
+- `README.md`, `docs/TESTING.md`, `docs/INSTRUCTIONS.md`,
+  `tools/capture_settings.py`, `tests/qml_engine_support.py`: the text
+  and scope corrections listed in the decisions above.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker
@@ -57,8 +185,8 @@ was explicitly withdrawn.
 | Settings and controls | `mpf/settings/DetectionSettings.qml`, `mpf/monitor/controls/FailureDetectionSection.qml`, `mpf/cura/MoonrakerFollowerMachineAction.py`, `mpf/settings/PrinterConfig.py` | Detection settings owns shared setup, progress, Cancel, a global enable switch that defaults on after setup, and the safety, signal, and safe-period explanations. Turning the switch off stops analysis/alerts and hides the Printer controls section without erasing per-printer choices. The compact Printer controls section owns per-printer enable, ordered adaptive bounds displayed from 0.00 to 1.00 in hundredths (Obico 0.38/0.78 defaults), a safe-period slider (0–15 minutes in ten-second steps; default five minutes), off-by-default notify/pause opt-ins and alert acknowledgment. Three solid slider segments reuse bed-mesh gestures without changing its rainbow default; no controls are enabled until the shared model is ready. Save validates bounds and ordering; load repairs a corrupt pair together. Diagnostics separately resets onboarding markers or removes shared assets and disables detection/actions for all saved printers. |
 | Actual camera | `mpf/monitor/camera/CameraPane.qml`, `CameraViewport.qml`, `FailureSignalBar.qml`, `MoonrakerMJPGImage.py` | The existing decoded-frame seam feeds inference; typed model state colours the real camera. No sample selector or extra camera connection. |
 | Settings usability | Five `mpf/settings/*Settings.qml` pages | Themed attached `UM.ScrollBar`, automatically always visible when scrolling is possible; fixed reserved gutter. |
-| Signal policy | `mpf/detection/DetectionPolicy.py` | Obico's ten-second cadence, configurable elapsed-print-time safe start (five-minute default), span-12 EWM, 310/7200-sample streaming short/long baselines, 3.8 short-mean multiple, 1.75 escalation, adaptive 0.38/0.78 low/high defaults and 90-second alert/ack cooldown. Threshold or safe-period edits retire old evidence and in-flight results; long-term baselines persist separately per printer and camera. The old mixed-camera baseline is ignored. The displayed two-decimal signal maps warning/failure to the selected slider positions, but is not calibrated model confidence. Waiting for the first analysed frame keeps a grey camera border, "Wait" in the scale and no score marker. `state()` reports idle/waiting/stale/normal/warning/failure. |
-| Model adapter | `mpf/detection/LocalFailureModel.py` | CPU-only ONNX Runtime session with one intra-/inter-op thread. `QImage` becomes NCHW float32 RGB [0,1], resized to the model's input shape; Obico's 0.08 score filter and 0.45 IoU non-max suppression retain boxes whose confidences are summed, potentially above 1. It uses Qt smooth resize, **not** exact OpenCV INTER_LINEAR; results differ measurably. Do not assert bit-for-bit upstream preprocessing equivalence. |
+| Signal policy | `mpf/detection/DetectionPolicy.py` | Obico's ten-second cadence, configurable elapsed-print-time safe start (five-minute default), span-12 EWM, 310/7200-sample streaming short/long baselines, 3.8 short-mean multiple, 1.75 escalation, and the 0.38/0.78 low/high defaults. The 90-second alert/acknowledgement cooldown and the one-pause-per-print latch are MPF's own, in the Monitor model's alert path, not in this policy. Threshold or safe-period edits retire old evidence and in-flight results; long-term baselines persist separately per printer and camera. The old mixed-camera baseline is ignored. The displayed two-decimal signal maps warning/failure to the selected slider positions, but is not calibrated model confidence. Waiting for the first analysed frame keeps a grey camera border, "Wait" in the scale and no score marker. `state()` reports idle/waiting/stale/normal/warning/failure. |
+| Model adapter | `mpf/detection/LocalFailureModel.py` | CPU-only ONNX Runtime session with one intra-/inter-op thread. `QImage` becomes NCHW float32 RGB [0,1], resized to the model's input shape; Obico's 0.08 score filter and 0.45 IoU non-max suppression retain boxes whose confidences are summed, potentially above 1. It uses Qt smooth resize, **not** exact OpenCV INTER_LINEAR, and its frames are decoded by Cura's `QImageReader` rather than Obico's `cv2.imdecode` — both differ measurably from upstream, so scores are not bit-comparable with a self-hosted Obico's. Do not assert bit-for-bit upstream preprocessing equivalence. |
 | Asset metadata | `mpf/detection/DetectionAssets.py` | Model URL, upstream-verified SHA-256, 202,223,918-byte size; SHA-256 and sizes for 15 ONNX Runtime 1.23.2 wheels (Python 3.10–3.12, macOS 13+ arm64/x86_64, glibc 2.27+ Linux aarch64/x86_64, Windows 10+ amd64). Reject unsupported host and less than 4 GiB physical RAM. |
 | Asset operations | `mpf/detection/AssetInstaller.py`, `LocalDetectionService.py` | Consent-only pinned downloads, worker-owned installation, startup integrity checks, real inference benchmark and global readiness persistence. |
 | Boot offer | `mpf/detection/DetectionOffer.qml`, `mpf/whatsnew/WhatsNewOverlay.py` | One-time global opt-in after What's New; later settings setup remains available. Diagnostics can reset both offer markers for the next launch without downloading the already-installed model again. |

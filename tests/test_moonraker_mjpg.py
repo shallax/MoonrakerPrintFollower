@@ -884,11 +884,17 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
     def test_paint_blits_the_frame_with_and_without_mirror(self):
         from PyQt6.QtCore import QSizeF
         from PyQt6.QtGui import QPainter
+        # Two colour halves: a single-colour fill is invariant under a
+        # horizontal flip, so only asymmetric content can catch a
+        # dropped or inverted mirror.
+        left, right = QColor(200, 30, 30), QColor(30, 30, 200)
         image = QImage(8, 6, QImage.Format.Format_RGB888)
-        image.fill(QColor(10, 20, 30))
+        for x in range(8):
+            for y in range(6):
+                image.setPixelColor(x, y, left if x < 4 else right)
         self.item._image = image
         self.item.setSize(QSizeF(8, 6))
-        for mirror in (False, True):
+        for mirror, expected in ((False, left), (True, right)):
             with self.subTest(mirror=mirror):
                 self.item.setMirror(mirror)
                 target = QImage(8, 6, QImage.Format.Format_RGB888)
@@ -896,8 +902,10 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
                 painter = QPainter(target)
                 self.item.paint(painter)
                 painter.end()
-                self.assertEqual(target.pixelColor(3, 2), QColor(10, 20, 30),
-                                 "the frame never reached the painter")
+                self.assertEqual(
+                    target.pixelColor(1, 2), expected,
+                    "the %s frame did not reach the painter"
+                    % ("mirrored" if mirror else "unmirrored"))
 
     def test_detection_receiver_reapplies_without_a_second_notify(self):
         receiver = QObject()

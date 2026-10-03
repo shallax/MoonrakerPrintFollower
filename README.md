@@ -784,22 +784,24 @@ The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
 ![Upload settings](screenshots/05-settings-upload.png)
 ![Diagnostics settings](screenshots/05-settings-diagnostics.png)
 
-The settings tabs: Connection, Following, Upload and Diagnostics.
+The settings tabs: Connection, Following, Upload, Detection and Diagnostics.
 
 ![Detection settings](screenshots/05-settings-detection.png)
 ![Detection settings after setup](screenshots/05-settings-detection-ready.png)
 
 **Local failure detection** is off until you opt in: one explicit,
-verified download of the Obico model and CPU inference runtime, a real
-inference check on your computer, then a global switch — no account, no
-cloud upload, no Docker or server to run. The model is shared across
-printers; everything after setup runs locally on the Cura computer.
+verified download of the Obico model (~193 MiB) and CPU inference
+runtime, a real inference check on your computer, then a global switch
+— no account, no cloud upload, no Docker or server to run. The model is
+shared across printers; everything after setup runs locally on the Cura
+computer. The weights are Obico's, licensed AGPL-3.0; the plugin is
+GPL-3.0, and the licences combine under GPL-3.0 section 13.
 
 ![Failure Detection controls](screenshots/12-detection-controls.png)
 
-Each printer keeps its own opt-ins on the Monitor: adaptive warning and
-failure thresholds, a safe period at the start of a print, and
-notification and automatic-pause switches that stay off unless ticked.
+Each printer keeps its own opt-ins on the Monitor: configurable warning
+and failure thresholds, a safe period at the start of a print, and
+notification and automatic-pause switches that stay off by default.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 

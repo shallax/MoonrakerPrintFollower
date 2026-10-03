@@ -1,7 +1,9 @@
 # Development instructions
 
 How changes are made in this repository. The architecture itself is described
-in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
+in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`; the 5.0.0
+local-detection work's status, contracts and remaining gates live in
+`LOCAL_DETECTION_IMPLEMENTATION.md`.
 
 ## Source ownership
 
@@ -163,7 +165,8 @@ are visible; a Python 3.14 patch release difference is acceptable.
   first), and PyQt6 collects inline `setContextProperty` temporaries —
   hold Python references. Outputs land in `dist/screenshots/*.png` (the
   CI artifact no longer includes them). `capture_settings.py` writes one PNG per
-  settings tab (Connection / Following / Upload / Diagnostics), each fitted to that
+  settings tab (Connection / Following / Upload / Detection / Diagnostics) plus
+  the post-setup detection render (`05-settings-detection-ready.png`), each fitted to that
   tab's Flickable content height — contentHeight is viewport-independent
   so measure-then-resize is stable, and the page's `UM.TabRow` appears
   as a composite class name (`TabRow_QMLTYPE_nn`), not `QQuickTabBar`.

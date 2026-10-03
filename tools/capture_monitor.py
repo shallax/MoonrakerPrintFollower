@@ -678,6 +678,8 @@ def main():
                 break
             previous = position
             pump_ms(50)
+        else:
+            raise RuntimeError("the detection section never settled in the controls pane")
         scroll = max(0.0, min(control_flick.property("contentHeight") - control_flick.height(),
                               position - 20))
         applied = None

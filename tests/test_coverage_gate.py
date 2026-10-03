@@ -65,6 +65,29 @@ class PerFileCoverageGateTests(unittest.TestCase):
         files["mpf/Below.py"] = self._entry(95.0)
         self.assertEqual(self._main(files), 0)
 
+    def test_a_wholly_excluded_file_still_fails_the_gate(self):
+        # `# pragma: no cover` on every statement reports
+        # num_statements 0 / 100% — without the has_code() cross-check
+        # the file would pass both this gate and the project total.
+        (self.root / "mpf" / "Blank.py").write_text(
+            "value = 1  # pragma: no cover\n", encoding="utf-8")
+        self.assertEqual(self._main({"mpf/Blank.py": self._entry(100.0, 0)}), 1)
+
+    def test_a_windows_separator_key_still_finds_its_file(self):
+        (self.root / "mpf" / "Back.py").write_text("value = 1\n", encoding="utf-8")
+        self.assertEqual(self._main({"mpf\\Back.py": self._entry(96.0)}), 0)
+
+    def test_unreadable_or_unparsable_input_is_judged_not_crashed(self):
+        (self.root / "mpf" / "Binary.py").write_bytes(b"\xff\xfe\x00")
+        self.assertEqual(self._main({}), 1)
+
+    def test_only_the_packages_own_entry_point_is_skipped(self):
+        (self.root / "mpf" / "__main__.py").write_text("value = 1\n", encoding="utf-8")
+        self.assertEqual(self._main({}), 0)
+        (self.root / "mpf" / "tools").mkdir()
+        (self.root / "mpf" / "tools" / "__main__.py").write_text("value = 1\n", encoding="utf-8")
+        self.assertEqual(self._main({}), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

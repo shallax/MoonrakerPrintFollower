@@ -6,11 +6,11 @@ average (the 2026-09-19 tightening), and a json-only gate let a file
 no test imports hide from judgement entirely: a coverage json lists
 measured files, so a never-imported file was silently skipped. The
 gate therefore enumerates the tree and treats a missing entry as a
-failure. Files whose coverage provably lives elsewhere — harness
-scenario legs, the live run, unreachable branches — carry a justified
-exclusion in the scenario map's schema: reason / evidence / date /
-recheck. `coverage json` feeds the bar; the tree decides what must be
-judged.
+failure. A file whose coverage provably lives elsewhere — the live
+run, an unreachable platform branch — carries a justified entry in
+EXCLUSIONS below: reason / evidence / date / recheck, validated
+before anything is judged. `coverage json` feeds the bar; the tree
+decides what must be judged.
 """
 from __future__ import annotations
 
@@ -23,16 +23,21 @@ BAR = 95.0
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "mpf"
 
+# Per-file excuses: path -> {reason, evidence, date, recheck}. The
+# validation below runs before anything is judged, so an excuse
+# without its justification fails the gate itself.
 EXCLUSIONS = {}
 
 
 def has_code(path: pathlib.Path) -> bool:
     """True when the file holds anything but comments and docstrings —
     an empty package marker has nothing to measure. An unreadable or
-    unparsable file is judged, never skipped."""
+    unparsable file is judged, never skipped: UnicodeDecodeError and
+    the NUL-byte ValueError are ValueError subclasses, so the except
+    covers binary and malformed input, not just syntax errors."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, SyntaxError):
+    except (OSError, SyntaxError, ValueError):
         return True
     for node in ast.walk(tree):
         if isinstance(node, ast.stmt) and not (
@@ -59,7 +64,9 @@ def main() -> int:
     failures = []
     for source_path in sorted(SOURCE.rglob("*.py")):
         file_path = source_path.relative_to(ROOT).as_posix()
-        if file_path.endswith("__main__.py") or file_path in EXCLUSIONS:
+        # Only the package's own entry point is skipped — a subpackage
+        # __main__.py carries code and is judged like any other file.
+        if file_path == "mpf/__main__.py" or file_path in EXCLUSIONS:
             continue
         entry = measured.get(file_path)
         if entry is None:
@@ -69,6 +76,13 @@ def main() -> int:
         summary = entry.get("summary", {})
         statements = summary.get("num_statements", 0)
         if statements <= 0:
+            # Zero measured statements is only legitimate for a file
+            # with no code. A file whose statements were all excluded
+            # (`# pragma: no cover`) reports 0/100% and would otherwise
+            # slip past both this gate and the project total.
+            if has_code(source_path):
+                failures.append("%s has code but no measured statements — "
+                                "coverage excluded it entirely" % file_path)
             continue
         percent = summary.get("percent_covered", 0.0)
         if percent >= BAR:
