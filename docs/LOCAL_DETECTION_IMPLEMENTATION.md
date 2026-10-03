@@ -147,6 +147,28 @@ Batch A — this round's defects and text honesty:
   `tools/capture_settings.py`, `tests/qml_engine_support.py`: the text
   and scope corrections listed in the decisions above.
 
+Batch B — small hardening:
+
+- `AssetInstaller.wheel_url` fetches the PyPI index through the same
+  HTTPS-at-every-hop opener as the wheel download (a named `_open_index`
+  seam), so an intermediate hop can never downgrade the scheme; the
+  existing CA and redirect pins drive that seam unchanged.
+- `LocalFailureModel.foreign_runtime()` is the single check for an
+  already-imported onnxruntime that is not the pinned install. It runs
+  in `LocalDetectionService.setup()` **before** the download as well as
+  at load, so a user with another runtime loaded is refused in
+  milliseconds instead of after ~193 MiB. `load()` requires its runtime
+  directory (fail-closed) and refuses a nameless imported module rather
+  than raising TypeError from `__file__ is None`.
+- New pins: symlink members, backslash and dot-dot member names, a
+  foreign top-level package, the per-member cap (declared metadata via a
+  fake archive — no bytes), the owner-only (0700) install modes, the
+  required-directory refusal, the nameless-runtime refusal, and the
+  pre-download probe (asserting no install was attempted).
+- The detection tests create their scratch trees outside the checkout
+  (`TemporaryDirectory()`), so a killed run leaves no `tmp*` debris in
+  the working tree.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker

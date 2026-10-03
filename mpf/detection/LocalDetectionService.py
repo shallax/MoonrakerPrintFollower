@@ -12,7 +12,7 @@ from . import AssetInstaller
 from .DetectionAssets import (
     ASSET_VERSION, MODEL_SHA256, MODEL_SIZE, host_wheel, installed_paths,
 )
-from .LocalFailureModel import LocalFailureModel
+from .LocalFailureModel import LocalFailureModel, foreign_runtime
 
 
 _lane = threading.Lock()
@@ -151,6 +151,17 @@ class LocalDetectionService(QObject):
         if self._host_error and not self._closed:
             self._error = self._host_error
             self._phase = "unsupported"
+            self.stateChanged.emit()
+            return
+        # Refuse a foreign already-imported runtime BEFORE the ~193 MiB
+        # download: the load-time guard can only tell the user after the
+        # whole install has been paid for.
+        foreign = foreign_runtime(self._root)
+        if foreign is not None:
+            self._error = ("Another plugin has already imported its own ONNX Runtime (%s); "
+                           "local detection needs its pinned build loaded first. Restart "
+                           "Cura with detection as the only ONNX Runtime user." % foreign)
+            self._phase = "error"
             self.stateChanged.emit()
             return
         if self._closed or self._busy or self._ready:

@@ -51,7 +51,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(dir=".")
+        self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.persistence = Persistence()
         self.model = Model()
@@ -931,7 +931,7 @@ class LocalDetectionServiceIntegrityTests(unittest.TestCase):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(dir=".")
+        self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.persistence = Persistence()
         self.wheel = RuntimeWheel("pinned.whl", "b" * 64, 256)
@@ -988,6 +988,19 @@ class LocalDetectionServiceIntegrityTests(unittest.TestCase):
         self.until(lambda: service.phase == "error")
         self.assertIn("integrity", service.error)
         self.assertFalse(service.ready)
+
+    def test_setup_refuses_a_foreign_runtime_before_any_download(self):
+        from types import SimpleNamespace
+        service = self.service()
+        installs = []
+        with patch.object(AssetInstaller, "install",
+                          side_effect=lambda *args, **kwargs: installs.append(True)), \
+                patch.dict(sys.modules, {"onnxruntime": SimpleNamespace(
+                    __file__="/elsewhere/onnxruntime/__init__.py")}):
+            service.setup()
+        self.assertEqual(installs, [], "the download started despite the foreign runtime")
+        self.assertEqual(service.phase, "error")
+        self.assertIn("ONNX Runtime", service.error)
 
 
 if __name__ == "__main__":

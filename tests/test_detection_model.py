@@ -120,7 +120,7 @@ class LocalFailureModelTests(unittest.TestCase):
         self.assertEqual(session.feed["camera"].shape, (1, 3, 100, 200))
 
     def test_load_imports_the_pinned_runtime_and_binds_its_session(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             installed = self.install_runtime(directory)
             model = LocalFailureModel.load("model-weights.onnx", str(installed))
             runtime = sys.modules["onnxruntime"]
@@ -132,7 +132,7 @@ class LocalFailureModelTests(unittest.TestCase):
         self.assertIsInstance(model, LocalFailureModel)
 
     def test_load_reuses_a_pinned_runtime_that_is_already_imported(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             installed = self.install_runtime(directory)
             sys.path.insert(0, str(installed))
             imported = importlib.import_module("onnxruntime")
@@ -142,13 +142,13 @@ class LocalFailureModelTests(unittest.TestCase):
         self.assertIsInstance(model, LocalFailureModel)
 
     def test_load_refuses_a_runtime_that_did_not_pin_the_release(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             installed = self.install_runtime(directory, version="1.24.0")
             with self.assertRaisesRegex(RuntimeError, "did not load"):
                 LocalFailureModel.load("model-weights.onnx", str(installed))
 
     def test_load_refuses_a_foreign_runtime_already_imported_in_cura(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             installed = self.install_runtime(directory)
             foreign = SimpleNamespace(
                 __file__=str(Path(directory, "site-packages", "onnxruntime", "__init__.py")),
@@ -190,6 +190,17 @@ class LocalFailureModelTests(unittest.TestCase):
                 LocalFailureModel(FakeSession([boxes, np.array([[[.9]]])])).score(image)
         filtered = np.array([[[[0., 0., float("inf"), .3]]]])
         self.assertEqual(LocalFailureModel(FakeSession([filtered, np.array([[[.05]]])])).score(image), 0.0)
+
+    def test_load_requires_the_pinned_runtime_directory(self):
+        # Fail-closed: a caller that omits the directory must refuse,
+        # never import whatever onnxruntime the process carries.
+        with self.assertRaisesRegex(RuntimeError, "runtime directory is required"):
+            LocalFailureModel.load("model-weights.onnx", "")
+
+    def test_a_nameless_imported_runtime_is_refused(self):
+        with patch.dict(sys.modules, {"onnxruntime": SimpleNamespace(__file__=None)}):
+            with self.assertRaisesRegex(RuntimeError, "already loaded"):
+                LocalFailureModel.load("model-weights.onnx", "/nonexistent/installed")
 
 
 if __name__ == "__main__":

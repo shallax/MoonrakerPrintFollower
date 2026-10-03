@@ -312,7 +312,7 @@ class WhatsNewDetectionOfferTests(harness.RealEngineTestCase):
 
     def test_the_detection_offer_reports_a_document_that_fails_to_load(self):
         self.window()
-        directory = tempfile.TemporaryDirectory(dir=".")
+        directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         broken = os.path.join(directory.name, "DetectionOffer.qml")
         with open(broken, "w", encoding="utf-8") as handle:

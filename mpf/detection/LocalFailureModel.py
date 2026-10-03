@@ -7,6 +7,23 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
 
 
+def foreign_runtime(runtime_directory: str) -> str | None:
+    """The location of an already-imported onnxruntime that is not the
+    pinned install, or None. Checked before any download and again at
+    load: a foreign build cannot be swapped out from under its owner,
+    so detection refuses rather than fighting it."""
+    existing = sys.modules.get("onnxruntime")
+    if existing is None:
+        return None
+    path = getattr(existing, "__file__", None)
+    if not path:
+        return "<already imported>"
+    resolved = Path(path).resolve()
+    if resolved.is_relative_to(Path(runtime_directory).resolve()):
+        return None
+    return str(resolved)
+
+
 class LocalFailureModel:
     def __init__(self, session):
         inputs = session.get_inputs()
@@ -23,20 +40,25 @@ class LocalFailureModel:
         self._height = height
 
     @classmethod
-    def load(cls, path: str, runtime_directory: str | None = None):
-        if runtime_directory is not None:
-            installed = Path(runtime_directory).resolve()
-            existing = sys.modules.get("onnxruntime")
-            if existing is not None and not Path(existing.__file__).resolve().is_relative_to(installed):
-                raise RuntimeError("Another inference runtime is already loaded in Cura")
-            if str(installed) not in sys.path:
-                sys.path.insert(0, str(installed))
+    def load(cls, path: str, runtime_directory: str):
+        """Load the pinned runtime directory, then the model.
+
+        ``runtime_directory`` is required and fail-closed: the pinned
+        build is the only one this adapter may run, so a caller that
+        omits it refuses instead of importing whatever onnxruntime the
+        process happens to carry."""
+        if not runtime_directory:
+            raise RuntimeError("The pinned inference runtime directory is required")
+        installed = Path(runtime_directory).resolve()
+        if foreign_runtime(runtime_directory) is not None:
+            raise RuntimeError("Another inference runtime is already loaded in Cura")
+        if str(installed) not in sys.path:
+            sys.path.insert(0, str(installed))
         import onnxruntime as ort
 
-        if runtime_directory is not None:
-            if (not Path(ort.__file__).resolve().is_relative_to(installed)
-                    or ort.__version__ != "1.23.2"):
-                raise RuntimeError("The pinned inference runtime did not load")
+        if (not Path(ort.__file__).resolve().is_relative_to(installed)
+                or ort.__version__ != "1.23.2"):
+            raise RuntimeError("The pinned inference runtime did not load")
         options = ort.SessionOptions()
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1

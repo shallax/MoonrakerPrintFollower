@@ -46,7 +46,7 @@ class DetectionAssetsTests(unittest.TestCase):
         with patch.dict(sys.modules, {"certifi": SimpleNamespace(where=lambda: "/cura/certifi/cacert.pem")}), \
                 patch.object(AssetInstaller.ssl, "create_default_context",
                              return_value=sentinel.trusted_context) as context, \
-                patch.object(AssetInstaller, "urlopen",
+                patch.object(AssetInstaller, "_open_index",
                              return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)) as open_url:
             self.assertEqual(AssetInstaller.wheel_url(wheel), url)
         context.assert_called_once_with(cafile="/cura/certifi/cacert.pem")
@@ -207,7 +207,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertIn(platform_tag, wheel.filename)
 
     def test_download_checks_size_hash_and_cleans_cancelled_partial_file(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             data = b"pinned camera model"
             digest = hashlib.sha256(data).hexdigest()
             path = os.path.join(directory, "model")
@@ -234,7 +234,7 @@ class DetectionAssetsTests(unittest.TestCase):
     def test_model_accepts_any_https_cdn_only_if_the_payload_matches_its_pin(self):
         data = b"pinned model"
         digest = hashlib.sha256(data).hexdigest()
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             target = os.path.join(directory, "model")
             with patch.object(AssetInstaller, "_open_download",
                               return_value=Response(data, "https://regional-cdn.example/model")):
@@ -257,7 +257,7 @@ class DetectionAssetsTests(unittest.TestCase):
             "https://regional-cdn.example/model")
         with self.assertRaisesRegex(ValueError, "redirect away from HTTPS"):
             handler.redirect_request(source, None, 302, "Found", {}, "http://regional-cdn.example/model")
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             target = os.path.join(directory, "rejected")
             with patch.object(AssetInstaller, "_open_download",
                               return_value=Response(b"pinned model", "http://regional-cdn.example/model")):
@@ -273,16 +273,16 @@ class DetectionAssetsTests(unittest.TestCase):
         payload = json.dumps({"urls": [{"filename": wheel.filename,
                                         "digests": {"sha256": wheel.sha256},
                                         "size": wheel.size, "url": url}]}).encode()
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
             self.assertEqual(AssetInstaller.wheel_url(wheel), url)
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           return_value=Response(payload, "https://attacker.example/index")):
             with self.assertRaisesRegex(ValueError, "index host"):
                 AssetInstaller.wheel_url(wheel)
 
     def test_runtime_extraction_rejects_traversal_and_keeps_destination_absent(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr("onnxruntime/../escape.py", "unsafe")
@@ -293,7 +293,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(directory, "escape.py")))
 
     def test_installed_runtime_is_checked_against_the_archive_on_reuse(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             member = "onnxruntime/capi/onnxruntime_inference_collection.py"
             with zipfile.ZipFile(archive, "w") as wheel:
@@ -308,7 +308,7 @@ class DetectionAssetsTests(unittest.TestCase):
                 AssetInstaller.extract_runtime(archive, destination, threading.Event())
 
     def test_extract_rejects_high_decompression_ratio_and_cleans_stage(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as wheel:
                 wheel.writestr("onnxruntime/capi/onnxruntime_inference_collection.py",
@@ -319,7 +319,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob(".runtime-*")), [])
 
     def test_extract_interrupts_large_member_and_cleans_stage(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as wheel:
                 wheel.writestr("onnxruntime/capi/onnxruntime_inference_collection.py",
@@ -330,7 +330,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob(".runtime-*")), [])
 
     def test_download_cancellation_after_first_chunk_removes_partial(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             data = b"x" * (128 * 1024)
             cancel = threading.Event()
             path = os.path.join(directory, "model")
@@ -372,11 +372,11 @@ class DetectionAssetsTests(unittest.TestCase):
                                         "url": "https://files.pythonhosted.org/packages/onnxruntime-test.whl"}]}).encode()
         cancelled = threading.Event()
         cancelled.set()
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           side_effect=AssertionError("index fetched while cancelled")):
             with self.assertRaises(AssetInstaller.DownloadCancelled):
                 AssetInstaller.wheel_url(wheel, cancelled)
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
             with self.assertRaises(AssetInstaller.DownloadCancelled):
                 AssetInstaller.wheel_url(wheel, CancelAfter(2))
@@ -384,7 +384,7 @@ class DetectionAssetsTests(unittest.TestCase):
     def test_index_transport_failures_are_failures_unless_the_setup_was_cancelled(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
         cancel = threading.Event()
-        with patch.object(AssetInstaller, "urlopen", side_effect=TimeoutError("index timed out")):
+        with patch.object(AssetInstaller, "_open_index", side_effect=TimeoutError("index timed out")):
             with self.assertRaises(TimeoutError):
                 AssetInstaller.wheel_url(wheel, cancel)
 
@@ -392,7 +392,7 @@ class DetectionAssetsTests(unittest.TestCase):
             cancel.set()
             raise TimeoutError("index timed out")
 
-        with patch.object(AssetInstaller, "urlopen", side_effect=cancel_while_reading):
+        with patch.object(AssetInstaller, "_open_index", side_effect=cancel_while_reading):
             with self.assertRaises(AssetInstaller.DownloadCancelled) as raised:
                 AssetInstaller.wheel_url(wheel, cancel)
         self.assertIsInstance(raised.exception.__cause__, TimeoutError)
@@ -408,16 +408,16 @@ class DetectionAssetsTests(unittest.TestCase):
         for label, urls, message in cases:
             payload = json.dumps({"urls": urls}).encode()
             with self.subTest(case=label), \
-                    patch.object(AssetInstaller, "urlopen",
+                    patch.object(AssetInstaller, "_open_index",
                                  return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
                 with self.assertRaisesRegex(ValueError, message):
                     AssetInstaller.wheel_url(wheel)
         payload = json.dumps({"urls": [release]}).encode()
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           return_value=Response(payload, "http://pypi.org/pypi/onnxruntime/1.23.2/json")):
             with self.assertRaisesRegex(ValueError, "index host"):
                 AssetInstaller.wheel_url(wheel)
-        with patch.object(AssetInstaller, "urlopen",
+        with patch.object(AssetInstaller, "_open_index",
                           return_value=Response(b"x" * (1024 * 1024 + 1),
                                                 DetectionAssets.RUNTIME_INDEX_URL)):
             with self.assertRaisesRegex(ValueError, "size limit"):
@@ -436,7 +436,7 @@ class DetectionAssetsTests(unittest.TestCase):
         for label, drifted in drifts:
             payload = json.dumps({"urls": [drifted]}).encode()
             with self.subTest(drift=label), \
-                    patch.object(AssetInstaller, "urlopen",
+                    patch.object(AssetInstaller, "_open_index",
                                  return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
                 with self.assertRaisesRegex(ValueError, "no longer matches"):
                     AssetInstaller.wheel_url(wheel)
@@ -444,7 +444,7 @@ class DetectionAssetsTests(unittest.TestCase):
     def test_download_requires_https_and_never_reuses_a_corrupt_file(self):
         data = b"pinned camera model"
         digest = hashlib.sha256(data).hexdigest()
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "model")
             with patch.object(AssetInstaller, "_open_download",
                               side_effect=AssertionError("insecure fetch")):
@@ -460,7 +460,7 @@ class DetectionAssetsTests(unittest.TestCase):
     def test_download_stops_at_the_pinned_size_and_removes_the_partial(self):
         size = 64 * 1024
         data = b"x" * (2 * size)
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "model")
             with patch.object(AssetInstaller, "_open_download",
                               return_value=Response(data, "https://cdn.example/model")):
@@ -472,7 +472,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob("*.part")), [])
 
     def test_download_transport_failure_is_not_reported_as_cancellation(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "model")
             with patch.object(AssetInstaller, "_open_download",
                               side_effect=ConnectionResetError("peer reset")):
@@ -501,7 +501,7 @@ class DetectionAssetsTests(unittest.TestCase):
             def infolist(self):
                 return list(members)
 
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             with patch.object(AssetInstaller.zipfile, "ZipFile", return_value=Wheel()):
                 with self.assertRaisesRegex(ValueError, "size limit"):
                     AssetInstaller.extract_runtime(os.path.join(directory, "runtime.whl"),
@@ -510,9 +510,58 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(directory, "runtime")))
             self.assertEqual(list(Path(directory).glob(".runtime-*")), [])
 
+    def test_extract_refuses_symlink_backslash_foreign_and_oversized_members(self):
+        # The declared-metadata guards, driven through a fake archive so
+        # no member bytes are needed.
+        cases = (
+            ("symlink member", "onnxruntime/capi/link.py", {"external_attr": (0o120777 << 16)}),
+            ("backslash name", "onnxruntime\\capi\\evil.py", {}),
+            ("foreign top-level package", "sitecustomize/evil.py", {}),
+            ("dot-dot component", "onnxruntime/../../evil.py", {}),
+            ("member over its own cap", "onnxruntime/capi/huge.py", {"file_size": 101 * 1024 ** 2}),
+        )
+        for label, name, attrs in cases:
+            with self.subTest(entry=label):
+                member = zipfile.ZipInfo(name)
+                for key, value in attrs.items():
+                    setattr(member, key, value)
+
+                class Wheel:
+                    members = [member]
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *_exc):
+                        return False
+
+                    def infolist(self):
+                        return list(self.members)
+
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch.object(AssetInstaller.zipfile, "ZipFile", return_value=Wheel()):
+                        with self.assertRaisesRegex(ValueError, "unsafe entry"):
+                            AssetInstaller.extract_runtime(
+                                os.path.join(directory, "runtime.whl"),
+                                os.path.join(directory, "runtime"), threading.Event())
+
+    def test_an_installed_runtime_is_owner_only(self):
+        import stat
+        member = "onnxruntime/capi/onnxruntime_inference_collection.py"
+        with tempfile.TemporaryDirectory() as directory:
+            archive = os.path.join(directory, "runtime.whl")
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as wheel:
+                wheel.writestr(member, "pinned runtime")
+            destination = os.path.join(directory, "runtime")
+            AssetInstaller.extract_runtime(archive, destination, threading.Event())
+            self.assertEqual(stat.S_IMODE(os.stat(destination).st_mode), 0o700)
+            self.assertEqual(
+                stat.S_IMODE(os.stat(os.path.join(destination, os.path.dirname(member))).st_mode),
+                0o700)
+
     def test_extract_skips_directory_members_and_verifies_complete_archives(self):
         member = "onnxruntime/capi/onnxruntime_inference_collection.py"
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr("onnxruntime/", "")
@@ -541,7 +590,7 @@ class DetectionAssetsTests(unittest.TestCase):
             def open(self, _member):
                 return io.BytesIO(b"short")
 
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             with patch.object(AssetInstaller.zipfile, "ZipFile", return_value=Wheel()):
                 with self.assertRaisesRegex(ValueError, "truncated"):
                     AssetInstaller.extract_runtime(os.path.join(directory, "runtime.whl"),
@@ -551,7 +600,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob(".runtime-*")), [])
 
     def test_extract_refuses_an_archive_without_the_inference_collection(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr("onnxruntime/capi/other.py", "not the entry point")
@@ -562,7 +611,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob(".runtime-*")), [])
 
     def test_verify_runtime_rejects_unsafe_member_names(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr("onnxruntime/../escape.py", "unsafe")
@@ -570,7 +619,7 @@ class DetectionAssetsTests(unittest.TestCase):
 
     def test_verify_runtime_rejects_missing_and_altered_installations(self):
         member = "onnxruntime/capi/onnxruntime_inference_collection.py"
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr(member, "pinned runtime")
@@ -587,7 +636,7 @@ class DetectionAssetsTests(unittest.TestCase):
 
     def test_verify_runtime_rejects_a_linked_installation(self):
         member = "onnxruntime/capi/onnxruntime_inference_collection.py"
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             archive = os.path.join(directory, "runtime.whl")
             with zipfile.ZipFile(archive, "w") as wheel:
                 wheel.writestr(member, "pinned runtime")
@@ -630,9 +679,9 @@ class DetectionAssetsTests(unittest.TestCase):
             Path(path).write_bytes(wheel_bytes if path.endswith(".whl") else b"model")
             progress(size, size)
 
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             runtime, model = DetectionAssets.installed_paths(directory)
-            with patch.object(AssetInstaller, "urlopen",
+            with patch.object(AssetInstaller, "_open_index",
                               return_value=Response(index, DetectionAssets.RUNTIME_INDEX_URL)), \
                     patch.object(AssetInstaller, "download", side_effect=fetch):
                 result = AssetInstaller.install(
@@ -660,7 +709,7 @@ class DetectionAssetsTests(unittest.TestCase):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-1.23.2-test.whl",
                                              hashlib.sha256(wheel_bytes).hexdigest(),
                                              len(wheel_bytes))
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             runtime, model = DetectionAssets.installed_paths(directory)
             archive = os.path.join(os.path.dirname(model), wheel.filename)
             os.makedirs(os.path.dirname(archive), mode=0o700)
@@ -680,7 +729,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(events[:2], [("runtime", 0, wheel.size),
                                           ("runtime", wheel.size, wheel.size)])
             self.assertEqual(events[2], ("model", 0, DetectionAssets.MODEL_SIZE))
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = os.path.join(directory, "detection-root")
             cramped = SimpleNamespace(total=0, used=0, free=DetectionAssets.MODEL_SIZE)
             with patch.object(AssetInstaller.shutil, "disk_usage", return_value=cramped), \
@@ -691,7 +740,7 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertTrue(os.path.isdir(root))
 
     def test_cancelled_network_read_reports_cancellation_not_timeout(self):
-        with tempfile.TemporaryDirectory(dir=".") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             cancel = threading.Event()
 
             class TimedOut(Response):

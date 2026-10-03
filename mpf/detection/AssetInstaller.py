@@ -8,7 +8,7 @@ import shutil
 import ssl
 import tempfile
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 import zipfile
 
 from .DetectionAssets import (
@@ -41,6 +41,14 @@ def _open_download(url):
     return opener.open(Request(url), timeout=3)
 
 
+def _open_index(request, timeout, context):
+    """The index fetch's one seam — the same HTTPS-at-every-hop handler
+    and Cura's own CA as the wheel download, so an intermediate hop can
+    never downgrade the scheme the way a bare urlopen allowed."""
+    opener = build_opener(HTTPSHandler(context=context), _HTTPSRedirectHandler())
+    return opener.open(request, timeout=timeout)
+
+
 def _check_cancelled(cancel) -> None:
     if cancel.is_set():
         raise DownloadCancelled("Local detection setup cancelled")
@@ -60,8 +68,9 @@ def wheel_url(wheel: RuntimeWheel, cancel=None) -> str:
     if cancel is not None:
         _check_cancelled(cancel)
     try:
-        with urlopen(Request(RUNTIME_INDEX_URL, headers={"Accept": "application/json"}),
-                     timeout=3, context=_trusted_context()) as response:
+        # The index fetch is a hop like any other: never a bare urlopen.
+        with _open_index(Request(RUNTIME_INDEX_URL, headers={"Accept": "application/json"}),
+                         timeout=3, context=_trusted_context()) as response:
             if urlsplit(response.geturl()).scheme != "https" \
                     or urlsplit(response.geturl()).hostname != "pypi.org":
                 raise ValueError("Unexpected runtime index host")
