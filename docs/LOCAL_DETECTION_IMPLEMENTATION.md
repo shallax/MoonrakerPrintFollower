@@ -175,6 +175,14 @@ Batch B — small hardening:
 - The detection tests create their scratch trees outside the checkout
   (`TemporaryDirectory()`), so a killed run leaves no `tmp*` debris in
   the working tree.
+- One Windows nuance the native leg taught us: `zipfile.ZipInfo.__init__`
+  rewrites `os.sep` to `/`, so on Windows a member name can never reach
+  the extraction guard carrying a backslash — the pin now writes
+  `.filename` back after construction to exercise that branch, and on a
+  real Windows archive the dot-dot and top-level-package checks still
+  catch the same hostile member. The owner-only (0700) pin skips on
+  Windows, where `st_mode` is synthetic and ownership is an ACL.
+
 
 Batch C — product fixes:
 
