@@ -4,8 +4,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.0.0
 
-Development candidate; not released. Local failure detection is optional,
-runs on the Cura computer and does not upload camera frames to a cloud service.
+Local failure detection is optional, runs on the Cura computer and does not
+upload camera frames to a cloud service.
 
 - Offer one-time consent-based setup after What's New on eligible hosts, with
   verified downloads of Obico's model and the pinned CPU inference runtime,
@@ -33,15 +33,10 @@ runs on the Cura computer and does not upload camera frames to a cloud service.
 - Add visible scrollbars to the settings tabs, platform and asset integrity
   checks, and pure-policy, model, real-QML and harness coverage.
 
-**Release gates still open:** an active-print reliability verdict across
-supported hosts, rights-cleared failure-video testing, Obico AGPL obligations
-and Marketplace policy for post-install native downloads. Missed failures
-and false alarms remain possible; automatic pause is opt-in and cannot be
-treated as a guaranteed safeguard.
+Missed failures and false alarms remain possible; automatic pause is opt-in
+and cannot be treated as a guaranteed safeguard.
 
 ## 4.6.2
-
-Candidate for RC1; not released.
 
 The implementation is decomposed into narrower owners with explicit inputs —
 the Monitor's renderer lifecycle and publication transaction, the file

@@ -45,14 +45,13 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Klipper's Apply Z offset can stage a probe or endstop adjustment "
             "when the target is clear; Save configuration remains separate.",
             "Detection can miss failures or raise false alarms. Do not rely "
-            "on it instead of normal print supervision and safety measures. "
-            "This is a development candidate, not a public release.",
+            "on it instead of normal print supervision and safety measures.",
         ),
     },
     {
         "version": "4.6.2",
-        "headline": "Version 4.6.2 is aiming for RC1: the build plate gains "
-            "optional axis arrows, alongside smaller internals and "
+        "headline": "Version 4.6.2 adds optional axis arrows to the build "
+            "plate, alongside smaller internals and "
             "interface fixes.",
         "items": (
             "The Print Follower and object picker beds show red X and green "
@@ -73,8 +72,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "even with a cached index. Failures show an unavailable state; "
             "transient downloads retry briefly, while refusals wait for Load.",
             "The Monitor, camera, file browser and other internals have "
-            "been split into smaller parts. This is a candidate, not "
-            "a final release.",
+            "been split into smaller parts.",
         ),
     },
 

@@ -9,7 +9,6 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 5.0.0
-- **Status:** Development candidate; not released
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
 
 ## What changed in 5.0.0
@@ -35,14 +34,11 @@ configuration remains a separate step.
 
 **Detection is an assistant, not a safety system.** It can miss spaghetti
 or raise false alarms; its adaptive signal is not a calibrated failure
-probability. Automatic pause is off by default. Live reliability,
-other supported hosts, Obico model licensing obligations and Marketplace
-download policy still require release review; this branch is not a public
-release.
+probability. Automatic pause is off by default.
 
 ## What changed in 4.6.2
 
-Version 4.6.2 is aiming for RC1, not yet released. It splits the Monitor,
+Version 4.6.2 splits the Monitor,
 file browser, camera, toolhead, Preview, dashboard and test harness into
 smaller owners while retaining existing settings and workflows.
 
