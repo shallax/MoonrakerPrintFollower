@@ -491,22 +491,26 @@ Updated 2026-10-03, after the review programme and the live trial:
    only on explicit request.
 4. The desktop-notification channel is CLOSED (built, trialled, removed —
    see the decisions above); nothing further is owed for it.
-5. The native CI legs run the plate prefix-ownership contract hot, and the
-   first hardening attempt did not settle it. Five native runs failed
-   "the ready prefix never took over" (macOS both attempts, Windows re-runs)
-   and one "a frame lost the printed history while the prefix image was not
-   Ready" (Windows first attempt), while every Linux leg stayed green and
-   the tip's predecessor passed the file on every leg 26 minutes earlier.
-   Its assertions are unchanged — the frames they read are waited for (a
-   first-owner gate on the census's own landmark, the file's 15 s
-   hang-guard convention in place of a 3 s budget). The wider guard then
-   ran to completion on both native legs without a takeover (the file went
-   7 s to 20 s), so the window was never what held it: the composition
-   never admits the loaded prefix there. The failure now carries the
-   barrier's own terms (the face's `_holdTerms`, the source and status the
-   scene graph holds, the URL the model published) and the boundary
-   census's peak, so the next native failure names the term instead of
-   re-reporting the symptom.
+5. The native CI legs ran the plate prefix-ownership contract hot: six
+   native runs failed "the ready prefix never took over" (macOS and Windows
+   alike) while every Linux leg stayed green. It was the TEST, not the
+   product. The takeover was read from a one-column fringe census — the
+   boundary column gains the two caps' fringes once the prefix owns the
+   interval — and that probe does not discriminate: measured on the exact
+   fixture, the column reads three loose rows in the loading gap (the
+   vector's own stroke) as much as after the takeover, and the bed
+   mapping's sub-pixel rounding (Windows `sx=1.832`, `bedXMin=52.5` against
+   Linux's `1.828` and `53`) moves it to two rows on the native rasteriser
+   while the composition is admitted all the same — the instrumented
+   failure shows `prefixReady=true`, `partialReady=true`, `shown=10`,
+   `wasShown=true` and the standing key equal to the live one with the
+   census at two. The takeover is now read from the composition's own
+   admission (the delivered receipt naming the prefix source and boundary);
+   the composed-frame assertions are unchanged, and a genuinely missing
+   prefix still fails the test, with `prefixFailed=true` and the image at
+   Error. The earlier widening (a first-owner gate and a 15 s hang guard in
+   place of 3 s) stays: it is what showed the window was never the
+   mechanism.
 
 ## Archived pre-wiring checklist (completed in source except noted above)
 
