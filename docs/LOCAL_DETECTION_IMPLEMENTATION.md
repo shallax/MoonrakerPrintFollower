@@ -473,19 +473,24 @@ converts to RGB NCHW float32/255 and reads single-class confidences.
 
 ## Remaining gates as of this integration
 
-1. Cura 5.13 on macOS arm64 passed installation and two real model inference
-   calls; other supported operating systems and Python ABIs remain unqualified.
-   The in-process benchmark reports a completed call over five seconds but
-   cannot forcibly stop a native call that hangs.
-2. Test cancellation and active-print live camera response in a live Cura session;
-   regenerate screenshots from that snapshot. No normal-to-failure recording
-   has been cleared for redistribution, so the simulator video-replay gate
-   remains open. Private timelapses are not test fixtures and are known
-   false negatives.
-3. Resolve Obico's AGPL obligations and written Ultimaker Marketplace policy
-   on native post-install downloads before shipping. Once the live build is accepted,
-   bump all version surfaces together, complete release
-   re-review and gates, and create a PR only on explicit request.
+Updated 2026-10-03, after the review programme and the live trial:
+
+1. Real inference has run under Cura 5.13 on macOS arm64 and on Windows;
+   the live active-print trial was reported working (signal colours, alerts,
+   the evidence folder). Other supported operating systems and Python ABIs
+   remain unqualified. The in-process benchmark reports a completed call
+   over five seconds but cannot forcibly stop a native call that hangs.
+2. The live trial's screenshots: none have been taken from that session yet,
+   and no normal-to-failure recording has been cleared for redistribution, so
+   the simulator video-replay gate remains open. Private timelapses are not
+   test fixtures and are known false negatives.
+3. Obico's AGPL obligations and the written Ultimaker Marketplace policy on
+   native post-install downloads: the submission is being sent and its answer
+   taken as it comes. Once the live build is accepted, bump all version
+   surfaces together, complete release re-review and gates, and create a PR
+   only on explicit request.
+4. The desktop-notification channel is CLOSED (built, trialled, removed —
+   see the decisions above); nothing further is owed for it.
 
 ## Archived pre-wiring checklist (completed in source except noted above)
 
