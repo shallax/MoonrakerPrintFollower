@@ -93,12 +93,15 @@ Fixed in this programme:
   indicator on the Failure Detection section header. Batch C. (The
   camera's Live badge was tried and REMOVED on review: that pill is
   about the stream being live and nothing else.)
-- OS notification with the triggering frame (approved): a best-effort
-  desktop notification (tray `showMessage` with the retained frame as
-  its icon) fires when Cura is not the foreground window, falling back
-  to the in-Cura message; it rides the existing per-printer notify
-  opt-in. The image renders as the notification icon on Linux and
-  Windows; macOS support is attempted and falls back. Batches C and D.
+- OS notification with the triggering frame (approved, then REMOVED
+  on the live trial): it was built — Cura's own tray `showMessage` with
+  the retained frame as its icon, gated on Cura not being the active
+  window — and the live Windows run measured its limits: the first
+  alert logged "Cura is the active window" (correct), the later ones
+  logged "shown" while no balloon appeared, and Cura's tray path is not
+  a channel users can rely on. Removed at the review's direction; the
+  in-Cura `UM.Message` is the alert, and the evidence folder keeps the
+  frame. Batches C and D, removed in G.
 - Failure evidence and tuning record (pro-user, domain): the alert
   retains its triggering frame and a per-print score timeline in a
   bounded store, the measured benchmark milliseconds are surfaced, and
@@ -115,22 +118,13 @@ External or live-test items, not code:
   the colour claim is proven live. What remains open is only the
   permission-cleared recording for redistribution; the private
   timelapses stay private fixtures.
-- Per-OS verification of the desktop notification: the code path is
-  pinned by tests on every OS (`DesktopAlert`'s gates and the frame it
-  carries), but no real desktop has SEEN one — and a live Windows
-  trial (2026-10-03) reported no notification, so this gate is now an
-  OPEN finding rather than an untested path. Every refusal logs its
-  reason (`desktop alert — ...` in Cura's log: the active-window
-  gate, Cura's tray icon being disabled, an unavailable tray, or a
-  raise), which is what the next trial reads to tell the three silent
-  refusals apart. Measured here:
-  `QSystemTrayIcon.isSystemTrayAvailable()` is False in the container,
-  so `notify()` refuses before handing anything over (a message to a
-  tray-less widget would report a delivery that never happened) and
-  the alert falls back to the in-Cura message exactly as designed.
-  Linux, Windows and macOS all need a live run before the channel is
-  promised; the README's wording ("where the platform supports it")
-  promises nothing per OS.
+- Desktop notifications: CLOSED by removal (2026-10-03). The live
+  Windows trial produced `desktop alert — shown` with no balloon on
+  screen, and Cura's tray widget is not a channel to build a feature
+  on: the whole channel (`DesktopAlert.py`, its tests, the README and
+  changelog sentences, the architecture row) is gone. The alert is the
+  in-Cura message plus the evidence folder, which the trial proved
+  working.
 
 Left as found, deliberately:
 
@@ -270,17 +264,9 @@ Batch D — failure evidence and the tuning record:
   detection's to stay on this computer.
 - The model retains the newest frame it handed to detection (a
   reference, not a copy) and, when an alert fires, saves it *before*
-  notifying so the desktop alert has a real path to carry. Every
+  showing the message. Every
   analysed frame also lands in its print's timeline as
   `{at, score, raw}` from the policy's own state.
-- `DesktopAlert.py` (new): the desktop notification for an alert raised
-  while Cura is not the foreground window (`applicationState()` is not
-  `ApplicationActive`). It uses Cura's own tray widget — the one Cura
-  keeps for pop-up messages and shows when the main window is
-  minimised — with the retained frame as its icon, mirroring Uranium's
-  own (deprecated) toast path. It is best-effort by contract: no tray,
-  a raising platform or a macOS daemon that ignores the image all fall
-  through to the in-Cura `UM.Message`, which is shown either way.
 - The measured benchmark is kept, not discarded: `_load_and_benchmark`
   stores `benchmark_ms` on the service, the action exposes it, and the
   Diagnostics tab reports "measured N ms per frame" beside the
@@ -290,9 +276,7 @@ Batch D — failure evidence and the tuning record:
   beside the migration notice it now parallels: the facade stays under
   its line budget and both overlays have one owner that closes them.
 - New pins: the store's bounds and refusals, `clear()`'s idempotence,
-  the desktop alert's four gates (active Cura, inactive, no tray, a
-  raising tray), an alert that keeps its frame and timeline and passes
-  the frame's path to the notification, the benchmark measured on a
+  an alert that keeps its frame and timeline, the benchmark measured on a
   deliberately slow stand-in model, the removal emptying the folder,
   and the Diagnostics page reading the milliseconds and driving the
   reveal. Verified on the leg afterwards: boot 1 9/9, boot 2 5/5.
@@ -349,20 +333,34 @@ Batch F — the captures and the last gates:
 Batch G — the detached anchor's ETA (the follow-up request):
 
 - The follower popover now answers the question a detached user actually
-  has: how long until the print reaches the layer they are looking at.
-  `NextPausePipeline.anchor_eta(layer, current)` reads it through the
-  SAME collaborators a pause row reads — the index's per-layer timing,
-  the observed speed ratio, `PreviewFormatting.pause_eta`'s countdown
-  plus wall clock — and refuses in every case the pause rows refuse: a
-  layer the print has already reached, no anchor, no index timing.
+  has: how long until the print reaches the point they are looking at.
+  `NextPausePipeline.anchor_eta(layer, current, fraction)` reads it
+  through the SAME collaborators a pause row reads — the index's
+  per-layer timing, the observed speed ratio, `PreviewFormatting.
+  pause_eta`'s countdown plus wall clock — and refuses in every case the
+  pause rows refuse: a point behind the print, no anchor, no index
+  timing.
+- The point is the SELECTED one, not the layer's end (the review's
+  ask): the two sliders read in the same units, so the layer slider
+  picks the layer and the progress slider picks a share of its motions.
+  `_anchor_point_fraction` turns that pair into the share of the layer's
+  time still ahead — for a layer the print is already inside, measured
+  from where the print IS, which is what makes the current layer read as
+  a deadline. The pipeline interpolates between the layer's own two
+  boundaries (start 0.0, end 1.0), clamped and never extrapolated, and a
+  fraction of zero on the live layer means "where the print already is":
+  nothing left to wait for.
 - The coordinator computes it while the popover is DETACHED
   (`plate_anchor_eta` on the snapshot); the model publishes
   `plateAnchorEta` (cleared while attached — the live layer is the
   anchor then, and there is nothing to count down to); the popover
-  renders it as a third row under the two tracks, sharing their
-  reserved label column, and shows an em dash when there is no
-  estimate. The row belongs to the detached mode: it appears with the
-  seek and leaves with the re-attach.
+  renders it in the toolbar row's free slot — the same space the
+  toolhead controls use — showing an em dash when there is no estimate.
+  Detaching therefore cannot reflow the popover: those controls are
+  attached-only and this is detached-only, so the row never grows (the
+  first cut gave the ETA its own row and was corrected on review). The
+  two slider tracks also moved into one group with no spacing between
+  them, so the layer and its within-layer scrub read as one control.
 - Pins: the pipeline's three refusals and its reading (pure, in
   `test_pause_at_layer.py`), the model's publish-while-detached /
   clear-while-attached contract (same file, end to end), and the
@@ -437,7 +435,7 @@ The programme's closing gate run, before the push:
 | Asset metadata | `mpf/detection/DetectionAssets.py` | Model URL, upstream-verified SHA-256, 202,223,918-byte size; SHA-256 and sizes for 15 ONNX Runtime 1.23.2 wheels (Python 3.10–3.12, macOS 13+ arm64/x86_64, glibc 2.27+ Linux aarch64/x86_64, Windows 10+ amd64). Reject unsupported host and less than 4 GiB physical RAM. |
 | Asset operations | `mpf/detection/AssetInstaller.py`, `LocalDetectionService.py` | Consent-only pinned downloads, worker-owned installation, startup integrity checks, real inference benchmark and global readiness persistence. |
 | Boot offer | `mpf/detection/DetectionOffer.qml`, `mpf/whatsnew/WhatsNewOverlay.py` (owned by `FollowerRuntime`, re-attached to every monitor install) | One-time global opt-in after What's New; later settings setup remains available. Diagnostics can reset both offer markers for the next launch without downloading the already-installed model again. The offer's witness in the first-install leg is an item inside the popup (`detectionOfferDismiss`), never the Popup root's objectName — a Popup is a QObject no visual-tree walk reaches. |
-| Alert reach and evidence | `mpf/monitor/MoonrakerMonitorModel.py` (alert path), `mpf/detection/EvidenceStore.py`, `mpf/detection/DesktopAlert.py`, `mpf/settings/DiagnosticsSettings.qml` | An alert names the printer, carries an Acknowledge action, and repeats while unacknowledged on a 300 s interval, at most 3 times per print with the count persisted in the per-print record. The triggering frame and each print's score timeline are kept in a bounded evidence folder (12 frames, 6 prints, 360 samples), revealed from Diagnostics and cleared with the downloads. When Cura is not the window in front and a system tray exists, the desktop notification carries the frame; the in-Cura message is always shown. |
+| Alert reach and evidence | `mpf/monitor/MoonrakerMonitorModel.py` (alert path), `mpf/detection/EvidenceStore.py`, `mpf/settings/DiagnosticsSettings.qml` | An alert names the printer, carries an Acknowledge action, and repeats while unacknowledged on a 300 s interval, at most 3 times per print with the count persisted in the per-print record. The triggering frame and each print's score timeline are kept in a bounded evidence folder (12 frames, 6 prints, 360 samples), revealed from Diagnostics and cleared with the downloads. The in-Cura message is the alert; a desktop-notification channel was built and removed (see the decisions above). |
 | Executable proof | `tests/test_detection_policy.py`, `test_detection_model.py`, `test_detection_assets.py`, `test_detection_service.py`, `test_monitor_model_runtime.py`, `test_qml_camera_controls.py`, `test_qml_settings.py` | Pure backend and real-QML tests, including live model state and camera/print/staleness transitions. The integrated detection controls, asset-removal, monitor, and QML gate passed 247 tests in seven independent processes. |
 
 The first live setup uncovered two network assumptions: Cura's Python

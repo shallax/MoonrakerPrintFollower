@@ -65,21 +65,36 @@ class NextPausePipeline:
         view = self._index.view
         return set(view.pause_layers) if view is not None else set()
 
-    def anchor_eta(self, layer, current=None) -> str:
-        """The time until the print reaches `layer`, for the anchored
-        (detached) popover — the SAME reading a pause row gets: the
-        countdown plus the wall-clock estimate, from the index's
-        per-layer timing and the observed speed ratio.
+    def anchor_eta(self, layer, current=None, fraction=1.0) -> str:
+        """The time until the print reaches the POINT the popover
+        selected: `layer`, and `fraction` of the way through it (0.0
+        the moment the layer starts, 1.0 the moment it ends) — the
+        SAME reading a pause row gets, from the index's per-layer
+        timing and the observed speed ratio.
 
-        "" when the layer is already reached (nothing is left to wait
-        for) or the index carries no timing for it — the no-ETA-no-bar
-        ruling, which the popover renders as an em dash.
+        A layer already under the print is the deadline case: the
+        caller passes the share of the layer still AHEAD (its live
+        position subtracted), so the current layer's own progress
+        reads as a deadline rather than a refusal.
+
+        "" when the point is behind the print or the index carries no
+        timing for it — the no-ETA-no-bar ruling, which the popover
+        renders as an em dash.
         """
-        if layer is None or (current is not None and layer <= current):
+        if layer is None or (current is not None and layer < current):
             return ""
-        remaining = self._preview.remaining(layer, self._index.view, end=True)
-        if remaining is None:
+        fraction = max(0.0, min(1.0, float(fraction)))
+        if layer == current and fraction <= 0.0:
+            # The point selected IS where the print is: nothing left.
             return ""
+        start = self._preview.remaining(layer, self._index.view, end=False) or 0.0
+        end = self._preview.remaining(layer, self._index.view, end=True)
+        if end is None:
+            return ""
+        # The layer's start is in the past for a layer under the print
+        # (remaining() floors it at zero), which is exactly right: the
+        # caller's fraction is already measured from the live position.
+        remaining = start + (end - start) * fraction
         return pause_eta(remaining, self._preview.format_duration, _clock)
 
     def _merge(self, baked, current=None):

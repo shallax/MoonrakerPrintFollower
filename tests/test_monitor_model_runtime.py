@@ -299,29 +299,32 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertIsNotNone(context)
         frame = QImage(24, 16, QImage.Format.Format_RGB888)
         frame.fill(0x336699)
-        module = self.qt.load("MoonrakerMonitorModel")
         # The context is pinned for the drive: the model drops any
         # result whose context is not the one it computes NOW, and a
         # publish landing mid-loop would otherwise empty the run (the
         # coverage leg's slower clock was enough to do it).
         with patch.object(model, "_detection_context", lambda: context), \
                 patch.object(model, "_detection_camera_id", lambda: "camera-a"):
+            # One publish first: its own context latch resets the policy
+            # the first time it sees a context, and a publish landing
+            # mid-drive (the coverage leg's slower clock) would otherwise
+            # empty the back half of the timeline.
+            model._publish()
             model.acceptDetectionFrame(frame)
-            with patch.object(module, "DesktopAlert") as desktop:
-                fed = 0
-                for _ in range(30):
-                    model._on_detection_result(context, 0.0)
-                    fed += 1
-                alerting = None
-                for _ in range(20):
-                    model._on_detection_result(context, 4.0)
-                    fed += 1
-                    if model.detectionAlertPending:
-                        alerting = True
-                        break
-                self.assertTrue(alerting, "the run never raised an alert")
-        # The frame that raised it, and the print's sample record, are
-        # both on disk — and the desktop alert carried the frame's path.
+            fed = 0
+            for _ in range(30):
+                model._on_detection_result(context, 0.0)
+                fed += 1
+            alerting = None
+            for _ in range(20):
+                model._on_detection_result(context, 4.0)
+                fed += 1
+                if model.detectionAlertPending:
+                    alerting = True
+                    break
+            self.assertTrue(alerting, "the run never raised an alert")
+        # The frame that raised it and the print's sample record are
+        # both on disk by the time the alert is shown.
         frames = sorted(Path(directory.name).rglob("frame-*.jpg"))
         self.assertEqual(len(frames), 1)
         self.assertGreater(frames[0].stat().st_size, 0)
@@ -330,10 +333,6 @@ class MonitorQtTests(harness.MonitorQtTests):
         # One line per analysed frame, exactly: a missing line is a
         # frame the evidence never recorded.
         self.assertEqual(len(timelines[0].read_text(encoding="utf-8").splitlines()), fed)
-        args, kwargs = desktop.notify.call_args
-        self.assertIn("local failure detection", args[0])
-        self.assertIn("check the camera", args[1])
-        self.assertEqual(kwargs["frame_path"], str(frames[0]))
 
     def test_an_evidence_write_that_raises_never_escapes_the_result_slot(self):
         import tempfile

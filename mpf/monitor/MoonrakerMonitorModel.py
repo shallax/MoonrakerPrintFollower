@@ -46,7 +46,7 @@ def _british_spelling() -> bool:
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
 from ..detection.DetectionPolicy import DetectionPolicy
-from ..detection import DesktopAlert, EvidenceStore
+from ..detection import EvidenceStore
 from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
@@ -379,7 +379,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._detection_alert_count = 0
         self._detection_alert_level = ""
         self._detection_frame = None
-        self._detection_frame_path = ""
         self._detection_paused_for_print = False
         self._detection_pause_pending = False
         self._detection_pause_uncertain = False
@@ -1165,11 +1164,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                           "Acknowledge this failure-detection alert")
         message.pyQtActionTriggered.connect(self._on_detection_alert_action)
         message.show()
-        # And, when Cura is not the window in front, a desktop alert
-        # carrying the retained frame: a user watching something else
-        # sees the picture, not only a line of text.
-        DesktopAlert.notify("Moonraker — local failure detection", summary,
-                            frame_path=self._detection_frame_path)
 
     def _on_detection_alert_action(self, message, action_id) -> None:
         if action_id != "detectionAcknowledge":
@@ -1220,9 +1214,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._detection_alert_count += 1
         self._save_detection_actions()
         self.detectionChanged.emit()
-        # Evidence BEFORE the notification: the desktop alert carries
-        # the frame's path, so the file must exist by the time it fires.
-        self._detection_frame_path = self._retain_detection_evidence(level, context)
+        # The evidence is written BEFORE the message: the frame has to
+        # be on disk by the time anyone follows the alert to it.
+        self._retain_detection_evidence(level, context)
         self._notify_detection(level, False)
 
     def _on_detection_pause_command(self, event):

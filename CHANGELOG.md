@@ -21,9 +21,7 @@ upload camera frames to a cloud service.
   suppresses warnings. The 0.00–1.00 adaptive signal is not a calibrated
   probability.
 - Alert by name of printer, with an Acknowledge button, and repeat the
-  alert on a bounded schedule while it stands unacknowledged. Where the
-  platform supports it — and when Cura is not the window in front — the
-  desktop notification carries the frame that triggered the alert.
+  alert on a bounded schedule while it stands unacknowledged.
 - Keep the triggering frame and a per-print score timeline in a bounded
   evidence folder under the detection storage, opened from Diagnostics and
   removed with the downloads. Diagnostics also reports the measured
@@ -38,10 +36,11 @@ upload camera frames to a cloud service.
   possibly duplicate request. Re-arm explicitly clears the latch and
   acknowledgment cooldown for an active print, including while paused,
   without issuing any printer command.
-- Show the estimated time to reach the layer you seek to in the Print
-  Follower popover while it is detached — the same countdown and wall-clock
-  reading the scheduled pauses show — and an em dash when the index has no
-  timing for that layer.
+- Show the estimated time to reach the point you pick in the Print Follower
+  popover while it is detached — the layer you seek to and the position
+  inside it, read exactly as a scheduled pause is, and an em dash when the
+  index has no timing for it. The layer's own tracks now sit together as
+  one control.
 - Apply a nonzero G-code Z offset through Klipper's generic probe or
   endstop command when its reference is unambiguous. Apply stages the
   configuration change; the separate Save configuration action persists it.

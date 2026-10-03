@@ -256,6 +256,16 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # belongs to the detached mode and reads an em dash when the
         # index has no timing — never a fabricated zero.
         monitor, _window, _face = self._follower_popover()
+        layer = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerSlider")
+        prog = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerProgress")
+        # The two tracks are one group (the review's request): no row
+        # spacing between them, pinned geometrically so a layout edit
+        # cannot silently reopen the gap.
+        from PyQt6.QtCore import QPointF as _P
+        top = layer.mapToItem(monitor, _P(0, 0)).y()
+        bottom = prog.mapToItem(monitor, _P(0, 0)).y()
+        self.assertAlmostEqual(bottom - (top + layer.height()), 0.0, delta=1.0,
+                               msg="the two tracks are not adjacent")
         eta = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerEta")
         self.assertIsNotNone(eta, "the Layer ETA row is missing")
         self.assertFalse(eta.isVisible(), "attached, the row has nothing to count down to")

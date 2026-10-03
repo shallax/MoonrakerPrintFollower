@@ -230,12 +230,41 @@ class NextPausePolicyTests(unittest.TestCase):
         pipeline, _physical, calls, view = self._pipeline(remaining_value=240.0)
         text = pipeline.anchor_eta(9, current=4)
         self.assertTrue(text.startswith("in 4m · ≈"), text)
+        self.assertIn((9, view, False), calls)
         self.assertIn((9, view, True), calls)
-        self.assertEqual(pipeline.anchor_eta(4, current=4), "", "the print's own layer")
         self.assertEqual(pipeline.anchor_eta(2, current=4), "", "a passed layer")
         self.assertEqual(pipeline.anchor_eta(None, current=4), "", "no anchor")
         untimed, _physical, _calls, _view = self._pipeline(remaining_value=None)
         self.assertEqual(untimed.anchor_eta(9, current=4), "", "no index timing")
+
+    def test_the_anchor_eta_reads_the_point_selected_inside_the_layer(self):
+        # The scrub selects a point within the layer (the review's
+        # ask): the ETA is interpolated between the layer's own
+        # boundaries, and the layer under the print is a DEADLINE —
+        # its fraction is the share still ahead of the live position.
+        from types import SimpleNamespace
+        from mpf.application.NextPausePipeline import NextPausePipeline
+        calls = []
+
+        def remaining(layer, view_arg=None, end=True):
+            calls.append((layer, end))
+            return 300.0 if end else 100.0
+
+        pipeline = NextPausePipeline(
+            preview=SimpleNamespace(remaining=remaining,
+                                    format_duration=lambda seconds: "%.0fs" % seconds),
+            pauses=SimpleNamespace(layers=set(), states={}),
+            index=SimpleNamespace(view=None))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=0.0).startswith("in 100s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=0.5).startswith("in 200s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=1.0).startswith("in 300s"))
+        # Clamped, never extrapolated past the layer's own end.
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=1.4).startswith("in 300s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=-0.2).startswith("in 100s"))
+        # The layer the print is inside: a fraction of zero is where
+        # the print already is, and the deadline still reads.
+        self.assertEqual(pipeline.anchor_eta(4, current=4, fraction=0.0), "")
+        self.assertTrue(pipeline.anchor_eta(4, current=4, fraction=0.25).startswith("in"))
 
     def test_the_bar_hides_without_an_eta(self):
         # No ETA, no bar (the live ruling): the fraction is None —
