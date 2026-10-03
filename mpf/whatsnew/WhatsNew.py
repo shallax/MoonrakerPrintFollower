@@ -26,6 +26,30 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.0.0",
+        "headline": "Version 5.0.0 introduces optional local print-failure "
+            "detection using your selected webcam and Cura computer.",
+        "items": (
+            "After you opt in, setup downloads and verifies the model and "
+            "CPU runtime, then checks that inference works on this computer. "
+            "There is no cloud account, video upload or server to run.",
+            "The Detection settings tab handles shared setup, a global switch "
+            "and health checks. Each printer has its own Enable checkbox, "
+            "warning and failure thresholds, and initial safe period.",
+            "A fresh signal during an active print colours the webcam frame "
+            "green, amber or red. Before the first analysis it shows a grey "
+            "frame and Wait without a marker; the signal is not a probability.",
+            "Notifications and automatic pause are separate opt-ins. A pause "
+            "must be confirmed before it is recorded, and Re-arm automatic "
+            "pause can allow another pause during the same print.",
+            "Klipper's Apply Z offset can stage a probe or endstop adjustment "
+            "when the target is clear; Save configuration remains separate.",
+            "Detection can miss failures or raise false alarms. Do not rely "
+            "on it instead of normal print supervision and safety measures. "
+            "This is a development candidate, not a public release.",
+        ),
+    },
+    {
         "version": "4.6.2",
         "headline": "Version 4.6.2 is aiming for RC1: the build plate gains "
             "optional axis arrows, alongside smaller internals and "

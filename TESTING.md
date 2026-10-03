@@ -1,6 +1,19 @@
 # TESTING.md — the real-Cura UI test harness
 
-## Current candidate: 4.6.2 (aiming for RC1; not released)
+## Current candidate: 5.0.0 (not released)
+
+Version 5.0.0 adds opt-in local inference and the Detection settings tab,
+per-printer thresholds and safe periods, webcam signal rendering, and
+separate notification/automatic-pause opt-ins with explicit pause re-arm.
+`make test_files FILES="tests.test_detection_policy tests.test_detection_model tests.test_detection_assets tests.test_detection_service tests.test_monitor_model_runtime tests.test_monitor_controls tests.test_qml_camera_controls tests.test_qml_settings tests.test_whatsnew"`
+runs focused parallel coverage; `make all` runs the complete local gate.
+The `group-webcams` simulator journey exercises settings and synthetic
+readiness on macOS, Windows and Linux, **not native inference** on every
+host. Setup and real inference ran on Cura 5.13/macOS arm64; active-print
+reliability, other hosts, rights-cleared video and release policy remain
+unverified. Automatic pause is not a guaranteed failure safeguard.
+
+### Historical 4.6.2 candidate
 
 Version 4.6.2 decomposes the plugin's internals and adds shared, switchable
 bed-axis arrows, zoom-stable Print Follower controls and a readable pause
@@ -505,13 +518,18 @@ re-seeded between them):
    records, and no migration record in `global` (nothing was
    migrated, so there is nothing to record). The leg then configures
    the printer through the settings dialog's own save verb and reads
-   the document back OFF DISK — a file edited behind the app would
+   the document back OFF DISK. After configuration, it checks that
+   What's New appears before the eligible-host local detection offer,
+   declines the offer through its visible button without downloading
+   model assets, and records that decision with the saved settings.
+   A file edited behind the app would
    prove nothing about the plugin's write path. The app then closes
    itself, so boot 2 reads a tree the app closed rather than one the
    harness killed mid-write; the driver acks the close request
    before Cura closes, so an ack that never arrives is a failure, not
    a shutdown eating its own reply.
-2. **Boot 2 — the survival.** The record boot 1 wrote is still
+2. **Boot 2 — the survival.** The detection offer does not return,
+   no model is installed, and the record boot 1 wrote is still
    there, field for field, and the document as a whole is untouched:
    the migration machinery left no record of its own in `global` and
    rebuilt nothing from a legacy blob. The red revision is the one
@@ -553,7 +571,11 @@ sensor hide/show, mini chart, runout, endstops); **console** —
 console (send/response, error lines and the collapsed bell, clear,
 scroll-to-prompt, recall, store backfill once, resize);
 **webcams** — camera (first load, selector, rotation/flip
-persistence, recovering wash, offline); **files** — files & print
+persistence, recovering wash, offline), plus a network-free synthetic
+model-readiness journey that verifies the global detection switch hides
+and restores the Monitor's printer controls without erasing printer choices
+on Linux, macOS and Windows; real inference remains covered by separate
+model and runtime tests, not by the simulator; **files** — files & print
 start (browse/thumbnails, upload, delete, folder create/rename,
 move, recents, print confirm → start verdict, the honest start
 watchdog); **motion** — controls (jog pad with peer-verified `G1`s,

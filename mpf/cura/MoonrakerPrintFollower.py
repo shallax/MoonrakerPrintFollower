@@ -11,7 +11,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         QObject.__init__(self)
         Extension.__init__(self)
         self._runtime = FollowerRuntime(application, self)
-        self._whats_new = WhatsNewOverlay()
+        self._whats_new = WhatsNewOverlay(self.detection)
 
     @property
     def client(self): return self._runtime.client
@@ -21,7 +21,6 @@ class MoonrakerPrintFollower(QObject, Extension):
     def transport(self): return self.client.transport
     @property
     def print_state(self): return self._runtime.coordinator.snapshot
-
     def index(self): return self._runtime.index
     @property
     def bed_mesh(self): return self._runtime.bed_mesh
@@ -43,8 +42,9 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     @property
     def persistence(self): return self._runtime.persistence
+    @property
+    def detection(self): return self._runtime.detection
     def notice(self): return self._runtime.notice
-
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
     def receive_preview_block(self, block): self._runtime.coordinator.receive_preview_block(block)

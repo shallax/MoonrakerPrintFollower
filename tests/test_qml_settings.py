@@ -2,6 +2,13 @@
 from tests import qml_engine_support as harness
 
 class SettingsCacheSizeTests(harness.SettingsCacheSizeTests):
+    def test_detection_page_has_no_redundant_model_ready_heading(self):
+        document, _window = self.open_settings(tab=3)
+        page = next(item for item in document.findChildren(harness.QQuickItem)
+                    if item.metaObject().className().startswith("DetectionSettings_"))
+        labels = [item.property("text") for item in page.findChildren(harness.QQuickItem)]
+        self.assertNotIn("Local model is ready.", labels)
+
     def test_the_cache_size_field_is_seeded_from_the_stored_limit(self):
         document, _window = self.open_settings(self.settings_config(cache_max_mb=2048),
                                                tab=self.DIAGNOSTICS_TAB)
@@ -95,6 +102,7 @@ class SettingsCacheClearTests(harness.SettingsCacheClearTests):
         with open(entry, "w", encoding="utf-8") as handle:
             handle.write("{}")
         self.click_item(window, self.clear_cache_button(document))
+        self.assertTrue(self.action.cacheStatus, "the cache-clear click did not reach the action")
         self.assertFalse(harness.os.path.exists(cache_root),
                          "the clear button left the persistent cache on disk")
         # The result is reported where the click happened: the row's
@@ -170,8 +178,29 @@ class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
 class SettingsTabCompositionTests(harness.SettingsPageCase):
     """Each persistent tab owns a disjoint part of the saved configuration."""
 
+    def test_diagnostics_is_the_last_tab(self):
+        document, _window = self.open_settings()
+        tabs = [item for item in document.findChildren(harness.QQuickItem)
+                if item.property("text") in
+                ("Connection", "Following", "Upload", "Detection", "Diagnostics")
+                and item.property("checked") is not None]
+        self.assertEqual([item.property("text") for item in sorted(tabs, key=lambda item: item.x())],
+                         ["Connection", "Following", "Upload", "Detection", "Diagnostics"])
+
+    def test_every_scrollable_tab_keeps_its_scrollbar_visible(self):
+        document, _window = self.open_settings(height=400)
+        pages = self.pages(document)
+        for index, name in enumerate(("ConnectionSettings", "FollowingSettings",
+                                      "UploadSettings", "DetectionSettings", "DiagnosticsSettings")):
+            with self.subTest(tab=name):
+                self.show_tab(document, index)
+                scrollbar = pages[name].findChild(harness.QQuickItem, "settingsScrollbar")
+                self.assertIsNotNone(scrollbar)
+                self.assertLess(scrollbar.property("size"), 1)
+                self.assertTrue(scrollbar.property("visible"))
+
     def pages(self, document):
-        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings")
+        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings", "DetectionSettings")
         result = {}
         for item in document.findChildren(harness.QQuickItem):
             name = item.metaObject().className()
@@ -190,6 +219,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             "FollowingSettings": {"enabled", "follow_mode", "moonraker_layer_is_one_based", "path_follow", "path_smoothing", "eta_learn", "auto_preview", "show_toolhead_indicator", "z_fallback", "z_tolerance"},
             "UploadSettings": {"frontend_url", "output_format", "upload_dialog", "upload_path", "upload_start_print", "upload_remember_state", "upload_autohide_message", "power_devices", "ready_retry_interval_s", "filename_translate_input", "filename_translate_output", "filename_translate_remove"},
             "DiagnosticsSettings": {"cache_max_mb", "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace", "camera_disabled", "software_follower_renderer"},
+            "DetectionSettings": set(),
         }
         seen = set()
         for name, page in pages.items():
@@ -198,9 +228,197 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             self.assertFalse(seen.intersection(values), "two tabs own the same setting")
             seen.update(values)
         self.assertEqual(len(seen), 36)
-        for index in (3, 1, 2, 0):
+        for index in (4, 3, 1, 2, 0):
             self.show_tab(document, index)
             self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")
+
+    def test_detection_settings_only_owns_shared_setup(self):
+        document, _ = self.open_settings()
+        page = self.pages(document)["DetectionSettings"]
+        self.assertEqual(page.property("values").toVariant(), {})
+        self.assertIsNone(page.findChild(harness.QQuickItem, "detectionEnabled"))
+        self.assertIsNone(page.findChild(harness.QQuickItem, "detectionThresholdSlider"))
+        self.assertIsNotNone(self.item_with_text(document, "Set up local detection"))
+        self.show_tab(document, 3)
+
+    def test_detection_attribution_has_room_for_its_link(self):
+        document, _ = self.open_settings(tab=3, width=700, height=600)
+        attribution = document.findChild(harness.QQuickItem, "detectionModelAttribution")
+        self.assertIsNotNone(attribution)
+        self.assertGreater(attribution.width(), 300)
+        self.assertLessEqual(attribution.property("contentHeight"), attribution.height())
+
+    def test_both_download_offers_link_obicos_agpl_and_explain_gpl_compatibility(self):
+        from types import SimpleNamespace
+        document, window = self.open_settings(tab=3, width=700, height=600)
+        self.action._detection = SimpleNamespace(ready=False, host_error="", busy=False,
+                                                 phase="", received=0, total=0, error="")
+        self.action.detectionChanged.emit()
+        self.pump()
+        self.click_item(window, self.item_with_text(document, "Set up local detection"))
+        setup = document.findChild(harness.QQuickItem, "detectionSetupLicense")
+        self.assertIsNotNone(setup)
+        self.assertTrue(setup.isVisible())
+        offer = self.mount("DetectionOffer.qml")
+        boot = offer.findChild(harness.QQuickItem, "detectionOfferLicense")
+        self.assertIsNotNone(boot)
+        for label in (setup, boot):
+            text = label.property("text")
+            self.assertIn("https://github.com/TheSpaghettiDetective/obico-server/blob/release/LICENSE", text)
+            self.assertIn("GNU AGPL 3.0", text)
+            self.assertIn("GNU GPL 3.0", text)
+            self.assertIn("compatible under GPL 3.0 section 13", text)
+            self.assertIn("AGPL requirements still applying", text)
+        self.assertLessEqual(setup.property("contentHeight"), setup.height())
+
+    def test_detection_settings_warns_before_setup(self):
+        document, _ = self.open_settings(tab=3, width=700, height=600)
+        warning = document.findChild(harness.QQuickItem, "detectionReliabilityWarning")
+        self.assertIsNotNone(warning)
+        self.assertTrue(warning.isVisible())
+        self.assertIn("only an assistant, not a safety system", warning.property("text"))
+        self.assertIn("not guaranteed to detect failures", warning.property("text"))
+        self.assertIn("flag healthy prints", warning.property("text"))
+        self.assertLessEqual(warning.property("contentHeight"), warning.height())
+
+    def test_global_detection_toggle_stops_detection_without_changing_printer_choice(self):
+        document, window = self.open_settings(tab=3, width=700, height=600)
+        box = document.findChild(harness.QQuickItem, "detectionGlobalEnabledCheckbox")
+        self.assertIsNotNone(box)
+        self.assertFalse(box.property("enabled"))
+        self.assertFalse(box.property("checked"))
+
+        class DetectionDouble:
+            ready = True
+            enabled = True
+            busy = False
+            host_error = ""
+            phase = "ready"
+            received = 0
+            total = 0
+            error = ""
+
+            def set_enabled(double, enabled):
+                double.enabled = enabled
+                self.action.detectionChanged.emit()
+                return True
+
+        self.action._detection = DetectionDouble()
+        self.action.detectionChanged.emit()
+        self.pump()
+        self.assertTrue(box.property("enabled"))
+        self.assertTrue(box.property("checked"))
+        self.click_item(window, box)
+        self.assertFalse(self.action._detection.enabled)
+        self.assertFalse(box.property("checked"))
+        self.assertFalse(self.follower.applied)
+        self.click_item(window, box)
+        self.assertTrue(self.action._detection.enabled)
+        self.assertTrue(box.property("checked"))
+
+    def test_detection_threshold_save_rejects_bad_pairs_without_mutating_config(self):
+        document, _ = self.open_settings()
+        data = {}
+        for page in self.pages(document).values():
+            data.update(page.property("values").toVariant())
+        for warning, failure in ((-1, 75), (35, 101), (75, 75), (80, 40),
+                                 (True, 75), (35.5, 75)):
+            with self.subTest(warning=warning, failure=failure):
+                data.update(detection_warning_threshold=warning,
+                            detection_failure_threshold=failure)
+                self.assertFalse(self.action.saveConfig(data))
+                self.assertEqual((self.follower.config.detection_warning_threshold,
+                                  self.follower.config.detection_failure_threshold), (38, 78))
+
+    def test_diagnostics_reset_only_rearms_the_onboarding_prompts(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        document, window = self.open_settings(tab=4)
+        persistence = SimpleNamespace(merge_state_global=Mock(return_value=True))
+        detection = SimpleNamespace(reset_offer=Mock())
+        self.follower.persistence = persistence
+        self.action._detection = detection
+        button = document.findChild(harness.QQuickItem, "resetOnboardingButton")
+        self.assertIsNotNone(button)
+        self.click_item(window, button)
+        persistence.merge_state_global.assert_called_once_with({"whatsNewSeen": ""})
+        detection.reset_offer.assert_called_once_with()
+        self.assertIn("next Cura run", self.action.onboardingResetStatus)
+        self.assertEqual(self.follower.applied, [])
+        self.assertIsNotNone(self.label_with_text(document, self.action.onboardingResetStatus))
+
+    def test_diagnostics_reset_reports_storage_failure_without_claiming_success(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        _document, _window = self.open_settings(tab=4)
+        self.follower.persistence = SimpleNamespace(merge_state_global=Mock(return_value=False))
+        self.action._detection = SimpleNamespace(reset_offer=Mock())
+        self.action.resetOnboardingForNextRun()
+        self.assertIn("Could not reset", self.action.onboardingResetStatus)
+        self.action._detection.reset_offer.assert_not_called()
+
+    def test_diagnostics_removes_shared_assets_after_disabling_every_machine(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        document, window = self.open_settings(self.settings_config(
+            detection_enabled=True, detection_notify_enabled=True,
+            detection_pause_enabled=True), tab=4)
+        persistence = SimpleNamespace(disable_all_detection=Mock(return_value=True))
+        detection = SimpleNamespace(busy=False, error="", remove_assets=Mock(return_value=True))
+        self.follower.persistence = persistence
+        self.action._detection = detection
+        button = document.findChild(harness.QQuickItem, "resetDetectionAssetsButton")
+        self.assertIsNotNone(button)
+        self.click_item(window, button)
+        persistence.disable_all_detection.assert_called_once_with()
+        detection.remove_assets.assert_called_once_with()
+        self.assertFalse(self.follower.config.detection_enabled)
+        self.assertFalse(self.follower.config.detection_notify_enabled)
+        self.assertFalse(self.follower.config.detection_pause_enabled)
+        self.assertIn("Removing", self.action.detectionResetStatus)
+        self.action._on_detection_reset_progress()
+        self.assertIn("removed", self.action.detectionResetStatus)
+
+    def test_failed_global_detection_disable_never_deletes_assets(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.open_settings(tab=4)
+        self.follower.persistence = SimpleNamespace(disable_all_detection=Mock(return_value=False))
+        self.action._detection = SimpleNamespace(busy=False, remove_assets=Mock())
+        self.action.resetDetectionAssets()
+        self.assertIn("no downloads were removed", self.action.detectionResetStatus)
+        self.action._detection.remove_assets.assert_not_called()
+
+    def test_forged_detection_enable_is_refused_without_setup(self):
+        document, _window = self.open_settings()
+        data = {}
+        for page in self.pages(document).values():
+            data.update(page.property("values").toVariant())
+        data["detection_enabled"] = True
+        self.assertFalse(self.action.saveConfig(data))
+        self.assertIn("Enable local detection in Settings", self.action.detectionRefusal)
+        self.assertFalse(self.follower.config.detection_enabled)
+
+    def test_detection_enable_cannot_be_saved_with_camera_disabled_in_same_draft(self):
+        from types import SimpleNamespace
+        document, _window = self.open_settings()
+        data = {}
+        for page in self.pages(document).values():
+            data.update(page.property("values").toVariant())
+        self.action._detection = SimpleNamespace(ready=True, enabled=True, host_error="", busy=False,
+                                                 phase="ready", received=0, total=0, error="")
+        self.action._output_plugin = SimpleNamespace(
+            _current_monitor=lambda: SimpleNamespace(
+                _camera=SimpleNamespace(url="http://printer-a/webcam"),
+                webcamStreamEnabled=True))
+        data.update(detection_enabled=True, camera_disabled=True)
+        self.assertFalse(self.action.saveConfig(data))
+        self.assertFalse(self.follower.config.detection_enabled)
+        self.action._detection.enabled = False
+        data["camera_disabled"] = False
+        self.assertFalse(self.action.saveConfig(data))
+        self.assertIn("Enable local detection in Settings", self.action.detectionRefusal)
+        self.assertFalse(self.follower.config.detection_enabled)
 
     def test_hidden_drafts_survive_switches_and_cancel_does_not_save(self):
         document, window = self.open_settings(self.settings_config(cache_max_mb=512), tab=self.DIAGNOSTICS_TAB)

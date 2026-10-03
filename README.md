@@ -8,9 +8,37 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.6.2
-- **Status:** Aiming for RC1; not released
+- **Release:** 5.0.0
+- **Status:** Development candidate; not released
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.0.0
+
+Version 5.0.0 adds optional local print-failure detection using the selected
+Moonraker webcam. With consent, Cura downloads and verifies the model and
+CPU inference runtime once; it needs no cloud account, video upload, Docker
+service or second camera connection. Supported hosts are checked before setup
+and benchmarked with a real inference call before detection can be enabled.
+
+The **Detection** settings tab holds shared setup, a global on/off switch,
+health and recovery controls, and the safety explanation. Each printer has a
+separate **Enable** checkbox in Monitor's Failure Detection section. Its
+warning and failure thresholds, safe period, notification and automatic-pause
+options are independent. The camera frame and signal scale show green, amber
+or red only for a fresh analysed frame during an active print. While the
+first reading is pending, a grey frame shows "Wait" without a score marker;
+other unavailable signals stay neutral. An automatic pause must be confirmed
+before its per-print latch is saved, and **Re-arm automatic pause** lets you explicitly
+allow another pause after cleaning up a failure. The Z-offset controls also
+gain a generic Klipper **Apply Z offset** action; saving the resulting
+configuration remains a separate step.
+
+**Detection is an assistant, not a safety system.** It can miss spaghetti
+or raise false alarms; its adaptive signal is not a calibrated failure
+probability. Automatic pause is off by default. Live reliability,
+other supported hosts, Obico model licensing obligations and Marketplace
+download policy still require release review; this branch is not a public
+release.
 
 ## What changed in 4.6.2
 
@@ -520,7 +548,8 @@ There is no **Extensions → Moonraker Print Follower** settings dialog. Configu
 1. Open **Settings → Printer → Manage Printers**.
 2. Select the Cura printer you want to configure.
 3. Click **Configure Moonraker**.
-4. Use the **Connection**, **Following**, **Upload** and **Diagnostics** tabs.
+4. Use the **Connection**, **Following**, **Upload**, **Detection** and
+   **Diagnostics** tabs.
 5. Click **Save**.
 
 The settings UI is implemented as a native Cura Machine Action QML page, so Cura owns the dialog and its modal lifecycle.

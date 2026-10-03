@@ -123,6 +123,21 @@ class PluginPersistence:
             return document
         return self._settings.update(mutate)
 
+    def disable_all_detection(self) -> bool:
+        """Disable detection and its actions for every saved machine in one write."""
+        def mutate(document):
+            machines = document.get("machines")
+            if not isinstance(machines, dict) or not machines:
+                return None
+            for entry in machines.values():
+                if isinstance(entry, dict):
+                    entry.update(detection_enabled=False,
+                                 detection_notify_enabled=False,
+                                 detection_pause_enabled=False)
+            return document
+
+        return self._settings.update(mutate)
+
     def set_global(self, patch: Dict[str, Any]) -> bool:
         def mutate(document):
             global_section = _global_section(document)

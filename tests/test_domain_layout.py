@@ -103,6 +103,7 @@ class DomainLayoutTests(unittest.TestCase):
     def test_owned_feature_files_are_colocated(self):
         features = {
             "monitor/camera": ("CameraPane.qml", "MonitorCamera.py", "MoonrakerMJPGImage.py", "CameraBridge.py"),
+            "detection": ("DetectionPolicy.py", "LocalFailureModel.py", "DetectionAssets.py", "AssetInstaller.py", "LocalDetectionService.py", "DetectionOffer.qml"),
             "monitor/console": ("ConsoleController.py", "ConsolePolicy.py"),
             "monitor/temperature": ("TemperatureChart.qml", "MonitorTemperatureHistory.py"),
             "monitor/toolhead": ("ToolheadSection.qml", "ToolheadController.py", "ToolheadPolicy.py"),

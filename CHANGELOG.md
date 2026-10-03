@@ -2,6 +2,43 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 5.0.0
+
+Development candidate; not released. Local failure detection is optional,
+runs on the Cura computer and does not upload camera frames to a cloud service.
+
+- Offer one-time consent-based setup after What's New on eligible hosts, with
+  verified downloads of Obico's model and the pinned CPU inference runtime,
+  cancellable progress, and a real inference benchmark. Setup and a global
+  switch also live in the new Detection settings tab. No download occurs
+  without consent; Diagnostics can reset the offer or remove shared assets.
+- Sample the already-decoded selected webcam feed on a bounded worker.
+  A fresh active-print signal colours the camera frame green, amber or red
+  with a left-hand scale; missing, idle and stale states remain neutral.
+  The first-analysis wait shows a grey frame and "Wait" without a marker.
+  The 0.00–1.00 adaptive signal is not a calibrated probability.
+- Configure each printer independently with an Enable checkbox, ordered
+  warning/failure slider, 0–15-minute safe period, and separately opted-in
+  notifications and automatic pause. Per-camera baselines persist separately;
+  changing thresholds or cameras retires stale evidence. Dependent controls
+  are disabled until that printer is enabled.
+- Save an automatic-pause latch only after confirmation. A failed request may
+  be retried; an unconfirmed timeout requires inspection rather than a
+  possibly duplicate request. Re-arm explicitly clears the latch and
+  acknowledgment cooldown for an active print, including while paused,
+  without issuing any printer command.
+- Apply a nonzero G-code Z offset through Klipper's generic probe or
+  endstop command when its reference is unambiguous. Apply stages the
+  configuration change; the separate Save configuration action persists it.
+- Add visible scrollbars to the settings tabs, platform and asset integrity
+  checks, and pure-policy, model, real-QML and harness coverage.
+
+**Release gates still open:** an active-print reliability verdict across
+supported hosts, rights-cleared failure-video testing, Obico AGPL obligations
+and Marketplace policy for post-install native downloads. Missed failures
+and false alarms remain possible; automatic pause is opt-in and cannot be
+treated as a guaranteed safeguard.
+
 ## 4.6.2
 
 Candidate for RC1; not released.

@@ -34,9 +34,9 @@ Cura.MachineAction {
             saveRefusalText = "Settings were not saved — fix the highlighted fields and save again.";
             return;
         }
-        var saved = manager.saveConfig(Object.assign({}, connectionSettings.values, followingSettings.values, uploadSettings.values, diagnosticsSettings.values));
+        var saved = manager.saveConfig(Object.assign({}, connectionSettings.values, followingSettings.values, uploadSettings.values, detectionSettings.values, diagnosticsSettings.values));
         saveRefused = !saved;
-        saveRefusalText = saved ? "" : "Settings were not saved — the file could not be written. Check the disk and try again.";
+        saveRefusalText = saved ? "" : (manager.detectionRefusal || "Settings were not saved — check the fields or the disk and try again.");
         if (saved && closeDialog)
             actionDialog.close();
     }
@@ -83,7 +83,7 @@ Cura.MachineAction {
     }
 
     // The migration-failure notice (the UX ruling): visible on all
-    // four tabs, dismissed ONLY by its Dismiss button — closing the
+    // tabs, dismissed ONLY by its Dismiss button — closing the
     // dialog, Escape or switching tabs must not dismiss it. The page
     // is no-reflow exempt, so the banner wraps and the tab bar
     // re-anchors to it.
@@ -150,6 +150,9 @@ Cura.MachineAction {
             text: "Upload"
         }
         UM.TabRowButton {
+            text: "Detection"
+        }
+        UM.TabRowButton {
             text: "Diagnostics"
         }
     }
@@ -185,6 +188,10 @@ Cura.MachineAction {
 
             UploadSettings {
                 id: uploadSettings
+                settings: manager
+            }
+            DetectionSettings {
+                id: detectionSettings
                 settings: manager
             }
             DiagnosticsSettings {

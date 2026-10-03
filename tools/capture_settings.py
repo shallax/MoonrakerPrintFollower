@@ -29,8 +29,8 @@ nothing in the repo tree is modified by this script:
     newest registration is 1.5, so an extra Enums 1.7 registration
     lifts the module version ceiling of the throwaway copy.
 
-One PNG is written per tab (05-settings-connection.png,
-05-settings-following.png, 05-settings-upload.png), each fitted to its
+One PNG is written per tab (05-settings-connection.png through
+05-settings-diagnostics.png), each fitted to its
 tab's content height.  The output is deterministic for a given toolchain
 (the dev container pins the fonts), so captures can be diffed across
 releases.
@@ -575,7 +575,7 @@ def main():
         for _ in range(5):
             app.processEvents()
 
-        # The page has three tabs (Connection / Following / Upload) driven
+        # The page has five tabs driven
         # by a TabBar + StackLayout; capture every tab, each fitted to its
         # own content height (the Upload tab is taller than the real
         # dialog's fixed frame, so a shared height would clip it).
@@ -592,7 +592,7 @@ def main():
         if tab_bar is None:
             raise RuntimeError("settings tab bar not found in the rendered page")
 
-        tab_names = ("connection", "following", "upload", "diagnostics")
+        tab_names = ("connection", "following", "upload", "detection", "diagnostics")
         if tab_bar.property("count") != len(tab_names):
             raise RuntimeError("settings page tab count changed: expected %d, got %s"
                                % (len(tab_names), tab_bar.property("count")))

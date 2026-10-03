@@ -77,6 +77,7 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.runQuadGantryLevel": "g2",
     "MoonrakerMonitorModel.saveConfig": "i6",
     "MoonrakerMonitorModel.selectWebcam": "e2",
+    "LocalDetectionService.set_enabled": "e4",
     "MoonrakerMonitorModel.setWebcamStreamEnabled": "e2",
     "MoonrakerMJPGImage.clearFrame": "e2",
     "MoonrakerMonitorModel.sendConsoleCommand": "d1",
@@ -187,6 +188,7 @@ SCENARIO_MAP = {
     "cameraFpsReadout": "e2",
     "cameraFpsScale": "e2",
     "cameraFrame": "e2",
+    "failureDetectionSection": "e4",
     "cameraGestureArea": "e2",
     "cameraLiveBadge": "e2",
     "cameraZoomBar": "e2",
@@ -1077,3 +1079,88 @@ EXCLUSIONS = {
         "recheck": "the harness gains wheel or drag input over the plate face",
     },
 }
+
+# Consented downloads and analysed live frames are unavailable to the
+# simulator; the unit and real-QML suites exercise these new surfaces.
+for _name in (
+    "LocalDetectionService.cancel", "LocalDetectionService.decline_offer",
+    "LocalDetectionService.reset", "LocalDetectionService.setup",
+    "LocalDetectionService.remove_assets",
+    "MoonrakerFollowerMachineAction.cancelDetectionSetup",
+    "MoonrakerFollowerMachineAction.declineDetectionOffer",
+    "MoonrakerFollowerMachineAction.resetOnboardingForNextRun",
+    "MoonrakerFollowerMachineAction.resetDetectionAssets",
+    "MoonrakerFollowerMachineAction.startDetectionSetup",
+    "detectionDownloadHourglass", "detectionDownloadHourglassRotation",
+    "detectionEnabled", "detectionGlobalEnabledCheckbox",
+    "detectionReliabilityWarning",
+    "detectionSetupProgress", "detectionThresholdSlider",
+    "resetOnboardingButton", "resetDetectionAssetsButton", "settingsScrollbar",
+    "detectionModelAttribution", "detectionSetupLicense", "detectionOfferLicense",
+    "detectionFirstRunOffer", "detectionOfferDismiss",
+    "MoonrakerFollowerMachineAction.setDetectionGlobalEnabled",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "consented local setup and settings controls are outside the simulator's network-free scenarios",
+        "evidence": "test_detection_service, test_qml_settings and the QML engine import gate",
+        "date": "2026-10-03",
+        "recheck": "a consented local-setup scenario is available in real Cura",
+    }
+
+for _name in ("detectionFirstRunOffer", "detectionOfferDismiss"):
+    EXCLUSIONS[_name] = {
+        "reason": "the first-install two-boot mode verifies offer ordering and decline without downloading assets",
+        "evidence": "tests/harness/runner.py: first_install1 and first_install2",
+        "date": "2026-10-03",
+        "recheck": "first-install mode gains a consented local-setup branch",
+    }
+
+for _name in ("MoonrakerMonitorModel.applyZOffset", "applyZOffsetButton", "canApplyZOffset"):
+    EXCLUSIONS[_name] = {
+        "reason": "the simulator has no unambiguous Z-reference configuration, so Apply is disabled there",
+        "evidence": "test_monitor_controls and test_qml_dashboard_layout exercise staged commands and button gating",
+        "date": "2026-10-03",
+        "recheck": "the harness gains a configured probe or mechanical endstop fixture",
+    }
+
+for _name in ("MoonrakerMonitorModel.rearmDetectionPause", "detectionRearmPauseButton",
+              "detectionPauseRearmable"):
+    EXCLUSIONS[_name] = {
+        "reason": "the simulator cannot produce a confirmed local-inference pause latch without a real model",
+        "evidence": "test_monitor_model_runtime and test_qml_dashboard_layout cover re-arm and its button",
+        "date": "2026-10-03",
+        "recheck": "the harness gains a synthetic confirmed-pause fixture",
+    }
+
+for _name in (
+    "detectionMainEnabledCheckbox", "detectionControlsThresholdSlider",
+    "detectionSafePeriodSlider", "detectionSafePeriodValue",
+    "detectionNotifyCheckbox", "detectionPauseCheckbox",
+    "detectionAcknowledgeButton",
+    "MoonrakerMonitorModel.setDetectionEnabled",
+    "MoonrakerMonitorModel.setDetectionThresholds",
+    "MoonrakerMonitorModel.setDetectionSafeSeconds",
+    "MoonrakerMonitorModel.setDetectionNotifyEnabled",
+    "MoonrakerMonitorModel.setDetectionPauseEnabled",
+    "MoonrakerMonitorModel.acknowledgeDetectionAlert",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "printer-local detection controls have no simulated failure feed or printer-command scenario",
+        "evidence": "test_qml_dashboard_layout: FailureDetectionSectionTests exercises real QML toggles and slider, readiness gates, acknowledgment, printer switching and collapse",
+        "date": "2026-10-03",
+        "recheck": "a native failure-detection controls scenario lands",
+    }
+
+for _name in (
+    "cameraStreamDisabledNotice", "failureSignalPill",
+    "failureSignalPillText", "failureSignalTick", "failureSignalTrack",
+    "failureSignalFrame", "failureSignalMarker",
+    "detectionScore", "detectionRawScore", "detectionGlobalEnabled",
+    "detectionState", "detectionStatus",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "local inference camera signal needs an analysed live frame absent from the simulator",
+        "evidence": "test_qml_camera_controls, test_monitor_model_runtime and test_detection_policy",
+        "date": "2026-10-03",
+        "recheck": "permission-cleared recording replay can exercise the live camera scenario",
+    }

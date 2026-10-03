@@ -6,8 +6,10 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release branch: **chore/v4.6.2**, aiming for RC1 (not released). The release notes
-are maintained in `CHANGELOG.md`, `README.md` and the What's New entries;
+Current release branch: **release/v5.0.0**, based on the latest `main`.
+This is a development candidate, not a public release or tag; 4.6.2 was
+not released. Release notes are maintained in
+`CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
 ## 4.6.2 — internal decomposition and plate polish (aiming for RC1)
@@ -2219,7 +2221,205 @@ review/round-2-*.md):
   persistent dismissible banner above the settings tab row with the
   recipe demoted to a permanent Diagnostics row on dismissal.
 
-## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
+## 5.0.0 — Local print-failure detection (development candidate)
+
+This release replaces the previously planned Preview-head work for 5.0.0.
+The Preview proposal is retained below as deferred work, without an assigned
+release. Detection is observation-only by default; users may independently
+opt into local notification and one automatic pause per print on a confirmed
+failure. Automatic cancel, resume, and heater controls are not offered.
+
+- Use the existing selected Moonraker camera to run a failure-detection model
+  locally on the Cura host. No cloud account, uploaded camera frames, Docker
+  prerequisite, manual commands, or user-managed server. Prefer in-process
+  inference; if a separate helper is necessary, the plugin installs, starts,
+  supervises, and stops it on Cura exit on every supported platform. It must
+  not leave background services running, including after an abnormal Cura
+  termination. Do not add an externally reachable camera or inference API.
+- Offer a one-time **global** first-run opt-in only on eligible hosts. Do not
+  download the model or any other substantial dependency without consent.
+  Declining the first-run offer is not a permanent lockout: a user can start
+  the same setup from the settings tab later, without repeated boot prompts.
+  Sequence the offer after the existing What's New overlay has been dismissed;
+  both entry points use the same eligibility, consent, download and benchmark
+  flow.
+  First-time setup may download verified, shared model/runtime assets once;
+  report their sizes before download. During the model download, show a modal
+  percentage/byte-count progress and a working Cancel, reusing the file
+  manager's existing download-progress presentation rather than inventing a
+  different one. The setup's download state is global and separate from the
+  printer file-download lane; reuse the dialog's visual/interaction pattern,
+  not its printer-specific network operation. Cancellation leaves the
+  per-printer feature disabled, cleans incomplete assets, and permits an
+  explicit later retry. Use versioned, private app-data storage and pinned
+  integrity checks before making an asset available. In particular,
+  the upstream ONNX weight is about 202 MB; the initial bandwidth restriction
+  for development was lifted by the author, but end-user downloads always
+  require explicit opt-in. Development download: 202,223,918 bytes,
+  SHA-256 `0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa`;
+  pin/check the intended release asset independently before shipping.
+- Keep enable/disable **per printer**, using a checkbox in a dedicated
+  Failure Detection section of Printer controls; installations, model data,
+  and runtime assets are **global/shared**, not copied into each printer's
+  settings or cache. Once setup succeeds, a separate global Detection
+  settings checkbox defaults on; switching it off stops all analysis and
+  alerts and hides the Printer controls section, but retains each printer's
+  choices for later re-enablement. The Detection settings page owns the
+  prominent safety warning and explanations; Printer controls stays compact
+  without duplicating them. Missed failures and false alarms remain possible.
+  The Printer controls section shows
+  per-printer warning and failure
+  thresholds on a two-handle green/amber/red
+  slider (Obico's adaptive low/high defaults 0.38/0.78, ordered hundredths
+  displayed from 0.00 to 1.00 without percent signs;
+  these are not direct raw-score colour cutoffs). Map the displayed relative
+  signal's warning/failure boundaries to those selected positions so its
+  number and camera colour agree after the safe period. Changing either
+  threshold discards evidence and late results from the previous thresholds.
+  A separate per-printer safe-period slider spans 0 seconds to 15 minutes
+  in ten-second steps (default five minutes). During that initial period,
+  detection may analyse frames but neither warn nor pause; changing it
+  discards prior evidence and late results. Use the print's elapsed duration
+  rather than an assumed number of frames so a late camera attach does not
+  start a new five-minute grace period.
+  Diagnostics can reset the What's New and detection-offer markers for the next
+  Cura run without clearing printer configuration or downloaded model assets,
+  or separately delete the shared downloads and turn detection/actions off for
+  all printers. The Detection settings tab retains the global setup/download
+  wizard and labelled health indicators for any actual prerequisites (for example
+  model, inference runtime, eligible host, and camera), with reasons and
+  recovery actions when unhealthy. Do not show indicators for dependencies
+  the implementation does not actually need (such as Docker or a GPU).
+  The Printer controls section defaults directly below Macros and owns
+  the active printer's enablement, threshold
+  slider, notify and pause opt-ins, alert acknowledgment, and an explicit
+  re-arm control after a confirmed or unconfirmed automatic pause. Re-arm is
+  available during the print even while paused, clears the one-pause guard
+  and acknowledgment cooldown, and never sends a printer command; persistent
+  evidence can trigger another pause after fresh analysis. When the shared
+  model is not ready, none of its controls are enabled; setup and prerequisites
+  are explained in Detection settings. When detection is off for the printer,
+  only its short "Enable" checkbox is interactive; the other controls retain
+  their values but remain disabled.
+- Before offering the wizard or allowing the checkbox to be enabled, check
+  host compatibility against the selected runtime's real platform,
+  architecture, memory and hardware requirements; explain a failed check
+  beside the disabled control. Do not claim an untested host is eligible,
+  require a GPU unless inference actually needs one, or equate a present GPU
+  with sufficient inference performance. Use two gates: reject clearly
+  unsupported hardware before showing the wizard, then benchmark real
+  inference after a consented model download. If that benchmark fails, leave
+  the feature disabled for every printer with the measured reason and a
+  retry-check action. Share the benchmark result globally. Bound benchmark
+  runtime and CPU demand; explain that borderline hardware may only fail
+  after the consented download. Decide measurable eligibility criteria after
+  assessing the runtime and supported Cura hosts.
+- While eligible and enabled, draw a green frame around a healthy, analysed
+  camera feed, amber for sustained warning evidence, and red for sustained
+  strong failure evidence. Show a 0.00–1.00 **Failure signal** scale to the left
+  of the webcam; it is a relative indication, not a calibrated probability.
+  Accompany colour with text for accessibility and disclose the possibility
+  of false positives and false negatives beside the opt-in. Green applies
+  only to an actively printing job with freshly analysed frames. Idle,
+  disabled-by-choice, missing, stale, unsupported, or not-yet-analysed states
+  are neutral with distinct explanatory text, never reassuring green. Reset
+  evidence on camera, printer, or print changes; use cadence-aware freshness
+  and hysteresis so a single noisy frame cannot cause or clear a warning.
+  While awaiting the first analysed frame on a live print camera, keep a grey
+  frame and show "Wait" in the scale without a score marker. Do not display
+  the raw model-evidence readout in Printer controls.
+  Persist separate long-term baselines for each printer and camera: a camera
+  with a lower model response must not inherit another view's baseline and
+  remain stuck at zero. Discard the legacy mixed-camera baseline on upgrade.
+  Mirror the webcam's zoom/FPS bar styling on the left with a linear
+  0.00–1.00 graduation; where the picture cannot fit that scale, show its
+  number and state in a pill over the image, like the existing compact
+  zoom/FPS control. Do not shrink the camera image or move the scale
+  below it.
+- Keep monitoring and inference bounded so the Cura UI and camera remain
+  responsive. Analyse a bounded sample of the already-received camera frames
+  without a second camera connection or GUI-thread inference; drop stale
+  queued frames. One global inference budget must prevent multiple printers
+  from multiplying CPU load. When Cura is closed or the feature is disabled,
+  stop work and release resources. Installation failures and runtime faults
+  must be visible rather than silently interpreted as healthy.
+
+Out of scope for the MVP: automatic cancel, resume, heater controls,
+cloud upload, historical alerts, feedback/training, multi-camera fusion,
+and claiming a model score is a failure probability. Notifications and
+one guarded automatic pause per print are separately opt-in and default off.
+
+Snapshot 0 is a non-functional Detection-tab mock-up with requirement
+indicators and preview-only setup/progress dialogs. Sample green/amber/red
+frames and the scale belong on the actual Monitor camera viewport, not a
+second camera illustration in settings. It saves no setting, downloads
+nothing and performs no analysis. The author's live layout review gates
+wiring the shared setup and real camera/inference slice; no preview state
+may be mistaken for active monitoring.
+
+Verification must exercise the actual camera path as well as pure detection
+policy: extend the existing local Moonraker simulator's MJPEG frame source to
+replay a small, permission-cleared normal-to-failure recording while its fake
+print state is active, and check green/amber/red transitions and neutral state
+when frames stop. Use still images for inexpensive model smoke tests and
+synthetic sequences for policy tests. Do not assume a public Obico time-lapse
+is licensed for redistribution; the upstream repository contains example
+failure stills, but no confirmed redistributable failure video fixture yet.
+The author identified Parker's 3D Prints' "3D Printing Fail Compilation -
+November 2023 Edition" (https://www.youtube.com/watch?v=TM67RN3cxjQ) as
+a manual failure reference, along with WildRoseBuilds'
+"EPIC 3D PRINTER FAILS (TIMELAPSE) / OCTOLAPSES)"
+(https://www.youtube.com/watch?v=JGpCGOMgk5g), and a single-print spaghetti
+timelapse by 3D Print Timelapse
+(https://www.youtube.com/watch?v=V8U65ApTbro), plus bLiTzJoN's
+"Printing Spaghetti - Failed 3D Print"
+(https://www.youtube.com/watch?v=87gsL-Luvis), and Brian Johnson's
+"3d Print Spaghetti (Fail)"
+(https://www.youtube.com/watch?v=mGH3p3AF1YY), plus an AllVisuals4U
+spaghetti-failure clip
+(https://www.youtube.com/watch?v=Ss4HkbBEhg8). Publication on YouTube
+does not grant permission to copy, redistribute or package these as
+test fixtures.
+
+Open implementation questions for the critic and panel: practical CPU-only
+runtime on supported Cura platforms; safe shared download/versioning and
+integrity checks without heavy dependencies; detection cadence and calibrated
+warning/red policy; plugin/model licence obligations; how the first-run offer
+fits Cura's launch lifecycle without interrupting unrelated printer workflows.
+The Obico maintainer states that the separately hosted model weights have the
+same AGPL-3.0 licence as the server
+(https://github.com/TheSpaghettiDetective/obico-server/issues/838);
+both download offers link to that licence and state GPLv3 section 13
+compatibility with MPF's GPLv3 while retaining AGPL obligations;
+distribution notices and packaging implications still need review. Obico's
+server hardware guide is for the full server, not a Cura-embedded CPU
+inference worker, and must not be used as a substitute for this feature's
+eligibility measurements. Runtime/native-binary download policy and AGPL
+compliance are separate pre-release gates; the author approved development
+while Marketplace acceptance is investigated, not public shipping without
+clearance. The author has subsequently allowed downloading the model for
+development; keep downloaded weights and all research assets outside the
+source tree (under `/tmp/mpf`).
+
+The author supplied three private failure timelapses for local evaluation;
+they are not redistributable fixtures without a separate rights check. A
+baseline run of Obico's pinned ONNX weight using its own OpenCV resize and
+channel preprocessing returned peak confidences of only 30%, 15% and 5%
+across the three clips (sampled at two frames per second). Earlier frames in
+the first clip sometimes scored higher than its later ones, so simply lowering
+the warning threshold would not reliably distinguish the failure. The author
+chose to continue with Obico's pinned ONNX model despite these false negatives:
+the supplied clips are accelerated timelapses, not necessarily representative
+of the live camera stream. Do not adjust thresholds to force a red result on
+these clips or describe the model as detecting them. The functional snapshot
+is installed for author testing, not cleared for public release. Per-printer
+thresholds, explicit pause re-arm, compact Detection controls and generic
+Klipper Z-offset Apply followed live testing. Active-print reliability,
+other supported hosts, model-licence obligations and Marketplace policy
+remain open gates. Version metadata can be 5.0.0 without marking the
+release shipped or creating a tag.
+
+## Deferred — Physical head in the Preview (former 5.0.0 plan)
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14

@@ -40,6 +40,8 @@ SIGNAL_GROUPS = (
     ("temperatureChartLatestChanged", ("temperatureChartLatest",)),
     ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
     ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
+    ("detectionChanged", ("detectionState", "detectionScore", "detectionRawScore",
+                          "detectionStatus")),
     ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
     ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
     # The follower view's state precedes the plate payloads: a
@@ -73,7 +75,8 @@ SIGNAL_GROUPS = (
                        "actionStatus", "actionTimestamp", "emergencyHoldProgress")),
     ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                          "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
-                         "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
+                         "zOffset", "zOffsetText", "zOffsetApplyTarget", "canApplyZOffset",
+                         "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
                          "canSaveConfig")),
     ("emergencyStopChanged", ("emergencyStopClicks",)),
     ("toolheadChanged", ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed",

@@ -25,10 +25,13 @@ Item {
         contentHeight: diagnosticsColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: UM.ScrollBar {
+            objectName: "settingsScrollbar"
+        }
 
         Column {
             id: diagnosticsColumn
-            width: parent.width
+            width: Math.max(0, parent.width - UM.Theme.getSize("scrollbar").width - 4 * screenScaleFactor)
             spacing: UM.Theme.getSize("default_margin").height
 
             UM.Label {
@@ -107,6 +110,51 @@ Item {
                 text: "Memory diagnostics sample every ten seconds and write to moonraker_leak.log in your home folder: the process size and physical footprint, growing QML item classes, growing plugin collections, and the camera stream's gauges. The separate Python-allocation trace is heavier and stalls Cura briefly each minute."
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")
+            }
+
+            UM.Label {
+                width: parent.width
+                text: "Re-show What's New and the optional local detection offer on the next Cura run. This keeps printer settings and installed model files."
+                wrapMode: Text.WordWrap
+                color: UM.Theme.getColor("text_inactive")
+            }
+            RowLayout {
+                width: parent.width
+                spacing: UM.Theme.getSize("default_margin").width
+                Cura.SecondaryButton {
+                    objectName: "resetOnboardingButton"
+                    text: "Reset first-run prompts"
+                    onClicked: settings.resetOnboardingForNextRun()
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: settings && settings.onboardingResetStatus !== undefined ? settings.onboardingResetStatus : ""
+                    wrapMode: Text.WordWrap
+                    color: UM.Theme.getColor("text_inactive")
+                }
+            }
+
+            UM.Label {
+                width: parent.width
+                text: "Remove the downloaded Obico model and inference runtime, and disable detection, notification, and automatic pause for every printer. A fresh setup will be required."
+                wrapMode: Text.WordWrap
+                color: UM.Theme.getColor("text_inactive")
+            }
+            RowLayout {
+                width: parent.width
+                spacing: UM.Theme.getSize("default_margin").width
+                Cura.SecondaryButton {
+                    objectName: "resetDetectionAssetsButton"
+                    text: "Remove local detection downloads"
+                    enabled: !settings.detectionBusy
+                    onClicked: settings.resetDetectionAssets()
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: settings && settings.detectionResetStatus !== undefined ? settings.detectionResetStatus : ""
+                    wrapMode: Text.WordWrap
+                    color: UM.Theme.getColor("text_inactive")
+                }
             }
 
             UM.Label {

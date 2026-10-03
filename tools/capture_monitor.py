@@ -501,14 +501,29 @@ def main():
         sliders = [child for child in item.findChildren(QQuickItem)
                    if "OutlineSlider" in child.metaObject().className()
                    and child.isVisible() and child.width() > 10]
+        control_flick = item.findChild(QQuickItem, "moonrakerControlsFlick")
+        if control_flick is None:
+            raise RuntimeError("the controls flickable is missing")
         slider_blue = 0
         for slider in sliders:
+            # The detection section can move every slider below the
+            # viewport; bring each candidate into view before checking
+            # pixels rather than sampling beyond the captured window.
+            position = slider.mapToItem(control_flick, QPointF(0, 0))
+            scroll = max(0, min(control_flick.property("contentHeight") - control_flick.height(),
+                                control_flick.property("contentY") + position.y()
+                                - control_flick.height() / 2))
+            control_flick.setProperty("contentY", scroll)
+            collapsed = settled_window()
             top_left = slider.mapToScene(QPointF(0, 0))
             hits = sum(1 for x in range(5, min(int(slider.width()), 400), 4)
                        for y in range(1, max(2, int(slider.height()) - 1))
-                       if collapsed.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)
+                       if 0 <= top_left.x() + x < collapsed.width()
+                       and 0 <= top_left.y() + y < collapsed.height()
+                       and collapsed.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)
             if hits >= 10:
                 slider_blue += 1
+        control_flick.setProperty("contentY", 0)
         if not slider_blue:
             raise RuntimeError("no slider shows the blue fill")
         print("slider fill accent-blue:", slider_blue, "of", len(sliders), "sliders")

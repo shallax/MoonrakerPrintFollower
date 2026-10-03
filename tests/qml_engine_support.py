@@ -96,6 +96,7 @@ if QT_AVAILABLE:
         webcamNamesChanged = pyqtSignal()
         cameraFpsChanged = pyqtSignal()
         webcamStreamEnabledChanged = pyqtSignal()
+        detectionChanged = pyqtSignal()
 
         def __init__(self, fps=15.0, maximum=30.0):
             super().__init__()
@@ -104,6 +105,31 @@ if QT_AVAILABLE:
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
             self._snapshot_available = False
+            self._detection_state = "idle"
+            self._detection_score = -1
+
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionState(self):
+            return self._detection_state
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionGlobalEnabled(self):
+            return True
+
+        @pyqtProperty(int, notify=detectionChanged)
+        def detectionScore(self):
+            return self._detection_score
+
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionStatus(self):
+            return {"waiting": "Waiting for an analysed frame",
+                    "normal": "Normal", "warning": "Warning",
+                    "failure": "Possible failure"}.get(self._detection_state, "Off for this printer")
+
+        def set_detection(self, state, score=-1):
+            self._detection_state = state
+            self._detection_score = score
+            self.detectionChanged.emit()
 
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFps(self):
@@ -3531,7 +3557,7 @@ class SettingsPageCase(RealEngineTestCase):
     """The settings pane mounted offscreen against the real machine
     action, in a real window (a windowless mount never lays out twice)."""
 
-    DIAGNOSTICS_TAB = 3
+    DIAGNOSTICS_TAB = 4
 
     def setUp(self):
         super().setUp()
@@ -3599,6 +3625,7 @@ class SettingsPageCase(RealEngineTestCase):
             if name == "QQuickTabBar" or name.startswith("TabRow_"):
                 candidate.setProperty("currentIndex", index)
                 self.pump(20)
+                self._pump_ms(100)
                 return
         self.fail("the settings tab bar did not mount")
 

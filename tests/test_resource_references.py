@@ -235,6 +235,7 @@ class ResourceReferenceTests(unittest.TestCase):
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardPanelHost.qml"),
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardOverlayHost.qml"),
             ("whatsnew/WhatsNewOverlay.py", "whatsnew/WhatsNewOverlay.qml"),
+            ("whatsnew/WhatsNewOverlay.py", "detection/DetectionOffer.qml"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
         })

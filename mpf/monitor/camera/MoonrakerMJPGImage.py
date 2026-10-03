@@ -21,7 +21,7 @@ import math
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QImage, QPainter
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtQuick import QQuickPaintedItem
@@ -57,6 +57,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
     traceEnabledChanged = pyqtSignal()
     targetFpsChanged = pyqtSignal()
     snapshotModeChanged = pyqtSignal()
+    detectionReceiverChanged = pyqtSignal()
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -71,6 +72,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._reply_finished_cb = None
         self._reply_error_cb = None
         self._image = QImage()
+        self._detection_receiver = None
         self._image_rect = None
 
         self._source_url = QUrl()
@@ -168,6 +170,18 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
 
     mirrorChanged = pyqtSignal()
     mirror = pyqtProperty(bool, fget=getMirror, fset=setMirror, notify=mirrorChanged)
+
+    def setDetectionReceiver(self, receiver: QObject | None) -> None:
+        if receiver is self._detection_receiver:
+            return
+        self._detection_receiver = receiver
+        self.detectionReceiverChanged.emit()
+
+    def getDetectionReceiver(self) -> QObject | None:
+        return self._detection_receiver
+
+    detectionReceiver = pyqtProperty(QObject, fget=getDetectionReceiver,
+                                      fset=setDetectionReceiver, notify=detectionReceiverChanged)
 
     def setTraceEnabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -736,6 +750,8 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # imageHeight must already expose the new dimensions when the
         # signal fires.
         self._image = image
+        if self._detection_receiver is not None:
+            self._detection_receiver.acceptDetectionFrame(image)
         rect = image.rect()
         if self._image_rect is None or rect != self._image_rect:
             self._image_rect = rect

@@ -23,6 +23,45 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_detection_thresholds_are_per_machine_and_bad_pairs_revert_together(self):
+        prefs = FakePreferences()
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        store.set(PrinterConfig(detection_warning_threshold=20, detection_failure_threshold=60,
+                                detection_safe_seconds=0,
+                                detection_notify_enabled=True, detection_pause_enabled=True))
+        self.assertEqual((store.get().detection_warning_threshold,
+                          store.get().detection_failure_threshold), (20, 60))
+        self.assertTrue(store.get().detection_notify_enabled)
+        self.assertTrue(store.get().detection_pause_enabled)
+        self.assertEqual(store.get().detection_safe_seconds, 0)
+        active[:] = ["machine-b", "Printer B"]
+        self.assertEqual((store.get().detection_warning_threshold,
+                          store.get().detection_failure_threshold), (38, 78))
+        self.assertFalse(store.get().detection_notify_enabled)
+        self.assertFalse(store.get().detection_pause_enabled)
+        self.assertEqual(store.get().detection_safe_seconds, 300)
+        store.set(PrinterConfig(detection_warning_threshold=0, detection_failure_threshold=100))
+        active[:] = ["machine-a", "Printer A"]
+        self.assertEqual((store.get().detection_warning_threshold,
+                          store.get().detection_failure_threshold), (20, 60))
+        self.assertTrue(store.get().detection_pause_enabled)
+        self.assertEqual(store.get().detection_safe_seconds, 0)
+        for pair in ((70, 20), (-1, 75), (35, 101), ("bad", 75),
+                     (True, 75), (35.5, 75)):
+            with self.subTest(pair=pair):
+                value = PrinterConfig.from_dict({
+                    "detection_warning_threshold": pair[0],
+                    "detection_failure_threshold": pair[1],
+                })
+                self.assertEqual((value.detection_warning_threshold,
+                                  value.detection_failure_threshold), (38, 78))
+        for value in (-1, 901, True, "30", 2.5, None, 1):
+            with self.subTest(safe=value):
+                self.assertEqual(PrinterConfig.from_dict({
+                    "detection_safe_seconds": value}).detection_safe_seconds, 300)
+        self.assertEqual(PrinterConfig.from_dict({"detection_safe_seconds": 900}).detection_safe_seconds, 900)
+
     def test_software_renderer_is_persistent_per_machine_and_defaults_to_gpu(self):
         prefs = FakePreferences()
         active = ["machine-a", "Printer A"]

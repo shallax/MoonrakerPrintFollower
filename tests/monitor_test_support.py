@@ -40,6 +40,7 @@ CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text(encoding="utf-8")
 CAMERA_VIEWPORT_QML = (PLUGINS / "CameraViewport.qml").read_text(encoding="utf-8")
 CAMERA_CONTROL_BAR_QML = (PLUGINS / "CameraControlBar.qml").read_text(encoding="utf-8")
 PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text(encoding="utf-8")
+FAILURE_DETECTION_SECTION_QML = (PLUGINS / "FailureDetectionSection.qml").read_text(encoding="utf-8")
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text(encoding="utf-8")
 TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text(encoding="utf-8")
 JOG_PAD_QML = (PLUGINS / "JogPad.qml").read_text(encoding="utf-8")
@@ -109,7 +110,7 @@ CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text(encoding="ut
 # id is not a sectionId: property — it is pinned separately.
 SECTION_IDS = {
     # Controls pane
-    "print", "setup", "toolhead", "macros", "profiles", "tuning",
+    "print", "failureDetection", "setup", "toolhead", "macros", "profiles", "tuning",
     "fans", "leds", "pwm", "power", "system", "save",
     # Information and Printer status panes
     "meshmap", "job", "temps", "fansinfo", "filament",

@@ -229,6 +229,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 identity=self._follower.current_printer_identity,
                 colour_scheme=self._colour_scheme,
                 index_service=self._follower.index(),
+                detection=getattr(self._follower, "detection", None),
             )
             # The Preview wirings are NOT made here: the grant below
             # attaches them to the current monitor only, and a machine

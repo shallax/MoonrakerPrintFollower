@@ -92,10 +92,28 @@ ColumnLayout {
             }
         }
     }
-    CentredSecondaryButton {
+    RowLayout {
         Layout.fillWidth: true
-        text: "Clear Z offset"
-        enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
-        onClicked: root.printerModel.clearZOffset()
+        CentredSecondaryButton {
+            Layout.fillWidth: true
+            text: "Clear Z offset"
+            enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
+            onClicked: root.printerModel.clearZOffset()
+        }
+        CentredSecondaryButton {
+            objectName: "applyZOffsetButton"
+            Layout.fillWidth: true
+            text: "Apply Z offset"
+            enabled: root.printerModel != null && root.printerModel.canApplyZOffset && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
+            onClicked: root.printerModel.applyZOffset()
+            UM.ToolTip {
+                visible: parent.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
+                text: root.printerModel != null && root.printerModel.zOffsetApplyTarget !== "" ? "Stages the current Z offset for the " + root.printerModel.zOffsetApplyTarget + ". Save configuration after the print to persist it; saving restarts Klipper." : "Apply requires a nonzero offset and an unambiguous Z probe or endstop configuration."
+            }
+        }
     }
 }

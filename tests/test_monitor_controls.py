@@ -563,6 +563,67 @@ class FactorAndOffsetTests(ControlsCase):
         self.controls.z_offset(0.1)
         self.assertEqual(len(self.commands.calls), 1)
 
+    def test_apply_z_offset_stages_the_configured_reference_without_saving_or_restarting(self):
+        self.data.observation = record(state="printing")
+        cases = (
+            ({"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+              "probe": {"pin": "PA1"}}, "Z_OFFSET_APPLY_PROBE", "probe"),
+            ({"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+              "beacon": {"serial": "/dev/beacon"}}, "Z_OFFSET_APPLY_PROBE", "probe"),
+            ({"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+              "probe": {"z_offset": "0.0"},
+              "beacon": {"serial": "/dev/beacon"}}, "Z_OFFSET_APPLY_PROBE", "probe"),
+            ({"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+              "probe": {"z_offset": "0.0"},
+              "bltouch": {"sensor_pin": "PA1"}}, "Z_OFFSET_APPLY_PROBE", "probe"),
+            ({"stepper_z": {"endstop_pin": "^PA1", "position_endstop": "0"},
+              "probe": {"pin": "PB1"}}, "Z_OFFSET_APPLY_ENDSTOP", "Z endstop"),
+        )
+        for config, script, target in cases:
+            with self.subTest(script=script, config=config):
+                self.data.rebuild(core={"gcode_move": {"homing_origin": [0, 0, .025]}},
+                                  auxiliary={"configfile": {"config": config}})
+                self.assertTrue(self.controls.values["canApplyZOffset"])
+                self.assertEqual(self.controls.values["zOffsetApplyTarget"], target)
+                self.controls.z_offset_apply()
+                self.assertEqual(self.commands.calls[-1],
+                                 ("script", "Apply Z offset", script, can_z_offset))
+        self.assertNotIn("SAVE_CONFIG", str(self.commands.calls))
+
+    def test_apply_z_offset_refuses_ambiguous_zero_and_busy_states(self):
+        cases = (
+            {},
+            {"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"}},
+            {"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+             "probe": {"z_offset": "0.0"}},
+            {"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+             "probe": {"pin": "PA1"}, "beacon": {"serial": "/dev/beacon"}},
+            {"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+             "beacon": {"prefixed_probe_commands": "true"}},
+            {"stepper_z": {"endstop_pin": "beacon:z_virtual_endstop"},
+             "beacon": {"serial": "/dev/beacon"}},
+            {"stepper_z": {"endstop_pin": "cartographer:z_virtual_endstop"},
+             "probe": {"pin": "PA1"}},
+            {"stepper_z": {"endstop_pin": "PA1"}},
+        )
+        for config in cases:
+            with self.subTest(config=config):
+                self.data.rebuild(core={"gcode_move": {"homing_origin": [0, 0, .02]}},
+                                  auxiliary={"configfile": {"config": config}})
+                self.assertFalse(self.controls.values["canApplyZOffset"])
+                self.controls.z_offset_apply()
+                self.assertEqual(self.commands.calls, [])
+        config = {"stepper_z": {"endstop_pin": "probe:z_virtual_endstop"},
+                  "probe": {"pin": "PA1"}}
+        self.data.rebuild(core={"gcode_move": {"homing_origin": [0, 0, 0]}},
+                          auxiliary={"configfile": {"config": config}})
+        self.assertFalse(self.controls.values["canApplyZOffset"])
+        self.data.observation = record(state="printing", busy=True)
+        self.data.rebuild(core={"gcode_move": {"homing_origin": [0, 0, .02]}})
+        self.assertFalse(self.controls.values["canApplyZOffset"])
+        self.controls.z_offset_apply()
+        self.assertEqual(self.commands.calls, [])
+
 
 class PresetTests(ControlsCase):
     def test_presets_sort_by_name_and_fall_back_to_the_key(self):

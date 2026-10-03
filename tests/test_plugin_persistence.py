@@ -95,6 +95,40 @@ class PluginPersistenceTests(unittest.TestCase):
         self.assertNotIn("A", document["machines"])
         self.assertIn("B", document["machines"])
 
+    def test_disable_all_detection_is_one_atomic_settings_write(self):
+        self._seed({
+            "A": {"url": "http://a:7125", "detection_enabled": True,
+                  "detection_notify_enabled": True, "detection_pause_enabled": True},
+            "B": {"url": "http://b:7125", "detection_enabled": True,
+                  "detection_notify_enabled": True},
+        })
+        before = len(self.saves)
+        self.assertTrue(self.facade.disable_all_detection())
+        self.assertEqual(len(self.saves), before + 1)
+        document = self.facade.settings_document()
+        for machine in document["machines"].values():
+            for field in ("detection_enabled", "detection_notify_enabled",
+                          "detection_pause_enabled"):
+                self.assertIs(machine[field], False)
+        self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
+        self.assertEqual(document["machines"]["B"]["url"], "http://b:7125")
+        self.assertEqual(document["global"]["migration"], {"status": "ok"})
+
+    def test_disable_all_detection_handles_missing_or_empty_machines(self):
+        self.assertTrue(self.facade.disable_all_detection())
+        self.assertEqual(self.saves, [])
+        self._seed({})
+        before = self.facade.settings_document()
+        self.assertTrue(self.facade.disable_all_detection())
+        self.assertEqual(self.facade.settings_document(), before)
+        self.assertEqual(len(self.saves), 1)
+
+    def test_disable_all_detection_reports_failed_atomic_write(self):
+        self._seed({"A": {"detection_enabled": True}})
+        self.facade._settings._save = lambda _path, _text: False
+        self.assertFalse(self.facade.disable_all_detection())
+        self.assertTrue(self.facade.get_machine("A")["detection_enabled"])
+
     def test_set_global_merges(self):
         self._seed({})
         self.assertTrue(self.facade.set_global({"activeMachineId": "A"}))

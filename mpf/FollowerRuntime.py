@@ -126,6 +126,8 @@ class FollowerRuntime:
             save=_savefile_write,
             lock=lambda: _state_lock(persistence_root),
         )
+        from .detection.LocalDetectionService import LocalDetectionService
+        self.detection = LocalDetectionService(persistence_root, self.persistence, parent)
         self.binding = PrinterBinding(
             application, self.client, self.persistence,
             cura_cfg_path=os.path.join(Resources.getConfigStoragePath(), "cura.cfg"),
@@ -246,3 +248,4 @@ class FollowerRuntime:
         self.file_download.close()  # in-flight downloads retire BEFORE the files root goes
         self.files.close()
         self.client.transport.close()  # the manager's pooled sockets close with the plugin
+        self.detection.close()

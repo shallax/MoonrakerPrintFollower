@@ -38,6 +38,14 @@ Item {
     // apply, watchdog and first-frame traces report under both.
     property bool traceCameraTiming: false
     property int paneId: -1
+    readonly property string signalState: root.printerModel != null ? root.printerModel.detectionState : "idle"
+    readonly property bool signalLive: (root.signalState === "normal" || root.signalState === "warning" || root.signalState === "failure") && root.cameraControlLive
+    readonly property bool signalWaiting: root.signalState === "waiting" && root.cameraControlLive
+    readonly property bool signalShown: root.signalLive || root.signalWaiting
+    readonly property bool signalCompact: !root.cameraBarFits
+    readonly property int signalScore: root.printerModel != null ? root.printerModel.detectionScore : -1
+    readonly property string signalName: root.printerModel != null ? root.printerModel.detectionStatus : "Unavailable"
+    readonly property color signalColor: root.signalWaiting ? UM.Theme.getColor("text_inactive") : root.signalState === "failure" ? MoonrakerTheme.dangerRed : root.signalState === "warning" ? MoonrakerTheme.warningOrange : MoonrakerTheme.successGreen
 
     // The card's own Layout slot: the viewport fills it, so the pane's
     // column equilibrium is unchanged.
@@ -407,6 +415,9 @@ Item {
 
     UM.Label {
         anchors.centerIn: parent
+        width: Math.max(0, parent.width - 2 * UM.Theme.getSize("default_margin").width)
+        wrapMode: Text.WordWrap
+        horizontalAlignment: Text.AlignHCenter
         // "Not configured" and "offline" are
         // different states: a configured webcam is
         // merely unreachable while Moonraker is
@@ -419,6 +430,9 @@ Item {
 
     UM.Label {
         anchors.centerIn: parent
+        width: Math.max(0, parent.width - 2 * UM.Theme.getSize("default_margin").width)
+        wrapMode: Text.WordWrap
+        horizontalAlignment: Text.AlignHCenter
         // The deliberate off state must not read as a
         // failure (the live ruling): a disabled stream shows
         // its own neutral notice, never the reconnecting
@@ -430,7 +444,11 @@ Item {
     }
 
     UM.Label {
+        objectName: "cameraStreamDisabledNotice"
         anchors.centerIn: parent
+        width: Math.max(0, parent.width - 2 * UM.Theme.getSize("default_margin").width)
+        wrapMode: Text.WordWrap
+        horizontalAlignment: Text.AlignHCenter
         visible: !root.configured && root.printerModel != null && root.printerModel.webcamNames.length > 0 && !root.printerModel.webcamStreamEnabled
         text: "Stream disabled — turn it back on in the camera controls."
         color: UM.Theme.getColor("text_inactive")
@@ -472,6 +490,7 @@ Item {
             // or below a configured snapshot URL is polled
             // instead, closing the continuous stream.
             targetFps: root.printerModel != null ? root.printerModel.cameraFps : 0
+            detectionReceiver: root.printerModel
             anchors.centerIn: parent
 
             property bool imageRotated: rotation === 90 || rotation === 270
@@ -845,6 +864,44 @@ Item {
                 color: MoonrakerTheme.cameraLiveText
                 font: UM.Theme.getFont("small")
             }
+        }
+        FailureSignalBar {
+            visible: root.signalShown && !root.signalCompact
+            score: root.signalScore
+            signalColor: root.signalColor
+            waiting: root.signalWaiting
+            anchors.left: parent.left
+            anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
+            anchors.verticalCenter: parent.verticalCenter
+            width: controlBar.cameraBarWidth
+            height: controlBar.cameraBarHeight
+        }
+        Rectangle {
+            objectName: "failureSignalPill"
+            visible: root.signalShown && root.signalCompact
+            width: signalPillLabel.width + 20 * screenScaleFactor
+            height: 20 * screenScaleFactor
+            radius: 10 * screenScaleFactor
+            color: MoonrakerTheme.cameraLivePill
+            anchors.left: parent.left
+            anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
+            anchors.verticalCenter: parent.verticalCenter
+            UM.Label {
+                id: signalPillLabel
+                objectName: "failureSignalPillText"
+                anchors.centerIn: parent
+                text: root.signalWaiting ? "Wait" : (root.signalScore / 100).toFixed(2) + " · " + root.signalName
+                color: root.signalColor
+                font: UM.Theme.getFont("small")
+            }
+        }
+        Rectangle {
+            objectName: "failureSignalFrame"
+            visible: root.signalShown
+            anchors.fill: parent
+            color: "transparent"
+            border.width: 3 * screenScaleFactor
+            border.color: root.signalColor
         }
     }
 }

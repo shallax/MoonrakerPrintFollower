@@ -78,6 +78,7 @@ without becoming the owner of that feature's implementation.
 | `plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
 | `bedmesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
 | `monitor/` | Dashboard/model composition, observations and projections, with camera, console, controls, temperature, toolhead and layout subfeatures. |
+| `detection/` | Consent-gated local model/runtime assets, single-worker CPU inference, freshness/evidence policy and the boot opt-in view. Never sends a printer command or opens a camera stream. |
 | `files/browser/` | File browser QML, state, policy and stable file-row view model. |
 | `files/transfers/` | Upload/download workflows, the upload dialog, streaming and remote-file leases. |
 | `moonraker/` | Protocol, HTTP/websocket transport and status session; no screen dependencies. |
@@ -167,6 +168,11 @@ correct package ownership.
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation and bounded snapshot polling; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
+| `DetectionAssets.py` | Pinned model and CPU runtime matrix, with host preflight | Network transfers or Qt presentation |
+| `AssetInstaller.py` | Consented, integrity-checked asset downloads (HTTPS at every redirect, fixed size and SHA-256 regardless of CDN host) and guarded runtime extraction | User-interface state |
+| `LocalFailureModel.py` | CPU-only model session and QImage-to-RGB tensor conversion | Camera transport or policy |
+| `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
+| `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
 | `TemperaturePresentation.py` | Per-printer chart configuration, history ownership and independently cached mini/full/latest/legend projections | Monitor publication, networking or toolhead state |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
@@ -179,7 +185,7 @@ correct package ownership.
 | `ThumbnailCache.py` | The listing thumbnails' whole lifecycle: the bounded fetch queue, the in-flight reply registry with its identity check, the generation that invalidates both together, the temp tree the bodies land in and the cache the listing rekeys on rename | Rows, the walk or a listing rebuild |
 | `ReplyBodyReader.py` | The hard byte cap on the replies the file chrome reads itself: one drain per readyRead, overflow aborts the transfer and drops the bytes, one disposal per reply | Transfer workflows or reply policy beyond the cap |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
-| `SectionLayoutPolicy.py` | The static pane→section table (Controls 13, Information 2, Status 7) and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
+| `SectionLayoutPolicy.py` | The static pane→section table (Controls 14, Information 4, Status 6), including the Failure Detection controls after Print, and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
 | `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter (the upload-with-start print gate included) | Upload state machine |
 | `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |
@@ -665,6 +671,13 @@ so power toggles and restart controls respond immediately. The
 transport's replace lane is never used for motion because replacement
 aborts an in-flight request whose G-code may or may not have executed.
 Live Z-offset nudges stay enabled during prints by design.
+The adjacent Apply control stages the current nonzero G-code Z offset for
+the configured probe or mechanical Z endstop; it is disabled when the
+reference cannot be identified unambiguously. It uses Klipper's
+`Z_OFFSET_APPLY_PROBE` or `Z_OFFSET_APPLY_ENDSTOP`, never a
+vendor-prefixed command or `SAVE_CONFIG` itself. Klipper exposes the
+result as pending configuration; the existing Save configuration control
+persists it after the print, restarting Klipper.
 
 Two standing UI rules bound every Monitor control (both pinned in
 `tests/test_monitor_qml_contracts.py`). **No reflow**: controls never disappear —
@@ -1340,11 +1353,57 @@ follow-up, not a demonstrated correctness defect or an RC architecture change.
 ### Settings page composition
 
 `MoonrakerFollowerConfiguration.qml` owns navigation, the migration banner and
-the save/cancel transaction. Its Connection, Following, Upload and Diagnostics
+the save/cancel transaction. Its Connection, Following, Upload, Detection and Diagnostics
 components own their editable fields and validation. Each publishes only its
 configuration values and receives the settings manager explicitly; changing tabs
-does not recreate a page or discard its draft. The shell merges the four value
-blocks only when saving and preserves all public validation properties.
+does not recreate a page or discard its draft. The shell merges the five value
+blocks only when saving and preserves all public validation properties. The
+Detection precedes Diagnostics (always the last tab). All five pages have a
+themed scrollbar that remains visible whenever their content can scroll, with
+space reserved beside the content. Detection settings owns shared consent-gated
+model/runtime setup and prerequisites. A standalone FailureDetectionSection.qml
+in Printer controls owns the active printer's enable checkbox and ordered
+adaptive warning/failure bounds, a 0–15-minute safe-period slider (five-minute
+default), along with independent notification and
+automatic-pause opt-ins and alert acknowledgment. All controls are disabled
+until the model is ready, with setup guidance in the section. Its two-handle
+slider reuses the bed-mesh gesture control with a three-segment colour mode;
+the bed-mesh rainbow remains the default.
+Only the per-printer Enable checkbox remains interactive while detection is
+off for that printer; thresholds, safe period, notification, pause and alert
+acknowledgment remain visible but disabled until enabled.
+The normalized 0.00–1.00 signal maps the adaptive warning and failure boundaries
+to the printer's selected slider positions; it is not raw model confidence.
+Thresholds and scores display exactly two decimals without percent signs;
+their persisted integers represent hundredths to preserve existing settings.
+The long-term baseline is stored per printer and stable camera identity;
+switching cameras restores that camera's own baseline, and the legacy
+printer-wide baseline is ignored because it cannot be assigned safely.
+The selected camera's decoded frames feed the local inference worker. Thresholds
+and the safe period are part of the print/camera context so an edit resets
+evidence and rejects results computed with the previous settings. The worker
+samples no faster than 10 seconds; the policy uses the print's elapsed duration
+for the configurable initial safe period, and mirrors Obico's EWM and streaming
+short/long baselines, relative alert/pause escalation, and 90-second
+acknowledgment cooldown. Printer controls owns per-printer opt-ins for Cura
+notifications and automatic pause (never cancel); both default off. Detection
+marks a per-print pause only after the printer's paused state confirms the
+command, not merely when the request is sent. A refused command can be retried
+on fresh failure evidence; an unconfirmed timeout requires manual inspection
+instead of an automatic repeat. A denied or unsent pause reports its reason.
+After a confirmed pause or unconfirmed timeout, an explicit Re-arm automatic
+pause button can clear the per-print guard and acknowledgment cooldown during
+an active print, including while paused. It does not issue a printer command;
+it resets current evidence while retaining the camera's long-term baseline.
+If the failure remains after resuming, fresh evidence may pause again.
+The lengthy safety, baseline and safe-period explanations
+live only in Settings → Detection; Printer controls retains just its
+controls and values.
+Diagnostics
+can rearm the global What's New and detection-offer markers for the next
+launch without touching installed assets or printer settings. A separate
+Diagnostics action removes the shared model/runtime and disables detection
+and both automation opt-ins on every saved printer.
 
 ### File-browser presentation
 

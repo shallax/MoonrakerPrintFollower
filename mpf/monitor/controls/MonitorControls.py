@@ -181,6 +181,8 @@ class MonitorControls(QObject):
             self._presets.append({"id": "__cooldown__", "name": "Cooldown", "preset": {"gcode": snapshot.presets["cooldownGcode"], "values": {}}})
         move = snapshot.core.get("gcode_move") or {}
         origin = move.get("homing_origin") or ()
+        z_offset = number(origin[2]) if len(origin) > 2 else 0
+        z_apply = self.z_offset_apply_command(config)
         changes = configfile.get("save_config_pending_items") or {}
         # The setup projections read the policy row (4.2.0, the
         # adversarial round's M2): setup_allowed was the raw
@@ -201,8 +203,12 @@ class MonitorControls(QObject):
             "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
             "speedFactorPercent": self._display("speed-factor", _factor_percent(min(500, max(0.01, number(move.get("speed_factor"), 1))) * 100)),
             "flowFactorPercent": self._display("flow-factor", _factor_percent(min(500, max(0.01, number(move.get("extrude_factor"), 1))) * 100)),
-            "zOffset": number(origin[2]) if len(origin) > 2 else 0,
-            "zOffsetText": f"{number(origin[2]) if len(origin) > 2 else 0:+.3f} mm",
+            "zOffset": z_offset,
+            "zOffsetText": f"{z_offset:+.3f} mm",
+            "zOffsetApplyTarget": ("Z endstop" if z_apply == "Z_OFFSET_APPLY_ENDSTOP"
+                                   else "probe" if z_apply else ""),
+            "canApplyZOffset": z_apply is not None and abs(z_offset) >= .0005
+                               and self._allowed(can_z_offset),
             "fanControlItems": fans, "ledItems": leds, "pwmOutputItems": pwm,
             "saveConfigPending": bool(configfile.get("save_config_pending")),
             # The section is permanently visible (no-reflow rule), so a
@@ -335,6 +341,46 @@ class MonitorControls(QObject):
         script = "SET_GCODE_OFFSET " + (f"Z_ADJUST={amount:+g}" if amount is not None else "Z=0")
         if set(homed.lower()) >= {"x", "y", "z"}: script += " MOVE=1"
         self._commands.script("Z offset", script, rule=can_z_offset)
+
+    def z_offset_apply(self):
+        if not self._allowed(can_z_offset) or not self._values.get("canApplyZOffset"):
+            return
+        config = (self._data.snapshot.auxiliary.get("configfile") or {}).get("config") or {}
+        command = self.z_offset_apply_command(config)
+        if command is not None:
+            self._commands.script("Apply Z offset", command, rule=can_z_offset)
+
+    @classmethod
+    def z_offset_apply_command(cls, config):
+        if not isinstance(config, Mapping):
+            return None
+        stepper = cls.section(config, "stepper_z")
+        pin = stepper.get("endstop_pin")
+        if not isinstance(pin, str) or not pin.strip():
+            return None
+        pin = pin.strip().casefold()
+        if pin != "probe:z_virtual_endstop":
+            return ("Z_OFFSET_APPLY_ENDSTOP" if "z_virtual_endstop" not in pin
+                    and "position_endstop" in stepper else None)
+        probe = cls.section(config, "probe")
+        beacon = cls.section(config, "beacon")
+        # Some probe modules persist an offset-only [probe] section alongside
+        # their own configured section; it is not a second physical probe.
+        offset_only_probe = set(probe) <= {"z_offset"}
+        sources = [name for name in ("probe", "bltouch", "beacon")
+                   if cls.section(config, name) and not (
+                       name == "probe" and offset_only_probe
+                       and (cls.section(config, "bltouch") or beacon))]
+        if len(sources) != 1:
+            return None
+        if sources[0] == "probe" and "pin" not in probe:
+            return None
+        if sources[0] == "beacon":
+            if str(beacon.get("register_as_probe", "true")).casefold() not in ("true", "1", "yes", "on"):
+                return None
+            if str(beacon.get("prefixed_probe_commands", "false")).casefold() not in ("false", "0", "no", "off"):
+                return None
+        return "Z_OFFSET_APPLY_PROBE"
 
     def output(self, kind, name, percent, preview=False):
         list_name = {"fan": "fanControlItems", "pwm-output": "pwmOutputItems", "led-brightness": "ledItems"}[kind]
@@ -571,4 +617,3 @@ class MonitorControls(QObject):
             return False
         self._pending[key] = now + PENDING_CEILING_SECONDS
         return True
-

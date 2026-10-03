@@ -19,8 +19,10 @@ from ..resources.PluginPaths import plugin_path
 
 
 class WhatsNewOverlay:
-    def __init__(self):
+    def __init__(self, detection=None):
         self._overlay = None
+        self._detection = detection
+        self._detection_overlay = None
         self._attempts = 0
         self._closed = False
         # The once-per-version offer: both the main window and the
@@ -41,6 +43,9 @@ class WhatsNewOverlay:
             except Exception:
                 pass
         self._overlay = None
+        if self._detection_overlay is not None:
+            self._detection_overlay.deleteLater()
+            self._detection_overlay = None
 
     def _find_main_window(self):
         # The main editor window among Cura's windows: the largest
@@ -101,7 +106,12 @@ class WhatsNewOverlay:
             # monitor model, and Qt drops the stale connection with the
             # old object.
             model.whatsNewRequested.connect(self._show)
+            if self._detection is not None:
+                model.whatsNewDismissed.connect(self._show_detection)
             model.checkWhatsNew()
+            from .WhatsNew import should_show
+            if not should_show(model._whats_new_seen):
+                QTimer.singleShot(0, self._show_detection)
         except Exception:
             Logger.log("e", "Moonraker Print Follower: the what's-new offer raised: %s",
                        traceback.format_exc(limit=4))
@@ -171,3 +181,33 @@ class WhatsNewOverlay:
             Logger.log("e", "Moonraker Print Follower: the what's-new overlay raised: %s",
                        traceback.format_exc(limit=4))
             return
+
+    def _show_detection(self):
+        if self._closed or self._detection is None or not self._detection.should_offer \
+                or self._detection_overlay is not None:
+            return
+        window = self._find_main_window()
+        if window is None or not window.isVisible():
+            return
+        try:
+            from UM.Qt.QtApplication import QtApplication
+            engine = QtApplication.getInstance()._qml_engine
+            path = plugin_path("detection", "DetectionOffer.qml")
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
+            component = QQmlComponent(engine)
+            component.setData(source.encode("utf-8"), QUrl.fromLocalFile(path))
+            overlay = component.createWithInitialProperties({"detection": self._detection})
+            if overlay is None:
+                Logger.log("e", "Moonraker Print Follower: detection offer failed to load: %s",
+                           component.errorString())
+                return
+            overlay.setProperty("parent", window.contentItem())
+            overlay.setProperty("x", max(0, round((window.width() - overlay.property("width")) / 2)))
+            overlay.setProperty("y", max(0, round((window.height() - overlay.property("height")) / 2)))
+            QMetaObject.invokeMethod(overlay, "open")
+            QMetaObject.invokeMethod(overlay, "forceActiveFocus")
+            self._detection_overlay = overlay
+        except Exception:
+            Logger.log("e", "Moonraker Print Follower: detection offer raised: %s",
+                       traceback.format_exc(limit=4))
