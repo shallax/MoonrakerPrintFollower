@@ -88,6 +88,12 @@ class PrintSnapshot:
     # plate_progress, so it never detaches with the popover (the live
     # request).
     plate_manual_progress: Optional[dict] = None
+    # The detached anchor's ETA (the 5.0.0 request): the estimated time
+    # until the print reaches the layer the popover is frozen on, read
+    # exactly as a pause row reads it. "" while attached, while the
+    # anchor is behind the print, or without index timing (the
+    # no-ETA-no-bar ruling).
+    plate_anchor_eta: str = ""
     # The index's layer count: the layer slider's range, and the clamp
     # that refuses a stale manual anchor from an earlier file. 0 without
     # a view.

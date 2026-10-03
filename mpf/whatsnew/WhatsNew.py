@@ -46,6 +46,9 @@ WHATS_NEW: Tuple[dict, ...] = (
             "repeated a few times while it stands unacknowledged. Detection "
             "settings can show the folder holding the frame that raised an "
             "alert and each print's score timeline.",
+            "The Print Follower popover shows the estimated time to reach "
+            "the layer you seek to while it is detached, so a look ahead "
+            "says exactly how long the wait is.",
             "Klipper's Apply Z offset can stage a probe or endstop adjustment "
             "when the target is clear; Save configuration remains separate.",
             "Detection can miss failures or raise false alarms. Do not rely "

@@ -62,7 +62,7 @@ SIGNAL_GROUPS = (
                              "pauseAtLayerHasClearable")),
     ("plateScrubVectorChanged", ("plateScrubVector",)),
     ("plateLiveScrubVectorChanged", ("plateLiveScrubVector",)),
-    ("plateProgressChanged", ("plateLayers", "plateSplit", "platePartial", "plateProgressAnchor", "plateProgressAvailable", "plateTrackingAvailable", "plateProgressReason", "plateSourceStatus", "plateSourceBusy", "plateSourceResolving", "plateSourceProgress",
+    ("plateProgressChanged", ("plateLayers", "plateSplit", "platePartial", "plateProgressAnchor", "plateAnchorEta", "plateProgressAvailable", "plateTrackingAvailable", "plateProgressReason", "plateSourceStatus", "plateSourceBusy", "plateSourceResolving", "plateSourceProgress",
                               "plateLayerCount", "plateLayerMotionCount",
                               "plateLiveLayers", "plateLiveSplit", "plateLivePartial", "plateLiveAnchor", "plateLiveAvailable",
                               "plateNavigationData", "plateNavigationSplit",

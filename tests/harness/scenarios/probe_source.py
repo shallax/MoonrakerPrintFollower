@@ -937,6 +937,25 @@ if model is not None:
     result["pauseAtLayerHasClearable"] = bool(model.pauseAtLayerHasClearable)
 result"""
 
+P_ANCHOR_ETA_READ = """window = _main_window()
+result = {"anchorEtaRead": False}
+model = None
+for item in _walk(window.contentItem(), depth=64):
+    try:
+        candidate = item.property("printer")
+    except Exception:
+        candidate = None
+    if candidate is not None and hasattr(candidate, "plateAnchorEta"):
+        model = candidate
+        break
+if model is not None:
+    result["anchorEtaRead"] = True
+    # A string always (never None): the publish carries the key, and
+    # "" is the no-estimate answer the row renders as an em dash.
+    result["plateAnchorEta"] = str(model.plateAnchorEta)
+    result["followerAttached"] = bool(model.followerAttached)
+result"""
+
 P_ATTACH_EMIT = """window = _main_window()
 result = {}
 for item in _walk(window.contentItem()):

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from ..preview.PreviewFormatting import pause_items
+from ..preview.PreviewFormatting import pause_eta, pause_items
 
 
 def _clock(remaining):
@@ -64,6 +64,23 @@ class NextPausePipeline:
         """The gcode's own pause layers, read-only rows (the ruling)."""
         view = self._index.view
         return set(view.pause_layers) if view is not None else set()
+
+    def anchor_eta(self, layer, current=None) -> str:
+        """The time until the print reaches `layer`, for the anchored
+        (detached) popover — the SAME reading a pause row gets: the
+        countdown plus the wall-clock estimate, from the index's
+        per-layer timing and the observed speed ratio.
+
+        "" when the layer is already reached (nothing is left to wait
+        for) or the index carries no timing for it — the no-ETA-no-bar
+        ruling, which the popover renders as an em dash.
+        """
+        if layer is None or (current is not None and layer <= current):
+            return ""
+        remaining = self._preview.remaining(layer, self._index.view, end=True)
+        if remaining is None:
+            return ""
+        return pause_eta(remaining, self._preview.format_duration, _clock)
 
     def _merge(self, baked, current=None):
         return pause_items(

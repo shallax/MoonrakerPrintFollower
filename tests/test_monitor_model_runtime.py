@@ -3631,12 +3631,17 @@ Item {
             # the false default is the owned state, not a disappearing
             # control.
             "visible: false",
-            # The standing-alert indicators: additive dots that appear
-            # while an alert waits to be acknowledged. Nothing hides —
-            # the unacknowledged state ADDS a mark to surfaces that
-            # are already up.
-            "visible: root.printerModel != null && root.printerModel.detectionAlertPending",
+            # The standing-alert indicator: an additive dot that
+            # appears on the Failure Detection header while an alert
+            # waits to be acknowledged. Nothing hides — the
+            # unacknowledged state ADDS a mark to a surface that is
+            # already up. (The camera's Live pill carries no alert
+            # mark: that pill is about the stream being live.)
             "visible: headerRoot.alertPending",
+            # The detached anchor's ETA row: it belongs to the detached
+            # MODE of the follower popover — attaching again is the
+            # user's own act, and the two rows above it never move.
+            "visible: root.printerModel != null && !root.printerModel.followerAttached",
         }
         for path in sorted(harness.PLUGINS.rglob("*.qml")):
             if path.name in exempt_files:

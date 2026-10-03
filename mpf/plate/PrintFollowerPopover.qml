@@ -509,6 +509,35 @@ MonitorPopOver {
                     }
                 }
 
+                // The future-layer ETA (the 5.0.0 request): what the
+                // print will do while the follower is DETACHED on a
+                // layer ahead of it. The row belongs to the detached
+                // mode — attached, the anchor IS the live layer and
+                // there is nothing to count down to — so it appears
+                // with the seek and leaves with the re-attach. It
+                // reads exactly as a pause row does, and an em dash
+                // when the index carries no timing (the no-ETA ruling).
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    visible: root.printerModel != null && !root.printerModel.followerAttached
+                    UM.Label {
+                        // The same reserved label column as the two
+                        // tracks above: the rows stay aligned.
+                        Layout.preferredWidth: 100 * screenScaleFactor
+                        Layout.maximumWidth: 100 * screenScaleFactor
+                        text: "Layer ETA"
+                        color: UM.Theme.getColor("text_inactive")
+                        elide: Text.ElideRight
+                    }
+                    UM.Label {
+                        objectName: "moonrakerFollowerLayerEta"
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        text: root.printerModel.plateAnchorEta !== "" ? root.printerModel.plateAnchorEta : "—"
+                    }
+                }
+
                 UM.Label {
                     objectName: "moonrakerFollowerSourceStatus"
                     Layout.fillWidth: true

@@ -644,17 +644,6 @@ Item {
                     radius: 4 * screenScaleFactor
                     color: MoonrakerTheme.errorRed
                 }
-                // The standing-alert dot: the badge is the one camera
-                // surface that is always up, so an unacknowledged
-                // alert marks the picture here too.
-                Rectangle {
-                    objectName: "cameraAlertPendingDot"
-                    visible: root.printerModel != null && root.printerModel.detectionAlertPending
-                    width: 8 * screenScaleFactor
-                    height: 8 * screenScaleFactor
-                    radius: 4 * screenScaleFactor
-                    color: root.printerModel != null && root.printerModel.detectionAlertLevel === "failure" ? MoonrakerTheme.dangerRed : MoonrakerTheme.warningOrange
-                }
                 UM.Label {
                     id: liveLabel
                     objectName: "cameraLiveBadgeText"

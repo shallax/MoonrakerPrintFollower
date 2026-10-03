@@ -5,7 +5,7 @@ The assembly point is the package's __init__.
 """
 from __future__ import annotations
 
-from .probe_source import P_PAUSE_BLOCK_READ, PENGUIN_MONITOR_READ
+from .probe_source import P_ANCHOR_ETA_READ, P_PAUSE_BLOCK_READ, PENGUIN_MONITOR_READ
 
 SCENARIOS = [
     {"id": "b1", "group": "status", "name": "standby renders its state word",
@@ -159,6 +159,16 @@ SCENARIOS = [
          # shares its visibility rules is present. Its zoomed half is
          # driven by the Qt suite (test_qml_plate_composition.py).
          {"op": "wait_rect", "objectName": "moonrakerFollowerJump", "absent": True, "budget": 5},
+         # The detached anchor's ETA (the 5.0.0 request): the row
+         # belongs to the detached mode, so the run detaches through
+         # the popover's own toggle and waits for it. The fixture's
+         # index may carry no timing for the anchor, which the row
+         # renders as an em dash — the row and the model key are the
+         # pins, not a particular number.
+         {"op": "click_text", "text": "Detach"},
+         {"op": "wait_model", "prop": "followerAttached", "value": False, "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerFollowerLayerEta", "budget": 15},
+         {"op": "wait_exec", "code": P_ANCHOR_ETA_READ, "contains": '"anchorEtaRead": true', "budget": 20},
      ]},
 
     {"id": "b12", "group": "status",

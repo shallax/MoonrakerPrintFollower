@@ -75,6 +75,7 @@ class _Plate(NamedTuple):
     visited: frozenset
     lookup_ms: object
     layer_count: int
+    anchor_eta: str = ""
 
 
 class PrintCoordinator(QObject):
@@ -480,6 +481,7 @@ class PrintCoordinator(QObject):
         manual_payload = None
         plate_visited = frozenset()
         plate_lookup_ms = None
+        anchor_eta = ""
         if plate_available and (physical.index is not None or self._manual_serving_active()):
             # The payload is built INSIDE the service — the raw index's
             # arrays never cross its boundary (the architecture
@@ -499,6 +501,11 @@ class PrintCoordinator(QObject):
             if self._manual_serving_active():
                 manual_payload = self._index.plate_progress(
                     self._plate_anchor, None, motion.live_position)
+                # The detached anchor's ETA (the 5.0.0 request): what the
+                # user waiting on a future layer actually wants to know.
+                # Only while detached — attached, the live layer is the
+                # anchor and there is nothing to count down to.
+                anchor_eta = self._next_pause.anchor_eta(self._plate_anchor, physical.index)
             # This is ONLY the coordinator-side service lookup.
             # Prepared-file I/O, decode, raw hydration and preparation
             # happen asynchronously inside GCodeIndexService and are
@@ -522,7 +529,7 @@ class PrintCoordinator(QObject):
                     plate_visited = visited(physical.index,
                                             plate_progress_payload["split"], exclude_rows)
         return _Plate(plate_progress_payload, manual_payload, plate_visited,
-                      plate_lookup_ms, layer_count)
+                      plate_lookup_ms, layer_count, anchor_eta)
 
     def _compose_snapshot(self, observation, face, motion, totals, pause, plate):
         """The one snapshot this frame produces: every value is read
@@ -547,6 +554,7 @@ class PrintCoordinator(QObject):
             filament_total=totals.filament_total if totals.filament_total and totals.filament_total > 0 else None,
             plate_progress=plate.progress,
             plate_manual_progress=plate.manual,
+            plate_anchor_eta=plate.anchor_eta,
             plate_lookup_ms=plate.lookup_ms,
             plate_layer_count=plate.layer_count,
             plate_pass_fraction=self._index.plate_pass_fraction()

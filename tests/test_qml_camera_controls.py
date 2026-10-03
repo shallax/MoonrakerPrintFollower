@@ -46,21 +46,6 @@ class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
         self.assertIn("Stale", [item.property("text") for item in
                                 bar.findChildren(harness.QQuickItem)])
 
-    def test_a_standing_alert_marks_the_camera_badge_by_its_level(self):
-        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
-        dot = self.find(pane, "cameraAlertPendingDot")
-        self.assertFalse(dot.property("visible"))
-        model.set_detection_alert("warning")
-        self.pump()
-        self.assertTrue(dot.property("visible"))
-        self.assertEqual(dot.property("color"), harness.QColor(0xfb, 0x8c, 0x00))
-        model.set_detection_alert("failure")
-        self.pump()
-        self.assertEqual(dot.property("color"), harness.QColor(0xd3, 0x2f, 0x2f))
-        model.set_detection_alert("")
-        self.pump()
-        self.assertFalse(dot.property("visible"))
-
     def test_compact_stale_state_names_the_reason_in_the_signal_pill(self):
         pane, _window, model, _image, _frame = self._fps_pane(180, 180)
         model.set_detection("stale")

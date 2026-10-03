@@ -90,7 +90,9 @@ Fixed in this programme:
   in a bounded way while unacknowledged (escalation or a five-minute
   interval, at most three per print, persisted with the per-print
   record), carries an Acknowledge action, and shows a pending-alert
-  indicator on the section header and the camera pill. Batch C.
+  indicator on the Failure Detection section header. Batch C. (The
+  camera's Live badge was tried and REMOVED on review: that pill is
+  about the stream being live and nothing else.)
 - OS notification with the triggering frame (approved): a best-effort
   desktop notification (tray `showMessage` with the retained frame as
   its icon) fires when Cura is not the foreground window, falling back
@@ -106,12 +108,22 @@ External or live-test items, not code:
 
 - AGPL obligations and the written Ultimaker Marketplace policy for
   post-install native downloads: still the release gate; the README
-  now discloses the licence relationship where a reader sees it.
-- The live active-print trial: still required before the colour claim
-  in the README is proven; no permission-cleared recording exists.
+  now discloses the licence relationship where a reader sees it. The
+  submission will be sent and the answer taken as it comes (the
+  2026-10-03 decision) — no policy text is invented here.
+- The live active-print trial: RUN and reported working (2026-10-03) —
+  the colour claim is proven live. What remains open is only the
+  permission-cleared recording for redistribution; the private
+  timelapses stay private fixtures.
 - Per-OS verification of the desktop notification: the code path is
   pinned by tests on every OS (`DesktopAlert`'s gates and the frame it
-  carries), but no real desktop has SEEN one. Measured here:
+  carries), but no real desktop has SEEN one — and a live Windows
+  trial (2026-10-03) reported no notification, so this gate is now an
+  OPEN finding rather than an untested path. Every refusal logs its
+  reason (`desktop alert — ...` in Cura's log: the active-window
+  gate, Cura's tray icon being disabled, an unavailable tray, or a
+  raise), which is what the next trial reads to tell the three silent
+  refusals apart. Measured here:
   `QSystemTrayIcon.isSystemTrayAvailable()` is False in the container,
   so `notify()` refuses before handing anything over (a message to a
   tray-less widget would report a delivery that never happened) and
@@ -236,9 +248,11 @@ Batch C — product fixes:
   `DETECTION_ALERT_MAX_PER_PRINT`), with the count and level persisted
   in the per-print record beside `alertedAt`/`acknowledgedAt`, so a
   Cura restart does not restart the budget. `detectionAlertLevel`
-  exposes the standing alert's severity, and both the section header
-  (`sectionAlertDot`, amber/red by level, visible while collapsed) and
-  the camera Live badge (`cameraAlertPendingDot`) mark it.
+  exposes the standing alert's severity, and the section header
+  (`sectionAlertDot`, amber/red by level, visible while collapsed)
+  marks it. The camera's Live badge carries no alert mark: the review
+  was explicit that the pill is about the stream being live and
+  nothing else.
 
 Batch D — failure evidence and the tuning record:
 
@@ -331,6 +345,37 @@ Batch F — the captures and the last gates:
   (connection 657, following 697, upload 796, detection 598,
   detection-ready 598, diagnostics 813); the determinism gate still
   reports 17 scenes byte-identical across two runs.
+
+Batch G — the detached anchor's ETA (the follow-up request):
+
+- The follower popover now answers the question a detached user actually
+  has: how long until the print reaches the layer they are looking at.
+  `NextPausePipeline.anchor_eta(layer, current)` reads it through the
+  SAME collaborators a pause row reads — the index's per-layer timing,
+  the observed speed ratio, `PreviewFormatting.pause_eta`'s countdown
+  plus wall clock — and refuses in every case the pause rows refuse: a
+  layer the print has already reached, no anchor, no index timing.
+- The coordinator computes it while the popover is DETACHED
+  (`plate_anchor_eta` on the snapshot); the model publishes
+  `plateAnchorEta` (cleared while attached — the live layer is the
+  anchor then, and there is nothing to count down to); the popover
+  renders it as a third row under the two tracks, sharing their
+  reserved label column, and shows an em dash when there is no
+  estimate. The row belongs to the detached mode: it appears with the
+  seek and leaves with the re-attach.
+- Pins: the pipeline's three refusals and its reading (pure, in
+  `test_pause_at_layer.py`), the model's publish-while-detached /
+  clear-while-attached contract (same file, end to end), and the
+  popover row driven on the real engine (present with the estimate,
+  em dash without, gone when attached) in
+  `test_qml_plate_navigation.py`. The harness's b11 scenario — which
+  previously exercised the popover only while attached — now detaches
+  through the popover's own toggle and waits for the row and the
+  model key, so the surface map keeps execution evidence rather than a
+  bookkeeping entry.
+- No capture changes: every capture scene renders the follower
+  ATTACHED, and the row is detached-only, so the committed set is
+  untouched (the QML test and the scenario are the evidence).
 
 The programme's closing gate run, before the push:
 

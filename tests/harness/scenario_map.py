@@ -170,6 +170,7 @@ SCENARIO_MAP = {
     # display-only within-layer bar.
     "moonrakerFollowerJump": "b11",
     "moonrakerFollowerKeepCentred": "b11",
+    "moonrakerFollowerLayerEta": "b11",
     "moonrakerFollowerLayerSlider": "b11",
     "moonrakerFollowerLayerReadout": "b11",
     "moonrakerFollowerAttach": "b11",
@@ -370,6 +371,7 @@ PREFIX_RULES = [
     ("key", "platePartial", "b11"),
     ("key", "plateSceneEpoch", "b11"),
     ("key", "plateProgressAnchor", "b11"),
+    ("key", "plateAnchorEta", "b11"),
     ("key", "plateProgressAvailable", "b11"),
     ("key", "plateProgressReason", "b11"),
     ("key", "plateHasObjects", "b11"),
@@ -1124,7 +1126,7 @@ EXCLUSIONS["MoonrakerFollowerMachineAction.revealDetectionEvidence"] = {
 EXCLUSIONS["revealDetectionEvidenceButton"] = dict(
     EXCLUSIONS["MoonrakerFollowerMachineAction.revealDetectionEvidence"])
 
-for _name in ("sectionAlertDot", "cameraAlertPendingDot"):
+for _name in ("sectionAlertDot",):
     EXCLUSIONS[_name] = {
         "reason": "a standing detection alert needs a real alert on a real print, which the simulator cannot raise",
         "evidence": "test_qml_dashboard_layout and test_qml_camera_controls drive both dots and their level colours",

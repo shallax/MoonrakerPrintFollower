@@ -82,6 +82,26 @@ class DesktopAlertTests(unittest.TestCase):
         self.assertEqual((title, body, timeout), ("Title", "Body", 7000))
         self.assertIsInstance(icon, QIcon)
 
+    def test_every_refusal_is_logged_with_its_reason(self):
+        # A live report of "no notification appeared" is otherwise
+        # indistinguishable from the alert never firing: each refusal
+        # says why in Cura's log.
+        import sys
+        from types import SimpleNamespace
+        from PyQt6.QtCore import Qt
+        logged = []
+        logger = SimpleNamespace(log=lambda level, message, *args: logged.append(message % args))
+        patcher = patch.dict(sys.modules, {"UM.Logger": SimpleNamespace(Logger=logger)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self._with_application(Qt.ApplicationState.ApplicationActive, None)
+        self.assertFalse(DesktopAlert.notify("t", "b"))
+        self.assertTrue(any("active window" in line for line in logged), logged)
+        logged.clear()
+        self._with_application(Qt.ApplicationState.ApplicationInactive, None)
+        self.assertFalse(DesktopAlert.notify("t", "b"))
+        self.assertTrue(any("no tray widget" in line for line in logged), logged)
+
     def test_a_machine_without_a_tray_falls_through_quietly(self):
         from PyQt6.QtCore import Qt
         self._with_application(Qt.ApplicationState.ApplicationInactive, None)

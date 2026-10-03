@@ -38,6 +38,10 @@ upload camera frames to a cloud service.
   possibly duplicate request. Re-arm explicitly clears the latch and
   acknowledgment cooldown for an active print, including while paused,
   without issuing any printer command.
+- Show the estimated time to reach the layer you seek to in the Print
+  Follower popover while it is detached — the same countdown and wall-clock
+  reading the scheduled pauses show — and an em dash when the index has no
+  timing for that layer.
 - Apply a nonzero G-code Z offset through Klipper's generic probe or
   endstop command when its reference is unambiguous. Apply stages the
   configuration change; the separate Save configuration action persists it.

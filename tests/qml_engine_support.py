@@ -107,7 +107,6 @@ if QT_AVAILABLE:
             self._snapshot_available = False
             self._detection_state = "idle"
             self._detection_score = -1
-            self._detection_alert_level = ""
 
         @pyqtProperty(str, notify=detectionChanged)
         def detectionState(self):
@@ -131,18 +130,6 @@ if QT_AVAILABLE:
         def set_detection(self, state, score=-1):
             self._detection_state = state
             self._detection_score = score
-            self.detectionChanged.emit()
-
-        @pyqtProperty(bool, notify=detectionChanged)
-        def detectionAlertPending(self):
-            return self._detection_alert_level != ""
-
-        @pyqtProperty(str, notify=detectionChanged)
-        def detectionAlertLevel(self):
-            return self._detection_alert_level
-
-        def set_detection_alert(self, level):
-            self._detection_alert_level = level
             self.detectionChanged.emit()
 
         @pyqtProperty(float, notify=cameraFpsChanged)
@@ -1327,6 +1314,7 @@ if QT_AVAILABLE:
             super().__init__()
             self._split = PlateFaceRenderTests.PAYLOAD["split"]
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
+            self._anchor_eta = ""
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._scrub = None
             self.scrub_reads = 0
@@ -1448,6 +1436,16 @@ if QT_AVAILABLE:
         @pyqtProperty(int, notify=plateProgressChanged)
         def plateProgressAnchor(self):
             return self._anchor
+
+        @pyqtProperty(str, notify=plateProgressChanged)
+        def plateAnchorEta(self):
+            return self._anchor_eta
+
+        def setAnchorEta(self, text):
+            """The coordinator's anchor estimate lands: the popover's
+            Layer ETA row follows it."""
+            self._anchor_eta = str(text)
+            self.plateProgressChanged.emit()
 
         def setAnchor(self, anchor):
             """Move the served layer: the follow's own publish."""

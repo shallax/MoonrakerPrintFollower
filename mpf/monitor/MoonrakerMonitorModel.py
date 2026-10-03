@@ -1602,6 +1602,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateProgressAnchor"] = (popover["anchor"]
                                               if popover is not None and popover["anchor"] is not None else -1)
             values["plateProgressAvailable"] = bool(popover is not None and popover.get("layers", {}).get("current") is not None)
+            # The detached anchor's ETA, read beside the anchor itself:
+            # "" means no estimate (behind the print, or no timing).
+            values["plateAnchorEta"] = (
+                getattr(snapshot, "plate_anchor_eta", "") or ""
+                if not self._follower_attached else "")
             if popover is None:
                 # No index at all: the reason stays empty — the face's
                 # download action owns that state (its idle line
@@ -1641,6 +1646,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateLayerMotionCount"] = self._values.get("plateLayerMotionCount", 0)
             values["plateProgressAnchor"] = self._values.get("plateProgressAnchor", -1)
             values["plateProgressAvailable"] = self._values.get("plateProgressAvailable", False)
+            values["plateAnchorEta"] = self._values.get("plateAnchorEta", "")
             values["plateProgressReason"] = self._values.get("plateProgressReason", "")
             values["plateNavigationData"] = self._values.get("plateNavigationData", "")
             values["plateNavigationSplit"] = self._values.get("plateNavigationSplit")
@@ -1983,6 +1989,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateSplit = value_property(QVariant, "plateSplit", plateProgressChanged, None)
     plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
+    # The detached anchor's ETA ("" = no estimate): the popover's
+    # "Layer ETA" row reads it beside the anchor.
+    plateAnchorEta = value_property(str, "plateAnchorEta", plateProgressChanged, "")
     plateTrackingAvailable = value_property(bool, "plateTrackingAvailable", plateProgressChanged, False)
     plateSourceStatus = value_property(str, "plateSourceStatus", plateProgressChanged, "")
     plateSourceBusy = value_property(bool, "plateSourceBusy", plateProgressChanged, False)
