@@ -2,7 +2,7 @@
 
 Reviewed on 14 September 2026 against main at [`f500f91df949d86c8350059bdd62189d5b40a5fc`](https://github.com/shallax/MoonrakerPrintFollower/commit/f500f91df949d86c8350059bdd62189d5b40a5fc), package version **4.0.1**.
 
-This report is a proposed engineering plan. Its findings describe the reviewed commit; its recommendations have not been implemented by this documentation change. The corresponding release proposals are in [ROADMAP.md](../../ROADMAP.md).
+This report is a proposed engineering plan. Its findings describe the reviewed commit; its recommendations have not been implemented by this documentation change. The corresponding release proposals are in [ROADMAP.md](../ROADMAP.md).
 
 ## 1. Assessment
 
