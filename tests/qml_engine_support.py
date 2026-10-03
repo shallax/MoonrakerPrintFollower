@@ -3719,6 +3719,21 @@ class SettingsPageCase(RealEngineTestCase):
                          Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
         self.pump(20)
 
+    def activate_item(self, window, item):
+        """Drive the control the way the packaged harness's click_item
+        drives objectName'd controls: a themed Cura control layers its
+        label over the clickable region, so a coordinate click can be
+        swallowed before the handler — the driver emits ``clicked`` when
+        the control carries that signal (the exact path a real click
+        drives, TESTING.md). Controls without one still get the real
+        press-and-release."""
+        emit = getattr(getattr(item, "clicked", None), "emit", None)
+        if emit is None:
+            self.click_item(window, item)
+            return
+        emit()
+        self.pump(20)
+
     @staticmethod
     def _assert_on_screen(window, scene):
         if not (0.0 <= scene.x() <= window.width() and 0.0 <= scene.y() <= window.height()):

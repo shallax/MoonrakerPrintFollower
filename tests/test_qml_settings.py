@@ -364,12 +364,24 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             detection_enabled=True, detection_notify_enabled=True,
             detection_pause_enabled=True), tab=4)
         persistence = SimpleNamespace(disable_all_detection=Mock(return_value=True))
-        detection = SimpleNamespace(busy=False, error="", remove_assets=Mock(return_value=True))
+        # A complete service double: the publish below re-evaluates every
+        # detection binding the pages own, and a missing attribute in a
+        # Qt property getter aborts the process.
+        detection = SimpleNamespace(ready=False, enabled=False, host_error="", busy=False,
+                                    phase="", received=0, total=0, error="",
+                                    remove_assets=Mock(return_value=True))
         self.follower.persistence = persistence
         self.action._detection = detection
+        # The page's controls bind to detectionBusy: publish the swap
+        # the way the real service's stateChanged does, so the enabled
+        # state the click depends on is settled before it lands.
+        self.action.detectionChanged.emit()
+        self.pump(20)
         button = document.findChild(harness.QQuickItem, "resetDetectionAssetsButton")
         self.assertIsNotNone(button)
-        self.click_item(window, button)
+        self.assertTrue(button.property("enabled"),
+                        "the remove-downloads button was disabled before the click")
+        self.activate_item(window, button)
         persistence.disable_all_detection.assert_called_once_with()
         detection.remove_assets.assert_called_once_with()
         self.assertFalse(self.follower.config.detection_enabled)
