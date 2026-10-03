@@ -368,7 +368,8 @@ Batch G — the detached anchor's ETA (the follow-up request):
   clear-while-attached contract (same file, end to end), and the
   popover row driven on the real engine (present with the estimate,
   em dash without, gone when attached) in
-  `test_qml_plate_navigation.py`. The harness's b11 scenario — which
+  `test_qml_plate_navigation.py`. Verified in real Cura: the status
+  group ran 87/87 steps with the new detach and Layer ETA steps. The harness's b11 scenario — which
   previously exercised the popover only while attached — now detaches
   through the popover's own toggle and waits for the row and the
   model key, so the surface map keeps execution evidence rather than a
