@@ -369,6 +369,52 @@ class WhatsNewDetectionOfferTests(harness.RealEngineTestCase):
         queued[0]()
         self.assertIsNotNone(offer._detection_overlay)
 
+    def test_a_reinstalled_monitor_is_rewired_and_the_deposed_one_dropped(self):
+        # The machine-switch shape the plugin hands over: the offer must
+        # ride the LIVE model, and a cached monitor's stale dismissal
+        # must never reveal the offer for the new owner.
+        self.window()
+        first = MonitorDouble()
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(first)
+        self.assertEqual(offer.offer_state()["wired"], True)
+        second = MonitorDouble()
+        offer.attach_model(second)
+        self.assertEqual(first.receivers(first.whatsNewDismissed), 0)
+        first.whatsNewDismissed.emit()
+        self.assertIsNone(offer._detection_overlay)
+        second.whatsNewDismissed.emit()
+        self.assertIsNotNone(offer._detection_overlay)
+        # Re-applying the same model changes nothing.
+        offer.attach_model(second)
+        self.assertEqual(second.receivers(second.whatsNewDismissed), 1)
+
+    def test_an_offer_model_whose_notes_were_seen_queues_only_the_offer(self):
+        self.window()
+        monitor = MonitorDouble(seen=latest_version())
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(monitor)
+        self.assertEqual(monitor.checks, 0)
+        queued = [callback for delay, callback in self.timer_records.calls if delay == 0]
+        self.assertEqual(queued, [offer._show_detection])
+
+    def test_close_unwires_the_model_and_the_give_up_is_observable(self):
+        monitor = MonitorDouble()
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(monitor)
+        offer.close()
+        self.assertEqual(monitor.receivers(monitor.whatsNewDismissed), 0)
+        self.assertEqual(offer.offer_state()["wired"], False)
+        # The retry loop's bound: a boot that never produces a window
+        # stops retrying and SAYS SO, so a first-install leg can tell
+        # never-wired from timed-out.
+        self.install_monitor(None)
+        silent = self.overlay(DetectionDouble())
+        silent._attempts = 300
+        silent._offer()
+        state = silent.offer_state()
+        self.assertEqual((state["wired"], state["gave_up"]), (False, True))
+
     def test_close_destroys_a_live_detection_offer(self):
         self.window()
         offer = self.overlay(DetectionDouble())

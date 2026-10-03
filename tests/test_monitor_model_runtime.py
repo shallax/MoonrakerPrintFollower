@@ -149,6 +149,115 @@ class MonitorQtTests(harness.MonitorQtTests):
             notify.assert_not_called()
             pause.assert_not_called()
 
+    def test_an_unacknowledged_alert_repeats_on_a_bounded_budget(self):
+        import time
+        from unittest.mock import patch
+        from mpf.monitor.MoonrakerMonitorModel import (
+            DETECTION_ALERT_MAX_PER_PRINT, DETECTION_ALERT_REPEAT_SECONDS)
+        config = self.follower.current_printer_config()
+        self.follower.apply_printer_config(harness.replace(
+            config, detection_enabled=True, detection_notify_enabled=True,
+            camera_url="http://printer-a/webcam"))
+        model = self.monitor()
+        self.deliver()
+        self.qt.events()
+        self.deliver_state("printing")
+        self.qt.events()
+        model._publish()
+        printer_id = self.follower.current_printer_identity()[0]
+        context = (printer_id, 0, model._print_state().job_key)
+        # A base in the PAST: the acknowledgement slot stamps the wall
+        # clock, so a future-dated alert would stay unacknowledged
+        # forever — the arithmetic below still needs room to advance.
+        now = time.time() - 200000.0
+        with patch.object(model, "_notify_detection") as notify:
+            model._handle_detection_action(context, "failure", now)
+            notify.assert_called_once_with("failure", False)
+            self.assertTrue(model.detectionAlertPending)
+            self.assertEqual(model.detectionAlertLevel, "failure")
+            # A missed toast must not mean a missed failure: the alert
+            # re-raises on the long interval, and stops at the cap.
+            model._handle_detection_action(context, "failure", now + DETECTION_ALERT_REPEAT_SECONDS - 1)
+            notify.assert_called_once()
+            for step in (0, 1, DETECTION_ALERT_MAX_PER_PRINT * 2):
+                model._handle_detection_action(
+                    context, "warning", now + DETECTION_ALERT_REPEAT_SECONDS + 1 + step * DETECTION_ALERT_REPEAT_SECONDS)
+            self.assertEqual(notify.call_count, DETECTION_ALERT_MAX_PER_PRINT,
+                             "the repeat budget must be the cap, not the attempts")
+            self.assertEqual(model.detectionAlertLevel, "warning")
+        # The budget is per print and survives a restart: it rides the
+        # record, not the process.
+        record = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
+        self.assertEqual(record["alertCount"], DETECTION_ALERT_MAX_PER_PRINT)
+        self.assertEqual(record["alertLevel"], "warning")
+        restored = self.monitor()
+        restored._sync_detection_thresholds()
+        restored._sync_detection_action_context((context[0], context[2]), time.time())
+        self.assertEqual(restored._detection_alert_count, DETECTION_ALERT_MAX_PER_PRINT)
+        # Acknowledging ends the repeat: the next alert is a fresh,
+        # immediate one.
+        with patch.object(model, "_notify_detection") as notify:
+            model.acknowledgeDetectionAlert()
+            self.assertFalse(model.detectionAlertPending)
+            self.assertEqual(model.detectionAlertLevel, "")
+            model._handle_detection_action(context, "failure", now + 10000)
+            notify.assert_called_once_with("failure", False)
+
+    def test_the_alert_names_the_printer_and_carries_an_acknowledge_action(self):
+        import sys
+        from unittest.mock import patch
+        sent = []
+
+        class FakeSignal:
+            def connect(self, _slot):
+                pass
+
+        class FakeMessage:
+            pyQtActionTriggered = FakeSignal()
+
+            def __init__(self, text, lifetime, dismissable):
+                self.text, self.lifetime, self.dismissable = text, lifetime, dismissable
+                self.title = ""
+                self.actions = []
+                self.shown = 0
+                self.hidden = 0
+                sent.append(self)
+
+            def setTitle(self, value):
+                self.title = value
+
+            def addAction(self, *args):
+                self.actions.append(args)
+
+            def show(self):
+                self.shown += 1
+
+            def hide(self):
+                self.hidden += 1
+
+        config = self.follower.current_printer_config()
+        self.follower.apply_printer_config(harness.replace(
+            config, detection_enabled=True, detection_notify_enabled=True,
+            camera_url="http://printer-a/webcam"))
+        model = self.monitor()
+        model.updateName("Voron 2.4")
+        with patch.object(sys.modules["UM.Message"], "Message", FakeMessage):
+            model._notify_detection("failure", False)
+        message = sent[-1]
+        self.assertIn("Voron 2.4", message.text)
+        self.assertIn("Possible print failure", message.text)
+        self.assertEqual(message.title, "Moonraker — local failure detection")
+        self.assertEqual(message.actions[0][:2], ("detectionAcknowledge", "Acknowledge"))
+        # The button's path is the model's own acknowledgement; an
+        # unrelated action leaves the alert standing.
+        with patch.object(model, "acknowledgeDetectionAlert") as ack:
+            model._on_detection_alert_action(message, "somethingElse")
+            ack.assert_not_called()
+            self.assertEqual(message.hidden, 0)
+            model._on_detection_alert_action(message, "detectionAcknowledge")
+            ack.assert_called_once_with()
+        self.assertEqual(message.hidden, 1)
+
     def test_rearm_allows_a_second_pause_after_a_confirmed_first_pause(self):
         import time
         from types import SimpleNamespace
@@ -3393,6 +3502,12 @@ Item {
             # the false default is the owned state, not a disappearing
             # control.
             "visible: false",
+            # The standing-alert indicators: additive dots that appear
+            # while an alert waits to be acknowledged. Nothing hides —
+            # the unacknowledged state ADDS a mark to surfaces that
+            # are already up.
+            "visible: root.printerModel != null && root.printerModel.detectionAlertPending",
+            "visible: headerRoot.alertPending",
         }
         for path in sorted(harness.PLUGINS.rglob("*.qml")):
             if path.name in exempt_files:

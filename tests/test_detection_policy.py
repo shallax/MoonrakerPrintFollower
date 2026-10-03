@@ -147,6 +147,28 @@ class DetectionPolicyTests(unittest.TestCase):
         self.assertIn(delayed.observe(4, now=310, context=context,
                                       print_elapsed_seconds=900), ("warning", "failure"))
 
+    def test_a_suppressed_safe_period_signal_stays_in_the_normal_band(self):
+        context = ("printer-a", "job", "camera")
+        policy = DetectionPolicy(safe_seconds=300)
+        policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        for index in range(30):
+            policy.observe(0, now=index * 10, context=context,
+                           print_elapsed_seconds=index * 10)
+        # A failure-sized signal inside the safe period: the level is
+        # suppressed, and the number must be too — a green "Normal"
+        # may never carry a failing score.
+        self.assertEqual(policy.observe(4, now=300, context=context,
+                                        print_elapsed_seconds=290), "normal")
+        suppressed = policy.state(now=300, context=context, active=True)
+        self.assertEqual(suppressed.name, "normal")
+        self.assertEqual(suppressed.raw_score, 4)
+        self.assertLess(suppressed.score, policy.warning_threshold)
+        # The same evidence once the period has passed escalates.
+        policy.observe(4, now=310, context=context, print_elapsed_seconds=310)
+        escalated = policy.state(now=310, context=context, active=True)
+        self.assertNotEqual(escalated.name, "normal")
+        self.assertGreaterEqual(escalated.score, policy.warning_threshold)
+
     def test_safe_period_bounds_and_invalid_elapsed_time(self):
         for value in (-1, 901, True, 5.5):
             with self.subTest(value=value), self.assertRaises(ValueError):

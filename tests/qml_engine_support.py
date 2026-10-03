@@ -107,6 +107,7 @@ if QT_AVAILABLE:
             self._snapshot_available = False
             self._detection_state = "idle"
             self._detection_score = -1
+            self._detection_alert_level = ""
 
         @pyqtProperty(str, notify=detectionChanged)
         def detectionState(self):
@@ -123,12 +124,25 @@ if QT_AVAILABLE:
         @pyqtProperty(str, notify=detectionChanged)
         def detectionStatus(self):
             return {"waiting": "Waiting for an analysed frame",
+                    "stale": "Camera analysis is stale",
                     "normal": "Normal", "warning": "Warning",
                     "failure": "Possible failure"}.get(self._detection_state, "Off for this printer")
 
         def set_detection(self, state, score=-1):
             self._detection_state = state
             self._detection_score = score
+            self.detectionChanged.emit()
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionAlertPending(self):
+            return self._detection_alert_level != ""
+
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionAlertLevel(self):
+            return self._detection_alert_level
+
+        def set_detection_alert(self, level):
+            self._detection_alert_level = level
             self.detectionChanged.emit()
 
         @pyqtProperty(float, notify=cameraFpsChanged)

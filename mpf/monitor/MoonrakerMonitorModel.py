@@ -94,6 +94,14 @@ SECTIONS_FILE_NAME = "moonrakerprintfollower_sections.json"
 # hand-edited file, or a stray drag value. The PANE bounds are the QML's
 # clamp: they depend on the live stage layout, which the model cannot see.
 CONSOLE_HEIGHT_MAX = 2000
+
+# How a standing detection alert reaches a user who missed the first
+# toast: it repeats on this interval while unacknowledged, and never
+# more than this many times in one print. Both bounds are persisted
+# with the per-print record, so a Cura restart does not restart the
+# count, and a silent alert can never nag a whole print.
+DETECTION_ALERT_REPEAT_SECONDS = 300
+DETECTION_ALERT_MAX_PER_PRINT = 3
 # What the follower's placeholder says when the layer it is on will
 # never arrive: the service latches a source it could not present
 # ("failed") and refuses an anchor a shrunken file left behind
@@ -367,6 +375,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._detection_action_context = None
         self._detection_alerted_at = None
         self._detection_acknowledged_at = None
+        self._detection_alert_count = 0
+        self._detection_alert_level = ""
         self._detection_paused_for_print = False
         self._detection_pause_pending = False
         self._detection_pause_uncertain = False
@@ -1093,9 +1103,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         from UM.Message import Message
         status = "Possible print failure" if level == "failure" else "Print failure warning"
         suffix = " — print paused" if paused else " — check the camera"
-        message = Message(status + suffix, 0, True)
+        # The alert names the printer: two machines on one Cura make an
+        # unattributed toast ambiguous.
+        printer = self.name or self.uniqueName
+        summary = ("%s on %s%s" % (status, printer, suffix)) if printer else status + suffix
+        message = Message(summary, 0, True)
         message.setTitle("Moonraker — local failure detection")
+        # The alert's own acknowledgement: it repeats while nobody
+        # acknowledges it (bounded per print), and this button is the
+        # direct way to stop that without hunting for the panel.
+        message.addAction("detectionAcknowledge", "Acknowledge", "",
+                          "Acknowledge this failure-detection alert")
+        message.pyQtActionTriggered.connect(self._on_detection_alert_action)
         message.show()
+
+    def _on_detection_alert_action(self, message, action_id) -> None:
+        if action_id != "detectionAcknowledge":
+            return
+        self.acknowledgeDetectionAlert()
+        try:
+            message.hide()
+        except Exception:
+            pass
 
     def _handle_detection_action(self, context, level: str, now: float) -> None:
         print_key = (context[0], context[2])
@@ -1119,12 +1148,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 self._commands.report_status(f"Automatic pause was not sent: {verdict.reason}")
         if not config.detection_notify_enabled:
             return
-        if (self._detection_alerted_at is not None
-                and (now - self._detection_alerted_at < 90
-                     or self._detection_acknowledged_at is None
-                     or self._detection_acknowledged_at < self._detection_alerted_at)):
-            return
+        if self._detection_alerted_at is not None:
+            unacknowledged = (self._detection_acknowledged_at is None
+                              or self._detection_acknowledged_at < self._detection_alerted_at)
+            if unacknowledged:
+                # A missed toast must not mean a missed failure, so an
+                # unacknowledged alert repeats on a long interval — and
+                # stops after a few: nagging forever trains the user to
+                # ignore it, and the print is capped either way.
+                if (now - self._detection_alerted_at < DETECTION_ALERT_REPEAT_SECONDS
+                        or self._detection_alert_count >= DETECTION_ALERT_MAX_PER_PRINT):
+                    return
+            elif now - self._detection_alerted_at < 90:
+                return
         self._detection_alerted_at = now
+        self._detection_alert_level = level
+        self._detection_alert_count += 1
         self._save_detection_actions()
         self.detectionChanged.emit()
         self._notify_detection(level, False)
@@ -1154,12 +1193,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if isinstance(saved, dict) and saved.get("print") == repr(print_key[1]):
             alerted = saved.get("alertedAt")
             acknowledged = saved.get("acknowledgedAt")
+            count = saved.get("alertCount")
             self._detection_alerted_at = alerted if type(alerted) in (int, float) and isfinite(alerted) and 0 <= alerted <= now else None
             self._detection_acknowledged_at = acknowledged if type(acknowledged) in (int, float) and isfinite(acknowledged) and 0 <= acknowledged <= now else None
+            self._detection_alert_count = count if type(count) is int and 0 <= count <= DETECTION_ALERT_MAX_PER_PRINT else 0
+            self._detection_alert_level = saved.get("alertLevel") if saved.get("alertLevel") in ("warning", "failure") else ""
             self._detection_paused_for_print = saved.get("paused") is True
         else:
             self._detection_alerted_at = None
             self._detection_acknowledged_at = None
+            self._detection_alert_count = 0
+            self._detection_alert_level = ""
             self._detection_paused_for_print = False
 
     def _save_detection_actions(self) -> bool:
@@ -1169,6 +1213,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "print": repr(self._detection_action_context[1]),
             "alertedAt": self._detection_alerted_at,
             "acknowledgedAt": self._detection_acknowledged_at,
+            "alertCount": self._detection_alert_count,
+            "alertLevel": self._detection_alert_level,
             "paused": self._detection_paused_for_print,
         }
         self._detection_action_saved = record
@@ -1226,6 +1272,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._detection_acknowledged_at is None
             or self._detection_acknowledged_at < self._detection_alerted_at)
 
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionAlertLevel(self):
+        """The level of the alert standing unacknowledged ("warning",
+        "failure", or ""): the pending indicators colour by it rather
+        than guessing a severity."""
+        if not self.detectionAlertPending:
+            return ""
+        return self._detection_alert_level
+
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionPauseRearmable(self):
         if not (self.detectionGlobalEnabled and self.detectionEnabled and self.detectionPauseEnabled):
@@ -1252,16 +1307,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._sync_detection_action_context((self._detection_printer_id(), job), time.time())
         previous = (self._detection_paused_for_print, self._detection_pause_pending,
                     self._detection_pause_uncertain, self._detection_alerted_at,
-                    self._detection_acknowledged_at, self._detection_action_saved)
+                    self._detection_acknowledged_at, self._detection_alert_count,
+                    self._detection_alert_level, self._detection_action_saved)
         self._detection_paused_for_print = False
         self._detection_pause_pending = False
         self._detection_pause_uncertain = False
         self._detection_alerted_at = None
         self._detection_acknowledged_at = None
+        self._detection_alert_count = 0
+        self._detection_alert_level = ""
         if not self._save_detection_actions():
             (self._detection_paused_for_print, self._detection_pause_pending,
              self._detection_pause_uncertain, self._detection_alerted_at,
-             self._detection_acknowledged_at, self._detection_action_saved) = previous
+             self._detection_acknowledged_at, self._detection_alert_count,
+             self._detection_alert_level, self._detection_action_saved) = previous
             self._commands.report_status("Could not save automatic pause re-arm; the pause latch is unchanged")
             self._publish()
             return

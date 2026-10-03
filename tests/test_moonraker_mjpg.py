@@ -1,13 +1,14 @@
 """Camera pipeline integration contracts, isolated by test-file process."""
 import time
 import unittest
+from unittest.mock import patch
 from tests.mjpg_test_support import QT_AVAILABLE
 
 if QT_AVAILABLE:
     from tests.mjpg_test_support import (
         QUrl, QColor, QImage, QObject,
         QBuffer, QIODevice, runtime, MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT,
-        MoonrakerMJPGImage, FakeReply, FakeNam,
+        MoonrakerMJPGImage, FakeReply, FakeNam, mjpg_module,
         _jpeg, _multipart, _chunked,
     )
 
@@ -932,6 +933,52 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self._await(lambda: len(sink.frames) == 1,
                     "the analysed frame never reached the receiver")
         self.assertEqual((sink.frames[0].width(), sink.frames[0].height()), (24, 16))
+
+    def test_a_raising_detection_receiver_cannot_take_down_the_frame_install(self):
+        class _Angry(QObject):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def acceptDetectionFrame(self, image):
+                self.calls += 1
+                raise ValueError("receiver bug")
+
+        angry = _Angry()
+        self.item.setDetectionReceiver(angry)
+        self._start()
+        with patch.object(mjpg_module, "Logger") as logger:
+            self._reply().deliver(_multipart(_jpeg(24, 16)))
+            self._await(lambda: angry.calls == 1, "the receiver was never called")
+            # The picture is the priority: the frame install continues,
+            # the fault is reported once, and the receiver stays
+            # attached for the next frame to try again.
+            self._await(lambda: self.item.imageWidth == 24,
+                        "a raising receiver blocked the frame install")
+        logger.logException.assert_called_once()
+        self.assertIs(self.item.getDetectionReceiver(), angry)
+
+    def test_a_deleted_detection_receiver_is_detached_instead_of_crashing(self):
+        from PyQt6 import sip
+
+        class _Sink(QObject):
+            def acceptDetectionFrame(self, image):
+                # The real receiver is a QObject whose handler touches
+                # its C++ side; a pure-Python body would keep working
+                # on a deleted wrapper and test nothing.
+                self.setObjectName("frame")
+
+        sink = _Sink()
+        self.item.setDetectionReceiver(sink)
+        sip.delete(sink)
+        self.assertTrue(sip.isdeleted(sink), "the fixture receiver was not deleted")
+        self._start()
+        with patch.object(mjpg_module, "Logger"):
+            self._reply().deliver(_multipart(_jpeg(24, 16)))
+            self._await(lambda: self.item.getDetectionReceiver() is None,
+                        "a deleted receiver stayed attached")
+        self._await(lambda: self.item.imageWidth == 24,
+                    "a deleted receiver blocked the frame install")
 
     def test_target_fps_change_reschedules_an_open_snapshot_poll(self):
         self.item.setSnapshotMode(True)

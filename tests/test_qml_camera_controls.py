@@ -31,8 +31,45 @@ class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
                                 bar.findChildren(harness.QQuickItem)])
         model.set_detection("stale")
         self.pump()
-        self.assertFalse(border.property("visible"))
-        self.assertFalse(bar.property("visible"))
+        # Stale is PRESENT and neutral: a grey frame, the bar with its
+        # own word, and no score marker — never a disappearance that
+        # reads as "no detection at all" (nor a green one).
+        self.assertFalse(view.property("signalLive"))
+        self.assertFalse(view.property("signalWaiting"))
+        self.assertTrue(view.property("signalStale"))
+        grey = view.property("signalColor")
+        self.assertEqual((grey.red(), grey.green(), grey.blue()),
+                         (grey.red(), grey.red(), grey.red()))
+        self.assertTrue(border.property("visible"))
+        self.assertTrue(bar.property("visible"))
+        self.assertFalse(marker.property("visible"))
+        self.assertIn("Stale", [item.property("text") for item in
+                                bar.findChildren(harness.QQuickItem)])
+
+    def test_a_standing_alert_marks_the_camera_badge_by_its_level(self):
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        dot = self.find(pane, "cameraAlertPendingDot")
+        self.assertFalse(dot.property("visible"))
+        model.set_detection_alert("warning")
+        self.pump()
+        self.assertTrue(dot.property("visible"))
+        self.assertEqual(dot.property("color"), harness.QColor(0xfb, 0x8c, 0x00))
+        model.set_detection_alert("failure")
+        self.pump()
+        self.assertEqual(dot.property("color"), harness.QColor(0xd3, 0x2f, 0x2f))
+        model.set_detection_alert("")
+        self.pump()
+        self.assertFalse(dot.property("visible"))
+
+    def test_compact_stale_state_names_the_reason_in_the_signal_pill(self):
+        pane, _window, model, _image, _frame = self._fps_pane(180, 180)
+        model.set_detection("stale")
+        self.pump()
+        self.assertTrue(self.find(pane, "failureSignalFrame").property("visible"))
+        pill = self.find(pane, "failureSignalPill")
+        self.assertTrue(pill.property("visible"))
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"),
+                         "Camera analysis is stale")
 
     def test_compact_waiting_state_uses_wait_in_the_signal_pill(self):
         pane, _window, model, _image, _frame = self._fps_pane(180, 180)
@@ -101,7 +138,15 @@ class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
         model.set_detection("stale")
         self.pump()
         self.assertFalse(view.property("signalLive"))
-        self.assertFalse(bars[0].property("visible"))
+        # Stale keeps the bar up (neutral, no marker) and still never
+        # resizes the camera frame it frames.
+        self.assertTrue(view.property("signalStale"))
+        self.assertTrue(bars[0].property("visible"))
+        markers = [item for item in bars[0].findChildren(harness.QQuickItem)
+                   if item.objectName() == "failureSignalMarker"]
+        self.assertEqual(len(markers), 1)
+        self.assertFalse(markers[0].property("visible"))
+        self.assertEqual(frame.width(), width)
 
     def test_narrow_camera_uses_an_in_image_signal_pill(self):
         pane, _window, model, _image, frame = self._fps_pane(180, 180)

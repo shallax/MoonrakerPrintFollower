@@ -117,6 +117,11 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         # a cached monitor that lost the selection must not hold it.
         if getattr(self._follower, "notice", None) is not None:
             self._follower.notice().attach_model(monitor)
+        # The offer rides the same rule: a switch reinstalls the model,
+        # and an unwired offer could not be dismissed into its own
+        # one-time marker.
+        if getattr(self._follower, "whats_new", None) is not None:
+            self._follower.whats_new().attach_model(monitor)
 
     def _revoke_monitor_routing(self) -> None:
         monitor = self._routed_monitor

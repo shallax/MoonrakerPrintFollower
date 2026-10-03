@@ -169,6 +169,60 @@ Batch B — small hardening:
   (`TemporaryDirectory()`), so a killed run leaves no `tmp*` debris in
   the working tree.
 
+Batch C — product fixes:
+
+- Safe-period banding: `DetectionPolicy.observe` bands the displayed
+  score by the level in **both** periods, not only after the safe
+  period. A suppressed warning reports "normal", and a green state can
+  no longer carry a 0.97. Pinned with a failure-sized signal inside the
+  safe period (normal, score < warning) that then escalates once the
+  period passes.
+- Camera seam: `MoonrakerMJPGImage._deliver_detection_frame` contains
+  the per-frame hand-off. An exception escaping the Qt install slot
+  aborts Cura, so a raising receiver is logged once (a `_detection_
+  faulted` latch) and stays attached — a skipped frame is worse for
+  detection than a repeated call — while a receiver whose C++ side is
+  gone (`sip.isdeleted`) is detached and the binding clears. Pinned both
+  ways in `test_moonraker_mjpg`; the fixture receiver touches its C++
+  side, because a pure-Python body on a deleted wrapper still runs and
+  would test nothing.
+- Offer wiring: `WhatsNewOverlay.attach_model(model)` takes the model's
+  What's-New signals on every monitor install — the shape
+  `MigrationNotice.attach_model` already uses — so a machine switch
+  re-wires the offer instead of leaving it on a deposed model, and a
+  model whose notes were already seen re-announces only the offer. The
+  plugin calls it from `_grant_monitor_routing` beside the notice's own
+  attach. `offer_state()` publishes `{wired, attempts, gave_up}` and the
+  give-up latches `_gave_up`, so the leg can tell never-wired from
+  timed-out.
+- The first-install probe looked for the **Popup root's** objectName
+  ("detectionFirstRunOffer"). A Popup is a QObject whose content
+  reparents into the window overlay, so no visual-tree walk can ever
+  see it: the offer was on screen (the 03b capture showed it) while the
+  probe reported `named: []`. The witness is now
+  `detectionOfferDismiss`, an item inside the popup — with the probe
+  also reporting the offer's wiring. Verified on the leg: boot 1 9/9
+  and boot 2 5/5, with `diag.named: [['detectionOfferDismiss', True]]`
+  and `wiring {'wired': True, 'attempts': 56, 'gave_up': False}`.
+- Stale visibility: the camera signal no longer disappears when the
+  analysis goes stale. `signalStale` joins `signalShown`, the colour is
+  the neutral `text_inactive` (never the live states' green), the bar
+  shows "Stale" with no score marker, and the compact pill names the
+  reason ("Camera analysis is stale"). The old pin that asserted a
+  blank frame for stale was replaced by the present-and-neutral one.
+- Notification reach: the alert names the printer ("Possible print
+  failure on <printer> — check the camera"); it carries an
+  **Acknowledge** action (`detectionAcknowledge`, delivered through
+  `pyQtActionTriggered`) that runs the model's own acknowledgement and
+  hides the toast; and while unacknowledged it re-raises on a 300 s
+  interval up to 3 times per print (`DETECTION_ALERT_REPEAT_SECONDS`,
+  `DETECTION_ALERT_MAX_PER_PRINT`), with the count and level persisted
+  in the per-print record beside `alertedAt`/`acknowledgedAt`, so a
+  Cura restart does not restart the budget. `detectionAlertLevel`
+  exposes the standing alert's severity, and both the section header
+  (`sectionAlertDot`, amber/red by level, visible while collapsed) and
+  the camera Live badge (`cameraAlertPendingDot`) mark it.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker

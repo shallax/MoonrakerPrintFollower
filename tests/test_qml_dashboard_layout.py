@@ -85,6 +85,7 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
                 self._failure = failure
                 self._safe = safe
                 self._rearmable = False
+                self._alert_level = "warning"
                 self.expanded = True
                 self.calls = []
 
@@ -127,6 +128,10 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
             @harness.pyqtProperty(bool, notify=detectionChanged)
             def detectionAlertPending(self):
                 return self._pending
+
+            @harness.pyqtProperty(str, notify=detectionChanged)
+            def detectionAlertLevel(self):
+                return self._alert_level if self._pending else ""
 
             @harness.pyqtProperty(bool, notify=detectionChanged)
             def detectionPauseRearmable(self):
@@ -283,6 +288,17 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
         first.detectionChanged.emit()
         self.pump()
         self.assertTrue(acknowledge.property("enabled"))
+        # The standing alert is marked on the section header too, so a
+        # collapsed section still shows something is waiting — and its
+        # colour follows the alert's level.
+        dot = self.find(section, "sectionAlertDot")
+        self.assertTrue(dot.property("visible"))
+        warning = harness.QColor(0xfb, 0x8c, 0x00)
+        self.assertEqual(dot.property("color"), warning)
+        first._alert_level = "failure"
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertEqual(dot.property("color"), harness.QColor(0xd3, 0x2f, 0x2f))
         center = acknowledge.mapToScene(harness.QPointF(acknowledge.width() / 2, acknowledge.height() / 2)).toPoint()
         QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
         self.pump()

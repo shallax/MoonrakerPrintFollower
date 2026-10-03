@@ -120,14 +120,16 @@ class DetectionPolicy:
                    else now - self._first_sample_at)
         self._level = ("failure" if self._failing(self.ESCALATION, elapsed)
                        else "warning" if self._failing(1, elapsed) else "normal")
+        # The banding follows the level, in the safe period as well: a
+        # suppressed warning reports "normal", and a green state must
+        # never carry a failing number.
         score = self._normalized_score()
-        if elapsed >= self.safe_seconds:
-            if self._level == "normal":
-                score = min(score, max(0, self.warning_threshold - 1))
-            elif self._level == "warning":
-                score = max(self.warning_threshold, min(score, self.failure_threshold - 1))
-            else:
-                score = max(score, self.failure_threshold)
+        if self._level == "normal":
+            score = min(score, max(0, self.warning_threshold - 1))
+        elif self._level == "warning":
+            score = max(self.warning_threshold, min(score, self.failure_threshold - 1))
+        else:
+            score = max(score, self.failure_threshold)
         self._score = score
         return self._level
 

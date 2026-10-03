@@ -41,11 +41,16 @@ Item {
     readonly property string signalState: root.printerModel != null ? root.printerModel.detectionState : "idle"
     readonly property bool signalLive: (root.signalState === "normal" || root.signalState === "warning" || root.signalState === "failure") && root.cameraControlLive
     readonly property bool signalWaiting: root.signalState === "waiting" && root.cameraControlLive
-    readonly property bool signalShown: root.signalLive || root.signalWaiting
+    // A stale analysis is PRESENT, with its reason: vanishing entirely
+    // would read as "no detection at all", and the neutral grey keeps
+    // it out of the green band the live states own.
+    readonly property bool signalStale: root.signalState === "stale" && root.cameraControlLive
+    readonly property bool signalShown: root.signalLive || root.signalWaiting || root.signalStale
+    readonly property bool signalWithoutScore: root.signalWaiting || root.signalStale
     readonly property bool signalCompact: !root.cameraBarFits
     readonly property int signalScore: root.printerModel != null ? root.printerModel.detectionScore : -1
     readonly property string signalName: root.printerModel != null ? root.printerModel.detectionStatus : "Unavailable"
-    readonly property color signalColor: root.signalWaiting ? UM.Theme.getColor("text_inactive") : root.signalState === "failure" ? MoonrakerTheme.dangerRed : root.signalState === "warning" ? MoonrakerTheme.warningOrange : MoonrakerTheme.successGreen
+    readonly property color signalColor: root.signalWithoutScore ? UM.Theme.getColor("text_inactive") : root.signalState === "failure" ? MoonrakerTheme.dangerRed : root.signalState === "warning" ? MoonrakerTheme.warningOrange : MoonrakerTheme.successGreen
 
     // The card's own Layout slot: the viewport fills it, so the pane's
     // column equilibrium is unchanged.
@@ -639,6 +644,17 @@ Item {
                     radius: 4 * screenScaleFactor
                     color: MoonrakerTheme.errorRed
                 }
+                // The standing-alert dot: the badge is the one camera
+                // surface that is always up, so an unacknowledged
+                // alert marks the picture here too.
+                Rectangle {
+                    objectName: "cameraAlertPendingDot"
+                    visible: root.printerModel != null && root.printerModel.detectionAlertPending
+                    width: 8 * screenScaleFactor
+                    height: 8 * screenScaleFactor
+                    radius: 4 * screenScaleFactor
+                    color: root.printerModel != null && root.printerModel.detectionAlertLevel === "failure" ? MoonrakerTheme.dangerRed : MoonrakerTheme.warningOrange
+                }
                 UM.Label {
                     id: liveLabel
                     objectName: "cameraLiveBadgeText"
@@ -869,7 +885,8 @@ Item {
             visible: root.signalShown && !root.signalCompact
             score: root.signalScore
             signalColor: root.signalColor
-            waiting: root.signalWaiting
+            waiting: root.signalWithoutScore
+            waitingText: root.signalStale ? "Stale" : "Wait"
             anchors.left: parent.left
             anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
             anchors.verticalCenter: parent.verticalCenter
@@ -890,7 +907,7 @@ Item {
                 id: signalPillLabel
                 objectName: "failureSignalPillText"
                 anchors.centerIn: parent
-                text: root.signalWaiting ? "Wait" : (root.signalScore / 100).toFixed(2) + " · " + root.signalName
+                text: root.signalWithoutScore ? (root.signalStale ? root.signalName : "Wait") : (root.signalScore / 100).toFixed(2) + " · " + root.signalName
                 color: root.signalColor
                 font: UM.Theme.getFont("small")
             }

@@ -331,7 +331,9 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         attach = Mock()
+        attach_offer = Mock()
         follower.notice = lambda: SimpleNamespace(attach_model=attach)
+        follower.whats_new = lambda: SimpleNamespace(attach_model=attach_offer)
         plugin = self.plugin(app, follower)
 
         plugin.refresh()
@@ -347,6 +349,10 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         self.assertEqual(device.getName(), "Printer A")
         self.assertTrue(device._monitor_view_qml_path.endswith("MoonrakerMonitorBedMesh.qml"))
         attach.assert_called_once_with(monitor)
+        # The one-time detection offer rides the same rule: a switch
+        # reinstalls the model, and an unwired offer could not be
+        # dismissed into its own marker.
+        attach_offer.assert_called_once_with(monitor)
 
         plugin.refresh()  # the same machine reuses the served instance and its monitor
         self.assertIs(plugin._current, device)

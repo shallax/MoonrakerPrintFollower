@@ -5,6 +5,9 @@ Rectangle {
     id: root
     property int score: 0
     property bool waiting: false
+    // What the readout says while there is no score to show: the
+    // first-analysis "Wait", or a stale analysis's own word.
+    property string waitingText: "Wait"
     property color signalColor: UM.Theme.getColor("primary")
 
     radius: 3 * screenScaleFactor
@@ -20,7 +23,7 @@ Rectangle {
         height: 16 * screenScaleFactor
         UM.Label {
             anchors.centerIn: parent
-            text: root.waiting ? "Wait" : (root.score / 100).toFixed(2)
+            text: root.waiting ? root.waitingText : (root.score / 100).toFixed(2)
             font: UM.Theme.getFont("small")
             color: UM.Theme.getColor("text")
         }

@@ -25,8 +25,17 @@ from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtProperty, pyqtSignal, py
 from PyQt6.QtGui import QGuiApplication, QImage, QPainter
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtQuick import QQuickPaintedItem
+from PyQt6 import sip
 
 from UM.Logger import Logger
+
+
+def _receiver_deleted(receiver: QObject) -> bool:
+    """True when Python still holds a receiver whose C++ side is gone."""
+    try:
+        return sip.isdeleted(receiver)
+    except Exception:
+        return False
 
 # The render ceiling: one decode and a repaint at most this often
 # while no target rate is set. In MJPEG mode the drain parses everything
@@ -91,6 +100,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._reply_error_cb = None
         self._image = QImage()
         self._detection_receiver = None
+        self._detection_faulted = False
         self._image_rect = None
 
         self._source_url = QUrl()
@@ -193,7 +203,30 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         if receiver is self._detection_receiver:
             return
         self._detection_receiver = receiver
+        self._detection_faulted = False
         self.detectionReceiverChanged.emit()
+
+    def _deliver_detection_frame(self, image: QImage) -> None:
+        """The frame hand-off runs inside the Qt thread's install slot.
+
+        An exception escaping a slot aborts Cura, so a receiver that
+        raises or whose C++ side has been deleted is contained here: a
+        deleted receiver is detached (the binding clears), anything
+        else is reported once and retried on the next frame, because a
+        silently skipped frame is worse for detection than a repeated
+        call.
+        """
+        receiver = self._detection_receiver
+        if receiver is None:
+            return
+        try:
+            receiver.acceptDetectionFrame(image)
+        except Exception:
+            if not self._detection_faulted:
+                self._detection_faulted = True
+                Logger.logException("e", "The detection receiver refused an analysed frame")
+            if _receiver_deleted(receiver):
+                self.setDetectionReceiver(None)
 
     def getDetectionReceiver(self) -> QObject | None:
         return self._detection_receiver
@@ -768,8 +801,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # imageHeight must already expose the new dimensions when the
         # signal fires.
         self._image = image
-        if self._detection_receiver is not None:
-            self._detection_receiver.acceptDetectionFrame(image)
+        self._deliver_detection_frame(image)
         rect = image.rect()
         if self._image_rect is None or rect != self._image_rect:
             self._image_rect = rect

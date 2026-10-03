@@ -1115,6 +1115,14 @@ for _name in ("detectionFirstRunOffer", "detectionOfferDismiss"):
         "recheck": "first-install mode gains a consented local-setup branch",
     }
 
+for _name in ("sectionAlertDot", "cameraAlertPendingDot"):
+    EXCLUSIONS[_name] = {
+        "reason": "a standing detection alert needs a real alert on a real print, which the simulator cannot raise",
+        "evidence": "test_qml_dashboard_layout and test_qml_camera_controls drive both dots and their level colours",
+        "date": "2026-10-03",
+        "recheck": "the simulator can raise an unacknowledged detection alert",
+    }
+
 for _name in ("MoonrakerMonitorModel.applyZOffset", "applyZOffsetButton", "canApplyZOffset"):
     EXCLUSIONS[_name] = {
         "reason": "the simulator has no unambiguous Z-reference configuration, so Apply is disabled there",

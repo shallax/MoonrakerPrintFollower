@@ -2359,9 +2359,13 @@ from UM.Application import Application
 # window union the click verbs already walk). Bound the depth: this
 # probe polls every two seconds, and the click path's depth-96 walk is
 # priced for a deliberate click, not a poll.
-names = ("whatsNewCloseButton", "detectionFirstRunOffer")
+names = ("whatsNewCloseButton", "detectionOfferDismiss")
 shown = {name: False for name in names}
 diag = {"named": [], "windows": 0}
+# The witness is an ITEM the popup owns, never the popup root: a Popup
+# is a QObject whose content reparents into the window overlay, so the
+# root's objectName ("detectionFirstRunOffer") is invisible to every
+# visual-tree walk this harness has.
 for window in QGuiApplication.topLevelWindows():
     if not isinstance(window, QQuickWindow):
         continue
@@ -2380,15 +2384,19 @@ for window in QGuiApplication.topLevelWindows():
             diag["named"].append((name, visible))
             if visible:
                 shown[name] = True
-service = next((ext._runtime.detection for ext in Application.getInstance().getExtensions()
-                if "MoonrakerPrintFollower" in type(ext).__name__ and
-                getattr(ext, "_runtime", None) is not None), None)
+extension = next((ext for ext in Application.getInstance().getExtensions()
+                  if "MoonrakerPrintFollower" in type(ext).__name__ and
+                  getattr(ext, "_runtime", None) is not None), None)
+service = extension._runtime.detection if extension is not None else None
+overlay = getattr(extension, "_whats_new", None) if extension is not None else None
+wiring = overlay.offer_state() if overlay is not None and hasattr(overlay, "offer_state") else None
 result = {"whats": shown["whatsNewCloseButton"],
-          "offer": shown["detectionFirstRunOffer"],
+          "offer": shown["detectionOfferDismiss"],
           "service": service is not None,
           "eligible": bool(service is not None and not service.host_error),
           "should_offer": bool(service is not None and service.should_offer),
           "ready": bool(service is not None and service.ready),
+          "wiring": wiring,
           "diag": diag}
 """
 

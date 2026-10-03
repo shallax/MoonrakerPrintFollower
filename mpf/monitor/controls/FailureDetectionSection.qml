@@ -30,6 +30,10 @@ ColumnLayout {
         title: "Failure Detection"
         sectionId: "failureDetection"
         sectionIcon: "Printer"
+        // The standing alert shows here too, so a collapsed section
+        // still says something is waiting to be acknowledged.
+        alertPending: root.printerModel != null && root.printerModel.detectionAlertPending
+        alertColor: root.printerModel != null && root.printerModel.detectionAlertLevel === "failure" ? MoonrakerTheme.dangerRed : MoonrakerTheme.warningOrange
     }
 
     ColumnLayout {
