@@ -284,6 +284,37 @@ Batch E — the two refactors:
   scenario map's through the same function, so both tables are judged
   by one code path instead of two copies of the field loop.
 
+Batch F — the captures and the last gates:
+
+- Why the Detection and Diagnostics captures were clipped: the
+  settings capture's canvas fit had never run. `StackLayout.currentItem`
+  is **null** on Cura's bundled engine (Qt writes it during the
+  layout's own rearrange, which the offscreen pass skips), so the page
+  lookup returned nothing and every capture kept the fixed 600-px
+  canvas. The active page is now selected by `currentIndex` — the
+  layout's children ARE the declared pages, in order.
+- And why the measurement could not be trusted once it ran: the first
+  reads after a tab switch report the PREVIOUS page's geometry, and
+  two processEvents-only reads can agree while both are stale (the
+  detection page measured 123 px twice, then settled at 598 px once
+  real time passed). The fit now requires the value to hold across
+  real-time pumps, and an unmeasurable or out-of-bounds height is a
+  failure rather than the silent skip that produced the clipped
+  images. `CAPTURE_HEIGHT_LIMIT` (1200) documents the ceiling: the
+  Diagnostics page fits at 813.
+- The fit then revealed Cura's placeholder text to the contrast
+  census, which held it to the strict text floor and failed three
+  upload-page labels at 1.87:1. Placeholders are muted by the theme
+  exactly as disabled control text is, so `_is_placeholder` (text
+  equal to an ancestor's `placeholderText` AND colour equal to that
+  ancestor's `placeholderTextColor`) joins `_is_inactive` in the
+  inactive class — the pair, not the string alone, so a real label
+  repeating the string keeps the strict floor.
+- All nine committed captures regenerated at their fitted heights
+  (connection 657, following 697, upload 796, detection 598,
+  detection-ready 598, diagnostics 813); the determinism gate still
+  reports 17 scenes byte-identical across two runs.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker

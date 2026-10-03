@@ -55,6 +55,15 @@ class FakeColour:
     def name(self):
         return "#%02x%02x%02x" % self._rgb
 
+    def __eq__(self, other):
+        # QColor compares by value; the fake must too, or a
+        # placeholder's colour can never equal its control's.
+        return isinstance(other, FakeColour) and other._rgb == self._rgb \
+            and other._alpha == self._alpha
+
+    def __hash__(self):
+        return hash((self._rgb, self._alpha))
+
 
 class FakePoint:
     def __init__(self, x, y):
@@ -70,7 +79,8 @@ class FakePoint:
 class FakeItem:
     def __init__(self, text=None, colour=(0, 0, 0), alpha=255, x=0, y=0, width=20, height=10,
                  visible=True, opacity=1.0, object_name=None, children=(),
-                 enabled=True, parent=None, clip=False,
+                 enabled=True, parent=None, clip=False, placeholder_text=None,
+                 placeholder_colour=None,
                  meta_chain=("Label_QMLTYPE_11", "QQuickText", "QQuickItem", "QObject")):
         self._text = text
         self._colour = FakeColour(colour, alpha) if colour is not None else None
@@ -80,6 +90,8 @@ class FakeItem:
         self._object_name = object_name
         self._children = list(children)
         self._enabled, self._parent, self._clip = enabled, parent, clip
+        self._placeholder_text = placeholder_text
+        self._placeholder_colour = placeholder_colour
         chain = None
         for name in reversed(meta_chain):
             chain = FakeMeta(name, chain)
@@ -96,6 +108,10 @@ class FakeItem:
             return self._enabled
         if name == "clip":
             return self._clip
+        if name == "placeholderText":
+            return self._placeholder_text
+        if name == "placeholderTextColor":
+            return self._placeholder_colour
         return None
 
     def childItems(self):
@@ -232,6 +248,42 @@ class CensusWalkerTests(unittest.TestCase):
         _, offenders, _ = self.census(item, image)
         self.assertEqual(len(offenders), 1)  # 205-grey on white is below the floor
         self.assertEqual(offenders[0]["ground_rgb"], (255, 255, 255))
+
+    def test_placeholder_text_is_measured_against_the_inactive_floor(self):
+        # Qt paints a placeholder through the control's own internal
+        # Text, in the control's muted placeholderTextColor. That is a
+        # deliberate theme choice, like a disabled control's grey — the
+        # strict text floor would fail Cura's own theme for it.
+        muted = (0xb4, 0xb4, 0xb4)
+        field = FakeItem(colour=None, width=200, height=24,
+                         placeholder_text="Characters to remove",
+                         placeholder_colour=FakeColour(muted))
+        placeholder = FakeItem(text="Characters to remove", colour=muted, width=180, height=16,
+                               parent=field)
+        field._children = [placeholder]
+        image = FakeImage(220, 40, fill=(0xf3, 0xf3, 0xf3), glyphs=[(muted, range(4, 8))])
+        checked, _, offenders, _ = capture_contrast.census(field, image)
+        self.assertEqual(checked, 1)
+        self.assertEqual(offenders, [], "placeholder text was held to the text floor")
+
+    def test_a_real_label_repeating_a_placeholder_string_keeps_the_strict_floor(self):
+        # The match is the pair (text, colour): a label that merely
+        # repeats the control's placeholder string, painted in the
+        # normal text colour, is judged like any other text.
+        field = FakeItem(colour=None, width=200, height=24,
+                         placeholder_text="Characters to remove",
+                         placeholder_colour=FakeColour((0xb4, 0xb4, 0xb4)))
+        label = FakeItem(text="Characters to remove", colour=(0xb4, 0xb4, 0xb4), width=180,
+                         height=16, parent=field)
+        field._children = [label]
+        image = FakeImage(220, 40, fill=(0xf3, 0xf3, 0xf3), glyphs=[((0xb4, 0xb4, 0xb4), range(4, 8))])
+        # Same colour as the placeholder palette, but the ancestor's
+        # placeholderTextColor is a DIFFERENT object: the pair does not
+        # match, so the strict floor applies and this is an offender.
+        field._placeholder_colour = FakeColour((0x11, 0x11, 0x11))
+        checked, _, offenders, _ = capture_contrast.census(field, image)
+        self.assertEqual(checked, 1)
+        self.assertEqual(len(offenders), 1)
 
     def test_invisible_items_are_skipped_and_noted(self):
         item = FakeItem(text="Hidden", colour=(255, 255, 255), visible=False, width=40, height=16,

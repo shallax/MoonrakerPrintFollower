@@ -44,6 +44,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -57,6 +58,12 @@ from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
 import capture_contrast
 import capture_settle
+
+# The tallest canvas a page capture may need. The Diagnostics page is
+# already taller than the fixed 600-px frame (813 px fitted); a page
+# that outgrows this is a capture failure to look at, never a silently
+# cropped image.
+CAPTURE_HEIGHT_LIMIT = 1200
 
 
 # ---------------------------------------------------------------------------
@@ -680,7 +687,7 @@ def main():
             and the action-buttons row (~28 px).
 
             The Flickable is located through the StackLayout's CURRENT
-            item, never by a visible-item hunt: the tab switch's
+            index, never by a visible-item hunt: the tab switch's
             visibility propagation is racy, and "the first visible
             Flickable" once found nothing (the diagnostics tab kept the
             upload height) and another time the wrong tab's page — the
@@ -695,6 +702,16 @@ def main():
                     stack = candidate
                     break
             page = stack.property("currentItem") if stack is not None else None
+            if page is None and stack is not None:
+                # Cura's bundled engine leaves StackLayout.currentItem
+                # null — it is written during the layout's own
+                # rearrange, which this offscreen pass skips — so the
+                # index is the selector: the layout's children ARE the
+                # declared pages, in order.
+                index = stack.property("currentIndex")
+                children = stack.childItems()
+                if type(index) is int and 0 <= index < len(children):
+                    page = children[index]
             flickable = None
             if page is not None:
                 # The QML-only types (QQuickFlickable) are not importable
@@ -733,29 +750,45 @@ def main():
             for _ in range(5):
                 app.processEvents()
             # Each tab's page is a Flickable whose content is shorter or
-            # taller than the fixed 600-px canvas, so fit the window to the
-            # active tab's content (the contentHeight is independent of the
-            # viewport size, so measuring before resizing is stable).  The
-            # tab panel never stretches.  Width stays at the requested 700.
-            # The Flickable's contentHeight can settle late (async item
-            # loads), so spin until two consecutive measurements agree
-            # before trusting it — a one-in-N capture flake otherwise.
+            # taller than the fixed 600-px canvas, so fit the window to
+            # the active tab's content.  The tab panel never stretches.
+            # Width stays at the requested 700.
+            #
+            # The measurement is only trustworthy once the switch has
+            # been laid out, and processEvents turns alone do not get
+            # there: the first reads report the PREVIOUS page's
+            # geometry and can agree with each other while doing it
+            # (the detection page measured 123 px twice, then settled
+            # at 598 once real time passed — the clipped Diagnostics
+            # and Detection captures). So the value must hold still
+            # across real-time pumps before it is believed.
             target = None
             previous = object()  # a sentinel: a first read of None must
             # NOT count as "stable" (the tab switch may not have landed
             # yet and no Flickable reports visible — the diagnostics
             # tab once kept the upload height and the captures flipped).
-            for _ in range(40):
+            stable = 0
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
                 target = fitted_height()
-                if target == previous:
-                    break
+                stable = stable + 1 if target == previous else 0
                 previous = target
                 app.processEvents()
-            if target is not None and 300 <= target <= 900:
-                item.setHeight(target)
-                window.resize(700, target)
-                for _ in range(5):
-                    app.processEvents()
+                if stable >= 5:
+                    break
+                time.sleep(0.02)
+            if target is None:
+                raise RuntimeError("no page content to measure for the %s capture" % name)
+            if not 300 <= target <= CAPTURE_HEIGHT_LIMIT:
+                # A silent skip is how the clipped captures happened:
+                # an unmeasurable or absurd height is a failure here,
+                # never a canvas that quietly crops the page.
+                raise RuntimeError("fitted height %d for the %s capture is outside %d..%d"
+                                   % (target, name, 300, CAPTURE_HEIGHT_LIMIT))
+            item.setHeight(target)
+            window.resize(700, target)
+            for _ in range(5):
+                app.processEvents()
             # The Save button's enabled binding can flip late; grab it
             # only after two consecutive stable reads AND a short settle
             # so any style transition finishes (a mid-transition grab
