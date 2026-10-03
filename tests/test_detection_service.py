@@ -1,6 +1,7 @@
 """Global detection service lifecycle, without network or native imports."""
 
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -11,7 +12,9 @@ from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtGui import QImage
 
 from mpf.detection import AssetInstaller
-from mpf.detection.DetectionAssets import ASSET_VERSION, RuntimeWheel, installed_paths
+from mpf.detection.DetectionAssets import (
+    ASSET_VERSION, MODEL_SHA256, MODEL_SIZE, RuntimeWheel, installed_paths,
+)
 from mpf.detection.LocalDetectionService import LocalDetectionService, _lane
 
 
@@ -569,6 +572,418 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertEqual(service.phase, "error")
         self.assertIn("symbolic link", service.error)
         self.assertTrue(os.path.islink(link))
+
+    def test_enabled_switch_rejects_a_non_checkbox_value(self):
+        # The slot is reachable from QML, where a stray string or number
+        # arrives as-is; only a real bool may move the global switch.
+        service = self.service()
+        for value in (1, "true", None):
+            with self.assertRaises(ValueError) as raised:
+                service.set_enabled(value)
+            self.assertIn("checkbox", str(raised.exception))
+        self.assertTrue(service.enabled)
+
+    def test_enabled_switch_already_in_place_costs_no_write(self):
+        service = self.service()
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        # A switch already where the checkbox wants it must not touch
+        # the store; a failing store would surface as an error if it did.
+        self.persistence.fail = True
+        self.assertTrue(service.set_enabled(True))
+        self.assertEqual(service.error, "")
+        self.assertTrue(service.enabled)
+
+    def test_setup_is_inert_once_ready_and_after_close(self):
+        service = self.service()
+        installs = []
+
+        def install(*_args):
+            installs.append(True)
+            return installed_paths(self.directory.name)
+
+        with patch.object(AssetInstaller, "install", side_effect=install):
+            service.setup()
+            self.until(lambda: service.ready)
+            service.setup()
+            self.assertEqual(len(installs), 1)
+            service.close()
+            service.setup()
+        self.assertFalse(service.busy)
+        self.assertEqual(service.phase, "ready")
+        self.assertEqual(service.error, "")
+
+    def test_cancel_is_inert_when_idle_and_during_removal(self):
+        service = self.service()
+        service.cancel()
+        self.assertFalse(service._cancel.is_set())
+        _, model = installed_paths(self.directory.name)
+        os.makedirs(os.path.dirname(model))
+        with open(model, "wb") as handle:
+            handle.write(b"asset")
+        entered = threading.Event()
+        release = threading.Event()
+        unlink = os.unlink
+
+        def gated(path, *args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return unlink(path, *args, **kwargs)
+
+        with patch("mpf.detection.LocalDetectionService.os.unlink", side_effect=gated):
+            self.assertTrue(service.remove_assets())
+            self.assertTrue(entered.wait(2))
+            # Cancel is not a removal switch: the teardown must run on.
+            service.cancel()
+            self.assertFalse(service._cancel.is_set())
+            release.set()
+            self.until(lambda: not service.busy)
+        self.assertEqual(service.phase, "uninstalled")
+        self.assertFalse(os.path.lexists(model))
+
+    def test_decline_offer_is_inert_without_an_offer_to_decline(self):
+        with patch("mpf.detection.LocalDetectionService.host_wheel",
+                   side_effect=ValueError("Unsupported Python")):
+            unsupported = self.service()
+        unsupported.decline_offer()
+        self.assertEqual(self.persistence.record, {})
+        self.assertFalse(unsupported.should_offer)
+        closed = self.service()
+        closed.close()
+        closed.decline_offer()
+        self.assertEqual(self.persistence.record, {})
+
+    def test_close_raises_when_the_worker_ignores_the_stop(self):
+        # The six-second budget is the contract: a worker wedged inside a
+        # score must be reported, never silently orphaned.
+        service = self.service()
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        image = QImage(8, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def stuck(_image):
+            entered.set()
+            release.wait(30)
+            return .42
+
+        with patch.object(self.model, "score", side_effect=stuck), \
+                patch("mpf.detection.LocalDetectionService._CADENCE", .01):
+            service.sample(image, ("print-1",))
+            self.assertTrue(entered.wait(2))
+            started = time.monotonic()
+            try:
+                with self.assertRaises(RuntimeError) as raised:
+                    service.close()
+            finally:
+                release.set()
+            self.assertGreaterEqual(time.monotonic() - started, 6.0)
+        self.assertIn("did not stop within six seconds", str(raised.exception))
+        self.assertEqual(service.phase, "error")
+        self.assertIn("did not stop", service.error)
+        self.until(lambda: not service._worker.is_alive())
+
+    def test_removal_status_is_only_terminal_when_it_says_so(self):
+        service = self.service()
+        service._removal_generation = 7
+        service._remove_requested = True
+        service._busy = True
+        service._phase = "removing"
+        service._updates.status.emit(7, {"phase": "runtime", "received": 4, "total": 10})
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(service.phase, "removing")
+        self.assertTrue(service._remove_requested)
+        service._updates.status.emit(7, {"busy": False, "ready": False,
+                                         "phase": "uninstalled", "error": ""})
+        self.until(lambda: not service._remove_requested)
+        self.assertEqual(service.phase, "uninstalled")
+        self.assertFalse(service.busy)
+
+    def test_cancelled_setup_reports_cancelled_without_the_lane(self):
+        service = self.service()
+        installs = []
+
+        def install(*_args):
+            installs.append(True)
+            return installed_paths(self.directory.name)
+
+        with patch.object(AssetInstaller, "install", side_effect=install):
+            self.assertTrue(_lane.acquire(timeout=1))
+            try:
+                service.setup()
+                self.assertTrue(service.busy)
+                service.cancel()
+                self.until(lambda: service.phase == "cancelled")
+            finally:
+                _lane.release()
+        self.assertEqual(installs, [])
+        self.assertFalse(service.busy)
+        self.assertFalse(service.ready)
+
+    def test_unreadable_asset_probe_leaves_cleanup_armed(self):
+        # A probe that cannot read the install is not proof of an
+        # install: the failed download's remains must still be swept.
+        service = self.service()
+        paths = installed_paths(self.directory.name)
+
+        def failing_install(*_args):
+            os.makedirs(os.path.dirname(paths[1]), exist_ok=True)
+            with open(paths[1], "wb") as handle:
+                handle.write(b"partial")
+            raise OSError("no space left on device")
+
+        with patch.object(service, "_verified", side_effect=ValueError("unreadable")), \
+                patch.object(AssetInstaller, "install", side_effect=failing_install):
+            service.setup()
+            self.until(lambda: service.phase == "error")
+        self.assertIn("no space left on device", service.error)
+        self.assertFalse(os.path.exists(paths[1]))
+        self.assertNotEqual(self.persistence.record.get("ready_version"), ASSET_VERSION)
+
+    def test_cancel_after_the_final_write_clears_the_success_marker(self):
+        service = self.service()
+        persist = service._persist
+
+        def cancel_with_the_write(record):
+            result = persist(record)
+            if record.get("ready_version") == ASSET_VERSION:
+                service._cancel.set()
+            return result
+
+        service._persist = cancel_with_the_write
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.phase == "cancelled")
+        self.assertFalse(service.ready)
+        self.assertEqual(service.error, "")
+        self.assertEqual(self.persistence.record["ready_version"], "")
+
+    def test_cancelled_install_leaves_no_partial_runtime_behind(self):
+        service = self.service()
+        runtime, model = installed_paths(self.directory.name)
+
+        def install(*_args):
+            os.makedirs(runtime, exist_ok=True)
+            with open(model, "wb") as handle:
+                handle.write(b"partial")
+            raise AssetInstaller.DownloadCancelled("cancelled")
+
+        with patch.object(service, "_verified", return_value=False), \
+                patch.object(AssetInstaller, "install", side_effect=install):
+            service.setup()
+            self.until(lambda: service.phase == "cancelled")
+        self.assertFalse(os.path.exists(runtime))
+        self.assertFalse(os.path.exists(model))
+        self.assertFalse(service.ready)
+
+    def test_failed_cleanup_is_reported_with_the_original_error(self):
+        service = self.service()
+        runtime, model = installed_paths(self.directory.name)
+
+        def install(*_args):
+            os.makedirs(runtime, exist_ok=True)
+            with open(model, "wb") as handle:
+                handle.write(b"partial")
+            raise OSError("archive is corrupt")
+
+        with patch.object(service, "_verified", return_value=False), \
+                patch("mpf.detection.LocalDetectionService.shutil.rmtree",
+                      side_effect=PermissionError("read-only runtime")), \
+                patch.object(AssetInstaller, "install", side_effect=install):
+            service.setup()
+            self.until(lambda: service.phase == "error")
+        self.assertIn("archive is corrupt", service.error)
+        self.assertIn("cleanup failed: read-only runtime", service.error)
+        self.assertFalse(os.path.exists(model))
+        self.assertTrue(os.path.isdir(runtime))
+        self.assertNotEqual(self.persistence.record.get("ready_version"), ASSET_VERSION)
+
+    def test_removal_refuses_an_asset_that_is_not_a_file(self):
+        service = self.service()
+        _, model = installed_paths(self.directory.name)
+        os.makedirs(model)
+        self.assertTrue(service.remove_assets())
+        self.until(lambda: not service.busy)
+        self.assertEqual(service.phase, "error")
+        self.assertIn("is not a file", service.error)
+        self.assertTrue(os.path.isdir(model))
+
+    def test_removal_refuses_a_runtime_that_is_not_a_directory(self):
+        service = self.service()
+        runtime, model = installed_paths(self.directory.name)
+        os.makedirs(os.path.dirname(model))
+        with open(runtime, "wb") as handle:
+            handle.write(b"not a runtime")
+        self.assertTrue(service.remove_assets())
+        self.until(lambda: not service.busy)
+        self.assertEqual(service.phase, "error")
+        self.assertIn("is not a directory", service.error)
+        self.assertTrue(os.path.isfile(runtime))
+
+    def test_startup_declines_when_the_worker_lane_is_never_free(self):
+        self.persistence.record = {"ready_version": ASSET_VERSION, "offer_seen": True}
+        self.assertTrue(_lane.acquire(timeout=1))
+        try:
+            service = self.service()
+            service.close()
+        finally:
+            _lane.release()
+        self.assertFalse(service.ready)
+        self.assertEqual(service.error, "")
+        self.assertEqual(self.model.calls, [])
+        self.assertFalse(service._worker.is_alive())
+
+    def test_setup_that_raced_the_startup_is_absorbed_by_it(self):
+        # The user can press Set up before the boot probe finishes; the
+        # probe's own success answers it, and must not leave a second
+        # download queued behind the first.
+        self.persistence.record = {"ready_version": ASSET_VERSION, "consent": True,
+                                   "offer_seen": True}
+        installs = []
+
+        def install(*_args):
+            installs.append(True)
+            return installed_paths(self.directory.name)
+
+        with patch.object(AssetInstaller, "install", side_effect=install):
+            self.assertTrue(_lane.acquire(timeout=1))
+            try:
+                service = self.service()
+                service.setup()
+                self.assertTrue(service.busy)
+            finally:
+                _lane.release()
+            self.until(lambda: service.ready)
+        self.assertFalse(service.busy)
+        self.assertEqual(service.phase, "ready")
+        self.assertEqual(installs, [])
+
+    def test_frame_behind_the_lane_is_dropped_when_cura_closes(self):
+        service = self.service()
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        received = []
+        service.resultReady.connect(lambda context, score: received.append((context, score)))
+        image = QImage(8, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        with patch("mpf.detection.LocalDetectionService._CADENCE", .01):
+            self.assertTrue(_lane.acquire(timeout=1))
+            try:
+                service.sample(image, ("queued",))
+                self.until(lambda: service._sample is None)
+                service.close()
+            finally:
+                _lane.release()
+        self.app.processEvents()
+        self.assertEqual(received, [])
+        self.assertEqual(len(self.model.calls), 2)
+        self.assertFalse(service._worker.is_alive())
+
+    def test_frame_inside_the_cadence_window_is_kept_for_the_next_beat(self):
+        # The cadence anchor is process-wide, so a frame this lane took
+        # while another lane scored must wait out the beat — and be kept,
+        # not dropped, while it does.
+        service = self.service()
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        received = []
+        service.resultReady.connect(lambda context, score: received.append((context, score)))
+        image = QImage(8, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        module = sys.modules["mpf.detection.LocalDetectionService"]
+        self.addCleanup(setattr, module, "_last_inference", module._last_inference)
+        module._last_inference = 0.0
+        with patch("mpf.detection.LocalDetectionService._CADENCE", 1.0):
+            self.assertTrue(_lane.acquire(timeout=1))
+            try:
+                service.sample(image, ("inside",))
+                self.until(lambda: service._sample is None)
+                module._last_inference = time.monotonic()
+                started = time.monotonic()
+            finally:
+                _lane.release()
+            self.until(lambda: len(received) == 1)
+        self.assertEqual(received, [(("inside",), .42)])
+        self.assertGreaterEqual(time.monotonic() - started, .5)
+
+
+class LocalDetectionServiceIntegrityTests(unittest.TestCase):
+    """The install probe against the real AssetInstaller, not a stub."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(dir=".")
+        self.addCleanup(self.directory.cleanup)
+        self.persistence = Persistence()
+        self.wheel = RuntimeWheel("pinned.whl", "b" * 64, 256)
+        self.patcher = patch("mpf.detection.LocalDetectionService.host_wheel",
+                             return_value=self.wheel)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+
+    def until(self, predicate, timeout=3):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if predicate():
+                return
+            time.sleep(.005)
+        self.fail("Timed out waiting for detection worker")
+
+    def service(self):
+        result = LocalDetectionService(self.directory.name, self.persistence)
+        self.addCleanup(result.close)
+        return result
+
+    def test_verified_probes_the_archive_model_and_runtime_together(self):
+        service = self.service()
+        runtime, model = installed_paths(self.directory.name)
+        archive = os.path.join(os.path.dirname(model), self.wheel.filename)
+        # An empty tree fails the first probe, not the code under it.
+        self.assertFalse(service._verified())
+        calls = []
+
+        def verify_file(path, size, digest):
+            calls.append(("file", path, size, digest))
+            return True
+
+        def verify_runtime(archive_path, runtime_path):
+            calls.append(("runtime", archive_path, runtime_path))
+            return True
+
+        with patch.object(AssetInstaller, "verify_file", side_effect=verify_file), \
+                patch.object(AssetInstaller, "verify_runtime", side_effect=verify_runtime):
+            self.assertTrue(service._verified())
+        self.assertEqual(calls, [
+            ("file", archive, self.wheel.size, self.wheel.sha256),
+            ("file", model, MODEL_SIZE, MODEL_SHA256),
+            ("runtime", archive, runtime),
+        ])
+        with patch.object(AssetInstaller, "verify_file", return_value=False) as verify_file:
+            self.assertFalse(service._verified())
+        self.assertEqual(verify_file.call_count, 1)
+
+    def test_startup_with_the_real_probe_rejects_missing_assets(self):
+        self.persistence.record = {"ready_version": ASSET_VERSION, "offer_seen": True}
+        service = self.service()
+        self.until(lambda: service.phase == "error")
+        self.assertIn("integrity", service.error)
+        self.assertFalse(service.ready)
 
 
 if __name__ == "__main__":
