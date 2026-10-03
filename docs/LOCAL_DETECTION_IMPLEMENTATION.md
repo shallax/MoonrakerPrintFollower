@@ -491,6 +491,17 @@ Updated 2026-10-03, after the review programme and the live trial:
    only on explicit request.
 4. The desktop-notification channel is CLOSED (built, trialled, removed —
    see the decisions above); nothing further is owed for it.
+5. The native CI legs ran the plate prefix-ownership contract hot: three of
+   four runs on the pushed tip failed it — "the ready prefix never took over"
+   on macOS (both attempts, so not a coin toss) and on the Windows re-run,
+   and "a frame lost the printed history while the prefix image was not
+   Ready" on the Windows first attempt — while the file stayed green on
+   Linux throughout, and the tip's own predecessor passed it on every leg
+   26 minutes earlier. The two signatures disagree about what was lost, so
+   the fixture is not leaking ownership; the windows are. Its assertions are
+   unchanged: the frames they read are now waited for (a first-owner gate on
+   the census's own landmark, and the file's existing 15 s hang-guard
+   convention in place of a 3 s budget).
 
 ## Archived pre-wiring checklist (completed in source except noted above)
 

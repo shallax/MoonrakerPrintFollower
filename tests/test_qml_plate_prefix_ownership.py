@@ -151,6 +151,18 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._printer.setSplit(18)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the picture never drew")
+        # The census below needs an owner to have existed first:
+        # _wait_red reads red ink anywhere on the plate, and a loaded
+        # native runner has presented the plate before the vector body
+        # landed (the Windows CI signature). The gate is the census's
+        # own landmark; the loop then holds it frame by frame.
+        image = self._wait_until(
+            window,
+            lambda grab: self._stroke_ink(
+                grab, face, window, census_plot, 75.0, 125.0) > 0)
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+            0, "the vector never took the printed history")
         # Every sampled frame while the prefix stays un-Ready: the
         # printed history (bed x=75, inside the prefix interval)
         # must stay on screen — the vector owns it all.
@@ -167,7 +179,12 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         layer.set_prefix(prefix, png_file(
             prefix, "/tmp/mpf/raster-probe",
             "fixture-ready-%d" % harness.time.monotonic_ns()), prefix_split, "fixture-key")
-        deadline = harness.time.monotonic() + 3.0
+        # A hang guard, not a budget (the file's 15 s convention): the
+        # PNG's decode and the tail's receipt are both asynchronous, and
+        # native runners have starved a 3 s window on macOS and Windows
+        # alike — a flake whose two signatures (this assertion and the
+        # per-frame census above) rule out a lost owner.
+        deadline = harness.time.monotonic() + 15.0
         takeover = False
         while harness.time.monotonic() < deadline:
             self.pump(5)
@@ -182,11 +199,18 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertTrue(takeover, "the ready prefix never took over")
         # The handover's own beat: the takeover is read a sync before
         # the scene presents the composed texture, and the strict
-        # census belongs to the composed frame — sampled a beat after
-        # it (the seam must not stay swollen, and the history must
-        # still be there).
+        # census belongs to the composed frame — the beat is taken,
+        # then the frame is waited for rather than assumed, since its
+        # latency is the runner's to decide (the seam must not stay
+        # swollen, and the history must still be there).
         self._pump_ms(30)
-        image = window.grabWindow()
+
+        def composed(grab):
+            near = self._stroke_ink(grab, face, window, census_plot, 75.0, 125.0)
+            tail = self._stroke_ink(grab, face, window, census_plot, 155.0, 125.0)
+            return near > 0 and max(near, tail) <= 3
+
+        image = self._wait_until(window, composed)
         self.assertGreater(
             self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
             0, "the composed frame lost the printed history")
