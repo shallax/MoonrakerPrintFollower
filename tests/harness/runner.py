@@ -2388,7 +2388,8 @@ extension = next((ext for ext in Application.getInstance().getExtensions()
                   if "MoonrakerPrintFollower" in type(ext).__name__ and
                   getattr(ext, "_runtime", None) is not None), None)
 service = extension._runtime.detection if extension is not None else None
-overlay = getattr(extension, "_whats_new", None) if extension is not None else None
+overlay = getattr(extension, "whats_new", None) if extension is not None else None
+overlay = overlay() if callable(overlay) else None
 wiring = overlay.offer_state() if overlay is not None and hasattr(overlay, "offer_state") else None
 result = {"whats": shown["whatsNewCloseButton"],
           "offer": shown["detectionOfferDismiss"],

@@ -1115,6 +1115,15 @@ for _name in ("detectionFirstRunOffer", "detectionOfferDismiss"):
         "recheck": "first-install mode gains a consented local-setup branch",
     }
 
+EXCLUSIONS["MoonrakerFollowerMachineAction.revealDetectionEvidence"] = {
+    "reason": "the evidence folder only exists after a consented local setup, which the simulator's network-free scenarios never perform",
+    "evidence": "test_qml_settings drives the Diagnostics button and the status it writes",
+    "date": "2026-10-03",
+    "recheck": "a consented local-setup scenario is available in real Cura",
+}
+EXCLUSIONS["revealDetectionEvidenceButton"] = dict(
+    EXCLUSIONS["MoonrakerFollowerMachineAction.revealDetectionEvidence"])
+
 for _name in ("sectionAlertDot", "cameraAlertPendingDot"):
     EXCLUSIONS[_name] = {
         "reason": "a standing detection alert needs a real alert on a real print, which the simulator cannot raise",

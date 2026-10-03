@@ -258,6 +258,72 @@ class MonitorQtTests(harness.MonitorQtTests):
             ack.assert_called_once_with()
         self.assertEqual(message.hidden, 1)
 
+    def test_an_alert_keeps_its_frame_and_the_prints_score_timeline(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtGui import QImage
+
+        directory = tempfile.TemporaryDirectory(prefix="mpf-alert-evidence-")
+        self.addCleanup(directory.cleanup)
+
+        class Detector(QObject):
+            stateChanged = pyqtSignal()
+            resultReady = pyqtSignal(object, float)
+            ready = True
+            enabled = True
+
+            def sample(self, image, context):
+                pass
+
+            def evidence_root(self):
+                return str(Path(directory.name, "detection", "evidence"))
+
+            def close(self):
+                pass
+
+        self.follower._runtime.detection.close()
+        self.follower._runtime.detection = Detector()
+        self.follower.apply_printer_config(harness.replace(
+            self.follower.current_printer_config(), detection_enabled=True,
+            detection_notify_enabled=True, detection_safe_seconds=0,
+            camera_url="http://printer-a/webcam"))
+        model = self.monitor()
+        self.deliver()
+        self.qt.events()
+        self.deliver_state("printing")
+        self.qt.events()
+        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        context = model._detection_context()
+        self.assertIsNotNone(context)
+        frame = QImage(24, 16, QImage.Format.Format_RGB888)
+        frame.fill(0x336699)
+        model.acceptDetectionFrame(frame)
+        module = self.qt.load("MoonrakerMonitorModel")
+        with patch.object(module, "DesktopAlert") as desktop:
+            for _ in range(30):
+                model._on_detection_result(context, 0.0)
+            alerting = None
+            for _ in range(20):
+                model._on_detection_result(context, 4.0)
+                if model.detectionAlertPending:
+                    alerting = True
+                    break
+            self.assertTrue(alerting, "the run never raised an alert")
+        # The frame that raised it, and the print's sample record, are
+        # both on disk — and the desktop alert carried the frame's path.
+        frames = sorted(Path(directory.name).rglob("frame-*.jpg"))
+        self.assertEqual(len(frames), 1)
+        self.assertGreater(frames[0].stat().st_size, 0)
+        timelines = sorted(Path(directory.name).rglob("timeline-*.jsonl"))
+        self.assertEqual(len(timelines), 1)
+        self.assertGreaterEqual(len(timelines[0].read_text(encoding="utf-8").splitlines()), 31)
+        args, kwargs = desktop.notify.call_args
+        self.assertIn("local failure detection", args[0])
+        self.assertIn("check the camera", args[1])
+        self.assertEqual(kwargs["frame_path"], str(frames[0]))
+
     def test_rearm_allows_a_second_pause_after_a_confirmed_first_pause(self):
         import time
         from types import SimpleNamespace

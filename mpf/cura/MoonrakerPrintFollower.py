@@ -3,7 +3,6 @@ from PyQt6.QtCore import QObject, pyqtSlot
 from UM.Extension import Extension
 
 from ..FollowerRuntime import FollowerRuntime
-from ..whatsnew.WhatsNewOverlay import WhatsNewOverlay
 
 
 class MoonrakerPrintFollower(QObject, Extension):
@@ -11,7 +10,6 @@ class MoonrakerPrintFollower(QObject, Extension):
         QObject.__init__(self)
         Extension.__init__(self)
         self._runtime = FollowerRuntime(application, self)
-        self._whats_new = WhatsNewOverlay(self.detection)
 
     @property
     def client(self): return self._runtime.client
@@ -45,7 +43,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     @property
     def detection(self): return self._runtime.detection
     def notice(self): return self._runtime.notice
-    def whats_new(self): return self._whats_new
+    def whats_new(self): return self._runtime.whats_new
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
     def receive_preview_block(self, block): self._runtime.coordinator.receive_preview_block(block)
@@ -63,7 +61,6 @@ class MoonrakerPrintFollower(QObject, Extension):
     def invalidateIndex(self): self._runtime.index.invalidate()
 
     def deinitialize(self):
-        self._whats_new.close()
         # The leak probe stops with the plugin (no dead runtime, no re-stacked timer).
         from ..diagnostics.LeakProbe import stop_leak_probe
         stop_leak_probe()

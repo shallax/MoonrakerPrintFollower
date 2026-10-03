@@ -223,6 +223,49 @@ Batch C — product fixes:
   (`sectionAlertDot`, amber/red by level, visible while collapsed) and
   the camera Live badge (`cameraAlertPendingDot`) mark it.
 
+Batch D — failure evidence and the tuning record:
+
+- `EvidenceStore.py` (new): the alert's evidence on disk, in
+  `<detection root>/detection/evidence/`. `save_frame` writes the
+  triggering frame as a JPEG named for its print (both identities are
+  hash tokens, so a print's name can never shape a path) and keeps the
+  newest `MAX_FRAMES` 12; `append_sample` appends one JSONL line per
+  analysed frame to the print's timeline, rewriting the file only past
+  twice its bound to trim back to `MAX_SAMPLES` 360 (an hour at the
+  ten-second cadence), and keeps the newest `MAX_TIMELINES` 6 prints.
+  Every writer is best-effort: a read-only or full disk returns "" and
+  the alert proceeds. `clear()` empties the folder, and the asset
+  removal path calls it — a removal is the user asking for nothing of
+  detection's to stay on this computer.
+- The model retains the newest frame it handed to detection (a
+  reference, not a copy) and, when an alert fires, saves it *before*
+  notifying so the desktop alert has a real path to carry. Every
+  analysed frame also lands in its print's timeline as
+  `{at, score, raw}` from the policy's own state.
+- `DesktopAlert.py` (new): the desktop notification for an alert raised
+  while Cura is not the foreground window (`applicationState()` is not
+  `ApplicationActive`). It uses Cura's own tray widget — the one Cura
+  keeps for pop-up messages and shows when the main window is
+  minimised — with the retained frame as its icon, mirroring Uranium's
+  own (deprecated) toast path. It is best-effort by contract: no tray,
+  a raising platform or a macOS daemon that ignores the image all fall
+  through to the in-Cura `UM.Message`, which is shown either way.
+- The measured benchmark is kept, not discarded: `_load_and_benchmark`
+  stores `benchmark_ms` on the service, the action exposes it, and the
+  Diagnostics tab reports "measured N ms per frame" beside the
+  **Show alert evidence folder** button (`revealDetectionEvidence`,
+  `QDesktopServices.openUrl`) and its status line.
+- `WhatsNewOverlay` moved from the Cura facade to `FollowerRuntime`,
+  beside the migration notice it now parallels: the facade stays under
+  its line budget and both overlays have one owner that closes them.
+- New pins: the store's bounds and refusals, `clear()`'s idempotence,
+  the desktop alert's four gates (active Cura, inactive, no tray, a
+  raising tray), an alert that keeps its frame and timeline and passes
+  the frame's path to the notification, the benchmark measured on a
+  deliberately slow stand-in model, the removal emptying the folder,
+  and the Diagnostics page reading the milliseconds and driving the
+  reveal. Verified on the leg afterwards: boot 1 9/9, boot 2 5/5.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker

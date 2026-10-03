@@ -173,6 +173,8 @@ correct package ownership.
 | `LocalFailureModel.py` | CPU-only model session and QImage-to-RGB tensor conversion | Camera transport or policy |
 | `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
 | `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
+| `EvidenceStore.py` | The alert's bounded evidence on disk: the triggering frame and a per-print score timeline, pruned by count | Qt, policy or printer commands |
+| `DesktopAlert.py` | The desktop notification for an alert raised while Cura is not in front: Cura's own tray widget, carrying the retained frame; best-effort, never the only channel | Qt presentation or the alert decision |
 | `TemperaturePresentation.py` | Per-printer chart configuration, history ownership and independently cached mini/full/latest/legend projections | Monitor publication, networking or toolhead state |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |

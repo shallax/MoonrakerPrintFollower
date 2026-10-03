@@ -8,7 +8,7 @@ import time
 from PyQt6.QtCore import QObject, Qt, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage
 
-from . import AssetInstaller
+from . import AssetInstaller, EvidenceStore
 from .DetectionAssets import (
     ASSET_VERSION, MODEL_SHA256, MODEL_SIZE, host_wheel, installed_paths,
 )
@@ -51,6 +51,7 @@ class LocalDetectionService(QObject):
         self._removal_outcome = None
         self._sample = None
         self._model = None
+        self._benchmark_ms = 0
         try:
             self._wheel = host_wheel()
             self._host_error = ""
@@ -109,6 +110,12 @@ class LocalDetectionService(QObject):
     @pyqtProperty(int, constant=True)
     def runtime_size(self) -> int:
         return self._wheel.size if self._wheel is not None else 0
+
+    @pyqtProperty(int, notify=stateChanged)
+    def benchmark_ms(self) -> int:
+        """What one frame's inference cost here when it was checked, in
+        milliseconds; 0 until a check has run."""
+        return self._benchmark_ms
 
     @pyqtProperty(bool, notify=stateChanged)
     def busy(self) -> bool:
@@ -311,6 +318,14 @@ class LocalDetectionService(QObject):
         elapsed = time.monotonic() - start
         if elapsed > _BENCHMARK_LIMIT:
             raise ValueError(f"Local inference took {elapsed:.1f}s (limit: 5s per frame)")
+        # The measured cost, kept rather than discarded: the Diagnostics
+        # tab reports what this computer actually spends per frame, and
+        # the cadence's headroom is read from it.
+        self._benchmark_ms = round(elapsed * 1000)
+
+    def evidence_root(self):
+        """The folder holding alert frames and per-print timelines."""
+        return EvidenceStore.evidence_directory(self._root)
 
     def _verified(self):
         runtime, model = installed_paths(self._root)
@@ -419,6 +434,11 @@ class LocalDetectionService(QObject):
                 if not os.path.isdir(runtime):
                     raise ValueError(f"Local detection runtime is not a directory: {runtime}")
                 shutil.rmtree(runtime)
+            # The alert frames and timelines go with the downloads: a
+            # removal is the user asking for nothing of detection's to
+            # stay on this computer.
+            EvidenceStore.clear(self._root)
+            self._benchmark_ms = 0
             self._persist({"ready_version": "", "consent": False, "offer_seen": False})
             self._finish_removal(generation, "uninstalled")
         except Exception as exc:

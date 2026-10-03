@@ -1,4 +1,6 @@
 """Executable qml settings contracts."""
+from unittest.mock import patch
+
 from tests import qml_engine_support as harness
 
 class SettingsCacheSizeTests(harness.SettingsCacheSizeTests):
@@ -252,7 +254,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         from types import SimpleNamespace
         document, window = self.open_settings(tab=3, width=700, height=600)
         self.action._detection = SimpleNamespace(ready=False, host_error="", busy=False,
-                                                 phase="", received=0, total=0, error="")
+                                                 phase="", received=0, total=0, error="",
+                                                 benchmark_ms=0)
         self.action.detectionChanged.emit()
         self.pump()
         self.click_item(window, self.item_with_text(document, "Set up local detection"))
@@ -297,6 +300,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             received = 0
             total = 0
             error = ""
+            benchmark_ms = 0
 
             def set_enabled(double, enabled):
                 double.enabled = enabled
@@ -357,6 +361,36 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         self.assertIn("Could not reset", self.action.onboardingResetStatus)
         self.action._detection.reset_offer.assert_not_called()
 
+    def test_diagnostics_reports_the_benchmark_and_reveals_the_evidence_folder(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from PyQt6.QtGui import QDesktopServices
+
+        document, window = self.open_settings(self.settings_config(
+            detection_enabled=True), tab=4)
+        detection = SimpleNamespace(ready=True, enabled=True, host_error="", busy=False,
+                                    phase="ready", received=0, total=0, error="",
+                                    benchmark_ms=231,
+                                    evidence_root=Mock(return_value="/tmp/mpf/evidence"))
+        self.action._detection = detection
+        self.action.detectionChanged.emit()
+        self.pump(20)
+        labels = [item.property("text") for item in document.findChildren(harness.QQuickItem)
+                  if isinstance(item.property("text"), str)]
+        self.assertTrue(any("measured 231 ms per frame" in text for text in labels),
+                        "the measured inference cost is not on the Diagnostics page")
+        opened = []
+        patcher = patch.object(QDesktopServices, "openUrl", staticmethod(opened.append))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        button = document.findChild(harness.QQuickItem, "revealDetectionEvidenceButton")
+        self.assertIsNotNone(button)
+        self.activate_item(window, button)
+        self.pump(20)
+        detection.evidence_root.assert_called_once_with()
+        self.assertEqual([url.toLocalFile() for url in opened], ["/tmp/mpf/evidence"])
+        self.assertIn("Opened /tmp/mpf/evidence", self.action.detectionEvidenceStatus)
+
     def test_diagnostics_removes_shared_assets_after_disabling_every_machine(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -368,7 +402,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         # detection binding the pages own, and a missing attribute in a
         # Qt property getter aborts the process.
         detection = SimpleNamespace(ready=False, enabled=False, host_error="", busy=False,
-                                    phase="", received=0, total=0, error="",
+                                    phase="", received=0, total=0, error="", benchmark_ms=0,
                                     remove_assets=Mock(return_value=True))
         self.follower.persistence = persistence
         self.action._detection = detection
@@ -418,7 +452,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         for page in self.pages(document).values():
             data.update(page.property("values").toVariant())
         self.action._detection = SimpleNamespace(ready=True, enabled=True, host_error="", busy=False,
-                                                 phase="ready", received=0, total=0, error="")
+                                                 phase="ready", received=0, total=0, error="",
+                                                 benchmark_ms=0)
         self.action._output_plugin = SimpleNamespace(
             _current_monitor=lambda: SimpleNamespace(
                 _camera=SimpleNamespace(url="http://printer-a/webcam"),

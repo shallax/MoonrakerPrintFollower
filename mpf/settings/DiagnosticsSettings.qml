@@ -136,7 +136,7 @@ Item {
 
             UM.Label {
                 width: parent.width
-                text: "Remove the downloaded Obico model and inference runtime, and disable detection, notification, and automatic pause for every printer. A fresh setup will be required."
+                text: "Remove the downloaded Obico model and inference runtime, and disable detection, notification, and automatic pause for every printer. A fresh setup will be required. Alert frames and score timelines are removed with them."
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")
             }
@@ -152,6 +152,28 @@ Item {
                 UM.Label {
                     Layout.fillWidth: true
                     text: settings && settings.detectionResetStatus !== undefined ? settings.detectionResetStatus : ""
+                    wrapMode: Text.WordWrap
+                    color: UM.Theme.getColor("text_inactive")
+                }
+            }
+
+            UM.Label {
+                width: parent.width
+                text: settings && settings.detectionBenchmarkMs > 0 ? "Local inference measured " + settings.detectionBenchmarkMs + " ms per frame when this computer was checked (the check refuses anything slower than 5000 ms). Every alert's triggering frame and each print's score timeline are kept in the evidence folder, bounded to the newest few." : "Local inference has not been measured yet: run the setup or restart Cura with detection installed. Every alert's triggering frame and each print's score timeline are kept in the evidence folder once it runs."
+                wrapMode: Text.WordWrap
+                color: UM.Theme.getColor("text_inactive")
+            }
+            RowLayout {
+                width: parent.width
+                spacing: UM.Theme.getSize("default_margin").width
+                Cura.SecondaryButton {
+                    objectName: "revealDetectionEvidenceButton"
+                    text: "Show alert evidence folder"
+                    onClicked: settings.revealDetectionEvidence()
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: settings && settings.detectionEvidenceStatus !== undefined ? settings.detectionEvidenceStatus : ""
                     wrapMode: Text.WordWrap
                     color: UM.Theme.getColor("text_inactive")
                 }

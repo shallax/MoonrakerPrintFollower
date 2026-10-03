@@ -46,6 +46,7 @@ def _british_spelling() -> bool:
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
 from ..detection.DetectionPolicy import DetectionPolicy
+from ..detection import DesktopAlert, EvidenceStore
 from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
@@ -377,6 +378,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._detection_acknowledged_at = None
         self._detection_alert_count = 0
         self._detection_alert_level = ""
+        self._detection_frame = None
+        self._detection_frame_path = ""
         self._detection_paused_for_print = False
         self._detection_pause_pending = False
         self._detection_pause_uncertain = False
@@ -1092,12 +1095,48 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         elapsed = duration if type(duration) in (int, float) and isfinite(duration) and duration >= 0 else None
         level = self._detection_policy.observe(
             confidence, now=now, context=context, print_elapsed_seconds=elapsed)
+        self._record_detection_sample(context, now, confidence)
         if self._detection_baseline_camera is not None and hasattr(self._store, "set_machine_state"):
             self._detection_baselines[self._detection_baseline_camera] = self._detection_policy.baseline
             self._store.set_machine_state(context[0], {
                 "detectionBaselines": self._detection_baselines})
         self._handle_detection_action(context, level, time.time())
         self._schedule_publish()
+
+    def _detection_evidence_root(self):
+        """Where the alert evidence belongs: the detection service's own
+        storage, so a removal takes the frames and timelines with the
+        downloads. A stand-in without it keeps only the timeline's
+        in-memory effect — the alert itself never depends on this."""
+        getter = getattr(self._detection, "evidence_root", None)
+        try:
+            return getter() if callable(getter) else None
+        except Exception:
+            return None
+
+    def _record_detection_sample(self, context, now, confidence) -> None:
+        """Every analysed frame lands in its print's timeline: the
+        record a user (or a bug report) reads to see what the signal
+        did before an alert, and what it was tuned against."""
+        root = self._detection_evidence_root()
+        if root is None:
+            return
+        state = self._detection_policy.state(now=now, context=context, active=True)
+        if state.score is None:
+            return
+        EvidenceStore.append_sample(
+            root, printer=context[0], print_key=context[2],
+            at=time.time(), score=state.score, raw=confidence)
+
+    def _retain_detection_evidence(self, level: str, context) -> str:
+        """The alert's triggering frame on disk, best-effort."""
+        root = self._detection_evidence_root()
+        frame = self._detection_frame
+        if root is None or frame is None or frame.isNull():
+            return ""
+        return EvidenceStore.save_frame(
+            root, frame, printer=context[0], print_key=context[2], level=level,
+            score=self.detectionScore, at=time.time())
 
     def _notify_detection(self, level: str, paused: bool) -> None:
         from UM.Message import Message
@@ -1116,6 +1155,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                           "Acknowledge this failure-detection alert")
         message.pyQtActionTriggered.connect(self._on_detection_alert_action)
         message.show()
+        # And, when Cura is not the window in front, a desktop alert
+        # carrying the retained frame: a user watching something else
+        # sees the picture, not only a line of text.
+        DesktopAlert.notify("Moonraker — local failure detection", summary,
+                            frame_path=self._detection_frame_path)
 
     def _on_detection_alert_action(self, message, action_id) -> None:
         if action_id != "detectionAcknowledge":
@@ -1166,6 +1210,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._detection_alert_count += 1
         self._save_detection_actions()
         self.detectionChanged.emit()
+        # Evidence BEFORE the notification: the desktop alert carries
+        # the frame's path, so the file must exist by the time it fires.
+        self._detection_frame_path = self._retain_detection_evidence(level, context)
         self._notify_detection(level, False)
 
     def _on_detection_pause_command(self, event):
@@ -1396,6 +1443,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def acceptDetectionFrame(self, image):
         context = self._detection_context()
         if context is not None:
+            # The newest frame handed over, kept by reference (no copy):
+            # an alert saves THIS as its evidence, and the reference
+            # costs one frame's lifetime beyond detection's own.
+            self._detection_frame = image
             self._detection.sample(image, context)
 
     def _observe(self):

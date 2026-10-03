@@ -11,7 +11,7 @@ from unittest.mock import patch
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtGui import QImage
 
-from mpf.detection import AssetInstaller
+from mpf.detection import AssetInstaller, EvidenceStore
 from mpf.detection.DetectionAssets import (
     ASSET_VERSION, MODEL_SHA256, MODEL_SIZE, RuntimeWheel, installed_paths,
 )
@@ -33,13 +33,23 @@ class Persistence:
         return True
 
 
+class ImageStub:
+    def save(self, path, fmt, quality):
+        with open(path, "wb") as handle:
+            handle.write(b"jpeg")
+        return True
+
+
 class Model:
     def __init__(self):
         self.calls = []
         self.block = None
+        self.delay = 0.0
 
     def score(self, image):
         self.calls.append((threading.get_ident(), image.pixelColor(0, 0).red()))
+        if self.delay:
+            time.sleep(self.delay)
         if self.block:
             self.block.wait(2)
         return .42
@@ -159,6 +169,35 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertEqual(other.phase, "ready")
         self.assertTrue(other.enabled)
         self.assertEqual(len(installs), 1)
+
+    def test_the_measured_inference_cost_is_kept_for_diagnostics(self):
+        # The benchmark used to be a pass/fail gate only; the number is
+        # what the Diagnostics tab reports, so it is kept.
+        self.model.delay = 0.004
+        service = self.service()
+        with patch.object(AssetInstaller, "install",
+                          return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        self.assertGreaterEqual(service.benchmark_ms, 2)
+        service.close()
+
+    def test_the_service_owns_the_evidence_folder_and_removal_empties_it(self):
+        service = self.service()
+        paths = installed_paths(self.directory.name)
+        with patch.object(AssetInstaller, "install", return_value=paths):
+            service.setup()
+            self.until(lambda: service.ready)
+        root = service.evidence_root()
+        self.assertEqual(root, EvidenceStore.evidence_directory(self.directory.name))
+        EvidenceStore.save_frame(self.directory.name, ImageStub(), printer="p",
+                                 print_key="j", level="failure", score=90)
+        self.assertTrue(os.listdir(root))
+        service.remove_assets()
+        self.until(lambda: service.phase == "uninstalled")
+        self.assertEqual(os.listdir(root), [], "removal left the user's frames behind")
+        self.assertEqual(service.benchmark_ms, 0)
+        service.close()
 
     def test_global_switch_persists_and_retires_inflight_results(self):
         service = self.service()

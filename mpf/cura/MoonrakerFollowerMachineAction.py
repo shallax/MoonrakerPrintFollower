@@ -41,6 +41,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     cacheStatusChanged = pyqtSignal()
     onboardingResetStatusChanged = pyqtSignal()
     detectionResetStatusChanged = pyqtSignal()
+    detectionEvidenceStatusChanged = pyqtSignal()
     migrationChanged = pyqtSignal()
     detectionChanged = pyqtSignal()
 
@@ -67,6 +68,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._cache_status = ""
         self._onboarding_reset_status = ""
         self._detection_reset_status = ""
+        self._detection_evidence_status = ""
         self._detection_reset_pending = False
         if self._detection is not None:
             self._detection.stateChanged.connect(self._on_detection_reset_progress)
@@ -283,6 +285,28 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=detectionChanged)
     def detectionError(self) -> str:
         return self._detection.error if self._detection is not None else ""
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionBenchmarkMs(self) -> int:
+        return self._detection.benchmark_ms if self._detection is not None else 0
+
+    @pyqtSlot()
+    def revealDetectionEvidence(self) -> None:
+        """The Diagnostics tab's reveal: the alert frames and the
+        per-print score timelines, in the file manager."""
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        if self._detection is None:
+            self._detection_evidence_status = "Local detection is unavailable"
+        else:
+            root = self._detection.evidence_root()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(root))
+            self._detection_evidence_status = "Opened " + root
+        self.detectionEvidenceStatusChanged.emit()
+
+    @pyqtProperty(str, notify=detectionEvidenceStatusChanged)
+    def detectionEvidenceStatus(self) -> str:
+        return self._detection_evidence_status
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionCameraReady(self) -> bool:
