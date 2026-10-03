@@ -491,17 +491,22 @@ Updated 2026-10-03, after the review programme and the live trial:
    only on explicit request.
 4. The desktop-notification channel is CLOSED (built, trialled, removed —
    see the decisions above); nothing further is owed for it.
-5. The native CI legs ran the plate prefix-ownership contract hot: three of
-   four runs on the pushed tip failed it — "the ready prefix never took over"
-   on macOS (both attempts, so not a coin toss) and on the Windows re-run,
-   and "a frame lost the printed history while the prefix image was not
-   Ready" on the Windows first attempt — while the file stayed green on
-   Linux throughout, and the tip's own predecessor passed it on every leg
-   26 minutes earlier. The two signatures disagree about what was lost, so
-   the fixture is not leaking ownership; the windows are. Its assertions are
-   unchanged: the frames they read are now waited for (a first-owner gate on
-   the census's own landmark, and the file's existing 15 s hang-guard
-   convention in place of a 3 s budget).
+5. The native CI legs run the plate prefix-ownership contract hot, and the
+   first hardening attempt did not settle it. Five native runs failed
+   "the ready prefix never took over" (macOS both attempts, Windows re-runs)
+   and one "a frame lost the printed history while the prefix image was not
+   Ready" (Windows first attempt), while every Linux leg stayed green and
+   the tip's predecessor passed the file on every leg 26 minutes earlier.
+   Its assertions are unchanged — the frames they read are waited for (a
+   first-owner gate on the census's own landmark, the file's 15 s
+   hang-guard convention in place of a 3 s budget). The wider guard then
+   ran to completion on both native legs without a takeover (the file went
+   7 s to 20 s), so the window was never what held it: the composition
+   never admits the loaded prefix there. The failure now carries the
+   barrier's own terms (the face's `_holdTerms`, the source and status the
+   scene graph holds, the URL the model published) and the boundary
+   census's peak, so the next native failure names the term instead of
+   re-reporting the symptom.
 
 ## Archived pre-wiring checklist (completed in source except noted above)
 

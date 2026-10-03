@@ -111,6 +111,23 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._pixel_width_contract = True
         self.test_partial_prefix_and_canvas_tail_keep_one_stroke_width()
 
+    def _takeover_terms(self, face, layer):
+        """The barrier's own terms, for a runner that starves it.
+
+        The takeover is one AND of many — the image's own status, the
+        URL the model published, the source the scene graph holds, the
+        delivered canvas receipt — so "it never took over" is
+        unanswerable without naming the term that held it (the face's
+        own report). An Image that never loaded and a composition that
+        never admitted a loaded one are different failures.
+        """
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        terms = QMetaObject.invokeMethod(face, "_holdTerms", Q_RETURN_ARG(QVariant))
+        texture = face.property("_prefixTexture")
+        if hasattr(texture, "toVariant"):
+            texture = texture.toVariant()
+        return "%s | texture=%s | model=%s" % (terms, dict(texture or {}), layer.prefixData)
+
     def test_a_prefix_that_never_loads_leaves_the_vector_owning_the_history(self):
         # The prefix's model-side validity is NOT the scene's: while
         # the prefix Image is not Ready (here its file never
@@ -186,17 +203,35 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # per-frame census above) rule out a lost owner.
         deadline = harness.time.monotonic() + 15.0
         takeover = False
+        states = []
+        boundary_peak = 0
         while harness.time.monotonic() < deadline:
             self.pump(5)
             image = window.grabWindow()
             self.assertGreater(
                 self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
                 0, "the loading gap lost the printed history")
-            if self._stroke_ink(image, face, window, census_plot,
-                                110.0, 125.0, tolerance=60) >= 3:
+            boundary = self._stroke_ink(image, face, window, census_plot,
+                                        110.0, 125.0, tolerance=60)
+            boundary_peak = max(boundary_peak, boundary)
+            if boundary >= 3:
                 takeover = True
                 break
-        self.assertTrue(takeover, "the ready prefix never took over")
+            if len(states) < 4:
+                state = self._takeover_terms(face, layer)
+                if state not in states:
+                    states.append(state)
+        if not takeover:
+            # A composition that never admitted the loaded prefix and
+            # one that admitted it under a censused column are
+            # different failures: the peak separates them.
+            final = self._takeover_terms(face, layer)
+            if final not in states:
+                states.append(final)
+        self.assertTrue(
+            takeover,
+            "the ready prefix never took over (the boundary census peaked at %d): %s"
+            % (boundary_peak, " || ".join(states)))
         # The handover's own beat: the takeover is read a sync before
         # the scene presents the composed texture, and the strict
         # census belongs to the composed frame — the beat is taken,
