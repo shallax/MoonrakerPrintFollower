@@ -194,7 +194,9 @@ Batch C — product fixes:
   plugin calls it from `_grant_monitor_routing` beside the notice's own
   attach. `offer_state()` publishes `{wired, attempts, gave_up}` and the
   give-up latches `_gave_up`, so the leg can tell never-wired from
-  timed-out.
+  timed-out — `wired` meaning the DISMISS path specifically, since
+  that is what reveals the offer (a model attached without it reads
+  unwired, not timed out).
 - The first-install probe looked for the **Popup root's** objectName
   ("detectionFirstRunOffer"). A Popup is a QObject whose content
   reparents into the window overlay, so no visual-tree walk can ever
