@@ -24,6 +24,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+import capture_settle
+
 from unittest.mock import patch
 
 from PyQt6.QtCore import QObject, QPointF, QUrl
@@ -357,9 +359,6 @@ def main():
         # can certify a quiet gap BETWEEN two bursts — the identical
         # run must also span long enough for every pending one-shot
         # (the 200 ms fit timers, the threaded paint) to have landed.
-        REQUIRED_IDENTICAL_FRAMES = 3
-        SETTLE_SPAN_SECONDS = 0.5
-
         def pending_layout_retries():
             """The QML readout-fit retries can fire after a quiet frame run.
 
@@ -376,39 +375,13 @@ def main():
             )
 
         def settled_window(timeout_ms=10000):
-            """The capture transaction: pump events, grab the whole
-            window, and require three consecutive complete frames to
-            be pixel-identical AND the identical run to span the
-            settle span before the scene counts as settled. The exact
-            image that proved the stability is RETURNED — the caller
-            saves this image and never grabs again, so the proven
-            frame and the saved frame can never diverge (the
-            settle-then-re-grab race behind the 03-sections-collapsed
-            nondeterminism)."""
-            deadline = time.monotonic() + timeout_ms / 1000
-            previous = None
-            identical = 0
-            first_identical = None
-            image = None
-            while time.monotonic() < deadline:
-                app.processEvents()
-                image = window.grabWindow()
-                if previous is not None and image == previous:
-                    if identical == 0:
-                        first_identical = time.monotonic()
-                    identical += 1
-                    if not pending_layout_retries() \
-                            and identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
-                            and time.monotonic() - first_identical >= SETTLE_SPAN_SECONDS:
-                        return image
-                else:
-                    identical = 0
-                    first_identical = None
-                previous = image
-                time.sleep(0.02)
-            raise RuntimeError(
-                "the capture window never settled across %d identical frames over %.1fs"
-                % (REQUIRED_IDENTICAL_FRAMES, SETTLE_SPAN_SECONDS))
+            """The capture transaction, from the shared settle owner:
+            the image that proved the stability is returned and saved
+            as-is, so the proven frame and the saved frame cannot
+            diverge."""
+            return capture_settle.settle(app, window.grabWindow, label="monitor",
+                                         timeout_ms=timeout_ms,
+                                         pending=pending_layout_retries)
 
         def grab(name, card=None):
             image = settled_window()

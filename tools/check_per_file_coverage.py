@@ -8,9 +8,9 @@ measured files, so a never-imported file was silently skipped. The
 gate therefore enumerates the tree and treats a missing entry as a
 failure. A file whose coverage provably lives elsewhere — the live
 run, an unreachable platform branch — carries a justified entry in
-EXCLUSIONS below: reason / evidence / date / recheck, validated
-before anything is judged. `coverage json` feeds the bar; the tree
-decides what must be judged.
+EXCLUSIONS below: reason / evidence / date / recheck, validated by the
+shared schema before anything is judged. `coverage json` feeds the
+bar; the tree decides what must be judged.
 """
 from __future__ import annotations
 
@@ -18,6 +18,12 @@ import ast
 import json
 import pathlib
 import sys
+
+# The shared schema is a sibling: this script runs both as a file
+# (sys.path[0] is tools/) and as a module (the gate's own tests), so
+# the directory is named explicitly rather than assumed.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from exclusion_schema import failures as exclusion_failures  # noqa: E402
 
 BAR = 95.0
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -49,11 +55,11 @@ def has_code(path: pathlib.Path) -> bool:
 
 def main() -> int:
     path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mpf/coverage.json"
-    for name, entry in EXCLUSIONS.items():
-        for field in ("reason", "evidence", "date", "recheck"):
-            if not str(entry.get(field, "")).strip():
-                print("coverage exclusion %s lacks %r" % (name, field))
-                return 1
+    problems = exclusion_failures(EXCLUSIONS, where="coverage exclusion ")
+    if problems:
+        for problem in problems:
+            print(problem)
+        return 1
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     # Coverage writes the platform's separator, and the tree, the

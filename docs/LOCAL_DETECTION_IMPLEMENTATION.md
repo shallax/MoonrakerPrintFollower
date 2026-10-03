@@ -266,6 +266,24 @@ Batch D — failure evidence and the tuning record:
   and the Diagnostics page reading the milliseconds and driving the
   reveal. Verified on the leg afterwards: boot 1 9/9, boot 2 5/5.
 
+Batch E — the two refactors:
+
+- `tools/capture_settle.py` (new) is the single owner of the pixel
+  settle: pump, grab, require consecutive identical frames across a
+  span, and RETURN the frame that proved it (so the proven frame and
+  the saved frame cannot diverge). `capture_monitor.py`'s
+  `settled_window` and `capture_settings.py`'s bespoke
+  `detection-ready` transaction both call it now — the monitor passes
+  its pending-layout-retry veto, the settings page its 0.5 s head
+  start and 0.4 s span. Determinism re-verified after the hoist:
+  "17 scenes byte-identical across two runs".
+- `tools/exclusion_schema.py` (new) is the single audited exclusion
+  path: reason / evidence / date / recheck, with the date now required
+  to be a real ISO-8601 day. The per-file coverage gate validates its
+  own table through it and `tests/test_coverage.py` validates the
+  scenario map's through the same function, so both tables are judged
+  by one code path instead of two copies of the field loop.
+
 ## Non-negotiable behavior
 
 - Run on the Cura computer. No account, cloud upload, manual server, Docker
