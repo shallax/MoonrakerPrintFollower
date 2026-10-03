@@ -20,7 +20,11 @@ def notify(title: str, body: str, frame_path: str = "", *, timeout_ms: int = 100
             return False
         from UM.Qt.QtApplication import QtApplication
         tray = getattr(QtApplication.getInstance(), "_tray_icon_widget", None)
-        if tray is None:
+        if tray is None or not tray.isSystemTrayAvailable():
+            # Cura's widget exists even where no tray does (this check
+            # is False in a container and on any session without a
+            # notification area): handing it a message there would
+            # report a delivery that never happened.
             return False
         icon = QIcon(frame_path) if frame_path else tray.icon()
         tray.showMessage(title, body, icon, timeout_ms)

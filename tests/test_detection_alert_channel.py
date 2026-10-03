@@ -44,6 +44,9 @@ class DesktopAlertTests(unittest.TestCase):
         class Tray:
             messages = []
 
+            def isSystemTrayAvailable(self):
+                return True
+
             def showMessage(self, *args):
                 self.messages.append(args)
 
@@ -61,6 +64,9 @@ class DesktopAlertTests(unittest.TestCase):
         class Tray:
             def __init__(self):
                 self.messages = []
+
+            def isSystemTrayAvailable(self):
+                return True
 
             def showMessage(self, *args):
                 self.messages.append(args)
@@ -81,10 +87,38 @@ class DesktopAlertTests(unittest.TestCase):
         self._with_application(Qt.ApplicationState.ApplicationInactive, None)
         self.assertFalse(DesktopAlert.notify("t", "b"))
 
+    def test_an_absent_notification_area_is_not_a_delivery(self):
+        # Cura's widget exists where no tray does (measured: the
+        # container reports isSystemTrayAvailable() False), and a
+        # message handed to it there would claim a delivery that never
+        # happened.
+        from PyQt6.QtCore import Qt
+
+        class Tray:
+            def __init__(self):
+                self.messages = []
+
+            def isSystemTrayAvailable(self):
+                return False
+
+            def showMessage(self, *args):
+                self.messages.append(args)
+
+            def icon(self):
+                return None
+
+        tray = Tray()
+        self._with_application(Qt.ApplicationState.ApplicationInactive, tray)
+        self.assertFalse(DesktopAlert.notify("t", "b"))
+        self.assertEqual(tray.messages, [], "a message went to a tray that cannot show it")
+
     def test_a_raising_tray_never_reaches_the_alert_path(self):
         from PyQt6.QtCore import Qt
 
         class Tray:
+            def isSystemTrayAvailable(self):
+                return True
+
             def showMessage(self, *args):
                 raise RuntimeError("no notification daemon")
 

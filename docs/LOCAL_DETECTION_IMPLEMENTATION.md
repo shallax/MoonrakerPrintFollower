@@ -110,12 +110,15 @@ External or live-test items, not code:
 - The live active-print trial: still required before the colour claim
   in the README is proven; no permission-cleared recording exists.
 - Per-OS verification of the desktop notification: the code path is
-  pinned by tests on every OS (`DesktopAlert`'s four gates and the
-  frame it carries), but no real desktop has SEEN one — this
-  environment has no notification daemon — so Linux, Windows and
-  macOS all need a live run before the channel is promised. The
-  in-Cura message is shown regardless, and the README's wording
-  ("where the platform supports it") promises nothing per OS.
+  pinned by tests on every OS (`DesktopAlert`'s gates and the frame it
+  carries), but no real desktop has SEEN one. Measured here:
+  `QSystemTrayIcon.isSystemTrayAvailable()` is False in the container,
+  so `notify()` refuses before handing anything over (a message to a
+  tray-less widget would report a delivery that never happened) and
+  the alert falls back to the in-Cura message exactly as designed.
+  Linux, Windows and macOS all need a live run before the channel is
+  promised; the README's wording ("where the platform supports it")
+  promises nothing per OS.
 
 Left as found, deliberately:
 
