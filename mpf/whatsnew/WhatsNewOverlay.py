@@ -48,14 +48,18 @@ class WhatsNewOverlay:
             return
         self._drop_model()
         self._model = model
-        signals = [(model.whatsNewRequested, self._show)]
+        # getattr, like the migration notice's own attach: a model that
+        # does not carry the surface (a cached device, a test double)
+        # is wired for what it has rather than refused.
+        signals = [(getattr(model, "whatsNewRequested", None), self._show)]
         if self._detection is not None:
-            signals.append((model.whatsNewDismissed, self._show_detection))
+            signals.append((getattr(model, "whatsNewDismissed", None), self._show_detection))
+        signals = [(signal, slot) for signal, slot in signals if signal is not None]
         for signal, slot in signals:
             signal.connect(slot)
         self._wired_signals = tuple(signals)
         from .WhatsNew import should_show
-        if not should_show(model._whats_new_seen):
+        if not should_show(getattr(model, "_whats_new_seen", "")):
             QTimer.singleShot(0, self._show_detection)
 
     def offer_state(self) -> dict:

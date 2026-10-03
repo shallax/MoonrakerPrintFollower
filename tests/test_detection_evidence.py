@@ -87,6 +87,33 @@ class EvidenceStoreTests(unittest.TestCase):
         timelines = [path for path in self._names() if path.name.startswith("timeline-")]
         self.assertEqual(len(timelines), EvidenceStore.MAX_TIMELINES)
 
+    def test_a_prune_that_cannot_read_or_delete_stays_quiet(self):
+        # The bounds are best-effort: an unreadable folder or a file
+        # another process holds must never turn a diagnostic write into
+        # an alert-path failure.
+        from unittest.mock import patch
+        for _ in range(EvidenceStore.MAX_FRAMES + 2):
+            EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
+                                     level="warning", score=40, at=1_700_000_000)
+        before = len(self._names())
+        with patch.object(EvidenceStore.os, "listdir", side_effect=OSError("denied")):
+            EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
+                                     level="warning", score=41, at=1_700_000_100)
+        self.assertEqual(len(self._names()), before + 1,
+                         "an unlistable folder skipped the write")
+        with patch.object(EvidenceStore.os, "unlink", side_effect=OSError("busy")):
+            EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
+                                     level="warning", score=42, at=1_700_000_200)
+        self.assertTrue(self._names()[-1].name.startswith("frame-"))
+
+    def test_clear_survives_a_file_that_will_not_go(self):
+        from unittest.mock import patch
+        EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
+                                 level="warning", score=40)
+        with patch.object(EvidenceStore.os, "unlink", side_effect=OSError("busy")):
+            EvidenceStore.clear(self.root)  # must not raise; nothing else can be done
+        self.assertTrue(self._names())
+
     def test_clear_takes_every_file_and_tolerates_an_absent_folder(self):
         EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
                                  level="warning", score=40)
