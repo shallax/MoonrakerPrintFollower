@@ -167,9 +167,17 @@ are visible; a Python 3.14 patch release difference is acceptable.
   CI artifact no longer includes them). `capture_settings.py` writes one PNG per
   settings tab (Connection / Following / Upload / Detection / Diagnostics) plus
   the post-setup detection render (`05-settings-detection-ready.png`), each fitted to that
-  tab's Flickable content height — contentHeight is viewport-independent
-  so measure-then-resize is stable, and the page's `UM.TabRow` appears
-  as a composite class name (`TabRow_QMLTYPE_nn`), not `QQuickTabBar`.
+  tab's Flickable content height. Three lessons from the fit that was
+  silently not running: the active page comes from the `StackLayout`'s
+  `currentIndex` (its `currentItem` is null on Cura's engine — Qt fills
+  it during the layout's own rearrange), the measured height must hold
+  still across REAL-TIME pumps (the first reads after a tab switch
+  report the previous page and can agree with each other while stale —
+  the detection page read 123 px twice, then settled at 598 px), and an
+  unmeasurable or absurd height fails the capture instead of quietly
+  keeping the old canvas and clipping the page. The page's `UM.TabRow`
+  appears as a composite class name (`TabRow_QMLTYPE_nn`), not
+  `QQuickTabBar`.
   Two more hard-won lessons: at interpreter exit the QML engine
   re-evaluates bindings against already-collected context-property
   wrappers and spews nondeterministic "Cannot read property ... of
