@@ -6,14 +6,14 @@ description: Plan and build a new MoonrakerPrintFollower release end-to-end — 
 # New feature / release workflow
 
 The author's preferred build flow for a MoonrakerPrintFollower release.
-INSTRUCTIONS.md owns repo mechanics; this skill owns the process. The
+docs/INSTRUCTIONS.md owns repo mechanics; this skill owns the process. The
 author is in the loop at every decision point when present; when away
 (e.g. an overnight run), every judgement call lands in
 `review/DECISIONS.md` for audit.
 
 ## Phase 0 — Plan (chat, don't code)
 
-1. The author gives a version number; read that section of ROADMAP.md
+1. The author gives a version number; read that section of docs/ROADMAP.md
    (create it if absent — Claude owns the roadmap) and chat about the
    feature: how they think it should look and function. Capture their
    intent in a careful paraphrase — never verbatim quotes, in the
@@ -35,7 +35,7 @@ author is in the loop at every decision point when present; when away
 ## Phase 1 — Round-1 general critic
 
 ONE read-only critic agent BEFORE any implementation: point it at the
-ROADMAP section, ARCHITECTURE.md, INSTRUCTIONS.md and the intended
+ROADMAP section, docs/ARCHITECTURE.md, docs/INSTRUCTIONS.md and the intended
 implementation. Mandate: criticism before code,
 no holds barred; read-only (no code changes, no repo edits — findings
 funnel back through me); severity-ordered findings, no cap, plus its
@@ -114,10 +114,10 @@ items; where findings conflict, pick the pragmatic side and push on.
 ## Phase 5 — Implement
 
 Build feature-by-feature with tests as we go (pure domain tests first,
-Qt tests, token pins). Follow the repo recipes in INSTRUCTIONS.md: one
+Qt tests, token pins). Follow the repo recipes in docs/INSTRUCTIONS.md: one
 owner per domain, value_property publishing, atomic state writes,
 surface lists in tests/test_composed_components.py, section pins.
-Update ARCHITECTURE.md and its contract tests in the same commits as
+Update docs/ARCHITECTURE.md and its contract tests in the same commits as
 the code they describe.
 
 **Snapshot sequencing (2026-09-10):** large

@@ -325,7 +325,7 @@ gate grew teeth, and the review-driven repairs land with it.
   with previous releases in collapsed sections below and a link to
   the project's home; Esc, a press outside the card or the Close
   button dismiss it, and it stays gone until the next release.
-- **The testing document describes the real harness** — TESTING.md's
+- **The testing document describes the real harness** — docs/TESTING.md's
   claims are reconciled and a doc-pin test stops the drift; the
   exclusion records carry reason, evidence, date and re-check
   trigger.
@@ -468,7 +468,7 @@ The Monitor layout is overhauled into three panes — **Information**, **Printer
 
 Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi-agent review against the architecture contract fixed the following:
 
-- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
+- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `docs/INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
 - The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
 - Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
 - Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
@@ -752,7 +752,7 @@ When exact within-layer following is active, the plugin can keep **Cura's own na
 ## Screenshots
 
 The screenshots are captured deterministically from the plugin's real
-QML with the real cura-light theme (see `INSTRUCTIONS.md`), so they
+QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`), so they
 always match the checked-out code.
 
 ![Monitor dashboard](screenshots/01-dashboard-default.png)
@@ -785,6 +785,21 @@ The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
 ![Diagnostics settings](screenshots/05-settings-diagnostics.png)
 
 The settings tabs: Connection, Following, Upload and Diagnostics.
+
+![Detection settings](screenshots/05-settings-detection.png)
+![Detection settings after setup](screenshots/05-settings-detection-ready.png)
+
+**Local failure detection** is off until you opt in: one explicit,
+verified download of the Obico model and CPU inference runtime, a real
+inference check on your computer, then a global switch — no account, no
+cloud upload, no Docker or server to run. The model is shared across
+printers; everything after setup runs locally on the Cura computer.
+
+![Failure Detection controls](screenshots/12-detection-controls.png)
+
+Each printer keeps its own opt-ins on the Monitor: adaptive warning and
+failure thresholds, a safe period at the start of a print, and
+notification and automatic-pause switches that stay off unless ticked.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 
@@ -846,7 +861,7 @@ Version 3.0.0 additionally migrates compatible upload and fallback-camera settin
 
 ## Internal structure
 
-High-risk logic is separated into focused modules. The authoritative ownership map — which module owns which mutable domain — lives in `ARCHITECTURE.md`, together with the design rules and the import/dependency contract enforced by the test suite. A few landmarks:
+High-risk logic is separated into focused modules. The authoritative ownership map — which module owns which mutable domain — lives in `docs/ARCHITECTURE.md`, together with the design rules and the import/dependency contract enforced by the test suite. A few landmarks:
 
 - `FollowerRuntime.py` — the composition root; constructs the follower's components and implements no domain policy
 - `PrintCoordinator.py` — cross-domain orchestration with explicit constructor dependencies
@@ -884,7 +899,7 @@ The same Makefile targets drive development on Linux, macOS and Windows:
 Linux defaults to the pinned Docker toolchain. macOS and Windows default
 to native host toolchains, with no Docker requirement; either can opt
 into the Linux image with `BACKEND=docker` (for example,
-`make BACKEND=docker build`). See [INSTRUCTIONS.md](INSTRUCTIONS.md)
+`make BACKEND=docker build`). See [INSTRUCTIONS.md](docs/INSTRUCTIONS.md)
 for setup, capture parity and the complete command list.
 
 The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.

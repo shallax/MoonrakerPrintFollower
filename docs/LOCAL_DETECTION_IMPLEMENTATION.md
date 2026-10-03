@@ -5,16 +5,16 @@ The `release/v5.0.0` branch now connects opt-in setup, per-printer
 enablement and already-decoded Monitor frames to a local inference worker
 and live signal. Cura 5.13 on macOS arm64 installed the pinned wheel and
 model after explicit opt-in and completed the real native benchmark; the
-Voron2 250 per-printer checkbox was saved with the author's approval.
+Voron2 250 per-printer checkbox was saved with explicit approval.
 Its idle Monitor webcam reports "Waiting for an active print" rather than
-green. An active-print camera trial and the author's verdict remain open.
+green. An active-print camera trial and a live verdict remain open.
 The development candidate uses 5.0.0 metadata; a branch push is not a
 release, and no PR or release tag has been created.
 
 `ROADMAP.md` (the 5.0.0 section) is the binding product scope;
 `INSTRUCTIONS.md` defines the build/test/ship procedures; `ARCHITECTURE.md`
 describes component ownership. Follow the `new-feature` skill's snapshot
-loop. The author approved the design and directed implementation with
+loop. The design was approved and the implementation directed with
 Obico's model, acknowledging that three supplied *timelapse* failure
 examples are not detected. The earlier proposal to evaluate another model
 was explicitly withdrawn.
@@ -75,7 +75,7 @@ package and installed in quit Cura before relaunch. The prior plugin is
 backed up in the Cura configuration directory. Local inference previously
 benchmarked successfully in Cura; an active-print trial is still pending.
 
-The author provided three private MP4 failure timelapses. Keep the footage
+Three private MP4 failure timelapses were provided. Keep the footage
 and extracted frames in the session/`/tmp/mpf` only; do not commit,
 redistribute, upload, or use them as CI fixtures without confirming rights.
 At two sampled frames/second, Obico's **exact upstream OpenCV**
@@ -84,7 +84,7 @@ and 5%. Denser sampling yielded maxima of 34% (all 101 frames at 10 fps),
 14% and 13% (the other two at 5 fps). This is model evidence, not a
 threshold-tuning target. The first clip's earlier frames often scored
 higher than later frames; thresholds low enough to turn the other two red
-would be misleading. The author nevertheless chose Obico because an
+would be misleading. Obico was nevertheless chosen because an
 accelerated timelapse is not the same as monitoring a live feed.
 
 Development-only artifacts are outside Git: `/tmp/mpf/model-weights.onnx`
@@ -103,14 +103,14 @@ converts to RGB NCHW float32/255 and reads single-class confidences.
    calls; other supported operating systems and Python ABIs remain unqualified.
    The in-process benchmark reports a completed call over five seconds but
    cannot forcibly stop a native call that hangs.
-2. Test cancellation and active-print live camera response in Cura with the author;
+2. Test cancellation and active-print live camera response in a live Cura session;
    regenerate screenshots from that snapshot. No normal-to-failure recording
    has been cleared for redistribution, so the simulator video-replay gate
    remains open. Private timelapses are not test fixtures and are known
    false negatives.
 3. Resolve Obico's AGPL obligations and written Ultimaker Marketplace policy
-   on native post-install downloads before shipping. Once the author accepts
-   the live build, bump all version surfaces together, complete release
+   on native post-install downloads before shipping. Once the live build is accepted,
+   bump all version surfaces together, complete release
    re-review and gates, and create a PR only on explicit request.
 
 ## Archived pre-wiring checklist (completed in source except noted above)
@@ -181,7 +181,7 @@ converts to RGB NCHW float32/255 and reads single-class confidences.
    tests.test_qml_camera_controls tests.test_qml_settings"` and then
    `make all` before any commit/push. Keep one process per test file.
    Regenerate the real Monitor and settings screenshots and
-   `make snapshot_package`; obtain the author's live Cura verdict
+   `make snapshot_package`; obtain a live Cura verdict
    before committing or shipping. No PR until explicitly requested.
 
 ## Release gates and cautions

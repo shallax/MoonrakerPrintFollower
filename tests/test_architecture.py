@@ -12,7 +12,7 @@ from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
-ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+ARCH = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
 RETIRED = {
     "Core", "FollowerBootstrap", "FollowerConfiguration", "FollowerCoordinator", "FollowerTransport",
@@ -100,7 +100,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
         self.assertIn("Stdlib-only local runs explicitly skip", ARCH)
 
     def test_instructions_document_records_the_version_bump_checklist(self):
-        instructions = (ROOT / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        instructions = (ROOT / "docs" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         for token in (
             "package.json", "mpf/plugin.json", "CHANGELOG.md", "README.md",
             "release workflow", "v<version>",
@@ -524,7 +524,8 @@ class SourceContractTests(unittest.TestCase):
                                   f"not PyQt6.{imported_module}")
 
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
-        candidates = list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*")) + list(ROOT.glob("*"))
+        candidates = (list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*"))
+                      + list(ROOT.glob("*")) + list((ROOT / "docs").rglob("*")))
         text = "\n".join(p.read_text(errors="replace") for p in candidates if p.is_file() and p.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"})
         # 127/8 is always the local machine and stays permitted; the
         # gate protects against real private LAN ranges leaking.

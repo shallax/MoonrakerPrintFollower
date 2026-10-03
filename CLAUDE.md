@@ -1,13 +1,13 @@
 # Working in this repository
 
-How changes are made here is documented in `INSTRUCTIONS.md`; the
-architecture is in `ARCHITECTURE.md`; the UI test harness in
-`TESTING.md`. Read `INSTRUCTIONS.md` before making changes.
+How changes are made here is documented in `docs/INSTRUCTIONS.md`; the
+architecture is in `docs/ARCHITECTURE.md`; the UI test harness in
+`docs/TESTING.md`. Read `docs/INSTRUCTIONS.md` before making changes.
 
 On macOS and Windows, Makefile procedures default to the shared native
 driver (`tools/native/dev.py`), with no Docker required: start with
 `make dev_install`. Use `BACKEND=docker` to opt into the pinned Linux
-image on either host. Linux defaults to Docker. See `INSTRUCTIONS.md`
+image on either host. Linux defaults to Docker. See `docs/INSTRUCTIONS.md`
 for the toolchain, parity report and platform details.
 
 ## Running a subset of the tests — do this in parallel

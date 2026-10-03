@@ -77,6 +77,7 @@ class SettingsManager(QObject):
         self._finished = False
         self._test_status = "Not tested"
         self._test_busy = False
+        self._detection_ready = False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def finished(self):
@@ -190,6 +191,78 @@ class SettingsManager(QObject):
         # The shipped default (RESTORE_WINDOW_DEFAULT): the capture
         # renders what a fresh install shows, never a blank combo.
         return "3"
+
+    # --- Local failure detection (see MoonrakerFollowerMachineAction) ---
+    # Defaults match the page's undefined-property fallbacks, so the
+    # five canonical tab captures are unchanged; the ready pass flips
+    # the flag for the enabled-state render.
+    detectionChanged = pyqtSignal()
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionReady(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionGlobalEnabled(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionCameraReady(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionBusy(self):
+        return False
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionPhase(self):
+        return ""
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionReceived(self):
+        return 0
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionTotal(self):
+        return 0
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionError(self):
+        return ""
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionHostError(self):
+        return ""
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionResetStatus(self):
+        return ""
+
+    @pyqtProperty(int, constant=True)
+    def detectionRuntimeSize(self):
+        # The setup copy names the runtime's size; a plausible value in
+        # the pinned range keeps the ready page's text honest.
+        return 24 * 1024 * 1024
+
+    @pyqtSlot(bool, result=bool)
+    def setDetectionGlobalEnabled(self, enabled):
+        return True
+
+    @pyqtSlot()
+    def startDetectionSetup(self):
+        pass
+
+    @pyqtSlot()
+    def cancelDetectionSetup(self):
+        pass
+
+    @pyqtSlot()
+    def resetDetectionAssets(self):
+        pass
+
+    def set_detection_ready(self, ready):
+        self._detection_ready = bool(ready)
+        self.detectionChanged.emit()
 
     # --- Integrated Moonraker output settings ---
     @pyqtProperty(str, notify=settingsChanged)
@@ -646,7 +719,14 @@ def main():
             content_bottom = absolute_y + float(flickable.property("contentHeight"))
             return int(content_bottom) + 49 + 6  # margins + footer row + air
 
-        for index, name in enumerate(tab_names):
+        # The five canonical tabs, then the ready-state detection render
+        # (the README needs the enabled surface): one pass, one filename
+        # rule — the ready capture is "05-settings-detection-ready.png".
+        passes = list(enumerate(tab_names))
+        passes.append((tab_names.index("detection"), "detection-ready"))
+        for index, name in passes:
+            if name == "detection-ready":
+                manager.set_detection_ready(True)
             tab_bar.setProperty("currentIndex", index)
             for _ in range(5):
                 app.processEvents()

@@ -640,6 +640,29 @@ def main():
         grab("11-print-follower.png", popover_card("Print Follower"))
         host.setProperty("openPopOver", "")
 
+        # The detection-enabled render (the README's enabled surface):
+        # the shared model reports ready with the global switch on and
+        # this printer's opt-ins ticked, so the Failure Detection
+        # controls render live in the controls pane. Runs after every
+        # canonical grab, so those frames are untouched.
+        from dataclasses import replace as _replace
+        follower.apply_printer_config(_replace(
+            follower.current_printer_config(), detection_enabled=True,
+            detection_notify_enabled=True, detection_pause_enabled=True))
+        model._detection = SimpleNamespace(ready=True, enabled=True,
+                                           sample=lambda image, context: None)
+        model.detectionChanged.emit()
+        for _ in range(3):
+            app.processEvents()
+        section = item.findChild(QQuickItem, "failureDetectionSection")
+        if section is None:
+            raise RuntimeError("the detection section did not render")
+        position = section.mapToItem(control_flick, QPointF(0, 0))
+        control_flick.setProperty("contentY", max(
+            0.0, min(control_flick.property("contentHeight") - control_flick.height(),
+                     position.y() - 20)))
+        grab("12-detection-controls.png")
+
         # Tear the scene down in dependency order while the context-property
         # wrappers are still referenced: at exit the wrappers free in
         # arbitrary order and the engine re-evaluates bindings against
