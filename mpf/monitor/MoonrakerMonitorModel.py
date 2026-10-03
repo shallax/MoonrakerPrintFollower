@@ -1124,9 +1124,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         state = self._detection_policy.state(now=now, context=context, active=True)
         if state.score is None:
             return
-        EvidenceStore.append_sample(
-            root, printer=context[0], print_key=context[2],
-            at=time.time(), score=state.score, raw=confidence)
+        try:
+            EvidenceStore.append_sample(
+                root, printer=context[0], print_key=context[2],
+                at=time.time(), score=state.score, raw=confidence)
+        except Exception:
+            # This runs inside the result slot, and an exception
+            # escaping a slot aborts Cura: a diagnostic write is never
+            # worth the print.
+            Logger.logException("e", "Moonraker Print Follower: detection timeline write failed")
 
     def _retain_detection_evidence(self, level: str, context) -> str:
         """The alert's triggering frame on disk, best-effort."""
@@ -1134,9 +1140,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         frame = self._detection_frame
         if root is None or frame is None or frame.isNull():
             return ""
-        return EvidenceStore.save_frame(
-            root, frame, printer=context[0], print_key=context[2], level=level,
-            score=self.detectionScore, at=time.time())
+        try:
+            return EvidenceStore.save_frame(
+                root, frame, printer=context[0], print_key=context[2], level=level,
+                score=self.detectionScore, at=time.time())
+        except Exception:
+            Logger.logException("e", "Moonraker Print Follower: detection evidence write failed")
+            return ""
 
     def _notify_detection(self, level: str, paused: bool) -> None:
         from UM.Message import Message

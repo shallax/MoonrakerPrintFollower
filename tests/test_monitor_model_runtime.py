@@ -335,6 +335,58 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertIn("check the camera", args[1])
         self.assertEqual(kwargs["frame_path"], str(frames[0]))
 
+    def test_an_evidence_write_that_raises_never_escapes_the_result_slot(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from mpf.detection import EvidenceStore
+
+        directory = tempfile.TemporaryDirectory(prefix="mpf-evidence-guard-")
+        self.addCleanup(directory.cleanup)
+
+        class Detector(QObject):
+            stateChanged = pyqtSignal()
+            resultReady = pyqtSignal(object, float)
+            ready = True
+            enabled = True
+
+            def sample(self, image, context):
+                pass
+
+            def evidence_root(self):
+                return str(Path(directory.name, "detection", "evidence"))
+
+            def close(self):
+                pass
+
+        self.follower._runtime.detection.close()
+        self.follower._runtime.detection = Detector()
+        self.follower.apply_printer_config(harness.replace(
+            self.follower.current_printer_config(), detection_enabled=True,
+            detection_notify_enabled=True, detection_safe_seconds=0,
+            camera_url="http://printer-a/webcam"))
+        model = self.monitor()
+        self.deliver()
+        self.qt.events()
+        self.deliver_state("printing")
+        self.qt.events()
+        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        context = model._detection_context()
+        with patch.object(model, "_detection_context", lambda: context), \
+                patch.object(EvidenceStore, "append_sample",
+                             side_effect=RuntimeError("disk gone")), \
+                patch.object(EvidenceStore, "save_frame",
+                             side_effect=RuntimeError("disk gone")):
+            for _ in range(30):
+                model._on_detection_result(context, 0.0)
+            for _ in range(20):
+                model._on_detection_result(context, 4.0)
+                if model.detectionAlertPending:
+                    break
+        # The alert still stands: the evidence failed, the signal did not.
+        self.assertTrue(model.detectionAlertPending)
+
     def test_rearm_allows_a_second_pause_after_a_confirmed_first_pause(self):
         import time
         from types import SimpleNamespace

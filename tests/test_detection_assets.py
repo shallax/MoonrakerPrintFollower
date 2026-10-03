@@ -523,6 +523,11 @@ class DetectionAssetsTests(unittest.TestCase):
         for label, name, attrs in cases:
             with self.subTest(entry=label):
                 member = zipfile.ZipInfo(name)
+                # Written back after construction, not just passed in:
+                # ZipInfo.__init__ rewrites os.sep to "/" — so on
+                # Windows the backslash case would arrive at the guard
+                # already normalised and prove nothing.
+                member.filename = name
                 for key, value in attrs.items():
                     setattr(member, key, value)
 
@@ -545,6 +550,9 @@ class DetectionAssetsTests(unittest.TestCase):
                                 os.path.join(directory, "runtime.whl"),
                                 os.path.join(directory, "runtime"), threading.Event())
 
+    @unittest.skipIf(os.name == "nt",
+                     "POSIX mode bits are synthetic on Windows: ownership is an ACL there, "
+                     "and st_mode reports 0o777 for everything")
     def test_an_installed_runtime_is_owner_only(self):
         import stat
         member = "onnxruntime/capi/onnxruntime_inference_collection.py"
