@@ -1,0 +1,7 @@
+# The coverage run measures the plugin only. Tests import stand-ins
+# from temporary directories (the pinned onnxruntime install), and a
+# measured file whose source is gone before the report makes
+# `coverage combine` abort — the gate must judge mpf/, never a test's
+# scratch tree.
+[run]
+source = mpf
