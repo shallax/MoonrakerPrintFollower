@@ -657,11 +657,19 @@ def main():
         section = item.findChild(QQuickItem, "failureDetectionSection")
         if section is None:
             raise RuntimeError("the detection section did not render")
-        # The pane lays out late (async item loads): measure the
-        # section's position until two reads agree, then hold the scroll
-        # until it sticks. A run that caught the pane mid-settle
-        # captured a shifted frame — the determinism check caught
-        # 12-detection-controls differing between two runs.
+        # The pane lays out late (async item loads), so the settle is
+        # pumped in WALL-CLOCK time: processEvents alone starves the
+        # timers the layout rides on (the settings capture's lesson),
+        # and a run that measured mid-settle captured a shifted frame —
+        # the determinism check caught 12-detection-controls differing
+        # between two runs.
+        def pump_ms(milliseconds):
+            deadline = time.monotonic() + milliseconds / 1000.0
+            while time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+
+        pump_ms(300)
         position = None
         previous = object()
         for _ in range(40):
@@ -669,21 +677,25 @@ def main():
             if position == previous:
                 break
             previous = position
-            for _ in range(3):
-                app.processEvents()
+            pump_ms(50)
         scroll = max(0.0, min(control_flick.property("contentHeight") - control_flick.height(),
                               position - 20))
         applied = None
         for _ in range(40):
             control_flick.setProperty("contentY", scroll)
-            for _ in range(3):
-                app.processEvents()
+            pump_ms(50)
             current = control_flick.property("contentY")
             if current == scroll and current == applied:
                 break
             applied = current
         else:
             raise RuntimeError("the controls pane never held the requested scroll")
+        # The capture is only useful while the section is actually in
+        # the pane's viewport: a clamped scroll would grab a frame of
+        # the wrong controls.
+        viewport = section.mapToItem(control_flick, QPointF(0, 0)).y()
+        if not 0 <= viewport <= control_flick.height() - 40:
+            raise RuntimeError("the detection section sits outside the controls viewport")
         grab("12-detection-controls.png")
 
         # Tear the scene down in dependency order while the context-property

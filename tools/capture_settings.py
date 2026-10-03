@@ -43,6 +43,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -769,6 +770,35 @@ def main():
                 app.processEvents()
             path = os.path.join(output_dir, "05-settings-%s.png" % name)
             image = window.grabWindow()
+            if name == "detection-ready":
+                # This page's glyphs (the global switch's checkmark) load
+                # asynchronously, so settling is a transaction: pump a
+                # fixed span for the load to land, then require an
+                # identical frame run SPANNING a further beat — two
+                # back-to-back identical frames can still precede a late
+                # glyph (the mac determinism gate caught the ready render
+                # differing between two runs at the checkbox).
+                settle_until = time.monotonic() + 0.5
+                while time.monotonic() < settle_until:
+                    app.processEvents()
+                    time.sleep(0.02)
+                previous = None
+                identical_since = None
+                deadline = time.monotonic() + 12.0
+                while time.monotonic() < deadline:
+                    app.processEvents()
+                    time.sleep(0.02)
+                    image = window.grabWindow()
+                    if previous is not None and image == previous:
+                        if identical_since is None:
+                            identical_since = time.monotonic()
+                        if time.monotonic() - identical_since >= 0.4:
+                            break
+                    else:
+                        identical_since = None
+                    previous = image
+                else:
+                    raise RuntimeError("the detection page never settled for " + path)
             if not image.save(path):
                 raise RuntimeError("failed to save " + path)
             diversity = pixel_diversity(image)
