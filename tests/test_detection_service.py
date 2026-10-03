@@ -690,14 +690,18 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.until(lambda: not service._worker.is_alive())
 
     def test_removal_status_is_only_terminal_when_it_says_so(self):
-        service = self.service()
+        # The worker stays out of this test: it reads the same flags the
+        # test pokes and may act on them between an assertion and its
+        # delivery (the 3.11/3.12 CI failures), and the drop is driven
+        # through the slot directly — a queued emit races a fixed number
+        # of processEvents calls with delivery.
+        with patch.object(LocalDetectionService, "_run", lambda _self: None):
+            service = self.service()
         service._removal_generation = 7
         service._remove_requested = True
         service._busy = True
         service._phase = "removing"
-        service._updates.status.emit(7, {"phase": "runtime", "received": 4, "total": 10})
-        self.app.processEvents()
-        self.app.processEvents()
+        service._on_status(7, {"phase": "runtime", "received": 4, "total": 10})
         self.assertEqual(service.phase, "removing")
         self.assertTrue(service._remove_requested)
         service._updates.status.emit(7, {"busy": False, "ready": False,

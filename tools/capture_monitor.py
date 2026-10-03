@@ -657,10 +657,33 @@ def main():
         section = item.findChild(QQuickItem, "failureDetectionSection")
         if section is None:
             raise RuntimeError("the detection section did not render")
-        position = section.mapToItem(control_flick, QPointF(0, 0))
-        control_flick.setProperty("contentY", max(
-            0.0, min(control_flick.property("contentHeight") - control_flick.height(),
-                     position.y() - 20)))
+        # The pane lays out late (async item loads): measure the
+        # section's position until two reads agree, then hold the scroll
+        # until it sticks. A run that caught the pane mid-settle
+        # captured a shifted frame — the determinism check caught
+        # 12-detection-controls differing between two runs.
+        position = None
+        previous = object()
+        for _ in range(40):
+            position = section.mapToItem(control_flick, QPointF(0, 0)).y()
+            if position == previous:
+                break
+            previous = position
+            for _ in range(3):
+                app.processEvents()
+        scroll = max(0.0, min(control_flick.property("contentHeight") - control_flick.height(),
+                              position - 20))
+        applied = None
+        for _ in range(40):
+            control_flick.setProperty("contentY", scroll)
+            for _ in range(3):
+                app.processEvents()
+            current = control_flick.property("contentY")
+            if current == scroll and current == applied:
+                break
+            applied = current
+        else:
+            raise RuntimeError("the controls pane never held the requested scroll")
         grab("12-detection-controls.png")
 
         # Tear the scene down in dependency order while the context-property
