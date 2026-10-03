@@ -42,6 +42,10 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Notifications and automatic pause are separate opt-ins. A pause "
             "must be confirmed before it is recorded, and Re-arm automatic "
             "pause can allow another pause during the same print.",
+            "An alert names the printer, has an Acknowledge button, and is "
+            "repeated a few times while it stands unacknowledged. Detection "
+            "settings can show the folder holding the frame that raised an "
+            "alert and each print's score timeline.",
             "Klipper's Apply Z offset can stage a probe or endstop adjustment "
             "when the target is clear; Save configuration remains separate.",
             "Detection can miss failures or raise false alarms. Do not rely "

@@ -16,7 +16,18 @@ upload camera frames to a cloud service.
   A fresh active-print signal colours the camera frame green, amber or red
   with a left-hand scale; missing, idle and stale states remain neutral.
   The first-analysis wait shows a grey frame and "Wait" without a marker.
-  The 0.00–1.00 adaptive signal is not a calibrated probability.
+  A stale analysis stays visible with its reason instead of disappearing,
+  and the displayed score stays inside its own band while the safe period
+  suppresses warnings. The 0.00–1.00 adaptive signal is not a calibrated
+  probability.
+- Alert by name of printer, with an Acknowledge button, and repeat the
+  alert on a bounded schedule while it stands unacknowledged. Where the
+  platform supports it — and when Cura is not the window in front — the
+  desktop notification carries the frame that triggered the alert.
+- Keep the triggering frame and a per-print score timeline in a bounded
+  evidence folder under the detection storage, opened from Diagnostics and
+  removed with the downloads. Diagnostics also reports the measured
+  inference cost of this computer.
 - Configure each printer independently with an Enable checkbox, ordered
   warning/failure slider, 0–15-minute safe period, and separately opted-in
   notifications and automatic pause. Per-camera baselines persist separately;
