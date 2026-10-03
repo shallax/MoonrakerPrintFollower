@@ -15,6 +15,12 @@ HOST := macos
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 else
 HOST := linux
+# The Linux branch needs it too: `snapshot_package` builds its
+# SOURCE_DATE_EPOCH with $(PYTHON), and an unset variable made that
+# shell call run `-` as a command — the epoch came out empty, the
+# builders died parsing it, and `... & ... & wait` swallowed the
+# deaths (the 2026-10-03 package failure).
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 endif
 BACKEND ?= $(if $(filter linux,$(HOST)),docker,native)
 ifeq ($(BACKEND),native)
@@ -143,8 +149,13 @@ ifneq ($(LEG),posix)
 else
 	$(MAKE) generate_shaders
 	# The two artifacts are independent: build them side by side
-	# (the 2026-09-18 parallelism ruling), then verify both.
-	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
+	# (the 2026-09-18 parallelism ruling), then verify both. The PIDs
+	# are waited on explicitly: a bare `wait` reports nothing, and a
+	# dead builder used to be read as a stale CHANGELOG instead of as
+	# the failure it was (the 2026-10-03 package failure).
+	python3 tools/build_curapackage.py & first=$$!; \
+	python3 tools/build_marketplace_source.py & second=$$!; \
+	wait $$first; wait $$second
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 endif

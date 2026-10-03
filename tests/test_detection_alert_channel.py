@@ -101,6 +101,45 @@ class DesktopAlertTests(unittest.TestCase):
         self._with_application(Qt.ApplicationState.ApplicationInactive, None)
         self.assertFalse(DesktopAlert.notify("t", "b"))
         self.assertTrue(any("no tray widget" in line for line in logged), logged)
+        logged.clear()
+
+        class NoTray:
+            def isSystemTrayAvailable(self):
+                return False
+
+        self._with_application(Qt.ApplicationState.ApplicationInactive, NoTray())
+        self.assertFalse(DesktopAlert.notify("t", "b"))
+        self.assertTrue(any("unavailable" in line for line in logged), logged)
+        logged.clear()
+
+        class Broken:
+            def isSystemTrayAvailable(self):
+                return True
+
+            def showMessage(self, *args):
+                raise RuntimeError("no daemon")
+
+            def icon(self):
+                return None
+
+        self._with_application(Qt.ApplicationState.ApplicationInactive, Broken())
+        self.assertFalse(DesktopAlert.notify("t", "b"))
+        self.assertTrue(any("raised" in line for line in logged), logged)
+        logged.clear()
+
+        class Fine:
+            def isSystemTrayAvailable(self):
+                return True
+
+            def showMessage(self, *args):
+                pass
+
+            def icon(self):
+                return None
+
+        self._with_application(Qt.ApplicationState.ApplicationInactive, Fine())
+        self.assertTrue(DesktopAlert.notify("Delivered", "b"))
+        self.assertTrue(any("shown" in line for line in logged), logged)
 
     def test_a_machine_without_a_tray_falls_through_quietly(self):
         from PyQt6.QtCore import Qt
