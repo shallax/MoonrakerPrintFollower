@@ -141,6 +141,28 @@ class DesktopAlertTests(unittest.TestCase):
         self.assertTrue(DesktopAlert.notify("Delivered", "b"))
         self.assertTrue(any("shown" in line for line in logged), logged)
 
+    def test_logging_never_breaks_the_alert(self):
+        # The diagnostic is best-effort like the notification: a
+        # missing or hostile logger must not take the alert path down
+        # with it. A None entry makes the import itself fail.
+        import sys
+        from unittest.mock import patch
+        from PyQt6.QtCore import Qt
+
+        class Tray:
+            def isSystemTrayAvailable(self):
+                return True
+
+            def showMessage(self, *args):
+                pass
+
+            def icon(self):
+                return None
+
+        self._with_application(Qt.ApplicationState.ApplicationInactive, Tray())
+        with patch.dict(sys.modules, {"UM.Logger": None}):
+            self.assertTrue(DesktopAlert.notify("t", "b"))
+
     def test_a_machine_without_a_tray_falls_through_quietly(self):
         from PyQt6.QtCore import Qt
         self._with_application(Qt.ApplicationState.ApplicationInactive, None)
