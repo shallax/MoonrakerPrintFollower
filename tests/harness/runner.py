@@ -2351,13 +2351,35 @@ FIRST_INSTALL_MARKER = "harness-firstinstall"
 BOOT1_DOCUMENT = os.environ.get("HARNESS_BOOT1_DOC", "/tmp/mpf/boot1-document.json")
 
 FIRST_INSTALL_OFFER_PROBE = """
-from PyQt6.QtCore import QObject
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtQuick import QQuickWindow
 from UM.Application import Application
-window = _main_window()
-items = window.contentItem().findChildren(QObject) if window is not None else []
-shown = {name: any(item.objectName() == name and bool(item.property("visible"))
-                   for item in items)
-         for name in ("whatsNewCloseButton", "detectionFirstRunOffer")}
+# The onboarding popups are not in the editor window's object tree:
+# under the WM-less Xvfb a Popup renders in its own QQuickWindow (the
+# window union the click verbs already walk). Bound the depth: this
+# probe polls every two seconds, and the click path's depth-96 walk is
+# priced for a deliberate click, not a poll.
+names = ("whatsNewCloseButton", "detectionFirstRunOffer")
+shown = {name: False for name in names}
+diag = {"named": [], "windows": 0}
+for window in QGuiApplication.topLevelWindows():
+    if not isinstance(window, QQuickWindow):
+        continue
+    try:
+        items = _walk(window.contentItem(), depth=48)
+    except AttributeError:
+        continue
+    diag["windows"] += 1
+    for item in items:
+        try:
+            name = item.objectName()
+        except Exception:
+            continue
+        if name in shown:
+            visible = _effectively_visible(item)
+            diag["named"].append((name, visible))
+            if visible:
+                shown[name] = True
 service = next((ext._runtime.detection for ext in Application.getInstance().getExtensions()
                 if "MoonrakerPrintFollower" in type(ext).__name__ and
                 getattr(ext, "_runtime", None) is not None), None)
@@ -2366,7 +2388,8 @@ result = {"whats": shown["whatsNewCloseButton"],
           "service": service is not None,
           "eligible": bool(service is not None and not service.host_error),
           "should_offer": bool(service is not None and service.should_offer),
-          "ready": bool(service is not None and service.ready)}
+          "ready": bool(service is not None and service.ready),
+          "diag": diag}
 """
 
 
@@ -2489,8 +2512,9 @@ def first_install1():
         # local detection offer. Decline through the real popup button:
         # this boot never consents to a model/runtime download.
         whats = wait_for(lambda: first_install_offer_state().get("whats"), 90.0)
+        whats_probe = first_install_offer_state()
         steps.append(("03a-whats-new", "What's New precedes the detection offer",
-                      "the first-boot What's New close button is visible",
+                      "the first-boot What's New close button is visible [probe=%s]" % whats_probe,
                       bool(whats), shot("03a-whats-new")))
         if whats:
             dismissed = rpc({"id": 1, "cmd": "click_item",
@@ -2501,7 +2525,8 @@ def first_install1():
         offered = (wait_for(lambda: first_install_offer_state().get("offer"), 90.0)
                    if state.get("eligible") else not state.get("offer"))
         steps.append(("03b-detection-offer", "eligible first boots offer local detection after What's New",
-                      "the offer appears only on eligible hosts, after dismissal",
+                      "the offer appears only on eligible hosts, after dismissal "
+                      "[state=%s dismissed=%s]" % (state, dismissed),
                       bool(dismissed.get("ok")) and bool(state.get("service")) and bool(offered),
                       shot("03b-detection-offer")))
         if state.get("eligible") and offered:
@@ -2608,7 +2633,8 @@ def first_install2():
                       untouched, shot("03-untouched")))
         offer = first_install_offer_state()
         steps.append(("04-no-repeat-offer", "the declined detection offer does not return on boot two",
-                      "no detection popup, no model downloaded and the offer remains dismissed",
+                      "no detection popup, no model downloaded and the offer remains dismissed "
+                      "[probe=%s]" % offer,
                       bool(offer.get("service")) and not offer.get("offer")
                       and not offer.get("should_offer") and not offer.get("ready"),
                       shot("04-no-repeat-offer")))
