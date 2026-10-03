@@ -773,7 +773,10 @@ The Exclude Object Picker shows each object's position and exclusion state.
 ![Print follower](screenshots/11-print-follower.png)
 
 The print follower renders indexed toolpaths, with layer and progress controls.
-This three-material penguin is generated as deterministic G-code for the capture.
+Detach it to look at a layer ahead of the print: the popover then shows the
+estimated time until the printer reaches that layer, read exactly like a
+scheduled pause's ETA. This three-material penguin is generated as
+deterministic G-code for the capture.
 
 ![Preview panel](screenshots/04-preview-panel.png)
 
