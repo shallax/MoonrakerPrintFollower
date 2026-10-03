@@ -1,7 +1,12 @@
 """The local model's image shape and confidence contract."""
 
+import importlib
+from pathlib import Path
+import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 from PyQt6.QtGui import QImage
@@ -22,7 +27,56 @@ class FakeSession:
         return self.outputs
 
 
+class ShapedSession(FakeSession):
+    def __init__(self, shape, outputs=None):
+        super().__init__(outputs)
+        self.shape = shape
+
+    def get_inputs(self):
+        return [SimpleNamespace(name="camera", shape=self.shape)]
+
+
+# A stand-in runtime whose import is real: load() inserts a directory on
+# sys.path and imports from it, so a real file is the only honest fixture.
+RUNTIME_MODULE = '''\
+from types import SimpleNamespace
+
+__version__ = "{version}"
+calls = {{}}
+
+
+class SessionOptions:
+    def __init__(self):
+        self.intra_op_num_threads = 0
+        self.inter_op_num_threads = 0
+
+
+class InferenceSession:
+    def __init__(self, path, sess_options=None, providers=None):
+        calls["session"] = (path, sess_options, providers)
+
+    def get_inputs(self):
+        return [SimpleNamespace(name="camera", shape=[1, 3, 416, 416])]
+'''
+
+
 class LocalFailureModelTests(unittest.TestCase):
+    def install_runtime(self, directory, version="1.23.2"):
+        """Write a stand-in onnxruntime package that load() genuinely imports."""
+        package = Path(directory, "runtime", "onnxruntime")
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(RUNTIME_MODULE.format(version=version),
+                                             encoding="utf-8")
+        installed = package.parent.resolve()
+        self.addCleanup(sys.modules.pop, "onnxruntime", None)
+        self.addCleanup(self._forget_path, str(installed))
+        return installed
+
+    @staticmethod
+    def _forget_path(entry):
+        while entry in sys.path:
+            sys.path.remove(entry)
+
     def test_rgb_image_is_resized_and_normalised_before_inference(self):
         session = FakeSession()
         image = QImage(16, 8, QImage.Format.Format_RGB888)
@@ -48,6 +102,94 @@ class LocalFailureModelTests(unittest.TestCase):
         image = QImage(16, 8, QImage.Format.Format_RGB888)
         image.fill(0)
         self.assertAlmostEqual(LocalFailureModel(FakeSession([boxes, scores])).score(image), 1.6)
+
+    def test_foreign_input_contracts_are_rejected_before_any_frame_is_scored(self):
+        for shapes in ((), ([1, 3, 416],), ([1, 3, 416, 416], [1, 3, 416, 416])):
+            session = SimpleNamespace(get_inputs=lambda shapes=shapes: [
+                SimpleNamespace(name="camera", shape=shape) for shape in shapes])
+            with self.subTest(shapes=shapes), self.assertRaisesRegex(ValueError, "model input"):
+                LocalFailureModel(session)
+        for shape in ([2, 3, 416, 416], [1, 4, 416, 416], [1, 3, 0, 416],
+                      [1, 3, 416, 1025], [1, 3, 416.0, 416], [1, 3, "416", 416]):
+            with self.subTest(shape=shape), self.assertRaisesRegex(ValueError, "dimensions"):
+                LocalFailureModel(ShapedSession(shape))
+        session = ShapedSession([1, 3, 100, 200])
+        image = QImage(16, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        LocalFailureModel(session).score(image)
+        self.assertEqual(session.feed["camera"].shape, (1, 3, 100, 200))
+
+    def test_load_imports_the_pinned_runtime_and_binds_its_session(self):
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            installed = self.install_runtime(directory)
+            model = LocalFailureModel.load("model-weights.onnx", str(installed))
+            runtime = sys.modules["onnxruntime"]
+            self.assertEqual(Path(runtime.__file__).parent, installed / "onnxruntime")
+            path, options, providers = runtime.calls["session"]
+        self.assertEqual(sys.path[0], str(installed))
+        self.assertEqual((path, providers), ("model-weights.onnx", ["CPUExecutionProvider"]))
+        self.assertEqual((options.intra_op_num_threads, options.inter_op_num_threads), (1, 1))
+        self.assertIsInstance(model, LocalFailureModel)
+
+    def test_load_reuses_a_pinned_runtime_that_is_already_imported(self):
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            installed = self.install_runtime(directory)
+            sys.path.insert(0, str(installed))
+            imported = importlib.import_module("onnxruntime")
+            model = LocalFailureModel.load("model-weights.onnx", str(installed))
+        self.assertIs(sys.modules["onnxruntime"], imported)
+        self.assertEqual(sys.path.count(str(installed)), 1)
+        self.assertIsInstance(model, LocalFailureModel)
+
+    def test_load_refuses_a_runtime_that_did_not_pin_the_release(self):
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            installed = self.install_runtime(directory, version="1.24.0")
+            with self.assertRaisesRegex(RuntimeError, "did not load"):
+                LocalFailureModel.load("model-weights.onnx", str(installed))
+
+    def test_load_refuses_a_foreign_runtime_already_imported_in_cura(self):
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            installed = self.install_runtime(directory)
+            foreign = SimpleNamespace(
+                __file__=str(Path(directory, "site-packages", "onnxruntime", "__init__.py")),
+                __version__="1.23.2")
+            with patch.dict(sys.modules, {"onnxruntime": foreign}):
+                with self.assertRaisesRegex(RuntimeError, "Another inference runtime"):
+                    LocalFailureModel.load("model-weights.onnx", str(installed))
+            self.assertNotIn(str(installed), sys.path)
+
+    def test_score_rejects_an_empty_frame_before_touching_the_session(self):
+        session = FakeSession()
+        with self.assertRaisesRegex(ValueError, "empty camera frame"):
+            LocalFailureModel(session).score(QImage())
+        self.assertIsNone(session.feed)
+
+    def test_score_rejects_foreign_output_arities_and_shapes(self):
+        image = QImage(16, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        boxes = np.array([[[[0., 0., .2, .2]]]])
+        for outputs in ([boxes], [boxes, np.array([[[.5]]]), np.array([[[.5]]])]):
+            with self.subTest(outputs=len(outputs)), \
+                    self.assertRaisesRegex(ValueError, "Unexpected failure model outputs"):
+                LocalFailureModel(FakeSession(outputs)).score(image)
+        for confidences in (np.array([[.5]]), np.array([[[.5]], [[.5]]]), np.array([[[.5, .5]]])):
+            with self.subTest(shape=confidences.shape), \
+                    self.assertRaisesRegex(ValueError, "output shapes"):
+                LocalFailureModel(FakeSession([boxes, confidences])).score(image)
+        doubled = np.array([[[[0., 0., .2, .2]]], [[[0., 0., .2, .2]]]])
+        with self.assertRaisesRegex(ValueError, "output shapes"):
+            LocalFailureModel(FakeSession([doubled, np.array([[[.5]]])])).score(image)
+
+    def test_score_rejects_non_finite_coordinates_from_a_confident_box(self):
+        image = QImage(16, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        for value in (float("inf"), float("-inf"), float("nan")):
+            boxes = np.array([[[[0., 0., value, .3]]]])
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, "coordinates"):
+                LocalFailureModel(FakeSession([boxes, np.array([[[.9]]])])).score(image)
+        filtered = np.array([[[[0., 0., float("inf"), .3]]]])
+        self.assertEqual(LocalFailureModel(FakeSession([filtered, np.array([[[.05]]])])).score(image), 0.0)
 
 
 if __name__ == "__main__":
