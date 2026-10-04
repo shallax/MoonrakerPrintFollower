@@ -190,7 +190,9 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
                          ["Connection", "Following", "Upload", "Detection", "Diagnostics"])
 
     def test_every_scrollable_tab_keeps_its_scrollbar_visible(self):
-        document, _window = self.open_settings(height=400)
+        # Force overflow independently of platform font wrapping, and
+        # observe the settled layout rather than a fixed event budget.
+        document, window = self.open_settings(height=240)
         pages = self.pages(document)
         for index, name in enumerate(("ConnectionSettings", "FollowingSettings",
                                       "UploadSettings", "DetectionSettings", "DiagnosticsSettings")):
@@ -198,6 +200,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
                 self.show_tab(document, index)
                 scrollbar = pages[name].findChild(harness.QQuickItem, "settingsScrollbar")
                 self.assertIsNotNone(scrollbar)
+                self._wait_until(window, lambda _image, bar=scrollbar:
+                    bar.property("size") < 1 and bar.property("visible"), timeout=3)
                 self.assertLess(scrollbar.property("size"), 1)
                 self.assertTrue(scrollbar.property("visible"))
 
