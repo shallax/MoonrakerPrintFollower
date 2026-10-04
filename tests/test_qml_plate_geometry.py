@@ -6,7 +6,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         previous = harness.PlatePrinterDouble.BED
         harness.PlatePrinterDouble.BED = (250.0, 400.0)
         self.addCleanup(setattr, harness.PlatePrinterDouble, "BED", previous)
-        monitor, _window = self.mount_window("MoonrakerMonitor.qml", 1100, 1000)
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 1100, 1000)
         self._open(monitor, "")
         faces = (
             next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerBedMeshMap")
@@ -16,12 +16,17 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateCanvas")
                  if item.property("compact") and item.parentItem().objectName() != "moonrakerPlateProgressFace"),
         )
+        self._wait_until(window, lambda _image: all(
+            face.width() > 170 and abs(face.height() / face.width() - 1.6) < .02
+            for face in faces), timeout=5.0)
         for face in faces:
-            self.assertGreater(face.width(), 170)
-            self.assertAlmostEqual(face.height() / face.width(), 1.6, delta=.02)
+            with self.subTest(face=face.objectName()):
+                self.assertGreater(face.width(), 170)
+                self.assertAlmostEqual(face.height() / face.width(), 1.6, delta=.02,
+                                       msg=f"{face.objectName()}: {face.width()}x{face.height()}")
 
     def test_information_mini_beds_fill_the_column(self):
-        monitor, _window = self.mount_window("MoonrakerMonitor.qml", 1100, 760)
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 1100, 760)
         self._open(monitor, "")
         mesh = next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerBedMeshMap")
                     if item.property("compact"))
@@ -29,9 +34,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                         if item.property("compact"))
         picker = next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateCanvas")
                       if item.property("compact") and item.parentItem().objectName() != "moonrakerPlateProgressFace")
-        for face in (mesh, follower, picker):
-            self.assertGreater(face.width(), 170)
-            self.assertAlmostEqual(face.height(), face.width(), delta=2)
+        faces = (mesh, follower, picker)
+        self._wait_until(window, lambda _image: all(
+            face.width() > 170 and abs(face.height() - face.width()) <= 2
+            for face in faces), timeout=5.0)
+        for face in faces:
+            with self.subTest(face=face.objectName()):
+                self.assertGreater(face.width(), 170)
+                self.assertAlmostEqual(face.height(), face.width(), delta=2,
+                                       msg=f"{face.objectName()}: {face.width()}x{face.height()}")
         self.assertAlmostEqual(mesh.width(), follower.width(), delta=2)
         self.assertAlmostEqual(mesh.width(), picker.width(), delta=2)
 
