@@ -316,6 +316,9 @@ class LocalDetectionService(QObject):
         start = time.monotonic()
         self._model.score(image)
         elapsed = time.monotonic() - start
+        # The limit is checked after the call, never enforced inside it:
+        # a hung native call cannot be aborted from Python, so an overrun
+        # is reported rather than pretended away.
         if elapsed > _BENCHMARK_LIMIT:
             raise ValueError(f"Local inference took {elapsed:.1f}s (limit: 5s per frame)")
         # The measured cost, kept rather than discarded: the Diagnostics

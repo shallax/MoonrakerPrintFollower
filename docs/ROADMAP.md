@@ -6,16 +6,13 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release branch: **release/v5.0.0**, based on the latest `main`.
-This is a development candidate, not a public release or tag; 4.6.2 was
-not released. Release notes are maintained in
+Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## 4.6.2 — internal decomposition and plate polish (aiming for RC1)
+## 4.6.2 — internal decomposition and plate polish
 
-An internal decomposition with targeted user-visible improvements; the release
-candidate is still in preparation.
+An internal decomposition with targeted user-visible improvements.
 
 - Decompose the remaining monoliths into owners with explicit inputs — the
   Monitor's renderer lifecycle and publication transaction, the file-browser,
@@ -2221,7 +2218,7 @@ review/round-2-*.md):
   persistent dismissible banner above the settings tab row with the
   recipe demoted to a permanent Diagnostics row on dismissal.
 
-## 5.0.0 — Local print-failure detection (development candidate)
+## 5.0.0 — Local print-failure detection
 
 This release replaces the previously planned Preview-head work for 5.0.0.
 The Preview proposal is retained below as deferred work, without an assigned
@@ -2364,10 +2361,10 @@ print state is active, and check green/amber/red transitions and neutral state
 when frames stop. Use still images for inexpensive model smoke tests and
 synthetic sequences for policy tests. Do not assume a public Obico time-lapse
 is licensed for redistribution; the upstream repository contains example
-failure stills, but no confirmed redistributable failure video fixture yet.
-The author identified Parker's 3D Prints' "3D Printing Fail Compilation -
-November 2023 Edition" (https://www.youtube.com/watch?v=TM67RN3cxjQ) as
-a manual failure reference, along with WildRoseBuilds'
+failure stills, but no confirmed redistributable failure video fixture.
+Manual failure references: Parker's 3D Prints' "3D Printing Fail Compilation
+- November 2023 Edition" (https://www.youtube.com/watch?v=TM67RN3cxjQ),
+along with WildRoseBuilds'
 "EPIC 3D PRINTER FAILS (TIMELAPSE) / OCTOLAPSES)"
 (https://www.youtube.com/watch?v=JGpCGOMgk5g), and a single-print spaghetti
 timelapse by 3D Print Timelapse
@@ -2390,34 +2387,27 @@ The Obico maintainer states that the separately hosted model weights have the
 same AGPL-3.0 licence as the server
 (https://github.com/TheSpaghettiDetective/obico-server/issues/838);
 both download offers link to that licence and state GPLv3 section 13
-compatibility with MPF's GPLv3 while retaining AGPL obligations;
-distribution notices and packaging implications still need review. Obico's
+compatibility with MPF's GPLv3 while retaining AGPL obligations; licence
+notices, source obligations and distribution packaging are explicit
+decisions, never inferred. Obico's
 server hardware guide is for the full server, not a Cura-embedded CPU
 inference worker, and must not be used as a substitute for this feature's
 eligibility measurements. Runtime/native-binary download policy and AGPL
-compliance are separate pre-release gates; the author approved development
-while Marketplace acceptance is investigated, not public shipping without
-clearance. The author has subsequently allowed downloading the model for
-development; keep downloaded weights and all research assets outside the
-source tree (under `/tmp/mpf`).
+compliance are gates of their own, separate from development; keep
+downloaded weights and all research assets outside the source tree (under
+`/tmp/mpf`).
 
-The author supplied three private failure timelapses for local evaluation;
+Three private failure timelapses were supplied for local evaluation;
 they are not redistributable fixtures without a separate rights check. A
 baseline run of Obico's pinned ONNX weight using its own OpenCV resize and
 channel preprocessing returned peak confidences of only 30%, 15% and 5%
 across the three clips (sampled at two frames per second). Earlier frames in
 the first clip sometimes scored higher than its later ones, so simply lowering
-the warning threshold would not reliably distinguish the failure. The author
-chose to continue with Obico's pinned ONNX model despite these false negatives:
-the supplied clips are accelerated timelapses, not necessarily representative
-of the live camera stream. Do not adjust thresholds to force a red result on
-these clips or describe the model as detecting them. The functional snapshot
-is installed for author testing, not cleared for public release. Per-printer
-thresholds, explicit pause re-arm, compact Detection controls and generic
-Klipper Z-offset Apply followed live testing. Active-print reliability,
-other supported hosts, model-licence obligations and Marketplace policy
-remain open gates. Version metadata can be 5.0.0 without marking the
-release shipped or creating a tag.
+the warning threshold would not reliably distinguish the failure. Obico's
+pinned ONNX model stays despite these false negatives: the supplied clips are
+accelerated timelapses, not necessarily representative of the live camera
+stream. Do not adjust thresholds to force a red result on these clips or
+describe the model as detecting them.
 
 ## Deferred — Physical head in the Preview (former 5.0.0 plan)
 

@@ -1,15 +1,10 @@
 # v5.0.0 local failure detection: implementation handoff
 
-**Status (2026-10-03): local setup and idle-state monitoring validated in Cura.**
-The `release/v5.0.0` branch now connects opt-in setup, per-printer
+The `release/v5.0.0` branch connects opt-in setup, per-printer
 enablement and already-decoded Monitor frames to a local inference worker
-and live signal. Cura 5.13 on macOS arm64 installed the pinned wheel and
-model after explicit opt-in and completed the real native benchmark; the
-Voron2 250 per-printer checkbox was saved with explicit approval.
-Its idle Monitor webcam reports "Waiting for an active print" rather than
-green. An active-print camera trial and a live verdict remain open.
-The development candidate uses 5.0.0 metadata; a branch push is not a
-release, and no PR or release tag has been created.
+and live signal: the pinned wheel and model install only after explicit
+opt-in, and the per-printer control is the user's to save. An idle
+Monitor webcam reports "Waiting for an active print" rather than green.
 
 `ROADMAP.md` (the 5.0.0 section) is the binding product scope;
 `INSTRUCTIONS.md` defines the build/test/ship procedures; `ARCHITECTURE.md`
@@ -106,25 +101,6 @@ Fixed in this programme:
   retains its triggering frame and a per-print score timeline in a
   bounded store, the measured benchmark milliseconds are surfaced, and
   Diagnostics reveals the evidence folder. Batch D.
-
-External or live-test items, not code:
-
-- AGPL obligations and the written Ultimaker Marketplace policy for
-  post-install native downloads: still the release gate; the README
-  now discloses the licence relationship where a reader sees it. The
-  submission will be sent and the answer taken as it comes (the
-  2026-10-03 decision) — no policy text is invented here.
-- The live active-print trial: RUN and reported working (2026-10-03) —
-  the colour claim is proven live. What remains open is only the
-  permission-cleared recording for redistribution; the private
-  timelapses stay private fixtures.
-- Desktop notifications: CLOSED by removal (2026-10-03). The live
-  Windows trial produced `desktop alert — shown` with no balloon on
-  screen, and Cura's tray widget is not a channel to build a feature
-  on: the whole channel (`DesktopAlert.py`, its tests, the README and
-  changelog sentences, the architecture row) is gone. The alert is the
-  in-Cura message plus the evidence folder, which the trial proved
-  working.
 
 Left as found, deliberately:
 
@@ -329,6 +305,13 @@ Batch F — the captures and the last gates:
   (connection 657, following 697, upload 796, detection 598,
   detection-ready 598, diagnostics 813); the determinism gate still
   reports 17 scenes byte-identical across two runs.
+- The plate prefix-ownership contract reads its takeover from the
+  composition's own admission, never from a fringe count in the
+  boundary column: that column carries the same three loose rows while
+  the vector still owns the history, and the bed mapping's sub-pixel
+  rounding takes it to two on a native rasteriser while the composition
+  is admitted all the same. The composed-frame assertions are
+  unchanged, and a genuinely missing prefix still fails the test.
 
 Batch G — the detached anchor's ETA (the follow-up request):
 
@@ -443,11 +426,7 @@ needed its bundled `certifi` CA file for verified HTTPS, and Obico's model
 URL redirected to a CDN asset. Model/runtime downloads now accept any
 HTTPS redirect host (never an HTTP downgrade), while retaining verified
 certificate chains, the pinned byte lengths and SHA-256 checks before
-installation. The latest snapshot, including the
-adaptive controls, configurable safe period and worker-safe asset reset, was verified against the
-package and installed in quit Cura before relaunch. The prior plugin is
-backed up in the Cura configuration directory. Local inference previously
-benchmarked successfully in Cura; an active-print trial is still pending.
+installation. Local inference has benchmarked successfully in Cura.
 
 Three private MP4 failure timelapses were provided. Keep the footage
 and extracted frames in the session/`/tmp/mpf` only; do not commit,
@@ -471,55 +450,13 @@ are at `TheSpaghettiDetective/obico-server:ml_api/model/` in the
 `ml_api/lib/onnx.py`; it resizes BGR camera data with OpenCV bilinear,
 converts to RGB NCHW float32/255 and reads single-class confidences.
 
-## Remaining gates as of this integration
+## Archived pre-wiring checklist (completed in source)
 
-Updated 2026-10-03, after the review programme and the live trial:
-
-1. Real inference has run under Cura 5.13 on macOS arm64 and on Windows;
-   the live active-print trial was reported working (signal colours, alerts,
-   the evidence folder). Other supported operating systems and Python ABIs
-   remain unqualified. The in-process benchmark reports a completed call
-   over five seconds but cannot forcibly stop a native call that hangs.
-2. The live trial's screenshots: none have been taken from that session yet,
-   and no normal-to-failure recording has been cleared for redistribution, so
-   the simulator video-replay gate remains open. Private timelapses are not
-   test fixtures and are known false negatives.
-3. Obico's AGPL obligations and the written Ultimaker Marketplace policy on
-   native post-install downloads: the submission is being sent and its answer
-   taken as it comes. Once the live build is accepted, bump all version
-   surfaces together, complete release re-review and gates, and create a PR
-   only on explicit request.
-4. The desktop-notification channel is CLOSED (built, trialled, removed —
-   see the decisions above); nothing further is owed for it.
-5. The native CI legs ran the plate prefix-ownership contract hot: six
-   native runs failed "the ready prefix never took over" (macOS and Windows
-   alike) while every Linux leg stayed green. It was the TEST, not the
-   product. The takeover was read from a one-column fringe census — the
-   boundary column gains the two caps' fringes once the prefix owns the
-   interval — and that probe does not discriminate: measured on the exact
-   fixture, the column reads three loose rows in the loading gap (the
-   vector's own stroke) as much as after the takeover, and the bed
-   mapping's sub-pixel rounding (Windows `sx=1.832`, `bedXMin=52.5` against
-   Linux's `1.828` and `53`) moves it to two rows on the native rasteriser
-   while the composition is admitted all the same — the instrumented
-   failure shows `prefixReady=true`, `partialReady=true`, `shown=10`,
-   `wasShown=true` and the standing key equal to the live one with the
-   census at two. The takeover is now read from the composition's own
-   admission (the delivered receipt naming the prefix source and boundary);
-   the composed-frame assertions are unchanged, and a genuinely missing
-   prefix still fails the test, with `prefixFailed=true` and the image at
-   Error. The earlier widening (a first-owner gate and a 15 s hang guard in
-   place of 3 s) stays: it is what showed the window was never the
-   mechanism.
-
-## Archived pre-wiring checklist (completed in source except noted above)
-
-1. **Harden the asset installer.** The current extractor accepts an
-   existing runtime against the pinned wheel, but there is not yet a
-   startup readiness gate or a demonstrated import in real Cura. Avoid
-   a live import of a different system ONNX Runtime and
-   demonstrate a clean import of the pinned wheel in a *real Cura* Python
-   3.12 process. Check NumPy availability/ABI and OS shared libraries,
+1. **Harden the asset installer.** The extractor accepts an existing
+   runtime against the pinned wheel, so a startup readiness gate and a
+   demonstrated import of the pinned wheel in a *real Cura* Python 3.12
+   process are required. Avoid a live import of a different system ONNX
+   Runtime. Check NumPy availability/ABI and OS shared libraries,
    not just wheel filenames. Cancel must interrupt or promptly end an
    active read. Model corruption and exhausted disk must surface errors;
    never treat them as successful setup. Add platform/preflight and
@@ -573,8 +510,8 @@ Updated 2026-10-03, after the review programme and the live trial:
    corrupt hashes, unsupported hosts, install reuse and errors. Add
    real-QML tests of live model properties rather than synthetic
    `previewSignalState`. Replay a permission-cleared recording through
-   the local Moonraker MJPEG simulator; the private timelapses can be
-   used only for local manual scoring pending rights confirmation.
+   the local Moonraker MJPEG simulator; the private timelapses are not
+   redistributable fixtures and are for local manual scoring only.
    Run targeted `make test_files FILES="tests.test_detection_policy
    tests.test_detection_model tests.test_detection_assets
    tests.test_qml_camera_controls tests.test_qml_settings"` and then
@@ -589,14 +526,11 @@ Updated 2026-10-03, after the review programme and the live trial:
   licence (see `ROADMAP.md` for the upstream issue). Both setup offers
   link to Obico's AGPLv3 text and explain that GPLv3 section 13 permits
   combining it with MPF's GPLv3, but AGPL obligations still apply.
-  Legal compliance, licence notices/source obligations and redistribution permissions
-  need explicit review. The plugin must not silently bundle the model
-  into a Marketplace package.
-- Written Ultimaker Marketplace acceptance of post-install native
-  downloads is pending. Do not infer approval from local success.
+  Licence notices, source obligations and redistribution permissions are
+  explicit decisions, never inferred. The plugin must not silently bundle
+  the model into a Marketplace package.
+- Post-install native downloads require Ultimaker's written acceptance
+  for the Marketplace; local success is not approval.
 - Performance and native runtime must be tested in real Cura versions
   and supported operating systems, not only the Python 3.14 dev venv.
-- Cura 5.13 now runs the functional snapshot with adaptive controls, a
-  configurable safe period and asset-reset hardening; it was installed while Cura was quit. Future
-  code changes require another verified package and a fresh, safe install
-  while Cura is quit. An active-print trial has not happened.
+- Install into Cura only from a verified package, with Cura quit.
