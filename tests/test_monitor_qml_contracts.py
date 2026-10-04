@@ -27,6 +27,50 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                 carried.append(path.name)
                 self.assertIn(right, text, path.name)
 
+    def test_failure_detection_has_independent_preferences_and_no_cancel(self):
+        section = harness.FAILURE_DETECTION_SECTION_QML
+        settings = (harness.PLUGINS / "settings/DetectionSettings.qml").read_text()
+        self.assertIn('title: "Failure Detection"', section)
+        self.assertIn('sectionId: "failureDetection"', section)
+        for property_name, setter in (("detectionEnabled", "setDetectionEnabled"),
+                                      ("detectionNotifyEnabled", "setDetectionNotifyEnabled"),
+                                      ("detectionPauseEnabled", "setDetectionPauseEnabled")):
+            self.assertIn("root.printerModel." + property_name, section)
+            self.assertIn("root.printerModel." + setter + "(checked)", section)
+        self.assertEqual(section.count("UM.CheckBox {"), 4)
+        self.assertEqual(section.count("onToggled:"), 4)
+        self.assertIn('text: "Enable"', section)
+        self.assertNotIn("Enable for this printer", section)
+        self.assertIn("readonly property bool controlsEnabled: root.detectionReady && root.printerModel.detectionEnabled", section)
+        self.assertEqual(section.count("enabled: root.controlsEnabled\n"), 8)
+        self.assertEqual(section.count("if (root.controlsEnabled)"), 5)
+        for token in ("detectionReady", "detectionCameraReady", "detectionWarningThreshold",
+                      "detectionFailureThreshold", "setDetectionThresholds(warning, failure)",
+                      "detectionSafeSeconds", "setDetectionSafeSeconds(",
+                      "objectName: \"detectionSafePeriodSlider\"", "to: 900", "stepSize: 10",
+                      "BedMeshRangeSlider {", "segmented: true"):
+            self.assertIn(token, section)
+        self.assertNotIn("onLowChanged: root.printerModel.setDetectionThresholds", section)
+        self.assertNotIn("onHighChanged: root.printerModel.setDetectionThresholds", section)
+        self.assertIn('text: "Acknowledge failure alert"', section)
+        self.assertIn("enabled: root.controlsEnabled && root.printerModel.detectionAlertPending", section)
+        self.assertIn("onClicked: root.printerModel.acknowledgeDetectionAlert()", section)
+        self.assertIn('text: "Re-arm automatic pause"', section)
+        self.assertIn("enabled: root.controlsEnabled && root.printerModel.detectionPauseRearmable", section)
+        self.assertIn("onClicked: root.printerModel.rearmDetectionPause()", section)
+        self.assertNotIn("detectionModelEvidence", section)
+        self.assertNotIn("Model evidence:", section)
+        for phrase in ("safePeriodSlider", "setDetectionSafeSeconds"):
+            self.assertIn(phrase, section)
+        for phrase in ("only an assistant, not a safety system",
+                       "not a calibrated probability",
+                       "never cancelled automatically"):
+            self.assertNotIn(phrase, section)
+            self.assertIn(phrase, settings)
+        self.assertNotIn("cancelPrint(", section)
+        self.assertIn('sectionHiddenMap["failureDetection"]', harness.DASHBOARD_QML)
+        self.assertIn('(root.printer.detectionGlobalEnabled || root.printer.detectionEnabled) && root.printer.sectionHiddenMap["failureDetection"]', harness.DASHBOARD_QML)
+
     def test_toolhead_control_surface(self):
         policy = (harness.PLUGINS / "ToolheadPolicy.py").read_text(encoding="utf-8")
         for token in ("G91", "G28", "M18", "jog_gate", "push_op", "JogOp",
@@ -133,15 +177,15 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(harness.re.findall(r'sectionId: "([^"]+)"', harness.DASHBOARD_QML + harness.MONITOR_QML + harness.PRINT_SECTION_QML + harness.SETUP_SECTION_QML + harness.TOOLHEAD_SECTION_QML + harness.MACROS_SECTION_QML + harness.PROFILES_SECTION_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML + harness.POWER_SECTION_QML + harness.SYSTEM_SECTION_QML + harness.SAVE_SECTION_QML + harness.FILE_MANAGER_SECTION_QML + harness.MESH_SECTION_QML + harness.TEMP_HISTORY_SECTION_QML + harness.FANS_INFO_SECTION_QML + harness.FILAMENT_SECTION_QML + harness.TEMPS_SECTION_QML + harness.SYSTEM_INFO_SECTION_QML + harness.MCUS_SECTION_QML + harness.JOB_SECTION_QML))
+        literals = set(harness.re.findall(r'sectionId: "([^"]+)"', harness.DASHBOARD_QML + harness.MONITOR_QML + harness.PRINT_SECTION_QML + harness.FAILURE_DETECTION_SECTION_QML + harness.SETUP_SECTION_QML + harness.TOOLHEAD_SECTION_QML + harness.MACROS_SECTION_QML + harness.PROFILES_SECTION_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML + harness.POWER_SECTION_QML + harness.SYSTEM_SECTION_QML + harness.SAVE_SECTION_QML + harness.FILE_MANAGER_SECTION_QML + harness.MESH_SECTION_QML + harness.TEMP_HISTORY_SECTION_QML + harness.FANS_INFO_SECTION_QML + harness.FILAMENT_SECTION_QML + harness.TEMPS_SECTION_QML + harness.SYSTEM_INFO_SECTION_QML + harness.MCUS_SECTION_QML + harness.JOB_SECTION_QML))
         self.assertEqual(literals, harness.SECTION_IDS - {"console"})
-        self.assertEqual(len(harness.SECTION_IDS), 22)
+        self.assertEqual(len(harness.SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', harness.CONSOLE_PANE_QML)
         # Header width must be owned by its container. Layout-rooted
         # sections use Layout.fillWidth; the two dynamic sections use an
         # explicit Item shell to avoid nested layout feedback. Their live
         # collapse/width/content transitions run in the real-engine suite.
-        for section_qml in (harness.PRINT_SECTION_QML, harness.SETUP_SECTION_QML, harness.TOOLHEAD_SECTION_QML,
+        for section_qml in (harness.PRINT_SECTION_QML, harness.FAILURE_DETECTION_SECTION_QML, harness.SETUP_SECTION_QML, harness.TOOLHEAD_SECTION_QML,
                             harness.MACROS_SECTION_QML, harness.PROFILES_SECTION_QML, harness.TUNING_SECTION_QML,
                             harness.FANS_SECTION_QML, harness.LEDS_SECTION_QML, harness.PWM_SECTION_QML,
                             harness.POWER_SECTION_QML, harness.SYSTEM_SECTION_QML, harness.SAVE_SECTION_QML,
@@ -404,7 +448,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # the CollapsibleSectionHeader type across all three panes. The
         # sections ride their components (4.3.0) — the expansion map is
         # read by every one of them.
-        self.assertIn("sectionExpandedMap", harness.PRINT_SECTION_QML + harness.SETUP_SECTION_QML + harness.TOOLHEAD_SECTION_QML + harness.MACROS_SECTION_QML + harness.PROFILES_SECTION_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML + harness.POWER_SECTION_QML + harness.SYSTEM_SECTION_QML + harness.SAVE_SECTION_QML + harness.FILE_MANAGER_SECTION_QML)
+        self.assertIn('sectionExpandedMap["failureDetection"]', harness.FAILURE_DETECTION_SECTION_QML)
+        self.assertIn("sectionExpandedMap", harness.PRINT_SECTION_QML + harness.FAILURE_DETECTION_SECTION_QML + harness.SETUP_SECTION_QML + harness.TOOLHEAD_SECTION_QML + harness.MACROS_SECTION_QML + harness.PROFILES_SECTION_QML + harness.TUNING_SECTION_QML + harness.FANS_SECTION_QML + harness.LEDS_SECTION_QML + harness.PWM_SECTION_QML + harness.POWER_SECTION_QML + harness.SYSTEM_SECTION_QML + harness.SAVE_SECTION_QML + harness.FILE_MANAGER_SECTION_QML)
         self.assertIn("setSectionExpanded", harness.MONITOR_MODEL)
         self.assertIn('sectionId: "toolhead"', harness.TOOLHEAD_SECTION_QML)
         # Direct instantiations must ASSIGN the type's properties: the old
@@ -462,7 +507,12 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # pane — a section nested inside another's instantiation is
         # valid QML and loads, but renders inside the wrong Column.
         self.assertIn("                        }\n                        SaveSection {", harness.DASHBOARD_QML)
+        self.assertLess(harness.DASHBOARD_QML.index("MacrosSection {"),
+                        harness.DASHBOARD_QML.index("FailureDetectionSection {"))
+        self.assertLess(harness.DASHBOARD_QML.index("FailureDetectionSection {"),
+                        harness.DASHBOARD_QML.index("ProfilesSection {"))
         self.assertEqual(harness.PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(harness.FAILURE_DETECTION_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(harness.SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(harness.TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(harness.MACROS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -486,6 +536,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertEqual(harness.MONITOR_QML.count("CollapsibleSectionHeader"), 0)
         self.assertEqual(harness.DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + harness.PRINT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + harness.FAILURE_DETECTION_SECTION_QML.count("CollapsibleSectionHeader")
                          + harness.SETUP_SECTION_QML.count("CollapsibleSectionHeader")
                          + harness.TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
                          + harness.MACROS_SECTION_QML.count("CollapsibleSectionHeader")
@@ -506,9 +557,10 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                          + harness.SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + harness.MCUS_SECTION_QML.count("CollapsibleSectionHeader")
                          + harness.JOB_SECTION_QML.count("CollapsibleSectionHeader")
-                         + harness.MONITOR_QML.count("CollapsibleSectionHeader"), 21)
+                         + harness.MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(harness.DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(harness.PRINT_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(harness.FAILURE_DETECTION_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(harness.SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(harness.TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(harness.MACROS_SECTION_QML.count('sectionIcon: "'), 1)
@@ -532,6 +584,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertEqual(harness.MONITOR_QML.count('sectionIcon: "'), 0)
         self.assertEqual(harness.DASHBOARD_QML.count('sectionIcon: "')
                          + harness.PRINT_SECTION_QML.count('sectionIcon: "')
+                         + harness.FAILURE_DETECTION_SECTION_QML.count('sectionIcon: "')
                          + harness.SETUP_SECTION_QML.count('sectionIcon: "')
                          + harness.TOOLHEAD_SECTION_QML.count('sectionIcon: "')
                          + harness.MACROS_SECTION_QML.count('sectionIcon: "')
@@ -550,7 +603,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                          + harness.SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
                          + harness.MCUS_SECTION_QML.count('sectionIcon: "')
                          + harness.JOB_SECTION_QML.count('sectionIcon: "')
-                         + harness.MONITOR_QML.count('sectionIcon: "'), 18)
+                         + harness.MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
         # sectionIcon: count is unchanged.
@@ -1077,6 +1130,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('text: "Current Z offset"', harness.PRINT_SECTION_QML)
         self.assertIn('"Current " + root.printerModel.zOffsetText', harness.ZOFFSET_CONTROLS_QML)
         self.assertIn("adjustZOffset", harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn("applyZOffset()", harness.ZOFFSET_CONTROLS_QML)
+        self.assertIn("canApplyZOffset", harness.ZOFFSET_CONTROLS_QML)
 
     def test_z_offset_buttons_are_opposites_with_equal_click_zones(self):
         self.assertIn("id: zOffsetGrid", harness.ZOFFSET_CONTROLS_QML)
@@ -1085,7 +1140,8 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # A two-column grid (up left, down right): both Repeater
         # delegates fill their cell equally, so click zones stay
         # matched and the labels cannot elide at narrow pane widths.
-        grid = harness.ZOFFSET_CONTROLS_QML[harness.ZOFFSET_CONTROLS_QML.index("id: zOffsetGrid"):harness.ZOFFSET_CONTROLS_QML.index('text: "Clear Z offset"')]
+        grid_start = harness.ZOFFSET_CONTROLS_QML.index("id: zOffsetGrid")
+        grid = harness.ZOFFSET_CONTROLS_QML[grid_start:harness.ZOFFSET_CONTROLS_QML.index("    }\n    RowLayout {", grid_start)]
         # Up row first, down row second, each four-across with equal
         # layout cells; the up model must precede the down model.
         self.assertLess(grid.index('text: "↑ "'), grid.index('text: "↓ "'))

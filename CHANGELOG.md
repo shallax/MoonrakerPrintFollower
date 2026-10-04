@@ -2,9 +2,99 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 4.6.2
+## 5.0.0
 
-Candidate for RC1; not released.
+Local failure detection is optional, runs on the Cura computer and does not
+upload camera frames to a cloud service. It watches only while Cura is open,
+the Monitor is active and the selected webcam is streaming.
+
+- Offer one-time consent-based setup after What's New on eligible hosts, with
+  verified downloads of Obico's model and the pinned CPU inference runtime,
+  cancellable progress, and a real inference benchmark. Setup and a global
+  switch also live in the new Detection settings tab. No download occurs
+  without consent; Diagnostics can reset the offer or remove shared assets.
+- Poll model/runtime and file-manager download progress every 250 ms. Coalesce
+  worker progress and bound each GUI delivery batch so fast downloads cannot
+  flood the interface. File progress updates avoid rebuilding file rows.
+- Restrict stale temporary-folder cleanup to folders owned by the plugin,
+  preserving other live `mpf-*` folders such as detection evidence fixtures.
+- Narrow the detection scale and let a leftward drag reduce it to a line or
+  a score pill below the analysis age. Drag right to expand the line; click
+  the pill to restore the full scale. Modes change during the drag, before
+  releasing the mouse.
+- Show the selected camera's raw baseline. Reset training data for that camera
+  from the Webcam pane, or for every camera on the printer from Detection
+  settings, with confirmation. The Webcam button yields when its title row is
+  too narrow. Resets preserve zones, sensitivity and bounds.
+- New cameras and reset cameras explicitly learn a baseline from six analysed
+  frames, without displaying a green score or triggering alerts while learning.
+  Afterwards the baseline adapts slowly so a sudden failure is not absorbed.
+- Escalating from warning to failure bypasses the acknowledgement cooldown,
+  allowing a fresh failure notification and opted-in automatic pause immediately.
+- Removing local detection assets also clears saved regions for every printer
+  and closes any active region editor.
+- Sample the already-decoded selected webcam feed on a bounded worker.
+  A fresh active-print signal colours the camera frame green, amber or red
+  with a left-hand scale; missing, idle and stale states remain neutral.
+  The first-analysis wait shows a grey frame and "Wait" without a marker.
+  A stale analysis stays visible with its reason instead of disappearing,
+  and the displayed score stays inside its own band while the safe period
+  suppresses warnings. The 0.00–1.00 adaptive signal is not a calibrated
+  probability.
+- Alert by name of printer, with an Acknowledge button, and repeat the
+  alert on a bounded schedule while it stands unacknowledged.
+- Keep the triggering frame and a per-print score timeline in a bounded
+  evidence folder under the detection storage, opened from Diagnostics and
+  removed with the downloads. Diagnostics also reports the measured
+  inference cost of this computer.
+- Configure each printer independently with sensitivity, advanced adaptive
+  bounds, a 0–15-minute safe period, and separate notification/pause opt-ins.
+- Draw up to four monitored polygons per camera. Pixels outside their union
+  are excluded, then the image is cropped to the smallest rectangle enclosing
+  all regions before resizing for analysis. Detection boxes map back to the
+  original camera image. Cropped regions start a fresh per-camera baseline.
+  Rectangles have draggable vertex handles,
+  midpoint insertion, vertex/shape deletion and Undo. Save/Cancel and Escape
+  make editing explicit. Camera loss or disabled feeds suspend detection and
+  camera-dependent controls until fresh analysis returns.
+- Restore each printer/camera's saved regions when switching cameras, and hide
+  their webcam outlines while detection is disabled for the printer. Camera
+  refreshes and foregrounding Cura preserve accumulated detection state;
+  stale analysis still expires normally.
+  Show sampled suspicious-region boxes with an analysis-age label; overlays
+  follow camera rotation, mirroring, zoom and pan.
+- Mute alerts and automatic pause for the rest of the current print while
+  retaining analysis and boxes. Mute survives restarts for the same attested
+  Moonraker run and clears for the next print.
+- Persist the automatic-pause guard before sending its uniquely identified
+  command. History is periodically re-attested and fresh proof is required
+  before a new pause; same-file restarts cannot inherit the previous run.
+  Uncertain outcomes remain guarded across restarts. Explicit re-arm
+  requires a successful save and fresh analysis; late results cannot re-use it.
+- Harden cancelled downloads, native inference retirement, disabled startup,
+  deferred Windows runtime deletion and confined evidence cleanup. Evidence
+  saves the exact analysed image on a bounded background queue. Model
+  setup cancellation interrupts blocked HTTP headers, chunk framing and TLS
+  negotiation on Windows as well as Unix, while slow healthy reads resume.
+- Show the estimated time to reach the point you pick in the Print Follower
+  popover while it is detached — the layer you seek to and the position
+  inside it, read exactly as a scheduled pause is, and an em dash when the
+  index has no timing for it. The layer's own tracks now sit together as
+  one control.
+- Let the Information pane's mini Bed Mesh, Exclude Object Picker and Print
+  Follower beds use the available width while retaining rectangular bed
+  proportions. The Print Follower antialiasing setting also smooths the
+  grid in its own bed and the Exclude Object Picker.
+- Apply a nonzero G-code Z offset through Klipper's generic probe or
+  endstop command when its reference is unambiguous. Apply stages the
+  configuration change; the separate Save configuration action persists it.
+- Add visible scrollbars to the settings tabs, platform and asset integrity
+  checks, and pure-policy, model, real-QML and harness coverage.
+
+Missed failures and false alarms remain possible; automatic pause is opt-in
+and cannot be treated as a guaranteed safeguard.
+
+## 4.6.2
 
 The implementation is decomposed into narrower owners with explicit inputs —
 the Monitor's renderer lifecycle and publication transaction, the file

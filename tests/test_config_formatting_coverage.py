@@ -3007,6 +3007,35 @@ if QT_AVAILABLE:
             self.assertEqual(self.data.tracked[-1][:2], ("Pause", {"paused"}))
             self.assertTrue(self.data.active_busy)
 
+        def test_late_reply_after_timeout_cannot_corrupt_a_new_dispatch(self):
+            for error in (None, "lost reply"):
+                self.commands.reset()
+                self.commands.send("Pause", "printer/print/pause")
+                old = self.data.requests[-1].callback
+                self.commands._command_changed({"name": "Pause", "outcome": "timed_out", "terminal": True})
+                self.commands.send("Resume", "printer/print/resume")
+                status = self.commands.status
+                old({"result": {}} if error is None else None, error)
+                self.assertTrue(self.commands.busy)
+                self.assertEqual(self.commands._tracked, "Resume")
+                self.assertEqual(self.commands.status, status)
+
+        def test_terminal_refusal_cannot_clear_a_command_dispatched_reentrantly(self):
+            self.commands.send("Pause", "printer/print/pause")
+            old = self.data.requests[-1].callback
+            self.commands.request("Resume", "printer/print/resume")
+            def fail(name, detail, command_id=None):
+                self.commands._command_changed({"name": name, "commandId": command_id,
+                    "outcome": "failed", "detail": detail, "terminal": True})
+            self.data.fail_command = fail
+            old({"message": "refused"}, "refused")
+            self.assertTrue(self.commands.busy)
+            self.assertEqual(self.commands._tracked, "Resume")
+            self.data.requests[-1].callback({"result": {}}, None)
+            self.commands._command_changed({"name": "Resume", "commandId": self.commands._dispatch_id,
+                "outcome": "confirmed", "terminal": True})
+            self.assertFalse(self.commands.busy)
+
         def test_a_server_refusal_reads_the_servers_own_words(self):
             self.commands.send("Extrude", "printer/gcode/script")
             self.data.requests[-1].callback({"message": "bad"}, "Extrude below minimum temp")
@@ -3226,13 +3255,13 @@ if QT_AVAILABLE:
         def set_commands_busy(self, busy):
             self.active_busy = busy
 
-        def track_command(self, name, expected_states=(), *, timeout_s=10.0):
+        def track_command(self, name, expected_states=(), *, timeout_s=10.0, command_id=None):
             self.tracked.append((name, set(expected_states), timeout_s))
 
-        def accept_command(self, name):
+        def accept_command(self, name, command_id=None):
             self.accepts.append(name)
 
-        def fail_command(self, name, detail):
+        def fail_command(self, name, detail, command_id=None):
             self.fails.append((name, detail))
 
         def later(self, delay_ms, callback):
@@ -3285,13 +3314,13 @@ if QT_AVAILABLE:
             self.failed = []
             self.guards = []
 
-        def track_command(self, name, expected_states=(), *, timeout_s=10.0):
+        def track_command(self, name, expected_states=(), *, timeout_s=10.0, command_id=None):
             self.tracked.append((name, set(expected_states), timeout_s))
 
-        def accept_command(self, name):
+        def accept_command(self, name, command_id=None):
             self.accepted.append(name)
 
-        def fail_command(self, name, detail):
+        def fail_command(self, name, detail, command_id=None):
             self.failed.append((name, detail))
 
         def set_pause_guard(self, active):

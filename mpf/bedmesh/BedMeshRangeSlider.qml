@@ -34,6 +34,7 @@ Item {
     property real handleHit: 10 * screenScaleFactor  // the forgiving grab zone
     property real grooveHeight: 8 * screenScaleFactor
     property real minWindowFraction: 0.005  // the narrowest selectable window
+    property bool segmented: false
     // NOT named windowChanged: Qt 6's Item owns that notify signal.
     signal windowAdjusted(real low, real high)
 
@@ -100,6 +101,7 @@ Item {
 
     Rectangle {
         // The full-scale rainbow groove.
+        visible: !root.segmented
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
         anchors.right: parent.right
@@ -130,11 +132,38 @@ Item {
         }
     }
 
+    Item {
+        visible: root.segmented
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: root.grooveHeight
+
+        Rectangle {
+            width: root.centre(root._low)
+            height: parent.height
+            color: MoonrakerTheme.successGreen
+        }
+        Rectangle {
+            x: root.centre(root._low)
+            width: Math.max(0, root.centre(root._high) - x)
+            height: parent.height
+            color: MoonrakerTheme.warningOrange
+        }
+        Rectangle {
+            x: root.centre(root._high)
+            width: Math.max(0, parent.width - x)
+            height: parent.height
+            color: MoonrakerTheme.dangerRed
+        }
+    }
+
     // The bar DESATURATES outside the window (a request):
     // a translucent grey wash lets the rainbow show through washed
     // out, so the full scale stays readable while only the section
     // between the handles reads at full colour.
     Rectangle {
+        visible: !root.segmented
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
         width: Math.max(0, root.centre(root._low) - root.handleWidth / 2)
@@ -144,6 +173,7 @@ Item {
     }
     Rectangle {
         id: highSideGrey
+        visible: !root.segmented
         anchors.verticalCenter: parent.verticalCenter
         x: root.centre(root._high) + root.handleWidth / 2
         width: Math.max(0, root.width - x)

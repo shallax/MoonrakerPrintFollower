@@ -7,12 +7,14 @@ import "../widgets"
 // The Plate section (4.6.0): the mini map out of the monitor as one
 // property-driven component, mirroring the bed-mesh section. The mini
 // is the glance — outlines plus the toolhead dot only, never the
-// layer path (90 px of 50 outlines is already mush); a click opens
+// layer path (dense outlines need their own full view); a click opens
 // the pop-over, where the gesture lives.
 ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
+    property real miniSlotWidth: 90 * screenScaleFactor
+    readonly property real bedDepthRatio: printerModel != null && printerModel.bedMeshMachineWidth > 0 && printerModel.bedMeshMachineDepth > 0 ? printerModel.bedMeshMachineDepth / printerModel.bedMeshMachineWidth : 1.0
     signal popOverToggleRequested(string name)
 
     CollapsibleSectionHeader {
@@ -32,13 +34,13 @@ ColumnLayout {
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
-        // NO-REFLOW: the 90 px slot is always reserved; the map fades
+        // NO-REFLOW: the bed-shaped slot is always reserved; the map fades
         // in and out and the placeholder overlays the same slot, so
         // the plate arriving (connect, print start) never shifts the
         // section.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 90 * screenScaleFactor
+            Layout.preferredHeight: Math.max(90 * screenScaleFactor, root.miniSlotWidth * root.bedDepthRatio)
 
             PlateCanvas {
                 id: plateMini

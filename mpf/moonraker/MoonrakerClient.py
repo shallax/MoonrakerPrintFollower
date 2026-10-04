@@ -658,14 +658,14 @@ class MoonrakerClient(QObject):
         self._session.connected = False
         self.connectionChanged.emit(False, f"{reason}; retrying in {retry_interval / 1000:g}s")
 
-    def track_command(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0) -> None:
+    def track_command(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0, command_id=None) -> None:
         command = self._session.commands.issue(name, expected_states, timeout_s=timeout_s,
-                                               revision=self._session.snapshot.revision)
+                                               revision=self._session.snapshot.revision, command_id=command_id)
         self._command_timer.start()
         self.commandChanged.emit(command.as_dict())
 
-    def accept_command(self, name: str) -> None:
-        command = self._session.commands.accepted(name)
+    def accept_command(self, name: str, command_id=None) -> None:
+        command = self._session.commands.accepted(name, command_id)
         if command is not None and not command.terminal:
             # The ack can land AFTER the confirming state frame was
             # already merged: Klipper pushes the state once and never
@@ -684,8 +684,8 @@ class MoonrakerClient(QObject):
             self.commandChanged.emit(command.as_dict())
         self.force_refresh()
 
-    def fail_command(self, name: str, detail: str) -> None:
-        command = self._session.commands.failed(name, detail)
+    def fail_command(self, name: str, detail: str, command_id=None) -> None:
+        command = self._session.commands.failed(name, detail, command_id)
         if command is not None:
             self.commandChanged.emit(command.as_dict())
 

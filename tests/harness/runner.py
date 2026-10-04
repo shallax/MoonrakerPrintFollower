@@ -2350,6 +2350,61 @@ FIRST_INSTALL_MARKER = "harness-firstinstall"
 # unit dir — a container path, handed in by ui_test.sh).
 BOOT1_DOCUMENT = os.environ.get("HARNESS_BOOT1_DOC", "/tmp/mpf/boot1-document.json")
 
+FIRST_INSTALL_OFFER_PROBE = """
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtQuick import QQuickWindow
+from UM.Application import Application
+# The onboarding popups are not in the editor window's object tree:
+# under the WM-less Xvfb a Popup renders in its own QQuickWindow (the
+# window union the click verbs already walk). Bound the depth: this
+# probe polls every two seconds, and the click path's depth-96 walk is
+# priced for a deliberate click, not a poll.
+names = ("whatsNewCloseButton", "detectionOfferDismiss")
+shown = {name: False for name in names}
+diag = {"named": [], "windows": 0}
+# The witness is an ITEM the popup owns, never the popup root: a Popup
+# is a QObject whose content reparents into the window overlay, so the
+# root's objectName ("detectionFirstRunOffer") is invisible to every
+# visual-tree walk this harness has.
+for window in QGuiApplication.topLevelWindows():
+    if not isinstance(window, QQuickWindow):
+        continue
+    try:
+        items = _walk(window.contentItem(), depth=48)
+    except AttributeError:
+        continue
+    diag["windows"] += 1
+    for item in items:
+        try:
+            name = item.objectName()
+        except Exception:
+            continue
+        if name in shown:
+            visible = _effectively_visible(item)
+            diag["named"].append((name, visible))
+            if visible:
+                shown[name] = True
+extension = next((ext for ext in Application.getInstance().getExtensions()
+                  if "MoonrakerPrintFollower" in type(ext).__name__ and
+                  getattr(ext, "_runtime", None) is not None), None)
+service = extension._runtime.detection if extension is not None else None
+overlay = getattr(extension, "whats_new", None) if extension is not None else None
+overlay = overlay() if callable(overlay) else None
+wiring = overlay.offer_state() if overlay is not None and hasattr(overlay, "offer_state") else None
+result = {"whats": shown["whatsNewCloseButton"],
+          "offer": shown["detectionOfferDismiss"],
+          "service": service is not None,
+          "eligible": bool(service is not None and not service.host_error),
+          "should_offer": bool(service is not None and service.should_offer),
+          "ready": bool(service is not None and service.ready),
+          "wiring": wiring,
+          "diag": diag}
+"""
+
+
+def first_install_offer_state():
+    return exec_rpc(FIRST_INSTALL_OFFER_PROBE, raise_on_error=True)
+
 
 
 
@@ -2462,6 +2517,38 @@ def first_install1():
                    timeout=60)
         steps.append(("03-configure", "the printer is configured through the settings save the dialog uses",
                       "the save was accepted", bool(save.get("ok")), shot("03-configure")))
+        # The new onboarding sequence is What's New, then the optional
+        # local detection offer. Decline through the real popup button:
+        # this boot never consents to a model/runtime download.
+        whats = wait_for(lambda: first_install_offer_state().get("whats"), 90.0)
+        whats_probe = first_install_offer_state()
+        steps.append(("03a-whats-new", "What's New precedes the detection offer",
+                      "the first-boot What's New close button is visible [probe=%s]" % whats_probe,
+                      bool(whats), shot("03a-whats-new")))
+        if whats:
+            dismissed = rpc({"id": 1, "cmd": "click_item",
+                             "objectName": "whatsNewCloseButton"})
+        else:
+            dismissed = {"ok": False}
+        state = first_install_offer_state()
+        offered = (wait_for(lambda: first_install_offer_state().get("offer"), 90.0)
+                   if state.get("eligible") else not state.get("offer"))
+        steps.append(("03b-detection-offer", "eligible first boots offer local detection after What's New",
+                      "the offer appears only on eligible hosts, after dismissal "
+                      "[state=%s dismissed=%s]" % (state, dismissed),
+                      bool(dismissed.get("ok")) and bool(state.get("service")) and bool(offered),
+                      shot("03b-detection-offer")))
+        if state.get("eligible") and offered:
+            declined = rpc({"id": 1, "cmd": "click_item",
+                            "objectName": "detectionOfferDismiss"})
+        else:
+            declined = {"ok": not state.get("eligible")}
+        final_offer = first_install_offer_state()
+        steps.append(("03c-declined", "declining the offer saves the choice without downloading assets",
+                      "offer closed, no model ready, no repeat offer",
+                      bool(declined.get("ok")) and not final_offer.get("offer")
+                      and not final_offer.get("should_offer") and not final_offer.get("ready"),
+                      shot("03c-declined")))
         # The save read back from the file, not from the plugin's
         # memory: what boot 2 gets is what is on disk.
         after = document_of(plugin_document())
@@ -2553,6 +2640,13 @@ def first_install2():
         steps.append(("03-untouched", "the second boot leaves the settings document alone",
                       "the document is identical to the one the first boot left",
                       untouched, shot("03-untouched")))
+        offer = first_install_offer_state()
+        steps.append(("04-no-repeat-offer", "the declined detection offer does not return on boot two",
+                      "no detection popup, no model downloaded and the offer remains dismissed "
+                      "[probe=%s]" % offer,
+                      bool(offer.get("service")) and not offer.get("offer")
+                      and not offer.get("should_offer") and not offer.get("ready"),
+                      shot("04-no-repeat-offer")))
     finally:
         stop_recorder(video)
     title = "First install — boot 2: the config survives the second boot"

@@ -1,6 +1,251 @@
 """Executable qml camera controls contracts."""
 from tests import qml_engine_support as harness
 
+
+class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
+    def test_camera_training_reset_hides_before_it_overflows(self):
+        wide, _window, model, _image, _frame = self._fps_pane(700, 700)
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertTrue(self.find(wide, "resetCameraTrainingButton").property("visible"))
+        narrow, _window, model, _image, _frame = self._fps_pane(360, 700)
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertFalse(self.find(narrow, "resetCameraTrainingButton").property("visible"))
+
+    def test_camera_training_reset_requires_confirmation_and_detection_enabled(self):
+        from PyQt6.QtCore import QObject, QMetaObject
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        button = self.find(pane, "resetCameraTrainingButton")
+        self.assertFalse(button.property("visible"))
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertTrue(button.property("visible"))
+        QMetaObject.invokeMethod(button, "clicked")
+        self.pump()
+        dialog = pane.findChild(QObject, "resetCameraTrainingDialog")
+        self.assertIn("webcam", dialog.property("title"))
+        self.assertEqual(model.training_resets, 0)
+        QMetaObject.invokeMethod(dialog, "reject")
+        self.assertEqual(model.training_resets, 0)
+        QMetaObject.invokeMethod(button, "clicked")
+        QMetaObject.invokeMethod(dialog, "accept")
+        self.assertEqual(model.training_resets, 1)
+
+    def test_signal_drag_collapses_to_line_then_pill_and_click_restores_bar(self):
+        from PyQt6.QtCore import QPoint, QPointF, QEvent
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtTest import QTest
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        model.set_detection("warning", 54)
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        drag = self.find(pane, "failureSignalDrag")
+        bar = drag.parentItem()
+        full_width = bar.width()
+        self.assertLess(full_width, 52)
+
+        def swipe(dx, via=None):
+            initial_mode = view.property("signalBarMode")
+            start = drag.mapToItem(window.contentItem(), QPointF(drag.width()/2, drag.height()/2)).toPoint()
+            end = start + QPoint(dx, 0)
+            QTest.mousePress(window, harness.Qt.MouseButton.LeftButton,
+                             harness.Qt.KeyboardModifier.NoModifier, start)
+            for distance in ([via, dx] if via is not None else [dx]):
+                point = start + QPoint(distance, 0)
+                event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(window.mapToGlobal(point)),
+                                   harness.Qt.MouseButton.NoButton, harness.Qt.MouseButton.LeftButton,
+                                   harness.Qt.KeyboardModifier.NoModifier)
+                self.app.sendEvent(window, event)
+                self.pump()
+                steps = 2 if distance < -55 else 1 if distance < -12 else -1 if distance > 12 else 0
+                self.assertEqual(view.property("signalBarMode"), max(0, min(2, initial_mode + steps)),
+                                 "The bar must change mode while the mouse is still held")
+            QTest.mouseRelease(window, harness.Qt.MouseButton.LeftButton,
+                               harness.Qt.KeyboardModifier.NoModifier, end)
+            self.pump()
+
+        swipe(-20)
+        self.assertEqual(view.property("signalBarMode"), 1)
+        self.assertLess(bar.width(), full_width)
+        self.assertTrue(self.find(pane, "failureSignalMarker").property("visible"))
+        swipe(20)
+        self.assertEqual(view.property("signalBarMode"), 0)
+        swipe(-20)
+        swipe(-20)
+        self.assertEqual(view.property("signalBarMode"), 2)
+        self.assertFalse(bar.property("visible"))
+        pill = self.find(pane, "failureSignalPill")
+        self.assertTrue(pill.property("visible"))
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"), "0.54")
+        model.set_detection("failure", 88)
+        self.pump()
+        self.assertEqual(view.property("signalBarMode"), 2)
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"), "0.88")
+        point = pill.mapToItem(window.contentItem(), QPointF(pill.width()/2, pill.height()/2)).toPoint()
+        QTest.mouseClick(window, harness.Qt.MouseButton.LeftButton,
+                         harness.Qt.KeyboardModifier.NoModifier, point)
+        self.pump()
+        self.assertEqual(view.property("signalBarMode"), 0)
+        self.assertTrue(bar.property("visible"))
+        self.assertAlmostEqual(bar.width(), full_width)
+        swipe(0, via=20)
+        swipe(0, via=-20)
+        swipe(-65, via=-20)
+        self.assertEqual(view.property("signalBarMode"), 2)
+
+    def test_waiting_for_first_analysis_has_a_grey_frame_and_wait_without_marker(self):
+        pane, _window, model, _image, frame = self._fps_pane(700, 700)
+        model.set_detection("waiting")
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        border = self.find(pane, "failureSignalFrame")
+        marker = self.find(pane, "failureSignalMarker")
+        bar = next(item for item in frame.findChildren(harness.QQuickItem)
+                   if item.metaObject().className().startswith("FailureSignalBar_"))
+        self.assertFalse(view.property("signalLive"))
+        self.assertTrue(view.property("signalWaiting"))
+        grey = view.property("signalColor")
+        self.assertEqual((grey.red(), grey.green(), grey.blue()),
+                         (grey.red(), grey.red(), grey.red()))
+        self.assertTrue(border.property("visible"))
+        self.assertTrue(bar.property("visible"))
+        self.assertFalse(marker.property("visible"))
+        self.assertIn("Wait", [item.property("text") for item in
+                                bar.findChildren(harness.QQuickItem)])
+        model.set_detection("learning")
+        self.pump()
+        self.assertFalse(view.property("signalLive"))
+        self.assertTrue(view.property("signalWaiting"))
+        self.assertEqual(view.property("signalColor"), grey)
+        self.assertFalse(marker.property("visible"))
+        self.assertIn("Learn", [item.property("text") for item in bar.findChildren(harness.QQuickItem)])
+        model.set_detection("normal", 12)
+        self.pump()
+        self.assertTrue(view.property("signalLive"))
+        self.assertNotEqual(view.property("signalColor"), grey)
+        self.assertTrue(marker.property("visible"))
+        self.assertIn("0.12", [item.property("text") for item in
+                                bar.findChildren(harness.QQuickItem)])
+        model.set_detection("stale")
+        self.pump()
+        # Stale is PRESENT and neutral: a grey frame, the bar with its
+        # own word, and no score marker — never a disappearance that
+        # reads as "no detection at all" (nor a green one).
+        self.assertFalse(view.property("signalLive"))
+        self.assertFalse(view.property("signalWaiting"))
+        self.assertTrue(view.property("signalStale"))
+        grey = view.property("signalColor")
+        self.assertEqual((grey.red(), grey.green(), grey.blue()),
+                         (grey.red(), grey.red(), grey.red()))
+        self.assertTrue(border.property("visible"))
+        self.assertTrue(bar.property("visible"))
+        self.assertFalse(marker.property("visible"))
+        self.assertIn("Stale", [item.property("text") for item in
+                                bar.findChildren(harness.QQuickItem)])
+
+    def test_compact_stale_state_names_the_reason_in_the_signal_pill(self):
+        pane, _window, model, _image, _frame = self._fps_pane(180, 180)
+        model.set_detection("stale")
+        self.pump()
+        self.assertTrue(self.find(pane, "failureSignalFrame").property("visible"))
+        pill = self.find(pane, "failureSignalPill")
+        self.assertTrue(pill.property("visible"))
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"),
+                         "Camera analysis is stale")
+
+    def test_compact_waiting_state_uses_wait_in_the_signal_pill(self):
+        pane, _window, model, _image, _frame = self._fps_pane(180, 180)
+        model.set_detection("waiting")
+        self.pump()
+        self.assertTrue(self.find(pane, "failureSignalFrame").property("visible"))
+        self.assertTrue(self.find(pane, "failureSignalPill").property("visible"))
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"), "Wait")
+
+    def test_idle_camera_does_not_add_a_failure_detection_status_row(self):
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        model.set_detection("idle")
+        self.pump()
+        labels = [item.property("text") for item in pane.findChildren(harness.QQuickItem)]
+        self.assertFalse(any(isinstance(text, str) and
+                             text.startswith("Failure detection — ") for text in labels))
+
+    def test_disabled_stream_notice_wraps_inside_a_narrow_pane(self):
+        pane, _window, model, _image, _frame = self._fps_pane(180, 400)
+        model.set_stream_enabled(False)
+        pane.setProperty("configured", False)
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        notice = self.find(pane, "cameraStreamDisabledNotice")
+        self.assertTrue(notice.property("visible"))
+        self.assertGreater(notice.property("lineCount"), 1)
+        self.assertGreaterEqual(notice.x(), 0)
+        self.assertLessEqual(notice.x() + notice.width(), view.width())
+
+    def test_quarter_signal_marks_leave_a_center_gap(self):
+        pane, _window, model, _image, frame = self._fps_pane(700, 700)
+        model.set_detection("warning", 54)
+        self.pump()
+        bar = next(item for item in frame.findChildren(harness.QQuickItem)
+                   if item.metaObject().className().startswith("FailureSignalBar_"))
+        track = next(item for item in bar.childItems()
+                     if item.objectName() == "failureSignalTrack")
+        ticks = sorted((item for item in track.childItems()
+                        if item.property("major") is not None), key=lambda item: item.y())
+        self.assertEqual(len(ticks), 5)
+        for index, tick in enumerate(ticks):
+            left = tick.childItems()[0]
+            if index % 2 == 0:
+                self.assertAlmostEqual(left.width(), tick.width(), delta=0.1)
+            else:
+                right = tick.childItems()[1]
+                self.assertAlmostEqual(left.width(), tick.width() / 4, delta=0.1)
+                self.assertAlmostEqual(right.width(), tick.width() / 4, delta=0.1)
+                self.assertGreater(right.x() - left.width(), 0)
+
+    def test_live_signal_frames_the_actual_camera_without_shrinking_it(self):
+        pane, _window, model, _image, frame = self._fps_pane(700, 700)
+        width = frame.width()
+        model.set_detection("warning", 54)
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        self.assertTrue(view.property("signalLive"))
+        self.assertEqual(frame.width(), width)
+        bars = [item for item in frame.findChildren(harness.QQuickItem)
+                if item.metaObject().className().startswith("FailureSignalBar_")]
+        self.assertEqual(len(bars), 1)
+        self.assertTrue(bars[0].property("visible"))
+        self.assertEqual(bars[0].property("score"), 54)
+        self.assertIn("0.54", [item.property("text") for item in
+                                bars[0].findChildren(harness.QQuickItem)])
+        model.set_detection("stale")
+        self.pump()
+        self.assertFalse(view.property("signalLive"))
+        # Stale keeps the bar up (neutral, no marker) and still never
+        # resizes the camera frame it frames.
+        self.assertTrue(view.property("signalStale"))
+        self.assertTrue(bars[0].property("visible"))
+        markers = [item for item in bars[0].findChildren(harness.QQuickItem)
+                   if item.objectName() == "failureSignalMarker"]
+        self.assertEqual(len(markers), 1)
+        self.assertFalse(markers[0].property("visible"))
+        self.assertEqual(frame.width(), width)
+
+    def test_narrow_camera_uses_an_in_image_signal_pill(self):
+        pane, _window, model, _image, frame = self._fps_pane(180, 180)
+        model.set_detection("failure", 88)
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        self.assertTrue(view.property("signalCompact"))
+        self.assertTrue(view.property("signalLive"))
+        pill = self.find(pane, "failureSignalPill")
+        label = self.find(pane, "failureSignalPillText")
+        self.assertTrue(pill.property("visible"))
+        self.assertEqual(label.property("text"), "0.88 · Possible failure")
+        self.assertAlmostEqual(pill.y() + pill.height() / 2, frame.height() / 2, delta=0.5)
+        self.assertAlmostEqual(label.y() + label.height() / 2, pill.height() / 2, delta=0.5)
+
+
 class CameraFpsControlTests(harness.CameraFpsControlTests):
 
     def _view(self, pane):

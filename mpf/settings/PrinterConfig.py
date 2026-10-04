@@ -182,6 +182,15 @@ class PrinterConfig:
     camera_rotation: int = 0
     camera_mirror: bool = False
     camera_selected: str = ""
+    detection_sensitivity: float = 1.0
+    detection_regions: dict = field(default_factory=dict)
+    detection_show_boxes: bool = True
+    detection_enabled: bool = False
+    detection_warning_threshold: int = 38
+    detection_failure_threshold: int = 78
+    detection_safe_seconds: int = 300
+    detection_notify_enabled: bool = False
+    detection_pause_enabled: bool = False
     # The webcam's decode rate (FPS): the user's own throttle for the
     # monitor page's idle load, persisted per machine like the other
     # camera settings.
@@ -259,6 +268,35 @@ class PrinterConfig:
             fps = defaults.camera_fps
         data["camera_fps"] = max(CAMERA_FPS_MIN, min(CAMERA_FPS_MAX, fps))
 
+        from ..geometry.DetectionRegions import persisted_regions
+        data["detection_regions"] = persisted_regions(data["detection_regions"])
+        sensitivity = data["detection_sensitivity"]
+        if type(sensitivity) not in (int, float) or not .8 <= sensitivity <= 1.2 or not isfinite(sensitivity):
+            data["detection_sensitivity"] = 1.0
+        if type(data["detection_show_boxes"]) is not bool:
+            data["detection_show_boxes"] = True
+        for key in ("detection_notify_enabled", "detection_pause_enabled"):
+            if type(data[key]) is not bool:
+                data[key] = getattr(defaults, key)
+
+        try:
+            warning = data["detection_warning_threshold"]
+            failure = data["detection_failure_threshold"]
+            if type(warning) not in (int, str) or type(failure) not in (int, str):
+                raise ValueError("thresholds must be integers")
+            warning, failure = int(warning), int(failure)
+            if not 0 <= warning < failure <= 100:
+                raise ValueError("thresholds must be ordered percentages")
+            data["detection_warning_threshold"] = warning
+            data["detection_failure_threshold"] = failure
+        except (TypeError, ValueError, OverflowError):
+            data["detection_warning_threshold"] = defaults.detection_warning_threshold
+            data["detection_failure_threshold"] = defaults.detection_failure_threshold
+        safe_seconds = data["detection_safe_seconds"]
+        if (type(safe_seconds) is not int or not 0 <= safe_seconds <= 900
+                or safe_seconds % 10):
+            data["detection_safe_seconds"] = defaults.detection_safe_seconds
+
         for key in ("aux_interval_ms", "console_interval_ms"):
             try:
                 data[key] = max(250, min(60_000, int(data[key])))
@@ -329,7 +367,7 @@ class PrinterConfig:
             "eta_learn",
             "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace",
             "camera_disabled", "software_follower_renderer",
-            "upload_dialog", "upload_start_print", "upload_remember_state",
+            "detection_enabled", "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):
             item = data[key]

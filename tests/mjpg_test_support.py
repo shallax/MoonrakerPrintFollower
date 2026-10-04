@@ -4,6 +4,7 @@ contracts. Qt-guarded — the container runs them for real against the
 production class with a fake network manager and a fake reply."""
 
 import os
+import sys
 
 # The window paint test needs a screen: the offscreen platform,
 # set before any Qt import (the real-engine file's pattern).
@@ -20,6 +21,11 @@ try:
             from mpf.monitor.camera.FrameDecoder import FrameDecoder
             from mpf.monitor.camera.MJPEGParser import MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT
             from mpf.monitor.camera.MoonrakerMJPGImage import MoonrakerMJPGImage, RENDER_INTERVAL_MS
+            # The defining module itself, captured while it is still in
+            # sys.modules: the fixture's rollback drops the entry, and a
+            # later import would execute a second copy whose patched
+            # globals the class under test does not read.
+            mjpg_module = sys.modules["mpf.monitor.camera.MoonrakerMJPGImage"]
         finally:
             _started.__exit__(None, None, None)
 except ImportError:

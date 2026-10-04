@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 # QHostAddress is a QtNetwork class: some bundled PyQt6 builds (Cura
 # 5.13's included) do not re-export it from QtCore, and the plugin
 # fails to register with "cannot import name 'QHostAddress'" when the
@@ -39,13 +39,21 @@ class MoonrakerFollowerMachineAction(MachineAction):
     testStatusChanged = pyqtSignal()
     testBusyChanged = pyqtSignal()
     cacheStatusChanged = pyqtSignal()
+    onboardingResetStatusChanged = pyqtSignal()
+    detectionResetStatusChanged = pyqtSignal()
+    detectionEvidenceStatusChanged = pyqtSignal()
     migrationChanged = pyqtSignal()
+    detectionChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
         self._application = application
         self._follower = follower
         self._output_plugin = output_plugin
+        self._detection = getattr(follower, "detection", None)
+        self._detection_refusal = ""
+        if self._detection is not None:
+            self._detection.stateChanged.connect(self.detectionChanged.emit)
         self._qml_url = "settings/MoonrakerFollowerConfiguration.qml"
 
         # Connection tests intentionally use a separate transport instance because
@@ -58,6 +66,12 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._test_status = "Not tested"
         self._test_busy = False
         self._cache_status = ""
+        self._onboarding_reset_status = ""
+        self._detection_reset_status = ""
+        self._detection_evidence_status = ""
+        self._detection_reset_pending = False
+        if self._detection is not None:
+            self._detection.stateChanged.connect(self._on_detection_reset_progress)
 
         registry = application.getContainerRegistry()
         self._container_registry = registry
@@ -218,6 +232,186 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsCameraDisabled(self) -> bool:
         return self._config().camera_disabled
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsDetectionEnabled(self) -> bool:
+        return self._config().detection_enabled
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsDetectionWarningThreshold(self) -> int:
+        return self._config().detection_warning_threshold
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsDetectionFailureThreshold(self) -> int:
+        return self._config().detection_failure_threshold
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionReady(self) -> bool:
+        return bool(self._detection is not None and self._detection.ready)
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionGlobalEnabled(self) -> bool:
+        return bool(self._detection is not None and self._detection.ready
+                    and self._detection.enabled)
+
+    @pyqtSlot(bool, result=bool)
+    def setDetectionGlobalEnabled(self, enabled: bool) -> bool:
+        if self._detection is None:
+            self._detection_refusal = "Local detection is unavailable"
+            self.detectionChanged.emit()
+            return False
+        return self._detection.set_enabled(enabled)
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionHostError(self) -> str:
+        return self._detection.host_error if self._detection is not None else "Local detection is unavailable"
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionBusy(self) -> bool:
+        return bool(self._detection is not None and self._detection.busy)
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionPhase(self) -> str:
+        return self._detection.phase if self._detection is not None else ""
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionReceived(self) -> int:
+        return self._detection.received if self._detection is not None else 0
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionTotal(self) -> int:
+        return self._detection.total if self._detection is not None else 0
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionError(self) -> str:
+        return self._detection.error if self._detection is not None else ""
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionBenchmarkMs(self) -> int:
+        return self._detection.benchmark_ms if self._detection is not None else 0
+
+    @pyqtSlot()
+    def revealDetectionEvidence(self) -> None:
+        """The Diagnostics tab's reveal: the alert frames and the
+        per-print score timelines, in the file manager."""
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        if self._detection is None:
+            self._detection_evidence_status = "Local detection is unavailable"
+        else:
+            root = self._detection.evidence_root()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(root))
+            self._detection_evidence_status = "Opened " + root
+        self.detectionEvidenceStatusChanged.emit()
+
+    @pyqtProperty(str, notify=detectionEvidenceStatusChanged)
+    def detectionEvidenceStatus(self) -> str:
+        return self._detection_evidence_status
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionCameraReady(self) -> bool:
+        monitor = self._output_plugin._current_monitor() if self._output_plugin is not None else None
+        return bool(monitor is not None and monitor._camera.url
+                    and monitor.webcamStreamEnabled and not self._config().camera_disabled)
+
+    @pyqtProperty(QObject, notify=settingsChanged)
+    def detectionMonitor(self):
+        return self._output_plugin._current_monitor() if self._output_plugin is not None else None
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionRefusal(self) -> str:
+        return self._detection_refusal
+
+    @pyqtProperty(int, constant=True)
+    def detectionRuntimeSize(self) -> int:
+        from ..detection.DetectionAssets import host_wheel
+        try:
+            return host_wheel().size
+        except ValueError:
+            return 0
+
+    @pyqtSlot()
+    def startDetectionSetup(self) -> None:
+        if self._detection is not None:
+            self._detection.setup()
+
+    @pyqtSlot()
+    def cancelDetectionSetup(self) -> None:
+        if self._detection is not None:
+            self._detection.cancel()
+
+    @pyqtSlot()
+    def declineDetectionOffer(self) -> None:
+        if self._detection is not None:
+            self._detection.decline_offer()
+
+    @pyqtProperty(str, notify=onboardingResetStatusChanged)
+    def onboardingResetStatus(self) -> str:
+        return self._onboarding_reset_status
+
+    @pyqtSlot()
+    def resetOnboardingForNextRun(self) -> None:
+        persistence = getattr(self._follower, "persistence", None)
+        if persistence is None or self._detection is None:
+            status = "Cannot reset onboarding: local detection or settings storage is unavailable."
+        else:
+            if not persistence.merge_state_global({"whatsNewSeen": ""}):
+                status = "Could not reset What's New; check Cura's preferences directory."
+            else:
+                monitor = self._output_plugin._current_monitor() if self._output_plugin is not None else None
+                if monitor is not None:
+                    monitor._whats_new_seen = ""
+                try:
+                    self._detection.reset_offer()
+                except OSError as exc:
+                    status = f"What's New reset, but local detection could not be reset: {exc}"
+                else:
+                    status = "What's New and local detection offer will appear on the next Cura run."
+        if not status.startswith("What's New and"):
+            Logger.log("w", "Moonraker Print Follower: %s", status)
+        self._onboarding_reset_status = status
+        self.onboardingResetStatusChanged.emit()
+
+    @pyqtProperty(str, notify=detectionResetStatusChanged)
+    def detectionResetStatus(self) -> str:
+        return self._detection_reset_status
+
+    def _on_detection_reset_progress(self):
+        if not self._detection_reset_pending or self._detection.busy:
+            return
+        self._detection_reset_pending = False
+        if self._detection.error:
+            self._detection_reset_status = "Could not remove local detection assets: " + self._detection.error
+            Logger.log("w", "Moonraker Print Follower: %s", self._detection_reset_status)
+        else:
+            self._detection_reset_status = "Local detection downloads removed. Set up the model again in Detection settings."
+        self.detectionResetStatusChanged.emit()
+
+    @pyqtSlot()
+    def resetDetectionAssets(self):
+        persistence = getattr(self._follower, "persistence", None)
+        if persistence is None or self._detection is None:
+            status = "Cannot remove detection downloads: setup or settings storage is unavailable."
+        elif self._detection.busy:
+            status = "Wait for local detection setup to finish or cancel it first."
+        elif not persistence.disable_all_detection():
+            status = "Could not disable detection for all printers; no downloads were removed."
+        else:
+            config = self._config()
+            disabled = replace(config, detection_enabled=False,
+                               detection_notify_enabled=False, detection_pause_enabled=False,
+                               detection_regions={})
+            if self._follower.apply_printer_config(disabled) is False:
+                status = "Detection disabled in storage, but this printer's live settings could not refresh."
+            elif not self._detection.remove_assets():
+                status = "Could not start download removal: " + self._detection.error
+            else:
+                self._detection_reset_pending = True
+                status = "Removing local detection downloads…"
+        if not status.startswith("Removing"):
+            Logger.log("w", "Moonraker Print Follower: %s", status)
+        self._detection_reset_status = status
+        self.detectionResetStatusChanged.emit()
 
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsMemoryDiagnosticsTrace(self) -> bool:
@@ -471,6 +665,27 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 mode = FollowMode.EXACT.value
 
             current = self._config()
+            warning_threshold = raw.get("detection_warning_threshold", current.detection_warning_threshold)
+            failure_threshold = raw.get("detection_failure_threshold", current.detection_failure_threshold)
+            if (type(warning_threshold) is not int or type(failure_threshold) is not int
+                    or not 0 <= warning_threshold < failure_threshold <= 100):
+                Logger.log("w", "Moonraker settings save refused: detection thresholds must be ordered percentages")
+                return False
+            detection_enabled = raw.get("detection_enabled", current.detection_enabled)
+            if not isinstance(detection_enabled, bool):
+                Logger.log("w", "Moonraker settings save refused: detection_enabled must be a checkbox value")
+                return False
+            if detection_enabled and not current.detection_enabled \
+                    and (not self.detectionGlobalEnabled or not self.detectionCameraReady
+                         or bool(raw.get("camera_disabled", current.camera_disabled))):
+                self._detection_refusal = (
+                    "Enable local detection in Settings and select a working camera before enabling this printer."
+                )
+                self.detectionChanged.emit()
+                Logger.log("w", "Moonraker settings save refused: %s", self._detection_refusal)
+                return False
+            self._detection_refusal = ""
+            self.detectionChanged.emit()
             # The mode is a validated two-literal choice: an unknown value
             # keeps the current one — never a silent default (UX-M7).
             feed_mode = str(raw.get("feed_mode") or "").strip().lower()
@@ -500,6 +715,9 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
                 "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
                 "camera_disabled": bool(raw.get("camera_disabled", False)),
+                "detection_enabled": detection_enabled,
+                "detection_warning_threshold": warning_threshold,
+                "detection_failure_threshold": failure_threshold,
                 "software_follower_renderer": bool(raw.get("software_follower_renderer", False)),
                 "feed_mode": feed_mode,
                 "follow_mode": mode,

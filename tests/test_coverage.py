@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from surface_coverage import check, check_evidence, extract  # noqa: E402
 from scenario_map import EXCLUSIONS, PREFIX_RULES, SCENARIO_MAP  # noqa: E402
+from tools.exclusion_schema import failures as exclusion_failures  # noqa: E402
 
 
 class CoverageMatrixTests(unittest.TestCase):
@@ -42,11 +43,10 @@ class CoverageMatrixTests(unittest.TestCase):
 
     def test_every_exclusion_carries_the_schema(self):
         # Workstream 4: an exclusion is reason + evidence + date +
-        # re-check trigger — a one-line prose entry cannot expire.
-        for name, entry in EXCLUSIONS.items():
-            for field in ("reason", "evidence", "date", "recheck"):
-                self.assertIn(field, entry, f"{name} lacks {field!r}")
-                self.assertTrue(str(entry[field]).strip(), f"{name}: {field} is empty")
+        # re-check trigger — a one-line prose entry cannot expire. The
+        # rule is shared with the per-file coverage gate, so both
+        # tables are judged by the same one code path.
+        self.assertEqual(exclusion_failures(EXCLUSIONS), [])
 
     def test_execution_check_requires_the_scenario_and_the_surface(self):
         # The evidence-side half: a mapped scenario that never ran,

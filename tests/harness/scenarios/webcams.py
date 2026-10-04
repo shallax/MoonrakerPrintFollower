@@ -7,6 +7,16 @@ from __future__ import annotations
 
 from .probe_source import CAM_FRAMES, CAM_STARTED
 
+_DETECTION_MODEL = (
+    "from UM.Application import Application\n"
+    "model = next((device.activePrinter for device in "
+    "Application.getInstance().getOutputDeviceManager().getOutputDevices() "
+    "if 'Moonraker' in type(device).__name__ and device.activePrinter is not None), None)\n"
+    "if model is None or model._detection is None:\n"
+    "    raise RuntimeError('local detection model unavailable')\n"
+    "service = model._detection\n"
+)
+
 SCENARIOS = [
     {"id": "e1", "group": "webcams", "name": "the camera starts on its own (the first-publish fix)",
      "steps": [
@@ -62,6 +72,40 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "cameraBarChipText", "budget": 15},
          {"op": "wait_rect", "objectName": "cameraZoomScale", "absent": True, "budget": 5},
          {"op": "wait_rect", "objectName": "cameraBar", "absent": True, "budget": 20},
+     ]},
+    {"id": "e4", "group": "webcams",
+     "name": "the global detection switch hides controls and stops analysis without deleting printer settings",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "wait_rect", "objectName": "failureDetectionSection", "absent": True, "budget": 10},
+         # Synthetic readiness tests the installed-model UI branch without
+         # downloading or executing native inference in the simulator.
+         {"op": "exec_code", "verbs": [], "code": _DETECTION_MODEL +
+          "service._ready = True\n"
+          "service.stateChanged.emit()\n"
+          "model._publish()\n"
+          "result = {'ready': model.detectionReady, 'enabled': model.detectionGlobalEnabled}"},
+         {"op": "assert_model", "prop": "detectionGlobalEnabled", "value": True, "budget": 10},
+         {"op": "wait_rect", "objectName": "failureDetectionSection", "budget": 10},
+         {"op": "exec_code", "verbs": [], "code": _DETECTION_MODEL +
+          "saved = model.detectionEnabled\n"
+          "if not service.set_enabled(False):\n"
+          "    raise RuntimeError(service.error)\n"
+          "model._publish()\n"
+          "result = {'enabled': model.detectionGlobalEnabled, 'printer_choice_kept': model.detectionEnabled == saved}"},
+         {"op": "assert_model", "prop": "detectionGlobalEnabled", "value": False, "budget": 10},
+         {"op": "wait_rect", "objectName": "failureDetectionSection", "absent": True, "budget": 10},
+         {"op": "assert_model", "prop": "detectionState", "value": "idle", "budget": 10},
+         {"op": "exec_code", "verbs": [], "code": _DETECTION_MODEL +
+          "if not service.set_enabled(True):\n"
+          "    raise RuntimeError(service.error)\n"
+          "model._publish()\n"
+          "service._ready = False\n"
+          "service.stateChanged.emit()\n"
+          "model._publish()\n"
+          "result = {'enabled': service.enabled, 'ready_restored': not service.ready}"},
+         {"op": "wait_rect", "objectName": "failureDetectionSection", "absent": True, "budget": 10},
      ]},
 
     # ─── files & print start ──────────────────────────────────

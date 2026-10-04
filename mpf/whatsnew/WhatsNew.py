@@ -26,9 +26,53 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.0.0",
+        "headline": "Version 5.0.0 introduces optional local print-failure "
+            "detection using your selected webcam and Cura computer.",
+        "items": (
+            "After you opt in, setup downloads and verifies the model and "
+            "CPU runtime, then checks that inference works on this computer. "
+            "There is no cloud account, video upload or server to run. "
+            "Detection watches while Cura and its Monitor are open.",
+            "The Detection settings tab handles shared setup, a global switch "
+            "and health checks. Each printer has its own Enable checkbox, "
+            "sensitivity, advanced bounds and initial safe period.",
+            "Draw up to four monitored regions on a webcam. They are saved "
+            "for that printer and camera; the image is cropped to their "
+            "bounds and pixels outside them are excluded. Their outlines "
+            "hide when detection is off.",
+            "A new camera learns its baseline from six analysed frames before "
+            "scoring. Reset training data for one camera from Webcam, or "
+            "for every camera on a printer from Detection settings. "
+            "Your monitored regions stay saved.",
+            "A fresh signal during an active print colours the webcam frame "
+            "green, amber or red. Before analysis it stays neutral; the "
+            "score is not a probability. Drag the scale left to show a "
+            "line or just the number.",
+            "Notifications and automatic pause are separate opt-ins. A pause "
+            "attempt is guarded before its command is sent. Re-arm automatic "
+            "pause can allow another attempt during the same print.",
+            "An alert names the printer, has an Acknowledge button, and is "
+            "repeated a few times while it stands unacknowledged. Detection "
+            "settings can show the folder holding the frame that raised an "
+            "alert and each print's score timeline.",
+            "The Print Follower popover shows the estimated time to reach "
+            "the layer you pick while it is detached, down to the point you "
+            "select inside it, so a look ahead says exactly how long the "
+            "wait is.",
+            "The mini Bed Mesh, Exclude Object Picker and Print Follower beds "
+            "fill the available pane width, keeping rectangular beds in "
+            "proportion. Antialiasing also smooths the Follower and Picker grids.",
+            "Klipper's Apply Z offset can stage a probe or endstop adjustment "
+            "when the target is clear; Save configuration remains separate.",
+            "Detection can miss failures or raise false alarms. Do not rely "
+            "on it instead of normal print supervision and safety measures.",
+        ),
+    },
+    {
         "version": "4.6.2",
-        "headline": "Version 4.6.2 is aiming for RC1: the build plate gains "
-            "optional axis arrows, alongside smaller internals and "
+        "headline": "Version 4.6.2 adds optional axis arrows to the build "
+            "plate, alongside smaller internals and "
             "interface fixes.",
         "items": (
             "The Print Follower and object picker beds show red X and green "
@@ -49,8 +93,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "even with a cached index. Failures show an unavailable state; "
             "transient downloads retry briefly, while refusals wait for Load.",
             "The Monitor, camera, file browser and other internals have "
-            "been split into smaller parts. This is a candidate, not "
-            "a final release.",
+            "been split into smaller parts.",
         ),
     },
 

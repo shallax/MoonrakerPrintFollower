@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
@@ -15,6 +16,22 @@ Cura.RoundedRectangle {
     // The printer model the host passes (root.printer): every model
     // read inside the card goes through this property.
     property var printerModel: null
+
+    Cura.MessageDialog {
+        id: resetTrainingDialog
+        objectName: "resetCameraTrainingDialog"
+        property var targetMonitor: null
+        property string cameraKey: ""
+        property string cameraLabel: ""
+        title: "Reset training data for " + cameraLabel + "?"
+        text: "This camera will learn a new baseline from six analysed frames. Keep the scene free of spaghetti while learning. Detection zones, tuning and other cameras will be kept."
+        standardButtons: Dialog.Yes | Dialog.No
+        anchors.centerIn: Overlay.overlay
+        onAccepted: {
+            if (targetMonitor != null && targetMonitor === root.printerModel && cameraKey === targetMonitor.detectionRegionCamera)
+                targetMonitor.resetDetectionBaseline();
+        }
+    }
 
     // The host's cameraConfigured: a webcam URL is present.
     property bool configured: false
@@ -103,6 +120,7 @@ Cura.RoundedRectangle {
             spacing: UM.Theme.getSize("default_margin").width
 
             UM.Label {
+                id: cameraTitle
                 // The pane title, in the other panes'
                 // style — the same large bold face as
                 // Information and Printer status (a
@@ -160,6 +178,7 @@ Cura.RoundedRectangle {
                         }
 
                         UM.SimpleButton {
+                            id: refreshButton
                             width: UM.Theme.getSize("small_button_icon").width
                             height: UM.Theme.getSize("small_button_icon").height
                             enabled: root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled
@@ -190,12 +209,30 @@ Cura.RoundedRectangle {
                         // its upstream fetch and the controls stand
                         // down until it comes back on.
                         UM.CheckBox {
+                            id: webcamToggle
                             text: "Enable"
                             checked: root.printerModel != null ? root.printerModel.webcamStreamEnabled : true
                             onToggled: {
                                 if (root.printerModel != null) {
                                     root.printerModel.setWebcamStreamEnabled(checked);
                                 }
+                            }
+                        }
+                        Cura.SecondaryButton {
+                            id: resetTrainingButton
+                            objectName: "resetCameraTrainingButton"
+                            text: "Reset training data"
+                            // Reserve the selector's minimum width, the refresh
+                            // icon and Enable first. Visibility must depend on
+                            // the outer width rather than this row's implicit
+                            // width, which itself changes with visibility.
+                            visible: cameraControls.visible && root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled && root.width >= 450 * screenScaleFactor && root.width - cameraTitle.implicitWidth - 3 * UM.Theme.getSize("default_margin").width >= (cameraSelector.visible ? cameraSelector.Layout.minimumWidth + UM.Theme.getSize("narrow_margin").width : 0) + refreshButton.width + webcamToggle.implicitWidth + resetTrainingButton.implicitWidth + 4 * UM.Theme.getSize("narrow_margin").width
+                            enabled: visible && root.printerModel.detectionCameraReady && !root.printerModel.detectionEditingRegions
+                            onClicked: {
+                                resetTrainingDialog.targetMonitor = root.printerModel;
+                                resetTrainingDialog.cameraKey = root.printerModel.detectionRegionCamera;
+                                resetTrainingDialog.cameraLabel = root.printerModel.cameraName || "selected camera";
+                                resetTrainingDialog.open();
                             }
                         }
                     }

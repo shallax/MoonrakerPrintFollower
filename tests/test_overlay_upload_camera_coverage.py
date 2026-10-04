@@ -42,15 +42,18 @@ if QT_AVAILABLE:
     from PyQt6.QtQml import QQmlComponent
 
     class MonitorStub(QObject):
-        """The monitor model's what's-new surface (signal + QML reads)."""
+        """The monitor model's what's-new surface (signals + QML reads)."""
 
         whatsNewRequested = pyqtSignal()
+        whatsNewDismissed = pyqtSignal()
 
         def __init__(self):
             super().__init__()
             from mpf.whatsnew.WhatsNew import entries
             self.checks = 0
             self.dismissals = 0
+            # The once-per-version marker the offer's re-announce reads.
+            self._whats_new_seen = ""
             self._content = entries()
 
         @pyqtProperty(QVariant, constant=True)

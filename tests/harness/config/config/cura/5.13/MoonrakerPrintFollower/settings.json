@@ -2,6 +2,9 @@
   "configVersion": 2,
   "global": {
     "activeMachineId": null,
+    "localDetection": {
+      "offer_seen": true
+    },
     "migration": {
       "attemptedAt": "2026-09-18-00-00-00",
       "backupName": null,

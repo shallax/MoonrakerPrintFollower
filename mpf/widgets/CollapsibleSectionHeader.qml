@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import UM 1.5 as UM
+import "../resources/theme"
 
 // Cura-style accordion section header, shared by every Monitor pane.
 // Mirrors Cura's CategoryButton: the title hugs the chevron on the right
@@ -20,6 +21,12 @@ Item {
     property string sectionId: ""
     property string sectionIcon: ""
     property url sectionIconUrl: ""
+    // The optional pending-alert dot beside the chevron: the section
+    // that owns an unacknowledged alert says so even while collapsed.
+    // The colour is the caller's, so the severity language stays in
+    // one place; only one section ever raises the flag.
+    property bool alertPending: false
+    property color alertColor: MoonrakerTheme.warningOrange
 
     property bool expanded: printerModel != null ? (printerModel.sectionExpandedMap[sectionId] !== false) : true
     property bool hovered: false
@@ -90,5 +97,17 @@ Item {
         height: UM.Theme.getSize("standard_arrow").height
         color: UM.Theme.getColor("setting_control_button")
         source: headerRoot.expanded ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleLeft")
+    }
+    Rectangle {
+        id: alertDot
+        objectName: "sectionAlertDot"
+        visible: headerRoot.alertPending
+        anchors.right: chevron.left
+        anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
+        anchors.verticalCenter: parent.verticalCenter
+        width: 8 * screenScaleFactor
+        height: width
+        radius: width / 2
+        color: headerRoot.alertColor
     }
 }

@@ -117,6 +117,11 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         # a cached monitor that lost the selection must not hold it.
         if getattr(self._follower, "notice", None) is not None:
             self._follower.notice().attach_model(monitor)
+        # The offer rides the same rule: a switch reinstalls the model,
+        # and an unwired offer could not be dismissed into its own
+        # one-time marker.
+        if getattr(self._follower, "whats_new", None) is not None:
+            self._follower.whats_new().attach_model(monitor)
 
     def _revoke_monitor_routing(self) -> None:
         monitor = self._routed_monitor
@@ -229,6 +234,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 identity=self._follower.current_printer_identity,
                 colour_scheme=self._colour_scheme,
                 index_service=self._follower.index(),
+                detection=getattr(self._follower, "detection", None),
             )
             # The Preview wirings are NOT made here: the grant below
             # attaches them to the current monitor only, and a machine

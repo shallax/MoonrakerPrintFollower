@@ -247,6 +247,9 @@ def runtime():
 
     class Message(QObject):
         actionTriggered = pyqtSignal(object, str)
+        # Uranium emits the PyQt-facing twin of actionTriggered; the
+        # monitor's alerts hand their Acknowledge button through it.
+        pyQtActionTriggered = pyqtSignal(object, str)
         def __init__(self, *_args): super().__init__()
         def setTitle(self, value): pass
         def setText(self, value): pass

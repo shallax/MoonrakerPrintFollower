@@ -2,6 +2,435 @@
 from tests import qml_engine_support as harness
 
 
+class ZOffsetApplyTests(harness.RealEngineTestCase):
+    def test_apply_button_follows_model_eligibility_and_target(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        class ModelDouble(harness.QObject):
+            changed = harness.pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self.can_apply = False
+                self.calls = 0
+
+            @harness.pyqtProperty(str, notify=changed)
+            def zOffsetText(self):
+                return "+0.025 mm"
+
+            @harness.pyqtProperty(str, notify=changed)
+            def zOffsetApplyTarget(self):
+                return "probe"
+
+            @harness.pyqtProperty(bool, notify=changed)
+            def canApplyZOffset(self):
+                return self.can_apply
+
+            @harness.pyqtProperty(bool, notify=changed)
+            def actionBusy(self):
+                return False
+
+            @harness.pyqtProperty(str, notify=changed)
+            def sectionReason(self):
+                return ""
+
+            @harness.pyqtSlot()
+            def applyZOffset(self):
+                self.calls += 1
+
+        section = self.mount("ZOffsetControls.qml")
+        window = harness.QQuickWindow()
+        window.resize(480, 330)
+        section.setParentItem(window.contentItem())
+        section.setWidth(460)
+        window.show()
+        self.addCleanup(window.deleteLater)
+        model = ModelDouble()
+        section.setProperty("printerModel", model)
+        self.pump()
+        apply = self.find(section, "applyZOffsetButton")
+        self.assertEqual(apply.property("text"), "Apply Z offset")
+        self.assertFalse(apply.property("enabled"))
+        model.can_apply = True
+        model.changed.emit()
+        self.pump()
+        self.assertTrue(apply.property("enabled"))
+        center = apply.mapToScene(harness.QPointF(apply.width() / 2, apply.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(model.calls, 1)
+
+
+class FailureDetectionSectionTests(harness.RealEngineTestCase):
+    def test_controls_require_setup_and_follow_the_selected_printer(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        class ModelDouble(harness.QObject):
+            detectionChanged = harness.pyqtSignal()
+            sectionChanged = harness.pyqtSignal()
+
+            def __init__(self, notify=False, pause=False, pending=False,
+                         ready=False, camera=False, warning=38, failure=78, safe=300):
+                super().__init__()
+                self._notify = notify
+                self._pause = pause
+                self._pending = pending
+                self._ready = ready
+                self._global_enabled = True
+                self._camera = camera
+                self._enabled = False
+                self._warning = warning
+                self._failure = failure
+                self._safe = safe
+                self._rearmable = False
+                self._sensitivity = 1.0
+                self._baseline = 1.47
+                self._alert_level = "warning"
+                self.expanded = True
+                self.calls = []
+
+            @harness.pyqtProperty(float, notify=detectionChanged)
+            def detectionSensitivity(self): return self._sensitivity
+            @harness.pyqtProperty(float, notify=detectionChanged)
+            def detectionBaseline(self): return self._baseline
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionEditingRegions(self): return False
+            @harness.pyqtProperty(str, notify=detectionChanged)
+            def detectionStatus(self): return "Off for this printer"
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionMuted(self): return False
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionMuteAvailable(self): return False
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionShowBoxes(self): return True
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionReady(self):
+                return self._ready
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionGlobalEnabled(self):
+                return self._global_enabled
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionCameraReady(self):
+                return self._camera
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionEnabled(self):
+                return self._enabled
+
+            @harness.pyqtProperty(int, notify=detectionChanged)
+            def detectionWarningThreshold(self):
+                return self._warning
+
+            @harness.pyqtProperty(int, notify=detectionChanged)
+            def detectionFailureThreshold(self):
+                return self._failure
+
+            @harness.pyqtProperty(int, notify=detectionChanged)
+            def detectionSafeSeconds(self):
+                return self._safe
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionNotifyEnabled(self):
+                return self._notify
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionPauseEnabled(self):
+                return self._pause
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionAlertPending(self):
+                return self._pending
+
+            @harness.pyqtProperty(str, notify=detectionChanged)
+            def detectionAlertLevel(self):
+                return self._alert_level if self._pending else ""
+
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionPauseRearmable(self):
+                return self._rearmable
+
+            @harness.pyqtProperty("QVariant", notify=sectionChanged)
+            def sectionExpandedMap(self):
+                return {"failureDetection": self.expanded}
+
+            @harness.pyqtSlot(bool)
+            def setDetectionEnabled(self, value):
+                self.calls.append(("enabled", value))
+                self._enabled = value
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot(float)
+            def setDetectionSensitivity(self, value):
+                self.calls.append(("sensitivity", value))
+                self._sensitivity = value
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def resetDetectionTuning(self):
+                self.calls.append(("reset",))
+                self._sensitivity = 1.0
+                self._warning, self._failure = 38, 78
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def resetDetectionBaseline(self):
+                self.calls.append(("baseline",))
+                self._baseline = 0.0
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot(int, int)
+            def setDetectionThresholds(self, warning, failure):
+                self.calls.append(("thresholds", warning, failure))
+                self._warning, self._failure = warning, failure
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot(int)
+            def setDetectionSafeSeconds(self, seconds):
+                self.calls.append(("safe", seconds))
+                self._safe = seconds
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot(bool)
+            def setDetectionNotifyEnabled(self, value):
+                self.calls.append(("notify", value))
+                self._notify = value
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot(bool)
+            def setDetectionPauseEnabled(self, value):
+                self.calls.append(("pause", value))
+                self._pause = value
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def acknowledgeDetectionAlert(self):
+                self.calls.append(("acknowledge",))
+                self._pending = False
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def rearmDetectionPause(self):
+                self.calls.append(("rearm",))
+                self._rearmable = False
+                self.detectionChanged.emit()
+
+        section = self.mount("FailureDetectionSection.qml")
+        window = harness.QQuickWindow()
+        window.resize(480, 1100)
+        section.setParentItem(window.contentItem())
+        section.setWidth(460)
+        window.show()
+        self.addCleanup(window.deleteLater)
+        notify = self.find(section, "detectionNotifyCheckbox")
+        pause = self.find(section, "detectionPauseCheckbox")
+        acknowledge = self.find(section, "detectionAcknowledgeButton")
+        rearm = self.find(section, "detectionRearmPauseButton")
+        enabled = self.find(section, "detectionMainEnabledCheckbox")
+        slider = self.find(section, "detectionControlsThresholdSlider")
+        safe_slider = self.find(section, "detectionSafePeriodSlider")
+        safe_value = self.find(section, "detectionSafePeriodValue")
+        self.assertEqual(enabled.property("text"), "Enable")
+        self.assertFalse(notify.property("checked"))
+        self.assertFalse(pause.property("checked"))
+        self.assertFalse(notify.property("enabled"))
+        self.assertFalse(acknowledge.property("enabled"))
+        self.assertFalse(enabled.property("enabled"))
+        self.assertFalse(slider.property("enabled"))
+        self.assertFalse(safe_slider.property("enabled"))
+        self.assertEqual(slider.property("minimum"), 0)
+        self.assertEqual(slider.property("maximum"), 1)
+
+        first = ModelDouble()
+        second = ModelDouble(notify=True, pending=True, warning=25, failure=65, safe=900)
+        section.setProperty("printerModel", first)
+        self.pump(30)
+        self.assertEqual(first.calls, [], "binding the model must not write configuration")
+        self.assertEqual(safe_slider.property("value"), 300)
+        self.assertEqual(safe_value.property("text"), "5m")
+        for control in (enabled, slider, safe_slider, notify, pause, acknowledge, rearm):
+            self.assertFalse(control.property("enabled"))
+
+        first._ready = True
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertFalse(enabled.property("enabled"), "a printer with no camera cannot be enabled")
+        for control in (slider, safe_slider, notify, pause, acknowledge, rearm):
+            self.assertFalse(control.property("enabled"))
+
+        first._camera = True
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertTrue(enabled.property("enabled"))
+        for control in (slider, safe_slider, notify, pause, acknowledge, rearm):
+            self.assertFalse(control.property("enabled"))
+        center = enabled.mapToScene(harness.QPointF(enabled.width() / 2, enabled.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls, [("enabled", True)])
+        for control in (slider, safe_slider, notify, pause):
+            self.assertTrue(control.property("enabled"))
+        self.assertFalse(acknowledge.property("enabled"))
+
+        handle = safe_slider.property("handle")
+        origin = handle.mapToScene(harness.QPointF(handle.width() / 2, handle.height() / 2)).toPoint()
+        destination = safe_slider.mapToScene(
+            harness.QPointF(safe_slider.width() * .8, safe_slider.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=origin)
+        QTest.mouseMove(window, pos=destination)
+        self.pump()
+        self.assertNotEqual(safe_value.property("text"), "5m")
+        preview = safe_value.property("text")
+        self.assertFalse(any(call[0] == "safe" for call in first.calls),
+                         "preview must not save before release")
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=destination)
+        self.pump()
+        self.assertEqual(safe_value.property("text"), preview)
+
+        for control in (pause, notify):
+            center = control.mapToScene(harness.QPointF(control.width() / 2, control.height() / 2)).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+            self.pump()
+        self.assertEqual(first.calls, [("enabled", True), ("safe", first._safe),
+                                       ("pause", True), ("notify", True)])
+        advanced = self.find(section, "detectionAdvancedButton")
+        center = advanced.mapToScene(harness.QPointF(advanced.width()/2, advanced.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertTrue(slider.property("visible"))
+        low_target = slider.mapToScene(harness.QPointF(slider.width() * 0.15, slider.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=low_target)
+        self.pump()
+        threshold_calls = [call for call in first.calls if call[0] == "thresholds"]
+        self.assertTrue(threshold_calls, "a slider gesture must reach the model")
+        self.assertLess(threshold_calls[-1][1], threshold_calls[-1][2])
+        self.assertAlmostEqual(slider.property("low"), first._warning / 100)
+        self.assertAlmostEqual(slider.property("high"), first._failure / 100)
+        labels = [item.property("text") for item in section.findChildren(harness.QQuickItem)]
+        self.assertIn("Lower %.2f" % (first._warning / 100), labels)
+        self.assertIn("Upper %.2f" % (first._failure / 100), labels)
+        self.assertTrue(notify.property("checked"))
+        self.assertTrue(pause.property("checked"))
+
+        target = safe_slider.mapToScene(harness.QPointF(safe_slider.width() * 0.4,
+                                                      safe_slider.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=target)
+        self.pump()
+        safe_calls = [call for call in first.calls if call[0] == "safe"]
+        self.assertTrue(safe_calls, "safe-period gesture must reach the printer model")
+        self.assertEqual(safe_calls[-1][1] % 10, 0)
+        self.assertEqual(safe_slider.property("value"), first._safe)
+
+        first._pending = True
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertTrue(acknowledge.property("enabled"))
+        # The standing alert is marked on the section header too, so a
+        # collapsed section still shows something is waiting — and its
+        # colour follows the alert's level.
+        dot = self.find(section, "sectionAlertDot")
+        self.assertTrue(dot.property("visible"))
+        warning = harness.QColor(0xfb, 0x8c, 0x00)
+        self.assertEqual(dot.property("color"), warning)
+        first._alert_level = "failure"
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertEqual(dot.property("color"), harness.QColor(0xd3, 0x2f, 0x2f))
+        center = acknowledge.mapToScene(harness.QPointF(acknowledge.width() / 2, acknowledge.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("acknowledge",))
+        self.assertFalse(acknowledge.property("enabled"))
+
+        first._rearmable = True
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertTrue(rearm.property("enabled"))
+        rearm_center = rearm.mapToScene(harness.QPointF(rearm.width() / 2, rearm.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=rearm_center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("rearm",))
+        self.assertFalse(rearm.property("enabled"))
+
+        center = enabled.mapToScene(harness.QPointF(enabled.width() / 2, enabled.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("enabled", False))
+        self.assertTrue(enabled.property("enabled"))
+        for control in (slider, safe_slider, notify, pause, acknowledge, rearm):
+            self.assertFalse(control.property("enabled"))
+        self.assertTrue(notify.property("checked"))
+        self.assertTrue(pause.property("checked"))
+        self.assertAlmostEqual(slider.property("low"), first._warning / 100)
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("enabled", True))
+        for control in (slider, safe_slider, notify, pause):
+            self.assertTrue(control.property("enabled"))
+
+        sensitivity = self.find(section, "detectionSensitivitySlider")
+        baseline = self.find(section, "detectionBaselineLabel")
+        self.assertEqual(baseline.property("text"), "Camera baseline (raw): 1.47")
+        first._sensitivity = .9
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertEqual(sensitivity.property("value"), 90)
+        target = sensitivity.mapToScene(harness.QPointF(sensitivity.width() * .8, sensitivity.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=target)
+        self.pump()
+        self.assertEqual(first.calls[-1][0], "sensitivity")
+        self.assertGreater(first._sensitivity, 1.0, "integer slider percentages must become model multipliers")
+        reset = self.find(section, "detectionResetTuningButton")
+        center = reset.mapToScene(harness.QPointF(reset.width()/2, reset.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("reset",))
+        self.assertEqual(sensitivity.property("value"), 100, "reset must restore the thumb after a gesture")
+        second._sensitivity = .8
+        section.setProperty("printerModel", second)
+        self.pump()
+        self.assertTrue(notify.property("checked"))
+        self.assertFalse(pause.property("checked"))
+        self.assertFalse(enabled.property("enabled"))
+        self.assertFalse(slider.property("enabled"))
+        self.assertFalse(safe_slider.property("enabled"))
+        self.assertFalse(notify.property("enabled"))
+        self.assertFalse(pause.property("enabled"))
+        self.assertFalse(acknowledge.property("enabled"), "a pending alert cannot bypass setup")
+        self.assertAlmostEqual(slider.property("low"), .25)
+        self.assertAlmostEqual(slider.property("high"), .65)
+        self.assertEqual(safe_slider.property("value"), 900)
+        self.assertEqual(second.calls, [])
+        self.assertEqual(sensitivity.property("value"), 80, "switching printers refreshes the thumb")
+        self.assertEqual(baseline.property("text"), "Camera baseline (raw): 1.47")
+        second._ready = True
+        second._camera = True
+        second.detectionChanged.emit()
+        self.pump()
+        self.assertFalse(acknowledge.property("enabled"))
+        self.assertFalse(notify.property("enabled"))
+        self.assertFalse(rearm.property("enabled"))
+        second._enabled = True
+        second.detectionChanged.emit()
+        self.pump()
+        self.assertTrue(acknowledge.property("enabled"))
+        second.expanded = False
+        second.sectionChanged.emit()
+        self.pump()
+        self.assertFalse(notify.isVisible())
+        self.assertFalse(pause.isVisible())
+        self.assertFalse(enabled.isVisible())
+        self.assertFalse(slider.isVisible())
+        self.assertFalse(safe_slider.isVisible())
+        self.assertFalse(acknowledge.isVisible())
+        self.assertFalse(rearm.isVisible())
+        self.assertEqual(second.calls, [])
+
+
 class CaptureShellStartupTests(harness.RealEngineTestCase):
     def test_preloaded_dashboard_is_ready_when_the_capture_shell_opens(self):
         from tools.capture_monitor import _preload_dashboard

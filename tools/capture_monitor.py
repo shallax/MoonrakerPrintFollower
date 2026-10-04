@@ -24,6 +24,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+import capture_settle
+
 from unittest.mock import patch
 
 from PyQt6.QtCore import QObject, QPointF, QUrl
@@ -357,9 +359,6 @@ def main():
         # can certify a quiet gap BETWEEN two bursts — the identical
         # run must also span long enough for every pending one-shot
         # (the 200 ms fit timers, the threaded paint) to have landed.
-        REQUIRED_IDENTICAL_FRAMES = 3
-        SETTLE_SPAN_SECONDS = 0.5
-
         def pending_layout_retries():
             """The QML readout-fit retries can fire after a quiet frame run.
 
@@ -376,39 +375,13 @@ def main():
             )
 
         def settled_window(timeout_ms=10000):
-            """The capture transaction: pump events, grab the whole
-            window, and require three consecutive complete frames to
-            be pixel-identical AND the identical run to span the
-            settle span before the scene counts as settled. The exact
-            image that proved the stability is RETURNED — the caller
-            saves this image and never grabs again, so the proven
-            frame and the saved frame can never diverge (the
-            settle-then-re-grab race behind the 03-sections-collapsed
-            nondeterminism)."""
-            deadline = time.monotonic() + timeout_ms / 1000
-            previous = None
-            identical = 0
-            first_identical = None
-            image = None
-            while time.monotonic() < deadline:
-                app.processEvents()
-                image = window.grabWindow()
-                if previous is not None and image == previous:
-                    if identical == 0:
-                        first_identical = time.monotonic()
-                    identical += 1
-                    if not pending_layout_retries() \
-                            and identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
-                            and time.monotonic() - first_identical >= SETTLE_SPAN_SECONDS:
-                        return image
-                else:
-                    identical = 0
-                    first_identical = None
-                previous = image
-                time.sleep(0.02)
-            raise RuntimeError(
-                "the capture window never settled across %d identical frames over %.1fs"
-                % (REQUIRED_IDENTICAL_FRAMES, SETTLE_SPAN_SECONDS))
+            """The capture transaction, from the shared settle owner:
+            the image that proved the stability is returned and saved
+            as-is, so the proven frame and the saved frame cannot
+            diverge."""
+            return capture_settle.settle(app, window.grabWindow, label="monitor",
+                                         timeout_ms=timeout_ms,
+                                         pending=pending_layout_retries)
 
         def grab(name, card=None):
             image = settled_window()
@@ -501,14 +474,29 @@ def main():
         sliders = [child for child in item.findChildren(QQuickItem)
                    if "OutlineSlider" in child.metaObject().className()
                    and child.isVisible() and child.width() > 10]
+        control_flick = item.findChild(QQuickItem, "moonrakerControlsFlick")
+        if control_flick is None:
+            raise RuntimeError("the controls flickable is missing")
         slider_blue = 0
         for slider in sliders:
+            # The detection section can move every slider below the
+            # viewport; bring each candidate into view before checking
+            # pixels rather than sampling beyond the captured window.
+            position = slider.mapToItem(control_flick, QPointF(0, 0))
+            scroll = max(0, min(control_flick.property("contentHeight") - control_flick.height(),
+                                control_flick.property("contentY") + position.y()
+                                - control_flick.height() / 2))
+            control_flick.setProperty("contentY", scroll)
+            collapsed = settled_window()
             top_left = slider.mapToScene(QPointF(0, 0))
             hits = sum(1 for x in range(5, min(int(slider.width()), 400), 4)
                        for y in range(1, max(2, int(slider.height()) - 1))
-                       if collapsed.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)
+                       if 0 <= top_left.x() + x < collapsed.width()
+                       and 0 <= top_left.y() + y < collapsed.height()
+                       and collapsed.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)
             if hits >= 10:
                 slider_blue += 1
+        control_flick.setProperty("contentY", 0)
         if not slider_blue:
             raise RuntimeError("no slider shows the blue fill")
         print("slider fill accent-blue:", slider_blue, "of", len(sliders), "sliders")
@@ -543,11 +531,25 @@ def main():
         if not chart_items:
             raise RuntimeError("visible compact TemperatureChart not found in the scene")
         chart = chart_items[0]
+        # The bed-sized mini maps above this chart can push it below the
+        # Information viewport. Scroll the chart into view before reading
+        # its pixels; a fixed scene position now samples the clipped area.
+        info_flick = chart.parentItem()
+        while info_flick is not None and info_flick.metaObject().indexOfProperty("contentY") < 0:
+            info_flick = info_flick.parentItem()
+        if info_flick is None:
+            raise RuntimeError("Information flickable not found above the mini chart")
+        chart_y = chart.mapToItem(info_flick, QPointF(0, 0)).y()
+        info_flick.setProperty("contentY", max(0, min(
+            info_flick.property("contentHeight") - info_flick.height(),
+            info_flick.property("contentY") + chart_y - info_flick.height() / 3)))
         scene = settled_window()
         top_left = chart.mapToScene(QPointF(0, 0))
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
-                   for y in range(5, int(chart.height()), 4)}
+                   for y in range(5, int(chart.height()), 4)
+                   if 0 <= top_left.x() + x < scene.width()
+                   and 0 <= top_left.y() + y < scene.height()}
         # The mini is a SPARKLINE (2 grid lines, flat series, no
         # labels): its correct signature is the background, the grid
         # and at least ONE series colour — the old 12-colour floor
@@ -557,6 +559,7 @@ def main():
         if len(colours) < 3:
             raise RuntimeError("mini chart region looks blank (%d colours)" % len(colours))
         print("mini chart region colours:", len(colours))
+        info_flick.setProperty("contentY", 0)
         for _ in range(3):
             app.processEvents()
 
@@ -624,6 +627,113 @@ def main():
             raise RuntimeError("the indexed penguin toolpaths did not paint")
         grab("11-print-follower.png", popover_card("Print Follower"))
         host.setProperty("openPopOver", "")
+
+        # The detection-enabled render (the README's enabled surface):
+        # the shared model reports ready with the global switch on and
+        # this printer's opt-ins ticked, so the Failure Detection
+        # controls render live in the controls pane. Runs after every
+        # canonical grab, so those frames are untouched.
+        from dataclasses import replace as _replace
+        follower.apply_printer_config(_replace(
+            follower.current_printer_config(), detection_enabled=True,
+            detection_notify_enabled=True, detection_pause_enabled=True))
+        model._detection = SimpleNamespace(ready=True, enabled=True,
+            reset=lambda: None, sample=lambda image, context, captured_at=None, regions=(): None)
+        model._failure_detection._detection = model._detection
+        model.detectionChanged.emit()
+        for _ in range(3):
+            app.processEvents()
+        section = item.findChild(QQuickItem, "failureDetectionSection")
+        if section is None:
+            raise RuntimeError("the detection section did not render")
+        # The pane lays out late (async item loads), so the settle is
+        # pumped in WALL-CLOCK time: processEvents alone starves the
+        # timers the layout rides on (the settings capture's lesson),
+        # and a run that measured mid-settle captured a shifted frame —
+        # the determinism check caught 12-detection-controls differing
+        # between two runs.
+        def pump_ms(milliseconds):
+            deadline = time.monotonic() + milliseconds / 1000.0
+            while time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+
+        pump_ms(300)
+        position = None
+        previous = object()
+        for _ in range(40):
+            position = section.mapToItem(control_flick, QPointF(0, 0)).y()
+            if position == previous:
+                break
+            previous = position
+            pump_ms(50)
+        else:
+            raise RuntimeError("the detection section never settled in the controls pane")
+        scroll = max(0.0, min(control_flick.property("contentHeight") - control_flick.height(),
+                              position - 20))
+        applied = None
+        for _ in range(40):
+            control_flick.setProperty("contentY", scroll)
+            pump_ms(50)
+            current = control_flick.property("contentY")
+            if current == scroll and current == applied:
+                break
+            applied = current
+        else:
+            raise RuntimeError("the controls pane never held the requested scroll")
+        # The capture is only useful while the section is actually in
+        # the pane's viewport: a clamped scroll would grab a frame of
+        # the wrong controls.
+        viewport = section.mapToItem(control_flick, QPointF(0, 0)).y()
+        if not 0 <= viewport <= control_flick.height() - 40:
+            raise RuntimeError("the detection section sits outside the controls viewport")
+        grab("12-detection-controls.png")
+
+        # Camera-local polygons and model proposals, fed through the production
+        # owner. A deterministic analysis clock keeps the age label reproducible.
+        from mpf.detection.DetectionObservation import DetectionBox, DetectionSample, DetectionResult, ModelDetections
+        from PyQt6.QtQml import QQmlExpression
+        owner = model._failure_detection
+        owner._monotonic = lambda: 100.0
+        owner._detection_history_pending = True  # no network identity request in a visual fixture
+        owner.setDetectionEditingRegions(True)
+        overlay = item.findChild(QQuickItem, "detectionOverlay")
+        if overlay is None:
+            raise RuntimeError("the region overlay did not render")
+        expression = QQmlExpression(engine.rootContext(), overlay, "addRectangle(); addRectangle(); selectedRegion = 0")
+        expression.evaluate()
+        if expression.hasError():
+            raise RuntimeError(expression.error().toString())
+        pump_ms(200)
+        grab("13-monitored-region-editor.png")
+        if not owner.saveDetectionRegions([[[.18,.18],[.72,.18],[.78,.72],[.20,.80]],
+                                           [[.62,.15],[.90,.15],[.90,.68],[.62,.68]]]):
+            raise RuntimeError("the capture regions could not be saved")
+        owner._detection_values()
+        sample_context = owner._detection_context()
+        image = QColor("white")
+        from PyQt6.QtGui import QImage
+        frame = QImage(640, 480, QImage.Format.Format_RGB888)
+        frame.fill(image)
+        # Notifications/commands are off for this explicitly synthetic sample.
+        follower.apply_printer_config(_replace(follower.current_printer_config(),
+            detection_notify_enabled=False, detection_pause_enabled=False))
+        owner._detection_values()
+        if len(owner.detectionRegions) != 2:
+            raise RuntimeError("the saved capture regions did not survive a detection-settings edit")
+        sample_context = owner._detection_context()
+        owner._on_detection_observation(DetectionResult(DetectionSample(frame, sample_context, 97.),
+            ModelDetections(.3, (DetectionBox(.35,.35,.20,.25,.8), DetectionBox(.74,.22,.10,.12,.6)))))
+        model._publish()
+        pump_ms(200)
+        drawn_regions = overlay.property("regions")
+        if hasattr(drawn_regions, "toVariant"):
+            drawn_regions = drawn_regions.toVariant()
+        if len(drawn_regions) != 2:
+            raise RuntimeError("the overlay lost its saved monitored regions")
+        if len(owner.detectionBoxes) != 2 or owner.detectionAnalysisAge != 3:
+            raise RuntimeError("the suspicious-region capture did not retain its sampled boxes and age")
+        grab("14-suspicious-region-boxes.png")
 
         # Tear the scene down in dependency order while the context-property
         # wrappers are still referenced: at exit the wrappers free in

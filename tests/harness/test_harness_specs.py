@@ -4,6 +4,7 @@ typo'd op used to surface only inside the container, forty minutes
 into a gate (the engineering panel's finding)."""
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -614,6 +615,24 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn("def _enum_name(", _driver_source("scene.py"))
         self.assertNotIn("int(window.visibility())", driver_source)
         self.assertNotIn("int(window.visibility())", owner)
+
+    def test_the_suite_profile_predismisses_the_one_time_boot_prompts(self):
+        # A suite boot is a settled install. The what's-new card and the
+        # local-detection offer are one-time prompts, and a modal still
+        # waiting blocks every stage click — the 5.0.0 detection offer
+        # failed e1–e4 exactly that way. Both markers stay seeded.
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        base = os.path.join(root, "tests", "harness", "config", "config", "cura", "5.13",
+                            "MoonrakerPrintFollower")
+        with open(os.path.join(base, "state.json"), encoding="utf-8") as handle:
+            state = json.load(handle)
+        self.assertTrue(state.get("whatsNewSeen"),
+                        "the suite profile no longer pre-dismisses What's New")
+        with open(os.path.join(base, "settings.json"), encoding="utf-8") as handle:
+            settings = json.load(handle)
+        record = (settings.get("global") or {}).get("localDetection") or {}
+        self.assertTrue(record.get("offer_seen", False),
+                        "the suite profile no longer pre-dismisses the local-detection offer")
 
 
 if __name__ == "__main__":

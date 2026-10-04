@@ -370,6 +370,22 @@ MonitorPopOver {
                         enabled: progressFace.dotAvailable()
                         onClicked: progressFace.centreOnToolhead()
                     }
+                    // The detached anchor's ETA (the 5.0.0 request):
+                    // how long until the print reaches the layer the
+                    // popover is frozen on. It rides the SAME slot as
+                    // the toolhead controls above — those are
+                    // attached-only, this is detached-only — so the
+                    // row never grows and detaching cannot reflow the
+                    // popover. An em dash is the no-estimate answer.
+                    UM.Label {
+                        objectName: "moonrakerFollowerLayerEta"
+                        visible: root.printerModel != null && !root.printerModel.followerAttached
+                        Layout.preferredWidth: 128 * screenScaleFactor
+                        Layout.maximumWidth: 168 * screenScaleFactor
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideLeft
+                        text: root.printerModel != null && root.printerModel.plateAnchorEta !== "" ? root.printerModel.plateAnchorEta : "—"
+                    }
                     Cura.SecondaryButton {
                         id: attachButton
                         objectName: "moonrakerFollowerAttach"
@@ -387,124 +403,134 @@ MonitorPopOver {
                     }
                 }
 
-                // The layer selection (the 4.6.0 request): the slider
-                // seeks the anchor the face draws. A seek from the
-                // LIVE layer is itself the detach — the model freezes
-                // on the committed layer (the live request: the slider
-                // must never sit dead while attached). A seek commits
-                // only once the drag quietens: every step rebuilds a
-                // layer window and rehydrates it, so a release commits
-                // at once and a drag settles first.
-                RowLayout {
+                // The two tracks are ONE control group: the layer
+                // slider and its within-layer scrub sit directly on
+                // top of each other, so the popover's own row
+                // spacing does not separate them (the review's
+                // request).
+                ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.Label {
-                        // The reserved label column: both slider rows
-                        // share it, so the tracks line up exactly over
-                        // each other (the live request).
-                        Layout.preferredWidth: 100 * screenScaleFactor
-                        Layout.maximumWidth: 100 * screenScaleFactor
-                        text: "Layer"
-                        color: UM.Theme.getColor("text_inactive")
-                        elide: Text.ElideRight
-                    }
-                    OutlineSlider {
-                        id: layerSlider
-                        objectName: "moonrakerFollowerLayerSlider"
-                        Layout.fillWidth: true
-                        from: 0
-                        to: Math.max(0, (root.printerModel != null ? root.printerModel.plateLayerCount : 0) - 1)
-                        stepSize: 1
-                        enabled: root.printerModel != null && root.printerModel.plateLayerCount > 0
-                        onValueTuning: {
-                            // The raw tick rides to the model: the
-                            // seek's perceived latency includes the
-                            // debounce, so the trace records it. The
-                            // signal is the slider's own — it never
-                            // fires during teardown.
-                            if (root.printerModel != null) {
-                                root.printerModel.seekAnchorTicked();
-                            }
-                            layerSeekTimer.restart();
-                        }
-                        onValueCommitted: {
-                            layerSeekTimer.stop();
-                            progressFace.endInteraction();
-                            commitLayerSeek();
-                        }
-                    }
-                    UM.Label {
-                        objectName: "moonrakerFollowerLayerReadout"
-                        Layout.preferredWidth: 64 * screenScaleFactor
-                        Layout.maximumWidth: 64 * screenScaleFactor
-                        horizontalAlignment: Text.AlignRight
-                        text: layerReadout()
-                    }
-                }
+                    spacing: 0
 
-                // The within-layer progress (the 4.6.0 request): a
-                // SCRUBBER, not a display bar — the slider plays the
-                // frozen layer through manually (the live request).
-                // Attached it mirrors the live split; a scrub is
-                // itself the detach (the layer slider's rule).
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.Label {
-                        // The same reserved column as the layer row:
-                        // the two tracks align exactly (the live
-                        // request).
-                        Layout.preferredWidth: 100 * screenScaleFactor
-                        Layout.maximumWidth: 100 * screenScaleFactor
-                        text: "Layer progress"
-                        color: UM.Theme.getColor("text_inactive")
-                        elide: Text.ElideRight
-                    }
-                    OutlineSlider {
-                        id: layerProgressSlider
-                        objectName: "moonrakerFollowerLayerProgress"
+                    // The layer selection (the 4.6.0 request): the slider
+                    // seeks the anchor the face draws. A seek from the
+                    // LIVE layer is itself the detach — the model freezes
+                    // on the committed layer (the live request: the slider
+                    // must never sit dead while attached). A seek commits
+                    // only once the drag quietens: every step rebuilds a
+                    // layer window and rehydrates it, so a release commits
+                    // at once and a drag settles first.
+                    RowLayout {
                         Layout.fillWidth: true
-                        from: 0
-                        to: Math.max(0, root.printerModel != null ? root.printerModel.plateLayerMotionCount : 0)
-                        // One tenth of a percent, bounded by one motion.
-                        stepSize: Math.max(1, to / 10000)
-                        enabled: root.printerModel != null && root.printerModel.plateProgressAvailable && root.printerModel.plateLayerMotionCount > 0
-                        // The scrub commits on every drag tick — the
-                        // fill tracks the thumb at frame rate (the
-                        // live request), and the release commits once
-                        // more for the final position. A scrub input
-                        // also ends any camera interaction outright:
-                        // a latched warm raster standing over the
-                        // hidden exact scene during scrub repaints is
-                        // the wrong picture between frames.
-                        onValueTuning: {
-                            progressFace.endInteraction();
-                            commitProgressSeek();
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        UM.Label {
+                            // The reserved label column: both slider rows
+                            // share it, so the tracks line up exactly over
+                            // each other (the live request).
+                            Layout.preferredWidth: 100 * screenScaleFactor
+                            Layout.maximumWidth: 100 * screenScaleFactor
+                            text: "Layer"
+                            color: UM.Theme.getColor("text_inactive")
+                            elide: Text.ElideRight
                         }
-                        onValueCommitted: {
-                            progressFace.endInteraction();
-                            commitProgressSeek();
+                        OutlineSlider {
+                            id: layerSlider
+                            objectName: "moonrakerFollowerLayerSlider"
+                            Layout.fillWidth: true
+                            from: 0
+                            to: Math.max(0, (root.printerModel != null ? root.printerModel.plateLayerCount : 0) - 1)
+                            stepSize: 1
+                            enabled: root.printerModel != null && root.printerModel.plateLayerCount > 0
+                            onValueTuning: {
+                                // The raw tick rides to the model: the
+                                // seek's perceived latency includes the
+                                // debounce, so the trace records it. The
+                                // signal is the slider's own — it never
+                                // fires during teardown.
+                                if (root.printerModel != null) {
+                                    root.printerModel.seekAnchorTicked();
+                                }
+                                layerSeekTimer.restart();
+                            }
+                            onValueCommitted: {
+                                layerSeekTimer.stop();
+                                progressFace.endInteraction();
+                                commitLayerSeek();
+                            }
+                        }
+                        UM.Label {
+                            objectName: "moonrakerFollowerLayerReadout"
+                            Layout.preferredWidth: 64 * screenScaleFactor
+                            Layout.maximumWidth: 64 * screenScaleFactor
+                            horizontalAlignment: Text.AlignRight
+                            text: layerReadout()
                         }
                     }
-                    UM.Label {
-                        objectName: "moonrakerFollowerLayerProgressReadout"
-                        // The same reserved width as the layer row's
-                        // readout: the tracks stay equal.
-                        Layout.preferredWidth: 64 * screenScaleFactor
-                        Layout.maximumWidth: 64 * screenScaleFactor
-                        horizontalAlignment: Text.AlignRight
-                        text: {
-                            // An expression, not a call: the readout
-                            // must re-bind on the split and the count
-                            // (the live report — a call froze it and
-                            // an unset count read NaN%).
-                            var total = root.printerModel != null ? root.printerModel.plateLayerMotionCount : 0;
-                            var split = root.printerModel != null ? root.printerModel.plateSplit : null;
-                            if (total <= 0 || split == null || isNaN(split) || isNaN(total)) {
-                                return "—";
+
+                    // The within-layer progress (the 4.6.0 request): a
+                    // SCRUBBER, not a display bar — the slider plays the
+                    // frozen layer through manually (the live request).
+                    // Attached it mirrors the live split; a scrub is
+                    // itself the detach (the layer slider's rule).
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("thin_margin").width
+                        UM.Label {
+                            // The same reserved column as the layer row:
+                            // the two tracks align exactly (the live
+                            // request).
+                            Layout.preferredWidth: 100 * screenScaleFactor
+                            Layout.maximumWidth: 100 * screenScaleFactor
+                            text: "Layer progress"
+                            color: UM.Theme.getColor("text_inactive")
+                            elide: Text.ElideRight
+                        }
+                        OutlineSlider {
+                            id: layerProgressSlider
+                            objectName: "moonrakerFollowerLayerProgress"
+                            Layout.fillWidth: true
+                            from: 0
+                            to: Math.max(0, root.printerModel != null ? root.printerModel.plateLayerMotionCount : 0)
+                            // One tenth of a percent, bounded by one motion.
+                            stepSize: Math.max(1, to / 10000)
+                            enabled: root.printerModel != null && root.printerModel.plateProgressAvailable && root.printerModel.plateLayerMotionCount > 0
+                            // The scrub commits on every drag tick — the
+                            // fill tracks the thumb at frame rate (the
+                            // live request), and the release commits once
+                            // more for the final position. A scrub input
+                            // also ends any camera interaction outright:
+                            // a latched warm raster standing over the
+                            // hidden exact scene during scrub repaints is
+                            // the wrong picture between frames.
+                            onValueTuning: {
+                                progressFace.endInteraction();
+                                commitProgressSeek();
                             }
-                            var pct = Math.max(0, split) / total * 100;
-                            return isNaN(pct) ? "—" : pct.toFixed(2) + "%";
+                            onValueCommitted: {
+                                progressFace.endInteraction();
+                                commitProgressSeek();
+                            }
+                        }
+                        UM.Label {
+                            objectName: "moonrakerFollowerLayerProgressReadout"
+                            // The same reserved width as the layer row's
+                            // readout: the tracks stay equal.
+                            Layout.preferredWidth: 64 * screenScaleFactor
+                            Layout.maximumWidth: 64 * screenScaleFactor
+                            horizontalAlignment: Text.AlignRight
+                            text: {
+                                // An expression, not a call: the readout
+                                // must re-bind on the split and the count
+                                // (the live report — a call froze it and
+                                // an unset count read NaN%).
+                                var total = root.printerModel != null ? root.printerModel.plateLayerMotionCount : 0;
+                                var split = root.printerModel != null ? root.printerModel.plateSplit : null;
+                                if (total <= 0 || split == null || isNaN(split) || isNaN(total)) {
+                                    return "—";
+                                }
+                                var pct = Math.max(0, split) / total * 100;
+                                return isNaN(pct) ? "—" : pct.toFixed(2) + "%";
+                            }
                         }
                     }
                 }

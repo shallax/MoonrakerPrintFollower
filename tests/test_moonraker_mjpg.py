@@ -1,13 +1,14 @@
 """Camera pipeline integration contracts, isolated by test-file process."""
 import time
 import unittest
+from unittest.mock import patch
 from tests.mjpg_test_support import QT_AVAILABLE
 
 if QT_AVAILABLE:
     from tests.mjpg_test_support import (
-        QUrl, QColor, QImage,
+        QUrl, QColor, QImage, QObject,
         QBuffer, QIODevice, runtime, MAX_HEADER_BYTES, MAX_IN_PROGRESS_FRAME_BYTES, RETAINED_GARBAGE_LIMIT,
-        MoonrakerMJPGImage, FakeReply, FakeNam,
+        MoonrakerMJPGImage, FakeReply, FakeNam, mjpg_module,
         _jpeg, _multipart, _chunked,
     )
 
@@ -879,6 +880,183 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         self.assertEqual(self.item.framesDisplayed, 1)
         self.assertEqual(self.item.imageWidth, 40)
 
+    # -- branch pins: the render, lifecycle and detection seams ---------
+
+    def test_paint_blits_the_frame_with_and_without_mirror(self):
+        from PyQt6.QtCore import QSizeF
+        from PyQt6.QtGui import QPainter
+        # Two colour halves: a single-colour fill is invariant under a
+        # horizontal flip, so only asymmetric content can catch a
+        # dropped or inverted mirror.
+        left, right = QColor(200, 30, 30), QColor(30, 30, 200)
+        image = QImage(8, 6, QImage.Format.Format_RGB888)
+        for x in range(8):
+            for y in range(6):
+                image.setPixelColor(x, y, left if x < 4 else right)
+        self.item._image = image
+        self.item.setSize(QSizeF(8, 6))
+        for mirror, expected in ((False, left), (True, right)):
+            with self.subTest(mirror=mirror):
+                self.item.setMirror(mirror)
+                target = QImage(8, 6, QImage.Format.Format_RGB888)
+                target.fill(QColor(0, 0, 0))
+                painter = QPainter(target)
+                self.item.paint(painter)
+                painter.end()
+                self.assertEqual(
+                    target.pixelColor(1, 2), expected,
+                    "the %s frame did not reach the painter"
+                    % ("mirrored" if mirror else "unmirrored"))
+
+    def test_detection_receiver_reapplies_without_a_second_notify(self):
+        receiver = QObject()
+        seen = []
+        self.item.detectionReceiverChanged.connect(lambda: seen.append(1))
+        self.item.setDetectionReceiver(receiver)
+        self.assertIs(self.item.getDetectionReceiver(), receiver)
+        self.item.setDetectionReceiver(receiver)
+        self.assertEqual(len(seen), 1, "re-applying the same receiver notified again")
+
+    def test_a_decoded_frame_reaches_the_detection_receiver(self):
+        class _Sink(QObject):
+            def __init__(self):
+                super().__init__()
+                self.frames = []
+
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
+                self.frames.append(image)
+
+        sink = _Sink()
+        self.item.setDetectionReceiver(sink)
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(24, 16)))
+        self._await(lambda: len(sink.frames) == 1,
+                    "the analysed frame never reached the receiver")
+        self.assertEqual((sink.frames[0].width(), sink.frames[0].height()), (24, 16))
+
+    def test_a_raising_detection_receiver_cannot_take_down_the_frame_install(self):
+        class _Angry(QObject):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
+                self.calls += 1
+                raise ValueError("receiver bug")
+
+        angry = _Angry()
+        self.item.setDetectionReceiver(angry)
+        self._start()
+        with patch.object(mjpg_module, "Logger") as logger:
+            self._reply().deliver(_multipart(_jpeg(24, 16)))
+            self._await(lambda: angry.calls == 1, "the receiver was never called")
+            # The picture is the priority: the frame install continues,
+            # the fault is reported once, and the receiver stays
+            # attached for the next frame to try again.
+            self._await(lambda: self.item.imageWidth == 24,
+                        "a raising receiver blocked the frame install")
+        logger.logException.assert_called_once()
+        self.assertIs(self.item.getDetectionReceiver(), angry)
+
+    def test_a_deleted_detection_receiver_is_detached_instead_of_crashing(self):
+        from PyQt6 import sip
+
+        class _Sink(QObject):
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
+                # The real receiver is a QObject whose handler touches
+                # its C++ side; a pure-Python body would keep working
+                # on a deleted wrapper and test nothing.
+                self.setObjectName("frame")
+
+        sink = _Sink()
+        self.item.setDetectionReceiver(sink)
+        sip.delete(sink)
+        self.assertTrue(sip.isdeleted(sink), "the fixture receiver was not deleted")
+        self._start()
+        with patch.object(mjpg_module, "Logger"):
+            self._reply().deliver(_multipart(_jpeg(24, 16)))
+            self._await(lambda: self.item.getDetectionReceiver() is None,
+                        "a deleted receiver stayed attached")
+        self._await(lambda: self.item.imageWidth == 24,
+                    "a deleted receiver blocked the frame install")
+
+    def test_target_fps_change_reschedules_an_open_snapshot_poll(self):
+        self.item.setSnapshotMode(True)
+        self.item.setTargetFps(1.0)
+        self.item.start()
+        self._reply().complete(_jpeg(40, 30))
+        self.assertTrue(self.item._snapshot_timer.isActive())
+        self.item.setTargetFps(2.0)
+        self.assertEqual(self.item._snapshot_timer.interval(), 500)
+
+    def test_start_without_a_source_never_opens_a_request(self):
+        bare = MoonrakerMJPGImage()
+        self.addCleanup(bare.stop)
+        # An empty QUrl is truthy in PyQt6, so the no-target guard only
+        # sees a falsy source — pin it against exactly that state.
+        bare._source_url = ""
+        bare.start()
+        self.assertFalse(bare._started)
+        self.assertIsNone(bare._image_reply)
+
+    def test_stop_releases_a_worker_that_could_not_be_joined(self):
+        class _StuckDecoder:
+            def stop(self):
+                return False
+
+        self.item._decoder = _StuckDecoder()
+        self.item.stop()
+        self.assertIsNone(self.item._decoder)
+
+    def test_stop_request_survives_a_reply_that_refuses_release(self):
+        class _HostileReply(FakeReply):
+            def deleteLater(self):
+                raise RuntimeError("wrapped object already gone")
+
+        self.item._started = True
+        self.item._image_reply = _HostileReply()
+        self.item._stop_request()
+        self.assertIsNone(self.item._image_reply)
+
+    def test_snapshot_timeout_without_an_open_poll_is_inert(self):
+        self.item._on_snapshot_timeout()
+        self.assertEqual(self.item.transportErrors, 0)
+
+    def test_an_oversized_snapshot_aborts_the_poll_and_reschedules(self):
+        self.item.setSnapshotMode(True)
+        self.item.setTargetFps(1.0)
+        self.item.start()
+        reply = self._reply()
+        reply.deliver(b"x" * (MAX_IN_PROGRESS_FRAME_BYTES + 1))
+        self.assertEqual(self.item._stats.oversized_drops, 1)
+        self.assertEqual(reply._aborted, 1)
+        self.assertIsNone(self.item._image_reply)
+        self.assertTrue(self.item._snapshot_timer.isActive())
+
+    def test_dispatch_leaves_the_frame_pending_while_one_is_in_flight(self):
+        self.item._pending_frame = b"pending"
+        self.item._decode_in_flight = 1
+        self.item._dispatch()
+        self.assertEqual(self.item._pending_frame, b"pending")
+        self.assertEqual(self.item._decode_in_flight, 1)
+
+    def test_trace_summary_is_rate_limited(self):
+        self.item.setTraceEnabled(True)
+        self.item._trace_summary_at = time.monotonic()
+        stamp = self.item._trace_summary_at
+        self.item._trace_summary()
+        self.assertEqual(self.item._trace_summary_at, stamp,
+                         "the summary ran twice inside one interval")
+
+    def test_destructor_stops_the_stream_and_swallows_teardown_failures(self):
+        from unittest.mock import Mock
+        self._start()
+        self.item.__del__()
+        self.assertFalse(self.item._started)
+
+        broken = MoonrakerMJPGImage()
+        broken.stop = Mock(side_effect=RuntimeError("teardown"))
+        broken.__del__()  # must not raise
 
 
 if __name__ == "__main__":

@@ -213,14 +213,14 @@ class MonitorData(QObject):
     def status(self):
         return self._client.status
 
-    def track_command(self, name, expected_states=(), *, timeout_s=10.0):
-        self._client.track_command(name, expected_states, timeout_s=timeout_s)
+    def track_command(self, name, expected_states=(), *, timeout_s=10.0, command_id=None):
+        self._client.track_command(name, expected_states, timeout_s=timeout_s, command_id=command_id)
 
-    def accept_command(self, name):
-        self._client.accept_command(name)
+    def accept_command(self, name, command_id=None):
+        self._client.accept_command(name, command_id=command_id)
 
-    def fail_command(self, name, detail):
-        self._client.fail_command(name, detail)
+    def fail_command(self, name, detail, command_id=None):
+        self._client.fail_command(name, detail, command_id=command_id)
 
     def force_refresh(self):
         self._client.force_refresh()

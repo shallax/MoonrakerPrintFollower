@@ -2,6 +2,32 @@
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def test_the_anchor_point_fraction_measures_the_selected_point(self):
+        # The detached popover's ETA targets the POINT selected inside
+        # the layer (the review's ask): a share of the layer's motions
+        # for a layer ahead, and the share still ahead of the print for
+        # the layer it is already inside.
+        from mpf.application.PrintCoordinator import _anchor_point_fraction
+        manual = {"motionTotal": 100, "split": 40, "anchor": 9}
+        self.assertAlmostEqual(_anchor_point_fraction(9, manual, None), 0.4)
+        # A layer ahead of the print ignores the live position.
+        live = {"motionTotal": 100, "split": 20, "anchor": 4}
+        self.assertAlmostEqual(_anchor_point_fraction(9, manual, live), 0.4)
+        # The layer under the print: the share still ahead of it
+        # (0.4 selected, 0.2 printed -> a quarter of what remains).
+        current = {"motionTotal": 100, "split": 20, "anchor": 9}
+        self.assertAlmostEqual(_anchor_point_fraction(9, manual, current), 0.25)
+        # A point the print has already passed, and a finished layer:
+        # nothing left to wait for.
+        self.assertEqual(_anchor_point_fraction(
+            9, {"motionTotal": 100, "split": 10}, current), 0.0)
+        self.assertEqual(_anchor_point_fraction(
+            9, manual, {"motionTotal": 100, "split": 100, "anchor": 9}), 0.0)
+        # No scrub resolution at all: the layer's own end is the point.
+        self.assertEqual(_anchor_point_fraction(9, {"motionTotal": 0}, None), 1.0)
+        self.assertEqual(_anchor_point_fraction(9, None, None), 1.0)
+        self.assertEqual(_anchor_point_fraction(9, {"motionTotal": None}, None), 1.0)
+
     def test_both_views_receive_the_same_once_matched_motion_observation(self):
         parts = self._printing(self._make())
         parts.index.view = harness._view()

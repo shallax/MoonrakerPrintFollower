@@ -578,11 +578,11 @@ class FakeDataClient(QObject if QT_AVAILABLE else object):
     def stop(self): self.stopped += 1
     def start(self): self.started += 1
 
-    def track_command(self, name, expected_states=(), *, timeout_s=10.0):
+    def track_command(self, name, expected_states=(), *, timeout_s=10.0, command_id=None):
         self.tracked.append((name, tuple(expected_states), timeout_s))
 
-    def accept_command(self, name): self.accepted.append(name)
-    def fail_command(self, name, detail): self.failed.append((name, detail))
+    def accept_command(self, name, command_id=None): self.accepted.append(name)
+    def fail_command(self, name, detail, command_id=None): self.failed.append((name, detail))
     def settle_command(self, name, detail): self.settled.append((name, detail))
 
 

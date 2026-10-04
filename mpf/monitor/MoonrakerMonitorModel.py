@@ -41,6 +41,7 @@ def _british_spelling() -> bool:
     return False
 
 
+from .MonitorDetection import MonitorDetection
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
 from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
@@ -91,6 +92,13 @@ SECTIONS_FILE_NAME = "moonrakerprintfollower_sections.json"
 # hand-edited file, or a stray drag value. The PANE bounds are the QML's
 # clamp: they depend on the live stage layout, which the model cannot see.
 CONSOLE_HEIGHT_MAX = 2000
+
+# How a standing detection alert reaches a user who missed the first
+# toast: it repeats on this interval while unacknowledged, and never
+# more than this many times in one print. Both bounds are persisted
+# with the per-print record, so a Cura restart does not restart the
+# count, and a silent alert can never nag a whole print.
+DETECTION_ALERT_REPEAT_SECONDS = 300
 # What the follower's placeholder says when the layer it is on will
 # never arrive: the service latches a source it could not present
 # ("failed") and refuses an anchor a shrunken file left behind
@@ -299,6 +307,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRefreshChanged = pyqtSignal()
     cameraRecoveringChanged = pyqtSignal()
     cameraFpsChanged = pyqtSignal()
+    detectionChanged = pyqtSignal()
     webcamStreamEnabledChanged = pyqtSignal()
     followerViewChanged = pyqtSignal()
     connectionDetailChanged = pyqtSignal()
@@ -319,7 +328,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                  pause_at_layer_block=None, request_pause_toggle=None,
                  request_pause_remove=None, request_pause_clear=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
-                 identity=None, state_store=None, persistence=None, index_service=None, colour_scheme=None):
+                 identity=None, state_store=None, persistence=None, index_service=None, colour_scheme=None,
+                 detection=None):
         super().__init__(output_controller, number_of_extruders)
         # The publication exists before anything can read a value
         # property: the declarations below resolve through it.
@@ -355,6 +365,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._request_pause_remove = request_pause_remove
         self._request_pause_clear = request_pause_clear
         self._identity = identity
+        self._detection = detection
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
         # instance; the default builds the production path.
@@ -374,9 +385,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # note line through the same channel as file refusals.
         self._request_file_download = request_file_download
         # The save download's progress window: the model polls the
-        # follower's progress payload each publish; the Cancel button
+        # follower's progress payload on a 250 ms clock; the Cancel button
         # retires the in-flight stream.
         self._request_download_progress = request_download_progress
+        self._download_progress = ""
         self._cancel_file_download = cancel_file_download
         if download_failed is not None:
             download_failed.connect(self._on_file_manager_note)
@@ -596,6 +608,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._chart_timer = QTimer(self)
         self._chart_timer.setInterval(1000)
         self._chart_timer.timeout.connect(self._on_chart_tick)
+        self._download_progress_timer = QTimer(self)
+        self._download_progress_timer.setInterval(250)
+        self._download_progress_timer.timeout.connect(self._poll_download_progress)
+        if detection is not None:
+            self._chart_timer.timeout.connect(self._refresh_detection)
         # The Preview value block rides the aux clock: the data's
         # emission forwards straight through to the output-device
         # edge (the seam's carrier, 4.3.0).
@@ -616,6 +633,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # e-stop's automatic cycle included).
         self._data.connectionStateChanged.connect(self._on_connection_state)
         self._temperature.changed.connect(lambda: self._publish())
+        self._failure_detection = MonitorDetection(
+            detection=detection, data=self._data, client=client, camera=self._camera,
+            recovery=self._camera_recovery, config=config, apply_config=apply_config,
+            identity=identity, print_state=self._print_state, commands=self._commands,
+            store=self._store, publish=self._publish, schedule_publish=self._schedule_publish,
+            published_values=lambda: self._values, printer_name=lambda: self.name or self.uniqueName,
+            parent=self)
+        self._failure_detection.detectionChanged.connect(self.detectionChanged.emit)
+        self._data.commandChanged.connect(self._on_detection_pause_command)
         self._data.set_owner_active(True)
         self._publish()
 
@@ -783,6 +809,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._schedule_publish()
 
     def _on_invalidated(self):
+        self._invalidate_detection()
         self._temperature._history.reset()
         # The session boundary drops the projection: a reconnect's
         # first snapshot must never match a definition read for the
@@ -807,6 +834,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def setMonitoringActive(self, active):
         if not active:
+            self._invalidate_detection()
+        if not active:
             # Ownership revocation retires the chart pop-over's
             # transient hydration state: a cached monitor must not
             # resume full-history construction after a machine switch
@@ -822,8 +851,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._temperature._chart_full = None
         if active:
             self._chart_timer.start()
+            self._download_progress_timer.start()
         else:
             self._chart_timer.stop()
+            self._download_progress_timer.stop()
         self._data.set_owner_active(active)
         # The post-migration ready point: the record may have landed
         # since construction (the early publishes read it while the
@@ -839,6 +870,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # — the signal path the toggle uses, fired here.
             self.sectionLayoutChanged.emit()
 
+
+    def _poll_download_progress(self) -> None:
+        """Sample byte counters without rebuilding the monitor or file rows."""
+        progress = (self._request_download_progress() or ""
+                    if self._request_download_progress is not None else "")
+        if progress == self._download_progress:
+            return
+        self._download_progress = progress
+        self._publication.set("fileDownloadProgress", progress)
+        self.fileManagerChanged.emit()
 
     def _publish_thumbs(self) -> None:
         """The thumbnail-only publish, COALESCED: landings arrive in
@@ -908,6 +949,190 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publication.store(self._compose(snapshot))
         self._apply_camera_url()
         self._emit_changed(previous)
+        # Region bindings also change while detection is idle, when neither
+        # the analysis context nor camera readiness changes on a selection.
+        camera_state = (self.detectionCameraReady, self._failure_detection._detection_printer_id(),
+                        self.detectionRegionCamera, self._failure_detection._regions_fingerprint())
+        if camera_state != self._failure_detection._detection_camera_seen:
+            self._failure_detection._detection_camera_seen = camera_state
+            self.detectionChanged.emit()
+
+    def _invalidate_detection(self):
+        return self._failure_detection._invalidate_detection()
+
+    def _detection_context(self):
+        return self._failure_detection._detection_context()
+
+    def _detection_values(self):
+        return self._failure_detection._detection_values()
+
+    def _refresh_detection(self):
+        return self._failure_detection._refresh_detection()
+
+    def _on_detection_result(self, context, confidence):
+        return self._failure_detection._on_detection_result(context, confidence)
+
+    def _on_detection_pause_command(self, event):
+        return self._failure_detection._on_detection_pause_command(event)
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionNotifyEnabled(self):
+        return self._failure_detection.detectionNotifyEnabled
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionEnabled(self):
+        return self._failure_detection.detectionEnabled
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionReady(self):
+        return self._failure_detection.detectionReady
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionGlobalEnabled(self):
+        return self._failure_detection.detectionGlobalEnabled
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionCameraReady(self):
+        return self._failure_detection.detectionCameraReady
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionWarningThreshold(self):
+        return self._failure_detection.detectionWarningThreshold
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionFailureThreshold(self):
+        return self._failure_detection.detectionFailureThreshold
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionSafeSeconds(self):
+        return self._failure_detection.detectionSafeSeconds
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionPauseEnabled(self):
+        return self._failure_detection.detectionPauseEnabled
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionAlertPending(self):
+        return self._failure_detection.detectionAlertPending
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionAlertLevel(self):
+        return self._failure_detection.detectionAlertLevel
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionPauseRearmable(self):
+        return self._failure_detection.detectionPauseRearmable
+
+    @pyqtSlot()
+    def rearmDetectionPause(self):
+        return self._failure_detection.rearmDetectionPause()
+
+    @pyqtSlot(bool)
+    def setDetectionNotifyEnabled(self, enabled):
+        return self._failure_detection.setDetectionNotifyEnabled(enabled)
+
+    @pyqtSlot(bool)
+    def setDetectionEnabled(self, enabled):
+        return self._failure_detection.setDetectionEnabled(enabled)
+
+    @pyqtSlot(int, int)
+    def setDetectionThresholds(self, warning, failure):
+        return self._failure_detection.setDetectionThresholds(warning, failure)
+
+    @pyqtSlot(int)
+    def setDetectionSafeSeconds(self, seconds):
+        return self._failure_detection.setDetectionSafeSeconds(seconds)
+
+    @pyqtSlot(bool)
+    def setDetectionPauseEnabled(self, enabled):
+        return self._failure_detection.setDetectionPauseEnabled(enabled)
+
+    @pyqtSlot()
+    def acknowledgeDetectionAlert(self):
+        return self._failure_detection.acknowledgeDetectionAlert()
+
+    def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
+        return self._failure_detection.acceptDetectionFrame(image, captured_at, source_url)
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionSensitivity(self):
+        return self._failure_detection.detectionSensitivity
+
+    @pyqtSlot(float)
+    def setDetectionSensitivity(self, value):
+        return self._failure_detection.setDetectionSensitivity(value)
+
+    @pyqtSlot()
+    def resetDetectionTuning(self):
+        return self._failure_detection.resetDetectionTuning()
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionBaseline(self):
+        return self._failure_detection.detectionBaseline
+
+    @pyqtSlot()
+    def resetDetectionBaseline(self):
+        return self._failure_detection.resetDetectionBaseline()
+
+    @pyqtSlot()
+    def resetPrinterDetectionTraining(self):
+        return self._failure_detection.resetPrinterDetectionTraining()
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionMuted(self):
+        return self._failure_detection.detectionMuted
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionMuteAvailable(self):
+        return self._failure_detection.detectionMuteAvailable
+
+    @pyqtSlot(bool)
+    def setDetectionMuted(self, muted):
+        return self._failure_detection.setDetectionMuted(muted)
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionShowBoxes(self):
+        return self._failure_detection.detectionShowBoxes
+
+    @pyqtSlot(bool)
+    def setDetectionShowBoxes(self, enabled):
+        return self._failure_detection.setDetectionShowBoxes(enabled)
+
+    @pyqtProperty(QVariant, notify=detectionChanged)
+    def detectionBoxes(self):
+        return self._failure_detection.detectionBoxes
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionAnalysisAge(self):
+        return self._failure_detection.detectionAnalysisAge
+
+    @pyqtProperty(QVariant, notify=detectionChanged)
+    def detectionRegions(self):
+        return self._failure_detection.detectionRegions
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionRegionCamera(self):
+        return self._failure_detection.detectionRegionCamera
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionRegionsValid(self):
+        return self._failure_detection.detectionRegionsValid
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionEditingRegions(self):
+        return self._failure_detection.detectionEditingRegions
+
+    @pyqtSlot(bool)
+    def setDetectionEditingRegions(self, editing):
+        return self._failure_detection.setDetectionEditingRegions(editing)
+
+    @pyqtSlot(QVariant, result=str)
+    def validateDetectionRegions(self, value):
+        return self._failure_detection.validateDetectionRegions(value)
+
+    @pyqtSlot(QVariant, result=bool)
+    def saveDetectionRegions(self, value):
+        return self._failure_detection.saveDetectionRegions(value)
 
     def _observe(self):
         """The snapshot read and the transitions that precede the values
@@ -947,8 +1172,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["monitorLoading"] = bool(self._client.connected and not self._data.snapshot.auxiliary)
         # The download progress window's payload: {name, percent} while
         # a save download streams, "" otherwise (the popup's gate).
-        values["fileDownloadProgress"] = (self._request_download_progress() or ""
-                                          if self._request_download_progress is not None else "")
+        values["fileDownloadProgress"] = self._download_progress
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
         # snapshot (the report: M117 showed nowhere).
@@ -1052,6 +1276,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateProgressAnchor"] = (popover["anchor"]
                                               if popover is not None and popover["anchor"] is not None else -1)
             values["plateProgressAvailable"] = bool(popover is not None and popover.get("layers", {}).get("current") is not None)
+            # The detached anchor's ETA, read beside the anchor itself:
+            # "" means no estimate (behind the print, or no timing).
+            values["plateAnchorEta"] = (
+                getattr(snapshot, "plate_anchor_eta", "") or ""
+                if not self._follower_attached else "")
             if popover is None:
                 # No index at all: the reason stays empty — the face's
                 # download action owns that state (its idle line
@@ -1091,6 +1320,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             values["plateLayerMotionCount"] = self._values.get("plateLayerMotionCount", 0)
             values["plateProgressAnchor"] = self._values.get("plateProgressAnchor", -1)
             values["plateProgressAvailable"] = self._values.get("plateProgressAvailable", False)
+            values["plateAnchorEta"] = self._values.get("plateAnchorEta", "")
             values["plateProgressReason"] = self._values.get("plateProgressReason", "")
             values["plateNavigationData"] = self._values.get("plateNavigationData", "")
             values["plateNavigationSplit"] = self._values.get("plateNavigationSplit")
@@ -1182,6 +1412,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["sectionReasonDetail"] = REASON_DETAIL.get(section, "")
         values.update(self._controls.values)
         values.update(self._camera.values)
+        values.update(self._detection_values())
         values["webcamStreamEnabled"] = self._camera_recovery.stream_enabled
         values.update(self._toolhead.values)
         values.update(self._console.values)
@@ -1432,6 +1663,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateSplit = value_property(QVariant, "plateSplit", plateProgressChanged, None)
     plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
+    # The detached anchor's ETA ("" = no estimate): the popover's
+    # "Layer ETA" row reads it beside the anchor.
+    plateAnchorEta = value_property(str, "plateAnchorEta", plateProgressChanged, "")
     plateTrackingAvailable = value_property(bool, "plateTrackingAvailable", plateProgressChanged, False)
     plateSourceStatus = value_property(str, "plateSourceStatus", plateProgressChanged, "")
     plateSourceBusy = value_property(bool, "plateSourceBusy", plateProgressChanged, False)
@@ -1515,6 +1749,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consolePending = value_property(int, "consolePending", consoleChanged, 0)
     consoleErrorBell = value_property(bool, "consoleErrorBell", consoleChanged, False)
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")
+    detectionState = value_property(str, "detectionState", detectionChanged, "idle")
+    detectionScore = value_property(int, "detectionScore", detectionChanged, -1)
+    detectionRawScore = value_property(float, "detectionRawScore", detectionChanged, -1.0)
+    detectionStatus = value_property(str, "detectionStatus", detectionChanged, "Off for this printer")
     cameraRotation = value_property(int, "cameraRotation", cameraTransformChanged, 0)
     cameraFlipHorizontal = value_property(bool, "cameraFlipHorizontal", cameraTransformChanged, False)
     cameraFlipVertical = value_property(bool, "cameraFlipVertical", cameraTransformChanged, False)
@@ -1530,6 +1768,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     flowFactorPercent = value_property(int, "flowFactorPercent", controlsChanged, 100)
     zOffset = value_property(float, "zOffset", controlsChanged, 0.0)
     zOffsetText = value_property(str, "zOffsetText", controlsChanged, "0.000 mm")
+    zOffsetApplyTarget = value_property(str, "zOffsetApplyTarget", controlsChanged, "")
+    canApplyZOffset = value_property(bool, "canApplyZOffset", controlsChanged, False)
     fanControlItems = value_property(QVariant, "fanControlItems", controlsChanged, [])
     ledItems = value_property(QVariant, "ledItems", controlsChanged, [])
     pwmOutputItems = value_property(QVariant, "pwmOutputItems", typedControlsChanged, [])
@@ -2074,8 +2314,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if verdict.mode != "allowed":
             self._commands.report_status(f"Pause refused: {verdict.reason}")
             self._publish()
-            return
-        self._commands.send("Pause", "printer/print/pause")
+            return False
+        return self._commands.send("Pause", "printer/print/pause")
     @pyqtSlot()
     def resumePrint(self):
         observation = getattr(self._data, "observation", None)
@@ -2757,6 +2997,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def adjustZOffset(self, amount): self._controls.z_offset(amount)
     @pyqtSlot()
     def clearZOffset(self): self._controls.z_offset()
+    @pyqtSlot()
+    def applyZOffset(self): self._controls.z_offset_apply()
     @pyqtSlot(str, int)
     def previewFanSpeed(self, name, percent): self._controls.output("fan", name, percent, True)
     @pyqtSlot(str, int)

@@ -68,6 +68,22 @@ class CameraOwnershipTests(harness.CameraOwnershipTests):
                          "http://127.0.0.1:59999/webcam2/?camera=back",
                          "the second selection resolved to the first source")
 
+    def test_unknown_query_selectors_restart_and_query_order_does_not(self):
+        pane, image = self._mount_pane()
+        self._apply(pane, "http://127.0.0.1:59999/stream?src=bed&device=1&token=old", True)
+        self.pump()
+        first = self._counts(image)
+        self._apply(pane, "http://127.0.0.1:59999/stream?token=new&device=1&src=bed", True)
+        self.pump()
+        self.assertEqual(first, self._counts(image))
+        self._apply(pane, "http://127.0.0.1:59999/stream?src=toolhead&device=1", True)
+        self.pump()
+        second = tuple(value + 1 for value in first)
+        self.assertEqual(second, self._counts(image))
+        self._apply(pane, "http://127.0.0.1:59999/stream?src=toolhead&device=2", True)
+        self.pump()
+        self.assertEqual(tuple(value + 1 for value in second), self._counts(image))
+
     def test_a_rotating_nonce_never_thrashes_a_selection(self):
         # E: the same selection with a rotated per-poll nonce (the
         # token/timestamp a camera service rewrites) is the SAME

@@ -29,9 +29,10 @@ nothing in the repo tree is modified by this script:
     newest registration is 1.5, so an extra Enums 1.7 registration
     lifts the module version ceiling of the throwaway copy.
 
-One PNG is written per tab (05-settings-connection.png,
-05-settings-following.png, 05-settings-upload.png), each fitted to its
-tab's content height.  The output is deterministic for a given toolchain
+One PNG is written per tab (05-settings-connection.png through
+05-settings-diagnostics.png), plus the post-setup detection render
+(05-settings-detection-ready.png); each is fitted to its page's content
+height.  The output is deterministic for a given toolchain
 (the dev container pins the fonts), so captures can be diffed across
 releases.
 
@@ -43,6 +44,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -55,6 +57,13 @@ from PyQt6.QtQml import QQmlComponent, QQmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
 import capture_contrast
+import capture_settle
+
+# The tallest canvas a page capture may need. The Diagnostics page is
+# already taller than the fixed 600-px frame (813 px fitted); a page
+# that outgrows this is a capture failure to look at, never a silently
+# cropped image.
+CAPTURE_HEIGHT_LIMIT = 1200
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +86,7 @@ class SettingsManager(QObject):
         self._finished = False
         self._test_status = "Not tested"
         self._test_busy = False
+        self._detection_ready = False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def finished(self):
@@ -190,6 +200,78 @@ class SettingsManager(QObject):
         # The shipped default (RESTORE_WINDOW_DEFAULT): the capture
         # renders what a fresh install shows, never a blank combo.
         return "3"
+
+    # --- Local failure detection (see MoonrakerFollowerMachineAction) ---
+    # Defaults match the page's undefined-property fallbacks, so the
+    # five canonical tab captures are unchanged; the ready pass flips
+    # the flag for the enabled-state render.
+    detectionChanged = pyqtSignal()
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionReady(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionGlobalEnabled(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionCameraReady(self):
+        return self._detection_ready
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionBusy(self):
+        return False
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionPhase(self):
+        return ""
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionReceived(self):
+        return 0
+
+    @pyqtProperty(int, notify=detectionChanged)
+    def detectionTotal(self):
+        return 0
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionError(self):
+        return ""
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionHostError(self):
+        return ""
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionResetStatus(self):
+        return ""
+
+    @pyqtProperty(int, constant=True)
+    def detectionRuntimeSize(self):
+        # The setup copy names the runtime's size; a plausible value in
+        # the pinned range keeps the ready page's text honest.
+        return 24 * 1024 * 1024
+
+    @pyqtSlot(bool, result=bool)
+    def setDetectionGlobalEnabled(self, enabled):
+        return True
+
+    @pyqtSlot()
+    def startDetectionSetup(self):
+        pass
+
+    @pyqtSlot()
+    def cancelDetectionSetup(self):
+        pass
+
+    @pyqtSlot()
+    def resetDetectionAssets(self):
+        pass
+
+    def set_detection_ready(self, ready):
+        self._detection_ready = bool(ready)
+        self.detectionChanged.emit()
 
     # --- Integrated Moonraker output settings ---
     @pyqtProperty(str, notify=settingsChanged)
@@ -575,7 +657,7 @@ def main():
         for _ in range(5):
             app.processEvents()
 
-        # The page has three tabs (Connection / Following / Upload) driven
+        # The page has five tabs driven
         # by a TabBar + StackLayout; capture every tab, each fitted to its
         # own content height (the Upload tab is taller than the real
         # dialog's fixed frame, so a shared height would clip it).
@@ -592,7 +674,7 @@ def main():
         if tab_bar is None:
             raise RuntimeError("settings tab bar not found in the rendered page")
 
-        tab_names = ("connection", "following", "upload", "diagnostics")
+        tab_names = ("connection", "following", "upload", "detection", "diagnostics")
         if tab_bar.property("count") != len(tab_names):
             raise RuntimeError("settings page tab count changed: expected %d, got %s"
                                % (len(tab_names), tab_bar.property("count")))
@@ -605,7 +687,7 @@ def main():
             and the action-buttons row (~28 px).
 
             The Flickable is located through the StackLayout's CURRENT
-            item, never by a visible-item hunt: the tab switch's
+            index, never by a visible-item hunt: the tab switch's
             visibility propagation is racy, and "the first visible
             Flickable" once found nothing (the diagnostics tab kept the
             upload height) and another time the wrong tab's page — the
@@ -620,6 +702,16 @@ def main():
                     stack = candidate
                     break
             page = stack.property("currentItem") if stack is not None else None
+            if page is None and stack is not None:
+                # Cura's bundled engine leaves StackLayout.currentItem
+                # null — it is written during the layout's own
+                # rearrange, which this offscreen pass skips — so the
+                # index is the selector: the layout's children ARE the
+                # declared pages, in order.
+                index = stack.property("currentIndex")
+                children = stack.childItems()
+                if type(index) is int and 0 <= index < len(children):
+                    page = children[index]
             flickable = None
             if page is not None:
                 # The QML-only types (QQuickFlickable) are not importable
@@ -646,34 +738,57 @@ def main():
             content_bottom = absolute_y + float(flickable.property("contentHeight"))
             return int(content_bottom) + 49 + 6  # margins + footer row + air
 
-        for index, name in enumerate(tab_names):
+        # The five canonical tabs, then the ready-state detection render
+        # (the README needs the enabled surface): one pass, one filename
+        # rule — the ready capture is "05-settings-detection-ready.png".
+        passes = list(enumerate(tab_names))
+        passes.append((tab_names.index("detection"), "detection-ready"))
+        for index, name in passes:
+            if name == "detection-ready":
+                manager.set_detection_ready(True)
             tab_bar.setProperty("currentIndex", index)
             for _ in range(5):
                 app.processEvents()
             # Each tab's page is a Flickable whose content is shorter or
-            # taller than the fixed 600-px canvas, so fit the window to the
-            # active tab's content (the contentHeight is independent of the
-            # viewport size, so measuring before resizing is stable).  The
-            # tab panel never stretches.  Width stays at the requested 700.
-            # The Flickable's contentHeight can settle late (async item
-            # loads), so spin until two consecutive measurements agree
-            # before trusting it — a one-in-N capture flake otherwise.
+            # taller than the fixed 600-px canvas, so fit the window to
+            # the active tab's content.  The tab panel never stretches.
+            # Width stays at the requested 700.
+            #
+            # The measurement is only trustworthy once the switch has
+            # been laid out, and processEvents turns alone do not get
+            # there: the first reads report the PREVIOUS page's
+            # geometry and can agree with each other while doing it
+            # (the detection page measured 123 px twice, then settled
+            # at 598 once real time passed — the clipped Diagnostics
+            # and Detection captures). So the value must hold still
+            # across real-time pumps before it is believed.
             target = None
             previous = object()  # a sentinel: a first read of None must
             # NOT count as "stable" (the tab switch may not have landed
             # yet and no Flickable reports visible — the diagnostics
             # tab once kept the upload height and the captures flipped).
-            for _ in range(40):
+            stable = 0
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
                 target = fitted_height()
-                if target == previous:
-                    break
+                stable = stable + 1 if target == previous else 0
                 previous = target
                 app.processEvents()
-            if target is not None and 300 <= target <= 900:
-                item.setHeight(target)
-                window.resize(700, target)
-                for _ in range(5):
-                    app.processEvents()
+                if stable >= 5:
+                    break
+                time.sleep(0.02)
+            if target is None:
+                raise RuntimeError("no page content to measure for the %s capture" % name)
+            if not 300 <= target <= CAPTURE_HEIGHT_LIMIT:
+                # A silent skip is how the clipped captures happened:
+                # an unmeasurable or absurd height is a failure here,
+                # never a canvas that quietly crops the page.
+                raise RuntimeError("fitted height %d for the %s capture is outside %d..%d"
+                                   % (target, name, 300, CAPTURE_HEIGHT_LIMIT))
+            item.setHeight(target)
+            window.resize(700, target)
+            for _ in range(5):
+                app.processEvents()
             # The Save button's enabled binding can flip late; grab it
             # only after two consecutive stable reads AND a short settle
             # so any style transition finishes (a mid-transition grab
@@ -688,7 +803,19 @@ def main():
             for _ in range(5):
                 app.processEvents()
             path = os.path.join(output_dir, "05-settings-%s.png" % name)
-            image = window.grabWindow()
+            if name == "detection-ready":
+                # This page's glyphs (the global switch's checkmark) load
+                # asynchronously, so the shared settle gets a fixed head
+                # start for the load to land, then proves the frame
+                # still across its own span — two back-to-back identical
+                # frames can still precede a late glyph (the mac
+                # determinism gate caught the ready render differing
+                # between two runs at the checkbox).
+                image = capture_settle.settle(app, window.grabWindow, label=path,
+                                              head_start_seconds=0.5, span_seconds=0.4,
+                                              timeout_ms=12000)
+            else:
+                image = window.grabWindow()
             if not image.save(path):
                 raise RuntimeError("failed to save " + path)
             diversity = pixel_diversity(image)

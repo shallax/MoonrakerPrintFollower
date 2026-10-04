@@ -12,7 +12,7 @@ from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
-ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+ARCH = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
 RETIRED = {
     "Core", "FollowerBootstrap", "FollowerConfiguration", "FollowerCoordinator", "FollowerTransport",
@@ -100,7 +100,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
         self.assertIn("Stdlib-only local runs explicitly skip", ARCH)
 
     def test_instructions_document_records_the_version_bump_checklist(self):
-        instructions = (ROOT / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        instructions = (ROOT / "docs" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         for token in (
             "package.json", "mpf/plugin.json", "CHANGELOG.md", "README.md",
             "release workflow", "v<version>",
@@ -167,7 +167,20 @@ class SourceContractTests(unittest.TestCase):
             'FilesViewModel': set(),
             'FollowController': set(),
             'FollowerColourScheme': {'PreviewColours'},
-            'FollowerRuntime': {'BedMeshPresenter', 'CacheNamespaces', 'CuraIntegration', 'FileDownload', 'GCodeIndexService', 'MigrationNotice', 'MoonrakerClient', 'PauseController', 'PluginPersistence', 'PreviewFollower', 'PreviewMotion', 'PreviewPresentation', 'PrintCoordinator', 'PrinterBinding', 'RemoteFileService', 'WhatsNew'},
+            'FollowerRuntime': {'BedMeshPresenter', 'CacheNamespaces', 'CuraIntegration', 'FileDownload', 'GCodeIndexService', 'LocalDetectionService', 'MigrationNotice', 'MoonrakerClient', 'PauseController', 'PluginPersistence', 'PreviewFollower', 'PreviewMotion', 'PreviewPresentation', 'PrintCoordinator', 'PrinterBinding', 'RemoteFileService', 'WhatsNew', 'WhatsNewOverlay'},
+            'AssetInstaller': {'DetectionAssets', 'DetectionDownloadTransport'},
+            'DetectionAssets': set(),
+            'DetectionDownloadTransport': set(),
+            'DetectionPolicy': set(),
+            'DetectionRegions': set(),
+            'DetectionObservation': set(),
+            'DetectionMask': set(),
+            'PrintRunIdentity': set(),
+            'CameraSourceIdentity': set(),
+            'MonitorDetection': {'CameraSourceIdentity', 'MonitorCamera', 'MonitorPermissions', 'DetectionPolicy', 'EvidenceStore', 'DetectionObservation', 'DetectionRegions', 'PrintRunIdentity'},
+            'LocalDetectionService': {'AssetInstaller', 'DetectionAssets', 'EvidenceStore', 'LocalFailureModel', 'DetectionObservation', 'DetectionMask'},
+            'EvidenceStore': set(),
+            'LocalFailureModel': {'DetectionMask', 'DetectionObservation'},
             'GCodeIndex': {'ArcGeometry', 'FeatureTracker', 'GCodeParser', 'IndexAssembly', 'IndexHeader', 'IndexLimits', 'IndexWork', 'MotionIndex'},
             'GCodeIndexService': {'GCodeIndex', 'IndexTasks', 'IndexView', 'LayerCache', 'MotionIndex', 'MotionRefinement', 'ObjectVisitTracker', 'PlateProgress', 'PlateSplitTracker', 'PreparedSession', 'PrintState'},
             'GCodeParser': set(),
@@ -198,13 +211,13 @@ class SourceContractTests(unittest.TestCase):
             'MonitorTemperatureHistory': {'MonitorFormatting'},
             'MonitorTuning': set(),
             'MoonrakerClient': {'CameraTiming', 'MoonrakerProtocol', 'MoonrakerSession'},
-            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig'},
+            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'DetectionAssets', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig'},
             'MoonrakerMJPGImage': {'FrameDecoder', 'CameraStatistics', 'MJPEGParser'},
             'FrameDecoder': set(),
-            'CameraRecovery': {'CameraTiming'},
+            'CameraRecovery': {'CameraTiming', 'CameraSourceIdentity'},
             'CameraStatistics': set(),
             'MJPEGParser': set(),
-            'MoonrakerMonitorModel': {'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateQt', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
+            'MoonrakerMonitorModel': {'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateQt', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
             'MoonrakerOutputDevice': {'CuraOutputWriter', 'MonitorPermissions', 'PluginPaths', 'UploadController'},
             'MoonrakerOutputDevicePlugin': {'FollowerColourScheme', 'MoonrakerMonitorModel', 'MoonrakerOutputDevice', 'PluginPaths'},
             'MoonrakerPrintFollower': {'FollowerRuntime', 'LeakProbe', 'WhatsNewOverlay'},
@@ -244,7 +257,7 @@ class SourceContractTests(unittest.TestCase):
             'PrintStartOwner': set(),
             'PrintState': {'RemoteJobService'},
             'PrinterBinding': {'CameraTiming', 'CuraAdapter', 'PersistenceMigration', 'PrinterConfig'},
-            'PrinterConfig': set(),
+            'PrinterConfig': {'DetectionRegions'},
             'RemoteFileService': {'DownloadStream', 'MoonrakerProtocol'},
             'RemoteJobService': set(),
             'RenderSurface': set(),
@@ -259,7 +272,7 @@ class SourceContractTests(unittest.TestCase):
             'UiStateStore': set(),
             'UploadController': {'MoonrakerTransport', 'PrinterConfig'},
             'WhatsNew': set(),
-            'WhatsNewOverlay': {'PluginPaths'},
+            'WhatsNewOverlay': {'PluginPaths', 'WhatsNew'},
         }
         # Cura adapters sanctioned to import cura APIs.
         cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
@@ -519,7 +532,8 @@ class SourceContractTests(unittest.TestCase):
                                   f"not PyQt6.{imported_module}")
 
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
-        candidates = list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*")) + list(ROOT.glob("*"))
+        candidates = (list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*"))
+                      + list(ROOT.glob("*")) + list((ROOT / "docs").rglob("*")))
         text = "\n".join(p.read_text(errors="replace") for p in candidates if p.is_file() and p.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"})
         # 127/8 is always the local machine and stays permitted; the
         # gate protects against real private LAN ranges leaking.

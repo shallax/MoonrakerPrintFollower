@@ -4,6 +4,7 @@ import copy
 from dataclasses import dataclass, field
 from enum import Enum
 import time
+from uuid import uuid4
 from typing import Any, Dict, Iterable, Optional, Set
 
 
@@ -177,6 +178,7 @@ class SessionSnapshot:
 @dataclass
 class CommandAcknowledgement:
     name: str
+    command_id: str = field(default_factory=lambda: uuid4().hex)
     expected_states: Set[str] = field(default_factory=set)
     issued_at: float = 0.0
     timeout_s: float = 10.0
@@ -192,6 +194,7 @@ class CommandAcknowledgement:
     def as_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
+            "commandId": self.command_id,
             "expected_states": sorted(self.expected_states),
             "http_accepted": self.http_accepted,
             "terminal": self.terminal,
@@ -207,9 +210,10 @@ class CommandTracker:
         self._commands: Dict[str, CommandAcknowledgement] = {}
 
     def issue(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0, now: Optional[float] = None,
-              revision: int = 0) -> CommandAcknowledgement:
+              revision: int = 0, command_id: str | None = None) -> CommandAcknowledgement:
         command = CommandAcknowledgement(
             name=str(name),
+            command_id=command_id or uuid4().hex,
             expected_states={str(item).strip().lower() for item in expected_states if str(item).strip()},
             issued_at=time.monotonic() if now is None else float(now),
             timeout_s=max(0.1, float(timeout_s)),
@@ -231,8 +235,10 @@ class CommandTracker:
                 changed.append(command)
         return changed
 
-    def accepted(self, name: str) -> Optional[CommandAcknowledgement]:
+    def accepted(self, name: str, command_id=None) -> Optional[CommandAcknowledgement]:
         command = self._commands.get(str(name))
+        if command_id is not None and (command is None or command.command_id != command_id):
+            return None
         if command is None or command.terminal:
             return command
         command.http_accepted = True
@@ -244,8 +250,10 @@ class CommandTracker:
             command.detail = "Moonraker accepted the command"
         return command
 
-    def failed(self, name: str, detail: str) -> Optional[CommandAcknowledgement]:
+    def failed(self, name: str, detail: str, command_id=None) -> Optional[CommandAcknowledgement]:
         command = self._commands.get(str(name))
+        if command_id is not None and (command is None or command.command_id != command_id):
+            return None
         if command is None:
             command = self.issue(str(name))
         command.terminal = True

@@ -22,6 +22,7 @@ Item {
     // the real renderer in test_moonraker_mjpg.py).
     property real targetFps: 0
     property bool snapshotMode: false
+    property var detectionReceiver: null
     property real recentDisplayedFPS: 0
     // The ownership counters: the camera start/stop lifecycle tests
     // count every call and every source assignment — Cura's real

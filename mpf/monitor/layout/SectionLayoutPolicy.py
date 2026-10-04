@@ -1,8 +1,8 @@
 """The section-layout policy (4.4.0): per-pane section order and
 hidden sets, normalised against the static pane table.
 
-The table is the single source of the 22 hideable section ids — the
-QML instantiation order per pane (Controls 13, Information 3, Status
+The table is the single source of the 24 hideable section ids — the
+QML instantiation order per pane (Controls 14, Information 4, Status
 6 — the plate map joins the information pane). The console
 is a pane key, not a section, and never appears here. The test suite
 pins the table against the QML instantiation sites and SECTION_IDS,
@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Tuple
 PANE_SECTION_ORDER: Dict[str, Tuple[str, ...]] = {
     "controls": (
         "fileManager", "print", "setup", "tuning", "toolhead",
-        "profiles", "macros",
+        "profiles", "macros", "failureDetection",
         "fans", "leds", "pwm", "power", "system", "save",
     ),
     "information": ("plateprogress", "plate", "meshmap", "temphistory"),

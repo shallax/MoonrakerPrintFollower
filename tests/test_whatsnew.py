@@ -5,18 +5,127 @@ checkable — a version bump in package.json without a matching WHATS_NEW
 head fails here, and the harness's seeded marker stays pinned to the
 shipped version so the suite's runs never see the popup unless a
 scenario asks.
+
+The offer's window-side mechanics are pinned at the end against the
+harness's real engine: the detection offer mounts the shipped document,
+and the paths that only a live host reaches (a broken document, an
+unreachable engine, a closed window) fail there or nowhere.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import pathlib
+import sys
+import tempfile
 import unittest
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 from mpf.whatsnew.WhatsNew import WHATS_NEW, entries, latest_version, should_show
+from tests import qml_engine_support as harness
+from tests.qt_runtime_support import QT_AVAILABLE, runtime
 from tests.source_root import SourceRoot
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
+
+if QT_AVAILABLE:
+    from PyQt6 import sip
+    from PyQt6.QtCore import QEvent, QObject, pyqtProperty, pyqtSignal, pyqtSlot
+    from PyQt6.QtQuick import QQuickWindow
+
+    class RecordingTimer:
+        """The overlay's deferred work, captured instead of armed."""
+
+        def __init__(self):
+            self.calls = []
+
+        def singleShot(self, delay, callback):
+            self.calls.append((delay, callback))
+
+    class DetectionDouble(QObject):
+        """The service's QML surface: what the offer document reads."""
+
+        stateChanged = pyqtSignal()
+
+        def __init__(self, should_offer=True):
+            super().__init__()
+            self._should_offer = should_offer
+            self.setups = 0
+            self.cancels = 0
+            self.declines = 0
+
+        @pyqtProperty(bool, notify=stateChanged)
+        def should_offer(self):
+            return self._should_offer
+
+        @pyqtProperty(bool, notify=stateChanged)
+        def busy(self):
+            return False
+
+        @pyqtProperty(bool, notify=stateChanged)
+        def ready(self):
+            return False
+
+        @pyqtProperty(str, notify=stateChanged)
+        def phase(self):
+            return "checking"
+
+        @pyqtProperty(int, notify=stateChanged)
+        def received(self):
+            return 0
+
+        @pyqtProperty(int, notify=stateChanged)
+        def total(self):
+            return 0
+
+        @pyqtProperty(str, notify=stateChanged)
+        def error(self):
+            return ""
+
+        @pyqtProperty(int, constant=True)
+        def runtime_size(self):
+            return 0
+
+        @pyqtSlot()
+        def setup(self):
+            self.setups += 1
+
+        @pyqtSlot()
+        def cancel(self):
+            self.cancels += 1
+
+        @pyqtSlot()
+        def decline_offer(self):
+            self.declines += 1
+
+    class MonitorDouble(QObject):
+        """The monitor's what's-new surface, following the shipped one."""
+
+        whatsNewRequested = pyqtSignal()
+        whatsNewDismissed = pyqtSignal()
+
+        def __init__(self, seen=""):
+            super().__init__()
+            self.checks = 0
+            self._whats_new_seen = seen
+
+        def checkWhatsNew(self):
+            self.checks += 1
+
+    class PopupDouble:
+        """A popup as close() meets one: alive, or already gone."""
+
+        def __init__(self, alive=True):
+            self.deletions = 0
+            self._alive = alive
+
+        def deleteLater(self):
+            self.deletions += 1
+            if not self._alive:
+                raise RuntimeError("wrapped C/C++ object has been deleted")
 
 
 class WhatsNewContentTests(unittest.TestCase):
@@ -39,7 +148,7 @@ class WhatsNewContentTests(unittest.TestCase):
         digest = hashlib.sha256(payload).hexdigest()
         self.assertEqual(
             digest,
-            "833473b601ade1f347223199049516332188d5a282e334ad1a0600ae053cd051",
+            "eb0205cd97271930536e0484da35fe7468fbe2a388d42b67f3960ed888aee915",
             "the historical what's-new content changed — shipped release "
             "notes are frozen; only a new head entry may be added, and "
             "this pin recomputed for the release")
@@ -111,6 +220,243 @@ class WhatsNewSeedTests(unittest.TestCase):
              / "MoonrakerPrintFollower" / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(seed["whatsNewSeen"], latest_version())
         self.assertFalse(should_show(seed["whatsNewSeen"]))
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class WhatsNewDetectionOfferTests(harness.RealEngineTestCase):
+    """The detection offer as the live run mounts it: the shipped
+    document, Cura's engine, and a window that can go away."""
+
+    def setUp(self):
+        super().setUp()
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.qt = stack.enter_context(runtime())
+        self.module = self.qt.load("WhatsNewOverlay")
+        self.logger = sys.modules["UM.Logger"].Logger
+        # Every deferred callback is recorded, never armed: the boot
+        # offer must not fire into a test that is mid-assertion.
+        self.timer_records = RecordingTimer()
+        stack.enter_context(patch.object(self.module, "QTimer", self.timer_records))
+        # Cura's own stored engine is the handle the offer reaches for;
+        # the harness's engine stands in for it.
+        application = SimpleNamespace(getInstance=lambda: SimpleNamespace(_qml_engine=self.engine))
+        package = ModuleType("UM.Qt")
+        package.__path__ = []
+        module = ModuleType("UM.Qt.QtApplication")
+        module.QtApplication = application
+        stack.enter_context(patch.dict(sys.modules, {
+            "UM.Qt": package, "UM.Qt.QtApplication": module}))
+
+    def overlay(self, detection=None):
+        result = self.module.WhatsNewOverlay(detection=detection)
+        self.addCleanup(result.close)
+        return result
+
+    def window(self, visible=True):
+        window = QQuickWindow()
+        window.resize(900, 700)
+        if visible:
+            window.show()
+        self.addCleanup(self._close_window, window)
+        self.pump(10)
+        return window
+
+    def _close_window(self, window):
+        window.close()
+        window.deleteLater()
+        # A window that still exists is still a candidate for the offer,
+        # so the teardown destroys it rather than merely hiding it.
+        self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.pump(10)
+
+    def install_monitor(self, monitor):
+        patcher = patch.object(self.module.WhatsNewOverlay, "_find_monitor",
+                               lambda _self: monitor)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_detection_offer_mounts_the_shipped_document(self):
+        window = self.window()
+        detection = DetectionDouble()
+        offer = self.overlay(detection)
+        offer._show_detection()
+        popup = offer._detection_overlay
+        self.assertIsNotNone(popup)
+        self.assertEqual(popup.property("objectName"), "detectionFirstRunOffer")
+        self.assertTrue(popup.property("visible"))
+        self.assertIs(popup.property("detection"), detection)
+        self.assertIs(popup.property("parent"), window.contentItem())
+        self.assertEqual(popup.property("x"), max(0, round(
+            (window.width() - popup.property("width")) / 2)))
+        self.assertEqual(popup.property("y"), max(0, round(
+            (window.height() - popup.property("height")) / 2)))
+
+    def test_the_detection_offer_waits_for_a_visible_window(self):
+        self.window(visible=False)
+        offer = self.overlay(DetectionDouble())
+        offer._show_detection()
+        self.assertIsNone(offer._detection_overlay)
+
+    def test_the_detection_offer_mounts_once_and_only_for_a_standing_offer(self):
+        self.window()
+        offer = self.overlay(DetectionDouble())
+        offer._show_detection()
+        first = offer._detection_overlay
+        self.assertIsNotNone(first)
+        offer._show_detection()
+        self.assertIs(first, offer._detection_overlay)
+        declined = self.overlay(DetectionDouble(should_offer=False))
+        declined._show_detection()
+        self.assertIsNone(declined._detection_overlay)
+
+    def test_the_detection_offer_reports_a_document_that_fails_to_load(self):
+        self.window()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        broken = os.path.join(directory.name, "DetectionOffer.qml")
+        with open(broken, "w", encoding="utf-8") as handle:
+            handle.write("import QtQuick 2.15\nItem { this is not qml }\n")
+        patcher = patch.object(self.module, "plugin_path", lambda *_args: broken)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        offer = self.overlay(DetectionDouble())
+        offer._show_detection()
+        self.assertIsNone(offer._detection_overlay)
+        self.assertEqual(self.logger.log.call_args[0][0], "e")
+        self.assertIn("failed to load", self.logger.log.call_args[0][1])
+
+    def test_the_detection_offer_survives_an_unreachable_engine(self):
+        self.window()
+
+        def explode():
+            raise RuntimeError("no Cura application")
+
+        patcher = patch.object(sys.modules["UM.Qt.QtApplication"], "QtApplication",
+                               SimpleNamespace(getInstance=explode))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        offer = self.overlay(DetectionDouble())
+        offer._show_detection()
+        self.assertIsNone(offer._detection_overlay)
+        self.assertEqual(self.logger.log.call_args[0][0], "e")
+        self.assertIn("detection offer raised", self.logger.log.call_args[0][1])
+
+    def test_the_offer_hands_the_dismissal_to_the_detection_offer(self):
+        self.window()
+        monitor = MonitorDouble(seen="")
+        offer = self.overlay(DetectionDouble())
+        self.install_monitor(monitor)
+        offer._offer()
+        self.assertEqual(monitor.checks, 1)
+        self.assertEqual([delay for delay, _ in self.timer_records.calls if delay == 0], [])
+        monitor.whatsNewDismissed.emit()
+        self.assertIsNotNone(offer._detection_overlay)
+        # Without a service there is nothing for the dismissal to reveal.
+        unwired = self.overlay()
+        unwired._offer()
+        self.assertEqual(monitor.receivers(monitor.whatsNewDismissed), 1)
+
+    def test_seen_notes_queue_the_detection_offer_behind_the_check(self):
+        self.window()
+        monitor = MonitorDouble(seen=latest_version())
+        offer = self.overlay(DetectionDouble())
+        self.install_monitor(monitor)
+        offer._offer()
+        self.assertEqual(monitor.checks, 1)
+        queued = [callback for delay, callback in self.timer_records.calls if delay == 0]
+        self.assertEqual(queued, [offer._show_detection])
+        queued[0]()
+        self.assertIsNotNone(offer._detection_overlay)
+
+    def test_a_reinstalled_monitor_is_rewired_and_the_deposed_one_dropped(self):
+        # The machine-switch shape the plugin hands over: the offer must
+        # ride the LIVE model, and a cached monitor's stale dismissal
+        # must never reveal the offer for the new owner.
+        self.window()
+        first = MonitorDouble()
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(first)
+        self.assertEqual(offer.offer_state()["wired"], True)
+        second = MonitorDouble()
+        offer.attach_model(second)
+        self.assertEqual(first.receivers(first.whatsNewDismissed), 0)
+        first.whatsNewDismissed.emit()
+        self.assertIsNone(offer._detection_overlay)
+        second.whatsNewDismissed.emit()
+        self.assertIsNotNone(offer._detection_overlay)
+        # Re-applying the same model changes nothing.
+        offer.attach_model(second)
+        self.assertEqual(second.receivers(second.whatsNewDismissed), 1)
+
+    def test_a_model_without_the_dismiss_surface_reads_as_unwired(self):
+        # The leg's diagnostic distinction: a model that cannot reveal
+        # the offer must not report as wired, or a missing popup would
+        # read as a timeout.
+        self.window()
+        from PyQt6.QtCore import QObject
+
+        class BareModel(QObject):
+            def __init__(self):
+                super().__init__()
+                self._whats_new_seen = ""
+
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(BareModel())
+        self.assertFalse(offer.offer_state()["wired"])
+
+    def test_an_offer_model_whose_notes_were_seen_queues_only_the_offer(self):
+        self.window()
+        monitor = MonitorDouble(seen=latest_version())
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(monitor)
+        self.assertEqual(monitor.checks, 0)
+        queued = [callback for delay, callback in self.timer_records.calls if delay == 0]
+        self.assertEqual(queued, [offer._show_detection])
+
+    def test_close_unwires_the_model_and_the_give_up_is_observable(self):
+        monitor = MonitorDouble()
+        offer = self.overlay(DetectionDouble())
+        offer.attach_model(monitor)
+        offer.close()
+        self.assertEqual(monitor.receivers(monitor.whatsNewDismissed), 0)
+        self.assertEqual(offer.offer_state()["wired"], False)
+        # The retry loop's bound: a boot that never produces a window
+        # stops retrying and SAYS SO, so a first-install leg can tell
+        # never-wired from timed-out.
+        self.install_monitor(None)
+        silent = self.overlay(DetectionDouble())
+        silent._attempts = 300
+        silent._offer()
+        state = silent.offer_state()
+        self.assertEqual((state["wired"], state["gave_up"]), (False, True))
+
+    def test_close_destroys_a_live_detection_offer(self):
+        self.window()
+        offer = self.overlay(DetectionDouble())
+        offer._show_detection()
+        popup = offer._detection_overlay
+        self.assertIsNotNone(popup)
+        offer.close()
+        self.assertIsNone(offer._detection_overlay)
+        self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.pump(5)
+        self.assertTrue(sip.isdeleted(popup))
+
+    def test_close_survives_a_whats_new_popup_that_is_already_gone(self):
+        # The what's-new popup's Qt core can be destroyed first (Cura
+        # owns its window); the detection offer's teardown must still
+        # happen rather than be aborted by the dead one.
+        offer = self.overlay()
+        dead = PopupDouble(alive=False)
+        live = PopupDouble()
+        offer._overlay = dead
+        offer._detection_overlay = live
+        offer.close()
+        self.assertEqual(dead.deletions, 1)
+        self.assertEqual(live.deletions, 1)
+        self.assertIsNone(offer._overlay)
+        self.assertIsNone(offer._detection_overlay)
 
 
 if __name__ == "__main__":

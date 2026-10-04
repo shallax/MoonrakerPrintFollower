@@ -834,6 +834,12 @@ Component {
                             width: controlContent.width
                             printerModel: root.printer
                         }
+                        FailureDetectionSection {
+                            objectName: "failureDetectionSection"
+                            visible: root.printer != null && (root.printer.detectionGlobalEnabled || root.printer.detectionEnabled) && root.printer.sectionHiddenMap["failureDetection"] !== true
+                            width: controlContent.width
+                            printerModel: root.printer
+                        }
                         ProfilesSection {
                             visible: root.printer == null || root.printer.sectionHiddenMap["profiles"] !== true
                             width: controlContent.width

@@ -401,6 +401,11 @@ def run_suite(title: str, names, jobs_count: int, coverage: bool = False,
     root = checkout_root()
     env = tool_env()
     python = sys.executable
+    if coverage and sys.version_info >= (3, 12):
+        # Qt starts native QThreadPool threads outside threading.settrace.
+        # Interpreter-wide monitoring measures their Python callbacks too,
+        # matching the CI 3.12 leg and the default on pinned Python 3.14.
+        env.setdefault("COVERAGE_CORE", "sysmon")
     rc, qt_error = capture([python, "-c", "import PyQt6.QtGui, PyQt6.QtQml"],
                            cwd=root, env=env)
     if rc:

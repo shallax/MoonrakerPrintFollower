@@ -990,6 +990,115 @@ class MachineActionCase(unittest.TestCase):
         self.assertEqual((action.testStatus, action.testBusy, action.cacheStatus),
                          ("Not tested", False, ""))
 
+    # ---- the detection settings surface ------------------------------
+
+    def test_detection_properties_mirror_the_printer_config(self):
+        follower = self._follower(self.printer_config.PrinterConfig(
+            detection_enabled=True, detection_warning_threshold=30,
+            detection_failure_threshold=70))
+        action = self._action(follower)
+        self.assertTrue(action.settingsDetectionEnabled)
+        self.assertEqual(action.settingsDetectionWarningThreshold, 30)
+        self.assertEqual(action.settingsDetectionFailureThreshold, 70)
+
+    def test_global_detection_toggle_refuses_without_a_service(self):
+        action = self._action()
+        notified = []
+        action.detectionChanged.connect(lambda: notified.append(1))
+        self.assertFalse(action.setDetectionGlobalEnabled(True))
+        self.assertEqual(action.detectionRefusal, "Local detection is unavailable")
+        self.assertTrue(notified)
+
+    def test_setup_cancel_and_decline_forward_to_the_service(self):
+        service = SimpleNamespace(stateChanged=Mock(), setup=Mock(), cancel=Mock(),
+                                  decline_offer=Mock())
+        follower = self._follower()
+        follower.detection = service
+        action = self._action(follower)
+        action.startDetectionSetup()
+        action.cancelDetectionSetup()
+        action.declineDetectionOffer()
+        service.setup.assert_called_once_with()
+        service.cancel.assert_called_once_with()
+        service.decline_offer.assert_called_once_with()
+
+    def test_onboarding_reset_without_storage_refuses(self):
+        action = self._action()
+        action.resetOnboardingForNextRun()
+        self.assertIn("unavailable", action.onboardingResetStatus)
+
+    def test_onboarding_reset_names_a_detection_reset_failure(self):
+        follower = self._follower(
+            persistence=SimpleNamespace(merge_state_global=Mock(return_value=True)))
+        follower.detection = SimpleNamespace(stateChanged=Mock(),
+                                             reset_offer=Mock(side_effect=OSError("read-only")))
+        monitor = SimpleNamespace(_whats_new_seen="seen")
+        action = self._action(follower, output_plugin=SimpleNamespace(
+            _current_monitor=lambda: monitor))
+        action.resetOnboardingForNextRun()
+        self.assertEqual(monitor._whats_new_seen, "")
+        self.assertIn("could not be reset", action.onboardingResetStatus)
+
+    def test_reset_progress_reports_a_failed_removal(self):
+        service = SimpleNamespace(stateChanged=Mock(), busy=False, error="disk busy")
+        follower = self._follower()
+        follower.detection = service
+        action = self._action(follower)
+        action._on_detection_reset_progress()  # nothing pending: inert
+        self.assertEqual(action.detectionResetStatus, "")
+        action._detection_reset_pending = True
+        action._on_detection_reset_progress()
+        self.assertIn("disk busy", action.detectionResetStatus)
+
+    def test_reset_assets_without_storage_is_refused(self):
+        action = self._action()
+        action.resetDetectionAssets()
+        self.assertIn("unavailable", action.detectionResetStatus)
+
+    def test_reset_assets_waits_out_a_busy_setup(self):
+        follower = self._follower(persistence=SimpleNamespace(
+            disable_all_detection=Mock(return_value=True)))
+        follower.detection = SimpleNamespace(stateChanged=Mock(), busy=True)
+        action = self._action(follower)
+        action.resetDetectionAssets()
+        self.assertIn("Wait for local detection setup", action.detectionResetStatus)
+
+    def test_reset_assets_reports_a_live_refresh_failure(self):
+        follower = self._follower(persistence=SimpleNamespace(
+            disable_all_detection=Mock(return_value=True)), apply_result=False)
+        follower.detection = SimpleNamespace(stateChanged=Mock(), busy=False,
+                                             remove_assets=Mock(return_value=True))
+        action = self._action(follower)
+        action.resetDetectionAssets()
+        self.assertIn("could not refresh", action.detectionResetStatus)
+
+    def test_reset_assets_reports_a_removal_that_cannot_start(self):
+        follower = self._follower(persistence=SimpleNamespace(
+            disable_all_detection=Mock(return_value=True)))
+        follower.detection = SimpleNamespace(stateChanged=Mock(), busy=False, error="locked",
+                                             remove_assets=Mock(return_value=False))
+        action = self._action(follower)
+        action.resetDetectionAssets()
+        self.assertIn("locked", action.detectionResetStatus)
+
+    def test_save_refuses_an_out_of_range_cache_size(self):
+        action = self._action()
+        for value in ("15", "4097"):
+            with self.subTest(cache_max_mb=value):
+                self.assertFalse(action.saveConfig(self._params(cache_max_mb=value)))
+
+    def test_save_refuses_a_non_checkbox_detection_enable(self):
+        action = self._action()
+        self.assertFalse(action.saveConfig(self._params(detection_enabled="yes")))
+
+    def test_a_cache_clear_whose_retirement_fails_is_reported_not_raised(self):
+        follower = self._follower()
+        follower.invalidateIndex = Mock(side_effect=RuntimeError("worker busy"))
+        action = self._action(follower)
+        action.clearCache()
+        self.assertEqual(action.cacheStatus,
+                         "Could not clear the cache — see Cura's log.")
+
 
 if __name__ == "__main__":
     unittest.main()

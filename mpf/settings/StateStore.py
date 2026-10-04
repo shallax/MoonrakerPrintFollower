@@ -23,6 +23,7 @@ shard write either."""
 from __future__ import annotations
 
 import contextlib
+import threading
 import json
 import os
 from typing import Any, Callable, Optional
@@ -67,6 +68,7 @@ class StateStore:
         # passes one provider for every document the facade owns, the
         # per-machine shards included — they share the lock, they are
         # not single-writer by construction.
+        self._thread_lock = threading.RLock()
         self._lock = lock or _no_lock
 
     def _acquire(self):
@@ -102,7 +104,7 @@ class StateStore:
         every key-scoped write goes through here. A failure reports
         once per session."""
         try:
-            with self._acquire():
+            with self._thread_lock, self._acquire():
                 document = mutate(self._current())
                 if document is None:
                     return True
@@ -125,7 +127,7 @@ class StateStore:
         if merge:
             return self.update(lambda document: _merged(document, update, delete))
         try:
-            with self._acquire():
+            with self._thread_lock, self._acquire():
                 return self._commit(dict(update))
         except Exception:
             self._report("write", _WRITE_NOTE)

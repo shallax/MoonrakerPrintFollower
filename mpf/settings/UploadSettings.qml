@@ -30,10 +30,13 @@ Item {
         contentHeight: outputColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: UM.ScrollBar {
+            objectName: "settingsScrollbar"
+        }
 
         Column {
             id: outputColumn
-            width: parent.width
+            width: Math.max(0, parent.width - UM.Theme.getSize("scrollbar").width - 4 * screenScaleFactor)
             spacing: UM.Theme.getSize("default_margin").height
 
             UM.Label {

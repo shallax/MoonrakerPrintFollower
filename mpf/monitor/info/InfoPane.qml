@@ -30,6 +30,9 @@ Cura.RoundedRectangle {
     // them out keeps those passes where they were.
     property alias content: infoContent
     property alias readoutRow: infoCollapsedReadout.readoutRow
+    // The mini beds size from the pane's fixed viewport width, not from a
+    // child width assigned during ColumnLayout's own polish pass.
+    readonly property real miniBedSlotWidth: Math.max(0, infoFlick.width - 14 - 2 * UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width)
     // Where the configure card hangs from, in this pane's frame.
     readonly property point headerAnchor: Qt.point(infoHeader.x, infoHeader.y + infoHeader.height)
 
@@ -217,6 +220,7 @@ Cura.RoundedRectangle {
                 visible: root.printerModel == null || root.printerModel.sectionHiddenMap["meshmap"] !== true
                 Layout.fillWidth: true
                 printerModel: root.printerModel
+                miniSlotWidth: root.miniBedSlotWidth
                 onPopOverToggleRequested: function (name) {
                     root.popOverToggleRequested(name);
                 }
@@ -225,6 +229,7 @@ Cura.RoundedRectangle {
                 visible: root.printerModel == null || root.printerModel.sectionHiddenMap["plateprogress"] !== true
                 Layout.fillWidth: true
                 printerModel: root.printerModel
+                miniSlotWidth: root.miniBedSlotWidth
                 onPopOverToggleRequested: function (name) {
                     root.popOverToggleRequested(name);
                 }
@@ -238,6 +243,7 @@ Cura.RoundedRectangle {
                 visible: root.printerModel != null && root.printerModel.sectionHiddenMap["plate"] !== true && (root.printerModel.printActive || root.printerModel.plateHasObjects)
                 Layout.fillWidth: true
                 printerModel: root.printerModel
+                miniSlotWidth: root.miniBedSlotWidth
                 onPopOverToggleRequested: function (name) {
                     root.popOverToggleRequested(name);
                 }

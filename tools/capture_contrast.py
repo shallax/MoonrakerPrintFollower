@@ -135,6 +135,40 @@ def _is_inactive(item) -> bool:
     return False
 
 
+def _is_placeholder(item) -> bool:
+    """True when the item paints a control's placeholder text.
+
+    Qt renders a placeholder through the control's own internal Text,
+    in ``placeholderTextColor`` — muted by design, exactly like a
+    disabled control's text, so it is measured against the inactive
+    floor. The match is semantic rather than name-based: the item's
+    text must equal an ancestor's ``placeholderText`` AND its colour
+    that ancestor's ``placeholderTextColor``, so a real label that
+    merely repeats the string keeps the strict floor (fail-closed).
+    """
+    try:
+        text = item.property("text")
+        colour = item.property("color")
+    except (AttributeError, TypeError):
+        return False
+    if not text:
+        return False
+    node = item.parentItem()
+    hops = 0
+    while node is not None and hops < 8:
+        try:
+            placeholder = node.property("placeholderText")
+            placeholder_colour = node.property("placeholderTextColor")
+        except (AttributeError, TypeError):
+            placeholder = placeholder_colour = None
+        if placeholder is not None and str(placeholder) == str(text) \
+                and placeholder_colour is not None and placeholder_colour == colour:
+            return True
+        node = node.parentItem()
+        hops += 1
+    return False
+
+
 def _name(item) -> str:
     try:
         return str(item.property("objectName") or "<unnamed>")
@@ -327,7 +361,7 @@ def census(root, image, *, min_contrast=MIN_CONTRAST,
             skipped.append((_name(item), "no glyph pixels"))
             continue
         checked += 1
-        disabled = _is_inactive(item)
+        disabled = _is_inactive(item) or _is_placeholder(item)
         inactive += 1 if disabled else 0
         # Translucent text renders as its blend over the ground, which is
         # what the eye (and the ratio) sees.

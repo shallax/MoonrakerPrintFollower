@@ -20,6 +20,7 @@ from .gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
 from .cura.CuraIntegration import CuraIntegration
 from .gcode.GCodeIndexService import GCodeIndexService
 from .settings.MigrationNotice import MigrationNotice
+from .whatsnew.WhatsNewOverlay import WhatsNewOverlay
 from .moonraker.MoonrakerClient import MoonrakerClient
 from .printing.PauseController import PauseController
 from .settings.PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
@@ -126,6 +127,8 @@ class FollowerRuntime:
             save=_savefile_write,
             lock=lambda: _state_lock(persistence_root),
         )
+        from .detection.LocalDetectionService import LocalDetectionService
+        self.detection = LocalDetectionService(persistence_root, self.persistence, parent)
         self.binding = PrinterBinding(
             application, self.client, self.persistence,
             cura_cfg_path=os.path.join(Resources.getConfigStoragePath(), "cura.cfg"),
@@ -210,6 +213,10 @@ class FollowerRuntime:
             raise_toast=lambda record: _raise_migration_toast(record),
             parent=parent,
         )
+        # The once-per-version offer rides the same plugin-level owner:
+        # the plugin re-attaches it to the CURRENT monitor on every
+        # (re)install, exactly as it does the notice.
+        self.whats_new = WhatsNewOverlay(self.detection)
         # The one-shot's trigger (B1): the clean must run after Cura's
         # second preference read, never from construction — and
         # saveSettings() only works once Cura has started. The
@@ -235,6 +242,7 @@ class FollowerRuntime:
         if self._closed: return
         self._closed = True
         self.notice.close()
+        self.whats_new.close()
         self.binding.close()
         self.coordinator.close()
         self.pauses.close()
@@ -246,3 +254,4 @@ class FollowerRuntime:
         self.file_download.close()  # in-flight downloads retire BEFORE the files root goes
         self.files.close()
         self.client.transport.close()  # the manager's pooled sockets close with the plugin
+        self.detection.close()

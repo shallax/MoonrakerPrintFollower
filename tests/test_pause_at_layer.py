@@ -222,6 +222,50 @@ class NextPausePolicyTests(unittest.TestCase):
         layer, _, _, _ = pipeline.compute(physical, 120.0)
         self.assertEqual(layer, 10)
 
+    def test_the_anchor_eta_reads_as_a_pause_row_and_refuses_when_meaningless(self):
+        # The detached popover's future-layer ETA reads through the
+        # same collaborators a pause row does — one reading, one
+        # wording — and refuses in every case the pause rows refuse:
+        # behind the print, no anchor, no index timing.
+        pipeline, _physical, calls, view = self._pipeline(remaining_value=240.0)
+        text = pipeline.anchor_eta(9, current=4)
+        self.assertTrue(text.startswith("in 4m · ≈"), text)
+        self.assertIn((9, view, False), calls)
+        self.assertIn((9, view, True), calls)
+        self.assertEqual(pipeline.anchor_eta(2, current=4), "", "a passed layer")
+        self.assertEqual(pipeline.anchor_eta(None, current=4), "", "no anchor")
+        untimed, _physical, _calls, _view = self._pipeline(remaining_value=None)
+        self.assertEqual(untimed.anchor_eta(9, current=4), "", "no index timing")
+
+    def test_the_anchor_eta_reads_the_point_selected_inside_the_layer(self):
+        # The scrub selects a point within the layer (the review's
+        # ask): the ETA is interpolated between the layer's own
+        # boundaries, and the layer under the print is a DEADLINE —
+        # its fraction is the share still ahead of the live position.
+        from types import SimpleNamespace
+        from mpf.application.NextPausePipeline import NextPausePipeline
+        calls = []
+
+        def remaining(layer, view_arg=None, end=True):
+            calls.append((layer, end))
+            return 300.0 if end else 100.0
+
+        pipeline = NextPausePipeline(
+            preview=SimpleNamespace(remaining=remaining,
+                                    format_duration=lambda seconds: "%.0fs" % seconds),
+            pauses=SimpleNamespace(layers=set(), states={}),
+            index=SimpleNamespace(view=None))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=0.0).startswith("in 100s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=0.5).startswith("in 200s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=1.0).startswith("in 300s"))
+        # Clamped, never extrapolated past the layer's own end.
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=1.4).startswith("in 300s"))
+        self.assertTrue(pipeline.anchor_eta(9, current=4, fraction=-0.2).startswith("in 100s"))
+        # The layer the print is inside: a fraction of zero is where
+        # the print already is, and the deadline still reads.
+        self.assertEqual(pipeline.anchor_eta(4, current=4, fraction=0.0), "")
+        self.assertTrue(pipeline.anchor_eta(4, current=4, fraction=0.25).startswith("in"))
+
     def test_the_bar_hides_without_an_eta(self):
         # No ETA, no bar (the live ruling): the fraction is None —
         # the model's -1.0 sentinel renders the fill absent.
@@ -353,6 +397,28 @@ class MonitorPauseBlockTests(unittest.TestCase):
     def publish(self, index=10, total=40):
         self.print_state = self.snapshot(index, total)
         self.model._publish()
+
+    def test_the_detached_anchor_eta_publishes_only_while_detached(self):
+        # The popover's "Layer ETA" row reads this: the coordinator's
+        # estimate reaches the model beside the anchor it describes,
+        # and attaching again clears it — the live layer is the anchor
+        # then, and there is nothing to count down to.
+        self.build()
+        self.model.setFollowerAttached(False)  # the detached popover's mode
+        self.model.setFollowerPopoverOpen(True)
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_progress={"layers": {"current": {"classes": {}}}, "split": 7,
+                            "method": "motion index", "anchor": 7},
+            plate_manual_progress={"layers": {"current": {"classes": {}}}, "split": 0,
+                                   "method": "motion index", "anchor": 9},
+            plate_anchor_eta="in 4m · ≈14:32")
+        self.model._publish()
+        self.assertEqual(self.value("plateProgressAnchor"), 9)
+        self.assertEqual(self.value("plateAnchorEta"), "in 4m · ≈14:32")
+        self.model.setFollowerAttached(True)
+        self.model._publish()
+        self.assertEqual(self.value("plateAnchorEta"), "",
+                         "an attached follower has no anchor to count down to")
 
     def test_an_unindexed_print_has_no_final_layer_claim_or_schedule_action(self):
         from mpf.printing.PrintState import PhysicalLayer, PrintSnapshot

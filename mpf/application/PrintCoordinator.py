@@ -75,6 +75,44 @@ class _Plate(NamedTuple):
     visited: frozenset
     lookup_ms: object
     layer_count: int
+    anchor_eta: str = ""
+
+
+def _anchor_point_fraction(anchor, manual, live) -> float:
+    """The point the popover selected inside `anchor`, as the share of
+    the layer's time still AHEAD of the print.
+
+    The two sliders read in the same units: the layer slider picks the
+    layer, the progress slider picks a share of that layer's motions
+    (the manual payload's split over its motion count). For a layer the
+    print is already inside, that share is measured from where the
+    print currently is — so the readout is the deadline for the point,
+    not for the layer's end.
+    """
+    def share(payload):
+        if not payload:
+            return None
+        try:
+            total = float(payload.get("motionTotal") or 0)
+            split = float(payload.get("split") or 0)
+        except (TypeError, ValueError):
+            return None
+        if total <= 0:
+            return None
+        return max(0.0, min(1.0, split / total))
+
+    selected = share(manual)
+    if selected is None:
+        # No scrub resolution: the layer's end is the point.
+        return 1.0
+    if live is None or live.get("anchor") != anchor:
+        return selected
+    current = share(live)
+    if current is None or current >= 1.0:
+        return 0.0
+    if selected <= current:
+        return 0.0
+    return (selected - current) / (1.0 - current)
 
 
 class PrintCoordinator(QObject):
@@ -480,6 +518,7 @@ class PrintCoordinator(QObject):
         manual_payload = None
         plate_visited = frozenset()
         plate_lookup_ms = None
+        anchor_eta = ""
         if plate_available and (physical.index is not None or self._manual_serving_active()):
             # The payload is built INSIDE the service — the raw index's
             # arrays never cross its boundary (the architecture
@@ -499,6 +538,16 @@ class PrintCoordinator(QObject):
             if self._manual_serving_active():
                 manual_payload = self._index.plate_progress(
                     self._plate_anchor, None, motion.live_position)
+                # The detached anchor's ETA (the 5.0.0 request): what the
+                # user waiting on a future layer actually wants to know,
+                # read to the POINT the popover selected inside it — so
+                # the layer under the print reads as a deadline too.
+                # Only while detached — attached, the live layer is the
+                # anchor and there is nothing to count down to.
+                anchor_eta = self._next_pause.anchor_eta(
+                    self._plate_anchor, physical.index,
+                    fraction=_anchor_point_fraction(
+                        self._plate_anchor, manual_payload, plate_progress_payload))
             # This is ONLY the coordinator-side service lookup.
             # Prepared-file I/O, decode, raw hydration and preparation
             # happen asynchronously inside GCodeIndexService and are
@@ -522,7 +571,7 @@ class PrintCoordinator(QObject):
                     plate_visited = visited(physical.index,
                                             plate_progress_payload["split"], exclude_rows)
         return _Plate(plate_progress_payload, manual_payload, plate_visited,
-                      plate_lookup_ms, layer_count)
+                      plate_lookup_ms, layer_count, anchor_eta)
 
     def _compose_snapshot(self, observation, face, motion, totals, pause, plate):
         """The one snapshot this frame produces: every value is read
@@ -547,6 +596,7 @@ class PrintCoordinator(QObject):
             filament_total=totals.filament_total if totals.filament_total and totals.filament_total > 0 else None,
             plate_progress=plate.progress,
             plate_manual_progress=plate.manual,
+            plate_anchor_eta=plate.anchor_eta,
             plate_lookup_ms=plate.lookup_ms,
             plate_layer_count=plate.layer_count,
             plate_pass_fraction=self._index.plate_pass_fraction()

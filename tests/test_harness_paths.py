@@ -200,7 +200,7 @@ class TestingDocPinTests(unittest.TestCase):
     # here instead of at the gate.
 
     def _doc(self):
-        return (ROOT / "TESTING.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
 
     def test_reconciliation_marker_is_present(self):
         self.assertIn("Reconciliation status (2026-09-15", self._doc())

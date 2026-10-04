@@ -12,6 +12,7 @@ wires Cura's SaveFile for the fsync+flock commit (M8)."""
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import asdict
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import quote_plus
@@ -67,6 +68,7 @@ class PluginPersistence:
         self._lock = lock
         self._note = note
         self._shards: Dict[str, StateStore] = {}
+        self._shards_lock = threading.RLock()
         # The session's own copy of the migration record: a store that
         # cannot be written still owes the notice its failure record.
         self._session_record: Optional[Dict[str, Any]] = None
@@ -121,6 +123,22 @@ class PluginPersistence:
             machines[machine_id] = merged
             document["machines"] = machines
             return document
+        return self._settings.update(mutate)
+
+    def disable_all_detection(self) -> bool:
+        """Disable detection/actions and clear regions for download removal, atomically."""
+        def mutate(document):
+            machines = document.get("machines")
+            if not isinstance(machines, dict) or not machines:
+                return None
+            for entry in machines.values():
+                if isinstance(entry, dict):
+                    entry.update(detection_enabled=False,
+                                 detection_notify_enabled=False,
+                                 detection_pause_enabled=False,
+                                 detection_regions={})
+            return document
+
         return self._settings.update(mutate)
 
     def set_global(self, patch: Dict[str, Any]) -> bool:
@@ -181,20 +199,21 @@ class PluginPersistence:
     # -- The state side -----------------------------------------------
 
     def _shard(self, machine_id: str) -> StateStore:
-        store = self._shards.get(machine_id)
-        if store is None:
-            # The shard filename is the quoted id — Cura's own
-            # convention for id-derived files (machine_instances/
-            # <quote_plus(id)>.global.cfg, the domain panel's L2):
-            # ids are name-derived and may carry spaces. The shard
-            # takes the SAME lock as the shared documents: a second
-            # process may write this machine's shard too.
-            store = StateStore(
-                os.path.join(self._state_dir, f"{quote_plus(machine_id)}.json"),
-                save=self._save, lock=self._lock, note=self._note,
-            )
-            self._shards[machine_id] = store
-        return store
+        with self._shards_lock:
+            store = self._shards.get(machine_id)
+            if store is None:
+                # The shard filename is the quoted id — Cura's own
+                # convention for id-derived files (machine_instances/
+                # <quote_plus(id)>.global.cfg, the domain panel's L2):
+                # ids are name-derived and may carry spaces. The shard
+                # takes the SAME lock as the shared documents: a second
+                # process may write this machine's shard too.
+                store = StateStore(
+                    os.path.join(self._state_dir, f"{quote_plus(machine_id)}.json"),
+                    save=self._save, lock=self._lock, note=self._note,
+                )
+                self._shards[machine_id] = store
+            return store
 
     def state_global_document(self) -> Dict[str, Any]:
         document = self._state_global.read()

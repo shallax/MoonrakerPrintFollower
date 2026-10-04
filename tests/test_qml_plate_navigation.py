@@ -250,6 +250,38 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertEqual(face.property("_lastSplit"), -1,
                          "the settle's reset left the stack split")
 
+    def test_the_detached_popover_shows_the_future_layer_eta(self):
+        # The 5.0.0 request: while detached on a layer ahead of the
+        # print, the popover says when the print gets there. The row
+        # belongs to the detached mode and reads an em dash when the
+        # index has no timing — never a fabricated zero.
+        monitor, _window, _face = self._follower_popover()
+        layer = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerSlider")
+        prog = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerProgress")
+        # The two tracks are one group (the review's request): no row
+        # spacing between them, pinned geometrically so a layout edit
+        # cannot silently reopen the gap.
+        from PyQt6.QtCore import QPointF as _P
+        top = layer.mapToItem(monitor, _P(0, 0)).y()
+        bottom = prog.mapToItem(monitor, _P(0, 0)).y()
+        self.assertAlmostEqual(bottom - (top + layer.height()), 0.0, delta=1.0,
+                               msg="the two tracks are not adjacent")
+        eta = monitor.findChild(harness.QQuickItem, "moonrakerFollowerLayerEta")
+        self.assertIsNotNone(eta, "the Layer ETA row is missing")
+        self.assertFalse(eta.isVisible(), "attached, the row has nothing to count down to")
+        self._printer.setFollowerAttached(False)
+        self._printer.setAnchorEta("in 4m · ≈14:32")
+        self.pump(20)
+        self.assertTrue(eta.isVisible())
+        self.assertEqual(eta.property("text"), "in 4m · ≈14:32")
+        self._printer.setAnchorEta("")
+        self.pump(20)
+        self.assertTrue(eta.isVisible(), "the row stays while detached")
+        self.assertEqual(eta.property("text"), "—")
+        self._printer.setFollowerAttached(True)
+        self.pump(20)
+        self.assertFalse(eta.isVisible())
+
     def test_detaching_freezes_the_layer_and_hides_the_dot(self):
         monitor, window, face = self._follower_popover()
         self._printer.setAnchor(9)

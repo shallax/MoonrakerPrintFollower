@@ -111,6 +111,34 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._pixel_width_contract = True
         self.test_partial_prefix_and_canvas_tail_keep_one_stroke_width()
 
+    def _prefix_owns(self, face):
+        """Whether the composition admits the prefix as the
+        presentation's owner: the delivered receipt naming its source
+        and boundary, which is the face's own definition (the same
+        reading its _exactReady takes for prefixReady)."""
+        state = face.property("_presentation")
+        if hasattr(state, "toVariant"):
+            state = state.toVariant()
+        state = state or {}
+        return state.get("kind") == "prefix" and bool(state.get("ready"))
+
+    def _takeover_terms(self, face, layer):
+        """The barrier's own terms, for a runner that starves it.
+
+        The takeover is one AND of many — the image's own status, the
+        URL the model published, the source the scene graph holds, the
+        delivered canvas receipt — so "it never took over" is
+        unanswerable without naming the term that held it (the face's
+        own report). An Image that never loaded and a composition that
+        never admitted a loaded one are different failures.
+        """
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
+        terms = QMetaObject.invokeMethod(face, "_holdTerms", Q_RETURN_ARG(QVariant))
+        texture = face.property("_prefixTexture")
+        if hasattr(texture, "toVariant"):
+            texture = texture.toVariant()
+        return "%s | texture=%s | model=%s" % (terms, dict(texture or {}), layer.prefixData)
+
     def test_a_prefix_that_never_loads_leaves_the_vector_owning_the_history(self):
         # The prefix's model-side validity is NOT the scene's: while
         # the prefix Image is not Ready (here its file never
@@ -151,6 +179,18 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._printer.setSplit(18)
         image, count = self._wait_red(window, face, want=True)
         self.assertGreater(count, 0, "the picture never drew")
+        # The census below needs an owner to have existed first:
+        # _wait_red reads red ink anywhere on the plate, and a loaded
+        # native runner has presented the plate before the vector body
+        # landed (the Windows CI signature). The gate is the census's
+        # own landmark; the loop then holds it frame by frame.
+        image = self._wait_until(
+            window,
+            lambda grab: self._stroke_ink(
+                grab, face, window, census_plot, 75.0, 125.0) > 0)
+        self.assertGreater(
+            self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
+            0, "the vector never took the printed history")
         # Every sampled frame while the prefix stays un-Ready: the
         # printed history (bed x=75, inside the prefix interval)
         # must stay on screen — the vector owns it all.
@@ -162,31 +202,58 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 0, "a frame lost the printed history while the prefix "
                    "image was not Ready")
         # The real file lands: the loading gap must also hold ink,
-        # and once Ready the prefix takes over — the boundary column
-        # gains the two caps' fringes (loose census >= 3 rows).
+        # and once Ready the prefix takes over. The takeover is read
+        # from the composition's OWN admission — the presentation
+        # flips to "prefix" only when the delivered canvas receipt
+        # names this exact source and boundary, which is what "the
+        # prefix owns [0, split)" means. The boundary column cannot
+        # carry it: measured, the vector's own stroke reads the same
+        # three loose rows the two caps' joint does, so the census is
+        # true before the prefix loads as much as after, and the bed
+        # mapping's sub-pixel rounding moves the Windows column to two
+        # rows while the composition is admitted all the same.
         layer.set_prefix(prefix, png_file(
             prefix, "/tmp/mpf/raster-probe",
             "fixture-ready-%d" % harness.time.monotonic_ns()), prefix_split, "fixture-key")
-        deadline = harness.time.monotonic() + 3.0
+        # A hang guard, not a budget (the file's 15 s convention): the
+        # PNG's decode and the tail's receipt are both asynchronous,
+        # and their latency belongs to the runner.
+        deadline = harness.time.monotonic() + 15.0
         takeover = False
+        states = []
         while harness.time.monotonic() < deadline:
             self.pump(5)
             image = window.grabWindow()
             self.assertGreater(
                 self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
                 0, "the loading gap lost the printed history")
-            if self._stroke_ink(image, face, window, census_plot,
-                                110.0, 125.0, tolerance=60) >= 3:
+            if self._prefix_owns(face):
                 takeover = True
                 break
-        self.assertTrue(takeover, "the ready prefix never took over")
+            if len(states) < 4:
+                state = self._takeover_terms(face, layer)
+                if state not in states:
+                    states.append(state)
+        if not takeover:
+            final = self._takeover_terms(face, layer)
+            if final not in states:
+                states.append(final)
+        self.assertTrue(takeover,
+                        "the ready prefix never took over: %s" % " || ".join(states))
         # The handover's own beat: the takeover is read a sync before
         # the scene presents the composed texture, and the strict
-        # census belongs to the composed frame — sampled a beat after
-        # it (the seam must not stay swollen, and the history must
-        # still be there).
+        # census belongs to the composed frame — the beat is taken,
+        # then the frame is waited for rather than assumed, since its
+        # latency is the runner's to decide (the seam must not stay
+        # swollen, and the history must still be there).
         self._pump_ms(30)
-        image = window.grabWindow()
+
+        def composed(grab):
+            near = self._stroke_ink(grab, face, window, census_plot, 75.0, 125.0)
+            tail = self._stroke_ink(grab, face, window, census_plot, 155.0, 125.0)
+            return near > 0 and max(near, tail) <= 3
+
+        image = self._wait_until(window, composed)
         self.assertGreater(
             self._stroke_ink(image, face, window, census_plot, 75.0, 125.0),
             0, "the composed frame lost the printed history")

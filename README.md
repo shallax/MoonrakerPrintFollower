@@ -8,13 +8,47 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.6.2
-- **Status:** Aiming for RC1; not released
+- **Release:** 5.0.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.0.0
+
+Version 5.0.0 adds optional local print-failure detection using the selected
+Moonraker webcam. With consent, Cura downloads and verifies the model and
+CPU inference runtime once; it needs no cloud account, video upload, Docker
+service or second camera connection. Supported hosts are checked before setup
+and benchmarked with a real inference call before detection can be enabled.
+Detection watches only while Cura is open, Monitor is active and the selected
+webcam is streaming.
+
+The **Detection** settings tab holds shared setup, a global on/off switch,
+health and recovery controls, and the safety explanation. Each printer has a
+separate **Enable** checkbox in Monitor's Failure Detection section. Its
+primary sensitivity, advanced adaptive bounds, safe period, notification and automatic-pause
+options are independent. The camera frame and signal scale show green, amber
+or red only for a fresh analysed frame during an active print. While the
+first reading is pending, a grey frame shows "Wait" without a score marker.
+On first use of a camera, or after resetting its training data, six analysed
+frames establish a baseline before any score or alert appears. Other unavailable
+signals stay neutral. The scale can be dragged left into a line or a number
+pill; click the pill to expand it. Automatic-pause protection is saved before
+the command is sent and retained if its outcome is uncertain.
+**Re-arm automatic pause** lets you explicitly
+allow another pause after cleaning up a failure. The Z-offset controls also
+gain a generic Klipper **Apply Z offset** action; saving the resulting
+configuration remains a separate step.
+The mini Bed Mesh, Exclude Object Picker and Print Follower views use the
+available Information-pane width while retaining each printer bed's aspect
+ratio. Print Follower's antialiasing setting also smooths the grid in its bed
+and the Exclude Object Picker.
+
+**Detection is an assistant, not a safety system.** It can miss spaghetti
+or raise false alarms; its adaptive signal is not a calibrated failure
+probability. Automatic pause is off by default.
 
 ## What changed in 4.6.2
 
-Version 4.6.2 is aiming for RC1, not yet released. It splits the Monitor,
+Version 4.6.2 splits the Monitor,
 file browser, camera, toolhead, Preview, dashboard and test harness into
 smaller owners while retaining existing settings and workflows.
 
@@ -301,7 +335,7 @@ gate grew teeth, and the review-driven repairs land with it.
   with previous releases in collapsed sections below and a link to
   the project's home; Esc, a press outside the card or the Close
   button dismiss it, and it stays gone until the next release.
-- **The testing document describes the real harness** — TESTING.md's
+- **The testing document describes the real harness** — docs/TESTING.md's
   claims are reconciled and a doc-pin test stops the drift; the
   exclusion records carry reason, evidence, date and re-check
   trigger.
@@ -444,7 +478,7 @@ The Monitor layout is overhauled into three panes — **Information**, **Printer
 
 Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi-agent review against the architecture contract fixed the following:
 
-- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
+- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `docs/INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
 - The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
 - Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
 - Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
@@ -520,7 +554,8 @@ There is no **Extensions → Moonraker Print Follower** settings dialog. Configu
 1. Open **Settings → Printer → Manage Printers**.
 2. Select the Cura printer you want to configure.
 3. Click **Configure Moonraker**.
-4. Use the **Connection**, **Following**, **Upload** and **Diagnostics** tabs.
+4. Use the **Connection**, **Following**, **Upload**, **Detection** and
+   **Diagnostics** tabs.
 5. Click **Save**.
 
 The settings UI is implemented as a native Cura Machine Action QML page, so Cura owns the dialog and its modal lifecycle.
@@ -727,7 +762,7 @@ When exact within-layer following is active, the plugin can keep **Cura's own na
 ## Screenshots
 
 The screenshots are captured deterministically from the plugin's real
-QML with the real cura-light theme (see `INSTRUCTIONS.md`), so they
+QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`), so they
 always match the checked-out code.
 
 ![Monitor dashboard](screenshots/01-dashboard-default.png)
@@ -748,7 +783,10 @@ The Exclude Object Picker shows each object's position and exclusion state.
 ![Print follower](screenshots/11-print-follower.png)
 
 The print follower renders indexed toolpaths, with layer and progress controls.
-This three-material penguin is generated as deterministic G-code for the capture.
+Detach it to look at a layer ahead of the print: the popover then shows the
+estimated time until the printer reaches that layer, read exactly like a
+scheduled pause's ETA. This three-material penguin is generated as
+deterministic G-code for the capture.
 
 ![Preview panel](screenshots/04-preview-panel.png)
 
@@ -759,7 +797,56 @@ The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
 ![Upload settings](screenshots/05-settings-upload.png)
 ![Diagnostics settings](screenshots/05-settings-diagnostics.png)
 
-The settings tabs: Connection, Following, Upload and Diagnostics.
+The settings tabs: Connection, Following, Upload, Detection and Diagnostics.
+
+![Detection settings](screenshots/05-settings-detection.png)
+![Detection settings after setup](screenshots/05-settings-detection-ready.png)
+
+**Local failure detection** is off until you opt in: one explicit,
+verified download of the Obico model (~193 MiB) and CPU inference
+runtime, a real inference check on your computer, then a global switch
+— no account, no cloud upload, no Docker or server to run. The model is
+shared across printers; everything after setup runs locally on the Cura
+computer. The weights are Obico's, licensed AGPL-3.0; the plugin is
+GPL-3.0, and the licences combine under GPL-3.0 section 13.
+Diagnostics can remove the shared downloads; that also clears saved monitored
+regions on every printer.
+
+![Failure Detection controls](screenshots/12-detection-controls.png)
+
+Each printer keeps its own opt-ins on the Monitor: sensitivity, advanced adaptive
+bounds, a safe period at the start of a print, and
+notification and automatic-pause switches that stay off by default. An
+alert names the printer, carries an **Acknowledge** button, and repeats
+a bounded number of times while it stands unacknowledged. Monitoring runs while Cura is open with the Monitor active and its selected camera streaming. The frame that raised an alert and each
+print's score timeline are kept in a bounded evidence folder, opened
+from Diagnostics.
+
+You can mute notifications and automatic pause for the rest of the current print
+while analysis continues. Draw monitored polygons directly on the webcam; pixels
+outside their union are excluded and the enclosing bounds are cropped before
+inference. Regions are saved separately for each printer and camera; their
+outlines hide when the printer's Failure Detection checkbox is off. Start
+with rectangles, drag
+vertex handles to reshape them, click midpoint handles to add vertices, and
+delete selected vertices or whole shapes. Up to four regions with 32 vertices
+each are supported; Save applies them together and Cancel/Escape discards edits.
+Empty regions monitor the
+full frame. Optional boxes show sampled suspicious regions, with the analysis
+age displayed; they are model proposals rather than confirmed failures. Mute
+and automatic-pause protection use Moonraker's active history identity so they
+follow the same print across reconnects and restarts. Detection and its controls
+are suspended when the camera is unavailable or its feed is disabled; returning
+requires fresh analysis.
+
+The raw camera baseline is shown in Printer controls. A newly enabled camera
+shows **Learning baseline** for its first six analysed frames. **Reset training
+data** in the Webcam pane clears only the selected camera's learned scores;
+the button hides when that pane is too narrow. Widen the pane to use it.
+The same action in Detection settings clears every camera's learned scores for
+that printer. Both ask for confirmation and keep the saved regions and tuning.
+Training survives Cura restarts and spans prints, so a print with a different
+footprint may warrant a reset before detection resumes.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 
@@ -821,7 +908,7 @@ Version 3.0.0 additionally migrates compatible upload and fallback-camera settin
 
 ## Internal structure
 
-High-risk logic is separated into focused modules. The authoritative ownership map — which module owns which mutable domain — lives in `ARCHITECTURE.md`, together with the design rules and the import/dependency contract enforced by the test suite. A few landmarks:
+High-risk logic is separated into focused modules. The authoritative ownership map — which module owns which mutable domain — lives in `docs/ARCHITECTURE.md`, together with the design rules and the import/dependency contract enforced by the test suite. A few landmarks:
 
 - `FollowerRuntime.py` — the composition root; constructs the follower's components and implements no domain policy
 - `PrintCoordinator.py` — cross-domain orchestration with explicit constructor dependencies
@@ -859,7 +946,7 @@ The same Makefile targets drive development on Linux, macOS and Windows:
 Linux defaults to the pinned Docker toolchain. macOS and Windows default
 to native host toolchains, with no Docker requirement; either can opt
 into the Linux image with `BACKEND=docker` (for example,
-`make BACKEND=docker build`). See [INSTRUCTIONS.md](INSTRUCTIONS.md)
+`make BACKEND=docker build`). See [INSTRUCTIONS.md](docs/INSTRUCTIONS.md)
 for setup, capture parity and the complete command list.
 
 The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.

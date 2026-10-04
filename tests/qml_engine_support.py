@@ -96,6 +96,7 @@ if QT_AVAILABLE:
         webcamNamesChanged = pyqtSignal()
         cameraFpsChanged = pyqtSignal()
         webcamStreamEnabledChanged = pyqtSignal()
+        detectionChanged = pyqtSignal()
 
         def __init__(self, fps=15.0, maximum=30.0):
             super().__init__()
@@ -104,6 +105,55 @@ if QT_AVAILABLE:
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
             self._snapshot_available = False
+            self._detection_state = "idle"
+            self._detection_score = -1
+            self.training_resets = 0
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionEnabled(self): return self._detection_state != "idle"
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionCameraReady(self): return True
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionRegionCamera(self): return "camera-one"
+        @pyqtProperty(str, notify=detectionChanged)
+        def cameraName(self): return "webcam"
+        @pyqtSlot()
+        def resetDetectionBaseline(self): self.training_resets += 1
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionEditingRegions(self): return False
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionShowBoxes(self): return True
+        @pyqtProperty("QVariant", notify=detectionChanged)
+        def detectionRegions(self): return []
+        @pyqtProperty("QVariant", notify=detectionChanged)
+        def detectionBoxes(self): return []
+        @pyqtProperty(float, notify=detectionChanged)
+        def detectionAnalysisAge(self): return -1.0
+
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionState(self):
+            return self._detection_state
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionGlobalEnabled(self):
+            return True
+
+        @pyqtProperty(int, notify=detectionChanged)
+        def detectionScore(self):
+            return self._detection_score
+
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionStatus(self):
+            return {"waiting": "Waiting for an analysed frame",
+                    "stale": "Camera analysis is stale",
+                    "normal": "Normal", "warning": "Warning",
+                    "failure": "Possible failure"}.get(self._detection_state, "Off for this printer")
+
+        def set_detection(self, state, score=-1):
+            self._detection_state = state
+            self._detection_score = score
+            self.detectionChanged.emit()
 
         @pyqtProperty(float, notify=cameraFpsChanged)
         def cameraFps(self):
@@ -1282,11 +1332,13 @@ if QT_AVAILABLE:
         # The picker's own payload: a test installs one before it mounts
         # (the class-attribute pattern the follower half's PAYLOAD uses).
         PLATE = None
+        BED = (250.0, 250.0)
 
         def __init__(self):
             super().__init__()
             self._split = PlateFaceRenderTests.PAYLOAD["split"]
             self._anchor = int(PlateFaceRenderTests.PAYLOAD["anchor"])
+            self._anchor_eta = ""
             self._layers = PlateFaceRenderTests.PAYLOAD["layers"]
             self._scrub = None
             self.scrub_reads = 0
@@ -1334,11 +1386,11 @@ if QT_AVAILABLE:
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineWidth(self):
-            return 250.0
+            return self.BED[0]
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineDepth(self):
-            return 250.0
+            return self.BED[1]
 
         @pyqtProperty(bool, constant=True)
         def bedMeshCenterIsZero(self):
@@ -1408,6 +1460,16 @@ if QT_AVAILABLE:
         @pyqtProperty(int, notify=plateProgressChanged)
         def plateProgressAnchor(self):
             return self._anchor
+
+        @pyqtProperty(str, notify=plateProgressChanged)
+        def plateAnchorEta(self):
+            return self._anchor_eta
+
+        def setAnchorEta(self, text):
+            """The coordinator's anchor estimate lands: the popover's
+            Layer ETA row follows it."""
+            self._anchor_eta = str(text)
+            self.plateProgressChanged.emit()
 
         def setAnchor(self, anchor):
             """Move the served layer: the follow's own publish."""
@@ -3515,9 +3577,11 @@ if QT_AVAILABLE:
     class _CatalogDouble(QObject):
         """Cura's translation catalog, read by the themed controls."""
 
+        @pyqtSlot(str, str, result=str)
         def i18nc(self, _context, text):
             return text
 
+        @pyqtSlot(str, result=str)
         def i18n(self, text):
             return text
 
@@ -3531,7 +3595,7 @@ class SettingsPageCase(RealEngineTestCase):
     """The settings pane mounted offscreen against the real machine
     action, in a real window (a windowless mount never lays out twice)."""
 
-    DIAGNOSTICS_TAB = 3
+    DIAGNOSTICS_TAB = 4
 
     def setUp(self):
         super().setUp()
@@ -3599,6 +3663,7 @@ class SettingsPageCase(RealEngineTestCase):
             if name == "QQuickTabBar" or name.startswith("TabRow_"):
                 candidate.setProperty("currentIndex", index)
                 self.pump(20)
+                self._pump_ms(100)
                 return
         self.fail("the settings tab bar did not mount")
 
@@ -3690,6 +3755,23 @@ class SettingsPageCase(RealEngineTestCase):
                          Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton)
         self._send_mouse(window, QEvent.Type.MouseButtonRelease, scene,
                          Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton)
+        self.pump(20)
+
+    def activate_item(self, window, item):
+        """Drive the control the way the packaged harness's click_item
+        drives objectName'd controls: a themed Cura control layers its
+        label over the clickable region, so a coordinate click can be
+        swallowed before the handler — the driver emits ``clicked`` when
+        the control carries that signal (the exact path a real click
+        drives, TESTING.md). Controls without one still get the real
+        press-and-release. This proves the handler wiring, not
+        coordinate hit-testing — a control occluded by an overlapping
+        item stays green here; the harness scenario suite owns that."""
+        emit = getattr(getattr(item, "clicked", None), "emit", None)
+        if emit is None:
+            self.click_item(window, item)
+            return
+        emit()
         self.pump(20)
 
     @staticmethod
