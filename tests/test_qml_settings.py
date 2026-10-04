@@ -379,7 +379,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         self.action._detection = detection
         button = document.findChild(harness.QQuickItem, "resetOnboardingButton")
         self.assertIsNotNone(button)
-        self.click_item(window, button)
+        self.activate_item(window, button)
         persistence.merge_state_global.assert_called_once_with({"whatsNewSeen": ""})
         detection.reset_offer.assert_called_once_with()
         self.assertIn("next Cura run", self.action.onboardingResetStatus)
