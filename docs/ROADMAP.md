@@ -10,6 +10,32 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
+## 5.1.0 — Preview physical head (candidate)
+
+This Preview work was originally planned for 5.0.0 and deferred when local
+failure detection took that release. Carry it forward as a 5.1.0 candidate,
+subject to proving Cura's Preview camera projection and the layer/foreign-height
+identity gate in a real Cura session. The detailed earlier proposal remains
+below as a planning record.
+
+- Show the printer's live physical head position in Cura Preview, mapped from
+  machine coordinates into the sliced scene. Include a distinct marker,
+  position readout, parked/unhomed explanations and display smoothing.
+- Put object-name tags in Preview using the same camera projection, if that
+  projection is available through a supported Cura interface.
+- Add a Preview control dock with jog, pause/resume and speed/extrusion factors
+  beside the toolpath, while retaining existing Monitor controls.
+- Replace the remaining private Cura SimulationPass writes in the native
+  nozzle lifecycle with supported public calls, subject to live validation.
+- Show macro descriptions and allow a macro during a paused print only after
+  explicit confirmation; keep macro execution blocked while printing.
+
+The old proposal also lists exploratory ideas such as filament-change markers,
+an extra Preview camera thumbnail and per-extruder colouring. They need a new
+scope decision before entering a release. Cloud analysis, model retraining,
+multi-camera fusion and automatic cancel/resume/heater actions remain
+unscheduled detection exclusions.
+
 ## 5.0.0 — local failure detection
 
 Optional local CPU detection with explicit consent for the Obico weights and
@@ -2441,7 +2467,10 @@ accelerated timelapses, not necessarily representative of the live camera
 stream. Do not adjust thresholds to force a red result on these clips or
 describe the model as detecting them.
 
-## Deferred — Physical head in the Preview (former 5.0.0 plan)
+## 5.1.0 planning record — Physical head in the Preview
+
+This is the historical 5.0.0 proposal now carried into the 5.1.0 candidate
+above. References to earlier release plans below record their original context.
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
