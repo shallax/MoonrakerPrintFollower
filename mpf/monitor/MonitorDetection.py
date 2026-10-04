@@ -579,8 +579,8 @@ class MonitorDetection(QObject):
         self._detection_alert_count = min(DETECTION_ALERT_MAX_PER_PRINT, self._detection_alert_count + 1)
         self._save_detection_actions()
         self.detectionChanged.emit()
-        # The evidence is written BEFORE the message: the frame has to
-        # be on disk by the time anyone follows the alert to it.
+        # Queue the exact triggering frame before the message without
+        # blocking the GUI on JPEG compression or app-data storage.
         self._retain_detection_evidence(level, context)
         self._notify_detection(level, False)
 

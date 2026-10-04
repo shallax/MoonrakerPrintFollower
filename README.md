@@ -22,12 +22,13 @@ and benchmarked with a real inference call before detection can be enabled.
 The **Detection** settings tab holds shared setup, a global on/off switch,
 health and recovery controls, and the safety explanation. Each printer has a
 separate **Enable** checkbox in Monitor's Failure Detection section. Its
-warning and failure thresholds, safe period, notification and automatic-pause
+primary sensitivity, advanced adaptive bounds, safe period, notification and automatic-pause
 options are independent. The camera frame and signal scale show green, amber
 or red only for a fresh analysed frame during an active print. While the
 first reading is pending, a grey frame shows "Wait" without a score marker;
-other unavailable signals stay neutral. An automatic pause must be confirmed
-before its per-print latch is saved, and **Re-arm automatic pause** lets you explicitly
+other unavailable signals stay neutral. Automatic-pause protection is saved
+before the command is sent and retained if its outcome is uncertain.
+**Re-arm automatic pause** lets you explicitly
 allow another pause after cleaning up a failure. The Z-offset controls also
 gain a generic Klipper **Apply Z offset** action; saving the resulting
 configuration remains a separate step.

@@ -16,6 +16,9 @@ was explicitly withdrawn.
 
 ## Review and fix programme (2026-10-03)
 
+This section records the earlier remediation history. The current release
+contracts below supersede its original alert-budget and action-state details.
+
 `release/v5.0.0` reached a fully green CI run on the remediation range
 `206919a..cab099b` (all nine jobs: lint, screenshots, package, CodeQL,
 three Pythons, both native builds, the repeat-boot smoke). A full
