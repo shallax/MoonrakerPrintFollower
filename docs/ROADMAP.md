@@ -21,10 +21,17 @@ opts into analysis, notification and automatic pause independently.
   bound to durable Moonraker history identity and persisted before dispatch.
 - Multiple camera-local monitored shapes, initially rectangles, with draggable
   vertices, midpoint insertion, vertex/shape deletion, Undo and Save/Cancel.
+  Each printer/camera keeps its own regions; their union is cropped for the
+  model and the outline hides when that printer disables detection.
+- A visible six-frame learning period on first use and after a confirmed
+  training reset, with one-camera reset in Webcam and all-camera reset for
+  the selected printer in Detection settings. Both preserve saved regions.
 - Optional suspicious-region boxes and analysis age on the transformed webcam.
+- A detection scale that drags between full, line and number-pill modes.
 - Analysis/controls suspend when the camera is missing, disabled or disconnected.
 - Bounded worker, acquisition freshness, exact-frame evidence, cancellable
-  downloads, lazy session loading and deferred loaded-runtime cleanup.
+  downloads with 250 ms progress polling, lazy session loading and deferred
+  loaded-runtime cleanup.
 
 Release reconciliation and executable regression evidence live in the detection
 implementation document. Real Cura/hardware validation
@@ -2239,7 +2246,11 @@ review/round-2-*.md):
   persistent dismissible banner above the settings tab row with the
   recipe demoted to a permanent Diagnostics row on dismissal.
 
-## 5.0.0 — Local print-failure detection
+## Original 5.0.0 proposal — superseded details
+
+This is the historical planning record. The current 5.0.0 scope is summarised
+at the top of this document; shipped behavior and release gates are documented
+in `LOCAL_DETECTION_IMPLEMENTATION.md`, `ARCHITECTURE.md` and `CHANGELOG.md`.
 
 This release replaces the previously planned Preview-head work for 5.0.0.
 The Preview proposal is retained below as deferred work, without an assigned

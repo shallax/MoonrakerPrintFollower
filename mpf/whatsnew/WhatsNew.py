@@ -35,13 +35,22 @@ WHATS_NEW: Tuple[dict, ...] = (
             "There is no cloud account, video upload or server to run.",
             "The Detection settings tab handles shared setup, a global switch "
             "and health checks. Each printer has its own Enable checkbox, "
-            "warning and failure thresholds, and initial safe period.",
+            "sensitivity, advanced bounds and initial safe period.",
+            "Draw up to four monitored regions on a webcam. They are saved "
+            "for that printer and camera; the image is cropped to their "
+            "bounds and pixels outside them are excluded. Their outlines "
+            "hide when detection is off.",
+            "A new camera learns its baseline from six analysed frames before "
+            "scoring. Reset training data for one camera from Webcam, or "
+            "for every camera on a printer from Detection settings. "
+            "Your monitored regions stay saved.",
             "A fresh signal during an active print colours the webcam frame "
-            "green, amber or red. Before the first analysis it shows a grey "
-            "frame and Wait without a marker; the signal is not a probability.",
+            "green, amber or red. Before analysis it stays neutral; the "
+            "score is not a probability. Drag the scale left to show a "
+            "line or just the number.",
             "Notifications and automatic pause are separate opt-ins. A pause "
-            "must be confirmed before it is recorded, and Re-arm automatic "
-            "pause can allow another pause during the same print.",
+            "attempt is guarded before its command is sent. Re-arm automatic "
+            "pause can allow another attempt during the same print.",
             "An alert names the printer, has an Acknowledge button, and is "
             "repeated a few times while it stands unacknowledged. Detection "
             "settings can show the folder holding the frame that raised an "

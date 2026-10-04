@@ -25,9 +25,12 @@ separate **Enable** checkbox in Monitor's Failure Detection section. Its
 primary sensitivity, advanced adaptive bounds, safe period, notification and automatic-pause
 options are independent. The camera frame and signal scale show green, amber
 or red only for a fresh analysed frame during an active print. While the
-first reading is pending, a grey frame shows "Wait" without a score marker;
-other unavailable signals stay neutral. Automatic-pause protection is saved
-before the command is sent and retained if its outcome is uncertain.
+first reading is pending, a grey frame shows "Wait" without a score marker.
+On first use of a camera, or after resetting its training data, six analysed
+frames establish a baseline before any score or alert appears. Other unavailable
+signals stay neutral. The scale can be dragged left into a line or a number
+pill; click the pill to expand it. Automatic-pause protection is saved before
+the command is sent and retained if its outcome is uncertain.
 **Re-arm automatic pause** lets you explicitly
 allow another pause after cleaning up a failure. The Z-offset controls also
 gain a generic Klipper **Apply Z offset** action; saving the resulting
@@ -800,6 +803,8 @@ runtime, a real inference check on your computer, then a global switch
 shared across printers; everything after setup runs locally on the Cura
 computer. The weights are Obico's, licensed AGPL-3.0; the plugin is
 GPL-3.0, and the licences combine under GPL-3.0 section 13.
+Diagnostics can remove the shared downloads; that also clears saved monitored
+regions on every printer.
 
 ![Failure Detection controls](screenshots/12-detection-controls.png)
 
@@ -813,7 +818,10 @@ from Diagnostics.
 
 You can mute notifications and automatic pause for the rest of the current print
 while analysis continues. Draw monitored polygons directly on the webcam; pixels
-outside their union are excluded before inference. Start with rectangles, drag
+outside their union are excluded and the enclosing bounds are cropped before
+inference. Regions are saved separately for each printer and camera; their
+outlines hide when the printer's Failure Detection checkbox is off. Start
+with rectangles, drag
 vertex handles to reshape them, click midpoint handles to add vertices, and
 delete selected vertices or whole shapes. Up to four regions with 32 vertices
 each are supported; Save applies them together and Cancel/Escape discards edits.
@@ -824,6 +832,14 @@ and automatic-pause protection use Moonraker's active history identity so they
 follow the same print across reconnects and restarts. Detection and its controls
 are suspended when the camera is unavailable or its feed is disabled; returning
 requires fresh analysis.
+
+The raw camera baseline is shown in Printer controls. A newly enabled camera
+shows **Learning baseline** for its first six analysed frames. **Reset training
+data** in the Webcam pane clears only the selected camera's learned scores;
+the same action in Detection settings clears every camera's learned scores for
+that printer. Both ask for confirmation and keep the saved regions and tuning.
+Training survives Cura restarts and spans prints, so a print with a different
+footprint may warrant a reset before detection resumes.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 

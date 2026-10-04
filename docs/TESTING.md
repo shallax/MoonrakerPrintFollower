@@ -3,8 +3,10 @@
 ## 5.0.0
 
 Version 5.0.0 adds opt-in local inference and the Detection settings tab,
-per-printer thresholds and safe periods, webcam signal rendering, and
-separate notification/automatic-pause opt-ins with explicit pause re-arm.
+per-printer sensitivity, bounds and safe periods, per-printer/camera monitored
+regions, six-frame baseline learning and scoped training resets, webcam signal
+rendering, and separate notification/automatic-pause opt-ins with explicit
+pause re-arm.
 `make test_files FILES="tests.test_detection_policy tests.test_detection_model tests.test_detection_assets tests.test_detection_service tests.test_monitor_model_runtime tests.test_monitor_controls tests.test_qml_camera_controls tests.test_qml_settings tests.test_whatsnew"`
 runs focused parallel coverage; `make all` runs the complete local gate.
 The `group-webcams` simulator journey exercises settings and synthetic

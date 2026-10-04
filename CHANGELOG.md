@@ -57,8 +57,8 @@ upload camera frames to a cloud service.
   camera-dependent controls until fresh analysis returns.
 - Restore each printer/camera's saved regions when switching cameras, and hide
   their webcam outlines while detection is disabled for the printer. Camera
-  refreshes and foregrounding Cura preserve
-  accumulated detection state; stale analysis still expires normally.
+  refreshes and foregrounding Cura preserve accumulated detection state;
+  stale analysis still expires normally.
   Show sampled suspicious-region boxes with an analysis-age label; overlays
   follow camera rotation, mirroring, zoom and pan.
 - Mute alerts and automatic pause for the rest of the current print while

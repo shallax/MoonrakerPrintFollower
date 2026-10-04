@@ -1391,6 +1391,12 @@ version. It survives stream/snapshot switching and ephemeral loopback-bridge
 ports. A semantic source change, camera change, tuning change, re-arm, or
 suspend/re-enable retires analysis through a monotonic epoch. Geometry is
 validated once per settings revision rather than on every decoded frame.
+First use and training resets enter a neutral six-frame Learning baseline
+period; no score or alert is produced during it. The Webcam pane resets the
+selected camera's training, while Detection settings resets training for every
+camera on the selected printer. Both confirmed actions preserve regions and
+tuning. Baselines persist across Cura restarts and prints; different print
+footprints can call for manual retraining.
 
 The selected camera's decoded frames feed a single bounded CPU worker at no
 more than one inference every ten seconds. Acquisition age, context and ordering
@@ -1408,9 +1414,13 @@ and selected vertices/shapes can be deleted. Undo is bounded; invalid crossed
 or degenerate shapes keep the last valid draft. Up to four polygons with
 32 vertices each form a monitored union. Save applies that camera's complete
 draft; Cancel/Escape discards it. Empty regions mean full frame. Source pixels
-outside the union are blacked out before resize, and outside-only proposals
+outside the union are blacked out and the smallest enclosing bounds are cropped
+before resize. Model boxes are mapped back to full-frame coordinates, and outside-only proposals
 are excluded before score aggregation. Insufficient mask resolution is reported
 for that sample/camera without destroying the shared model session.
+Disabling detection for a printer closes an active edit and hides its saved
+region outlines on the webcam; the camera's saved geometry remains available
+when detection is enabled again.
 
 Durable action state uses Moonraker history's active job ID/start time, filename
 and printer binding. Active history is re-attested every ten seconds even when
